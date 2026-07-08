@@ -1,0 +1,40 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#scalar-client {
+  width: 100% !important;
+}
+
+.missing-endpoint {
+  padding: 32px;
+  font-family: monospace;
+}
+
+.token-banner {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  padding: 8px 16px;
+  background: #22c55e;
+  color: white;
+  border-radius: 6px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  z-index: 10001;
+  animation: fadeOut 3s forwards;
+}
+
+@keyframes fadeOut {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}

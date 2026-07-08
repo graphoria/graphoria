@@ -1,0 +1,49 @@
+# Development files
+.env
+.env.local
+.env.*.local
+*.log
+logs
+*.pid
+*.seed
+*.pid.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Testing
+coverage/
+.nyc_output/
+
+# Development
+docker-build.txt
+simulator.ts
+bunfig.toml
+bun.lock
+
+# Git
+.git/
+.gitignore
+
+# Examples (keep these in separate examples directory)
+examples/local-*
+examples/test-*

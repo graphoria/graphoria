@@ -1,0 +1,39 @@
+{
+  "name": "@graphoria/playgrounds",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:graphiql": "vite --mode graphiql",
+    "dev:scalar": "vite --mode scalar",
+    "build": "tsc && vite build --mode graphiql && vite build --mode scalar && vite build --mode console",
+    "build:graphiql": "tsc && vite build --mode graphiql",
+    "build:scalar": "tsc && vite build --mode scalar",
+    "build:console": "tsc && vite build --mode console",
+    "dev:console": "vite --mode console"
+  },
+  "dependencies": {
+    "@graphiql/plugin-explorer": "5.1.1",
+    "@graphiql/toolkit": "0.11.3",
+    "@scalar/api-reference": "^1.55.3",
+    "graphiql": "5.2.2",
+    "graphql": "16.14.0",
+    "graphql-ws": "^6.0.8",
+    "monaco-editor": "0.52.2",
+    "monaco-graphql": "1.8.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "wouter": "3.10.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.2",
+    "@types/node": "25.6.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react-swc": "^4.3.0",
+    "tailwindcss": "^4.3.2",
+    "typescript": "6.0.3",
+    "vite": "8.0.11",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
