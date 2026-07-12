@@ -450,8 +450,6 @@ export async function createBunServer(options?: Partial<Env>) {
 
   const server = serve(serverHandlers);
 
-  logger("graphoria").info({ port: server.port, prefixes }, "server ready");
-
   return {
     server,
     prefixes,
