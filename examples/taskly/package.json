@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@graphoria/react": "0.1.0",
-    "@graphoria/server": "0.1.1",
+    "@graphoria/server": "0.1.2",
     "@urql/exchange-auth": "3.0.0",
     "bun-plugin-tailwind": "0.1.2",
     "cnfast": "0.0.8",
