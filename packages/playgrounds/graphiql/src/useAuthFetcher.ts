@@ -15,8 +15,8 @@ function deriveWsUrl(httpUrl: string): string {
 
 function triggerSchemaRefetch(): void {
   setTimeout(() => {
-    const button = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Re-fetch GraphQL schema"]',
+    const button = [...document.querySelectorAll("button")].find((el) =>
+      el.getAttribute("aria-label")?.includes("Re-fetch GraphQL schema"),
     );
     button?.focus();
     button?.click();
