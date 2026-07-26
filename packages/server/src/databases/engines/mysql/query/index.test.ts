@@ -73,7 +73,7 @@ describe("MySQL: Store", () => {
                                     SELECT 
                                       JSON_OBJECT('name', t3.\`name\`) 
                                     FROM 
-                                      dbo.categories t3 
+                                      \`dbo\`.\`categories\` t3 
                                     WHERE 
                                       t2.\`category_id\` = t3.\`category_id\`
                                   ), 
@@ -82,7 +82,7 @@ describe("MySQL: Store", () => {
                               )
                             ) 
                           FROM 
-                            dbo.product_categories t2 
+                            \`dbo\`.\`product_categories\` t2 
                           WHERE 
                             t1.\`product_id\` = t2.\`product_id\`
                         ), 
@@ -91,7 +91,7 @@ describe("MySQL: Store", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -131,7 +131,7 @@ describe("MySQL: Store", () => {
                                     SELECT 
                                       JSON_OBJECT('name', t3.\`name\`) 
                                     FROM 
-                                      dbo.categories t3 
+                                      \`dbo\`.\`categories\` t3 
                                     WHERE 
                                       t2.\`category_id\` = t3.\`category_id\`
                                   ), 
@@ -140,7 +140,7 @@ describe("MySQL: Store", () => {
                               )
                             ) 
                           FROM 
-                            dbo.product_categories t2 
+                            \`dbo\`.\`product_categories\` t2 
                           WHERE 
                             t1.\`product_id\` = t2.\`product_id\`
                         ), 
@@ -149,7 +149,7 @@ describe("MySQL: Store", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1 
+                  \`dbo\`.\`products\` t1 
                 WHERE 
                   t1.\`name\` = $1
               ), 
@@ -188,7 +188,7 @@ describe("MySQL: Store", () => {
                               )
                             ) 
                           FROM 
-                            dbo.order_items t2 
+                            \`dbo\`.\`order_items\` t2 
                           WHERE 
                             t2.\`quantity\` > $1 
                             AND t1.\`product_id\` = t2.\`product_id\`
@@ -198,7 +198,7 @@ describe("MySQL: Store", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -232,7 +232,7 @@ describe("MySQL: Store", () => {
                               JSON_OBJECT('quantity', t2.\`quantity\`)
                             ) 
                           FROM 
-                            dbo.order_items t2 
+                            \`dbo\`.\`order_items\` t2 
                           WHERE 
                             t1.\`product_id\` = t2.\`product_id\`
                         ), 
@@ -241,13 +241,13 @@ describe("MySQL: Store", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1 
+                  \`dbo\`.\`products\` t1 
                 WHERE 
                   EXISTS (
                     SELECT 
                       1 
                     FROM 
-                      dbo.reviews t2 
+                      \`dbo\`.\`reviews\` t2 
                     WHERE 
                       t1.\`product_id\` = t2.\`product_id\` 
                       AND (t2.\`rating\` >= $1)
@@ -288,7 +288,7 @@ describe("MySQL: Orders", () => {
                               t2.\`last_name\`
                             ) 
                           FROM 
-                            dbo.customers t2 
+                            \`dbo\`.\`customers\` t2 
                           WHERE 
                             t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
@@ -297,7 +297,7 @@ describe("MySQL: Orders", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -341,7 +341,7 @@ describe("MySQL: Common", () => {
                                       SELECT 
                                         JSON_OBJECT('name', t3.\`name\`) 
                                       FROM 
-                                        dbo.categories t3 
+                                        \`dbo\`.\`categories\` t3 
                                       WHERE 
                                         t2.\`category_id\` = t3.\`category_id\`
                                     ), 
@@ -350,7 +350,7 @@ describe("MySQL: Common", () => {
                                 )
                               ) 
                             FROM 
-                              dbo.product_categories t2 
+                              \`dbo\`.\`product_categories\` t2 
                             WHERE 
                               t1.\`product_id\` = t2.\`product_id\`
                           ), 
@@ -359,7 +359,7 @@ describe("MySQL: Common", () => {
                       )
                     ) 
                   FROM 
-                    dbo.products t1
+                    \`dbo\`.\`products\` t1
                 ), 
                 JSON_ARRAY()
               )
@@ -385,7 +385,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -416,7 +416,7 @@ describe("MySQL: Common", () => {
                           SELECT 
                             JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
-                            dbo.customers t2 
+                            \`dbo\`.\`customers\` t2 
                           WHERE 
                             t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
@@ -425,7 +425,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -455,7 +455,7 @@ describe("MySQL: Common", () => {
                           SELECT 
                             JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
-                            dbo.customers t2 
+                            \`dbo\`.\`customers\` t2 
                           WHERE 
                             t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
@@ -464,7 +464,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -489,7 +489,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -524,7 +524,7 @@ describe("MySQL: Common", () => {
                           SELECT 
                             JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
-                            dbo.customers t2 
+                            \`dbo\`.\`customers\` t2 
                           WHERE 
                             t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
@@ -533,7 +533,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -563,7 +563,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -598,7 +598,7 @@ describe("MySQL: Common", () => {
                           SELECT 
                             JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
-                            dbo.customers t2 
+                            \`dbo\`.\`customers\` t2 
                           WHERE 
                             t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
@@ -607,7 +607,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -637,7 +637,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -662,7 +662,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -693,7 +693,7 @@ describe("MySQL: Common", () => {
                           SELECT 
                             JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
-                            dbo.customers t2 
+                            \`dbo\`.\`customers\` t2 
                           WHERE 
                             t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
@@ -702,7 +702,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -727,7 +727,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.orders t1
+                  \`dbo\`.\`orders\` t1
               ), 
               JSON_ARRAY()
             )
@@ -752,7 +752,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1 
+                  \`dbo\`.\`products\` t1 
                 ORDER BY 
                   t1.\`product_id\` ASC 
                 LIMIT 
@@ -775,7 +775,7 @@ describe("MySQL: Common", () => {
             MIN(t1.\`order_id\`) AS min_order_id, 
             SUM(t1.\`total_amount\`) AS sum_total_amount 
           FROM 
-            dbo.orders t1 
+            \`dbo\`.\`orders\` t1 
           GROUP BY 
             t1.\`customer_id\`
         ) 
@@ -811,7 +811,7 @@ describe("MySQL: Common", () => {
                               )
                             ) 
                           FROM 
-                            dbo.orders t1 
+                            \`dbo\`.\`orders\` t1 
                           WHERE 
                             t1.\`customer_id\` = t1_agg.\`customer_id\`
                         ), 
@@ -849,7 +849,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -878,7 +878,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -907,7 +907,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -936,7 +936,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -965,7 +965,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -992,7 +992,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1021,7 +1021,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1048,7 +1048,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1075,7 +1075,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1102,7 +1102,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1129,7 +1129,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1156,7 +1156,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1183,7 +1183,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1210,7 +1210,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1237,7 +1237,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1266,7 +1266,7 @@ describe("MySQL: Common", () => {
                     )
                   ) 
                 FROM 
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ), 
               JSON_ARRAY()
             )
@@ -1293,7 +1293,7 @@ describe("MySQL: Common", () => {
                     )
                   )
                 FROM
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ),
               JSON_ARRAY()
             )
@@ -1315,7 +1315,7 @@ describe("MySQL: Common", () => {
                     JSON_OBJECT('order', t1.\`order\`, 'name', t1.\`name\`)
                   )
                 FROM
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
                 ORDER BY
                   t1.\`order\` ASC
               ),
@@ -1339,7 +1339,7 @@ describe("MySQL: Common", () => {
                     JSON_OBJECT('print', t1.\`name\`, 'group', t1.\`sku\`)
                   )
                 FROM
-                  dbo.products t1
+                  \`dbo\`.\`products\` t1
               ),
               JSON_ARRAY()
             )

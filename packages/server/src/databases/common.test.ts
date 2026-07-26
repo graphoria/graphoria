@@ -3,7 +3,13 @@ import { describe, expect, it } from "bun:test";
 import type { SelectionAnalysis, VariableDefinition } from "../analyzeQuery/types";
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
 
-import { buildOrderByClauseFp, buildWhereClauseFp, filterBasedOnDirective } from "./common";
+import {
+  buildOrderByClauseFp,
+  buildWhereClauseFp,
+  filterBasedOnDirective,
+  qualifiedNameFp,
+  wrapIdentifierFp,
+} from "./common";
 
 const stubEntities = (overrides: Partial<MergedEntities> = {}): MergedEntities =>
   ({
@@ -238,6 +244,30 @@ describe("buildWhereClauseFp", () => {
       );
       expect(sql).toBe(`WHERE t1."name" = $1`);
     });
+  });
+});
+
+describe("wrapIdentifierFp", () => {
+  it("uses the delimiters of each dialect", () => {
+    expect(wrapIdentifierFp("pg")("order")).toBe(`"order"`);
+    expect(wrapIdentifierFp("mysql")("order")).toBe("`order`");
+    expect(wrapIdentifierFp("mssql")("order")).toBe("[order]");
+  });
+
+  it("escapes a closing delimiter by doubling it", () => {
+    expect(wrapIdentifierFp("pg")(`we"ird`)).toBe(`"we""ird"`);
+    expect(wrapIdentifierFp("mysql")("we`ird")).toBe("`we``ird`");
+    expect(wrapIdentifierFp("mssql")("we]ird")).toBe("[we]]ird]");
+  });
+});
+
+describe("qualifiedNameFp", () => {
+  const table = { schema: "dbo", name: "order" };
+
+  it("delimits both parts of the name", () => {
+    expect(qualifiedNameFp("pg")(table)).toBe(`"dbo"."order"`);
+    expect(qualifiedNameFp("mysql")(table)).toBe("`dbo`.`order`");
+    expect(qualifiedNameFp("mssql")(table)).toBe("[dbo].[order]");
   });
 });
 

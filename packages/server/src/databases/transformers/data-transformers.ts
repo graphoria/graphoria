@@ -1,6 +1,7 @@
 import type { Database, Relationships } from "../../types/configuration";
 import type { RelationshipResolver, StoredProcedure, Table, Tables } from "../../types/db";
 
+import { qualifiedNameFp } from "../common";
 import { genResolverName } from "./genResolverName";
 
 /**
@@ -103,6 +104,7 @@ export const buildTableResolver = (tables: Tables, table: Table, db: Database) =
   return {
     ...table,
     db,
+    dottedQuotedName: qualifiedNameFp(db.type)(table),
     internalName,
     resolverName: internalName,
     relationships,
