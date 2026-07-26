@@ -126,5 +126,6 @@ export const buildProcedureResolver = (sp: StoredProcedure, db: Database) => {
     internalName,
     resolverName,
     dottedName,
+    dottedQuotedName: qualifiedNameFp(db.type)(sp),
   };
 };
