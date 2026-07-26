@@ -169,7 +169,6 @@ export const generateSQL = (
         null,
         index + 1,
         {},
-        true,
       );
 
       const cte = buildAggregationCTE(groupByInfo, dottedQuotedName, tableAlias, whereClause);
@@ -232,7 +231,6 @@ export const buildSQLForField = (
     parentTableAlias,
     level,
     aliasMap,
-    true,
   );
 
   // Check if this is a GROUP BY query
@@ -273,7 +271,6 @@ export const buildSQLForField = (
         aliasMap,
       ),
     ([name, selector]) => `'${name}', ${selector}`,
-    true,
   );
 
   const fromClause = `FROM ${dottedQuotedName} ${tableAlias}`;

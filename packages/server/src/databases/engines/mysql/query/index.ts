@@ -16,6 +16,7 @@ import {
   isAggregationField,
   isSingleQuery,
   processFieldSelectionsMySQL,
+  wrapIdentifierMySQL,
 } from "../../../common";
 
 // Generate CTE for aggregations
@@ -31,7 +32,7 @@ const buildAggregationCTE = (
 
   // Add group by fields
   groupByFields.forEach((field) => {
-    selectClauses.push(`${tableAlias}.${field}`);
+    selectClauses.push(`${tableAlias}.${wrapIdentifierMySQL(field)}`);
   });
 
   // Add aggregations
@@ -40,11 +41,13 @@ const buildAggregationCTE = (
       selectClauses.push(`COUNT(*) AS ${agg.alias}`);
     } else {
       const func = agg.name.toUpperCase();
-      selectClauses.push(`${func}(${tableAlias}.${agg.fieldName}) AS ${agg.alias}`);
+      selectClauses.push(
+        `${func}(${tableAlias}.${wrapIdentifierMySQL(agg.fieldName)}) AS ${agg.alias}`,
+      );
     }
   });
 
-  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}.${field}`).join(", ")}`;
+  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}.${wrapIdentifierMySQL(field)}`).join(", ")}`;
 
   return `${cteAlias} AS (
     SELECT
@@ -72,7 +75,7 @@ const buildGroupedQuery = (
   if (hasKey) {
     // Add key object with group by fields
     const keyFields = keys
-      .map((key) => `'${key.alias || key.name}', ${cteAlias}.${key.name}`)
+      .map((key) => `'${key.alias || key.name}', ${cteAlias}.${wrapIdentifierMySQL(key.name)}`)
       .join(", ");
 
     selectClauses.push(`'${keyResolved}', JSON_OBJECT(${keyFields})`);
@@ -96,12 +99,13 @@ const buildGroupedQuery = (
     if (itemsSelection?.selections) {
       const itemFields = itemsSelection.selections
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
-        .map((sel) => `'${sel.alias || sel.name}', ${tableAlias}.${sel.name}`)
+        .map((sel) => `'${sel.alias || sel.name}', ${tableAlias}.${wrapIdentifierMySQL(sel.name)}`)
         .join(", ");
 
       if (itemFields) {
         const joinConditions = groupByFields.map(
-          (field) => `${tableAlias}.${field} = ${cteAlias}.${field}`,
+          (field) =>
+            `${tableAlias}.${wrapIdentifierMySQL(field)} = ${cteAlias}.${wrapIdentifierMySQL(field)}`,
         );
 
         const whereConditions = whereClause
@@ -169,7 +173,6 @@ export const generateSQL = (
         null,
         index + 1,
         {},
-        false,
       );
 
       const cte = buildAggregationCTE(groupByInfo, dottedName, tableAlias, whereClause);
@@ -232,7 +235,6 @@ export const buildSQLForField = (
     parentTableAlias,
     level,
     aliasMap,
-    false,
   );
 
   // Check if this is a GROUP BY query
@@ -273,7 +275,6 @@ export const buildSQLForField = (
         aliasMap,
       ),
     ([name, selector]) => `'${name}', ${selector}`,
-    false,
   );
 
   const fromClause = `FROM ${dottedName} ${tableAlias}${withoutArrayWrapper ? " LIMIT 1" : ""}`;
