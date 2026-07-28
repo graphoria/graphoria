@@ -14,6 +14,8 @@ import {
   ordWithWhenOrDirectiveQuery,
   prodLimitQuery,
   prodQuery,
+  prodReservedWordAliasQuery,
+  prodReservedWordColumnQuery,
   prodWhereArgumentNestedEntitiesQuery,
   prodWhereArgumentNestedQuery,
   prodWhereArgumentQuery,
@@ -237,7 +239,7 @@ describe("PostgreSQL: Store", () => {
                     SELECT
                       1
                     FROM
-                      dbo.reviews t2
+                      "dbo"."reviews" t2
                     WHERE
                       t1."product_id" = t2."product_id"
                       AND (t2."rating" >= $1)
@@ -1264,6 +1266,52 @@ describe("PostgreSQL: Common", () => {
                       'price',
                       ROUND((t1."price" * $1), $2)
                     )
+                  )
+                FROM
+                  "dbo"."products" t1
+              ),
+              '[]'::json
+            )
+          ) as json_result
+      `),
+    );
+  });
+
+  it("Should handle reserved word column names", () => {
+    expect(genSql(StorePG, prodReservedWordColumnQuery)).toBe(
+      format(`
+        SELECT
+          json_build_object(
+            'dbo_products',
+            COALESCE(
+              (
+                SELECT
+                  json_agg(
+                    json_build_object('order', t1."order", 'name', t1."name")
+                    ORDER BY
+                      t1."order" ASC
+                  )
+                FROM
+                  "dbo"."products" t1
+              ),
+              '[]'::json
+            )
+          ) as json_result
+      `),
+    );
+  });
+
+  it("Should handle reserved word aliases as JSON keys", () => {
+    expect(genSql(StorePG, prodReservedWordAliasQuery)).toBe(
+      format(`
+        SELECT
+          json_build_object(
+            'order',
+            COALESCE(
+              (
+                SELECT
+                  json_agg(
+                    json_build_object('print', t1."name", 'group', t1."sku")
                   )
                 FROM
                   "dbo"."products" t1

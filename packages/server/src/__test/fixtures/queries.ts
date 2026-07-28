@@ -580,3 +580,29 @@ export const prodWhereArgumentVariableAndStaticQuery = analyzeQuery(
   StoreMSSQL,
   StoreMSSQL.schema,
 );
+
+export const prodReservedWordAliasQuery = analyzeQuery(
+  `
+    {
+      order: dbo_products {
+        print: name
+        group: sku
+      }
+    }
+  `,
+  StoreMSSQL,
+  StoreMSSQL.schema,
+);
+
+export const prodReservedWordColumnQuery = analyzeQuery(
+  `
+    {
+      dbo_products(orderBy: [{ order: ASC }]) {
+        order
+        name
+      }
+    }
+  `,
+  StoreMSSQL,
+  StoreMSSQL.schema,
+);

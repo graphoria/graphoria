@@ -16,12 +16,16 @@ import {
   isAggregationField,
   isSingleQuery,
   processFieldSelectionsMSSQL,
+  wrapIdentifierMSSQL,
 } from "../../../common";
+
+// FOR JSON PATH uses the unbracketed alias as the JSON key, so bracket-quoting
+// (required for reserved words like PRINT) never leaks into results.
 
 // Generate CTE for aggregations
 const buildAggregationCTE = (
   groupByInfo: GroupByInfo,
-  dottedName: string,
+  dottedQuotedName: string,
   tableAlias: string,
   whereClause: string,
 ): string => {
@@ -31,7 +35,7 @@ const buildAggregationCTE = (
 
   // Add group by fields
   groupByFields.forEach((field) => {
-    selectClauses.push(`${tableAlias}.${field}`);
+    selectClauses.push(`${tableAlias}.${wrapIdentifierMSSQL(field)}`);
   });
 
   // Add aggregations
@@ -40,16 +44,18 @@ const buildAggregationCTE = (
       selectClauses.push(`COUNT(*) AS ${agg.alias}`);
     } else {
       const func = agg.name.toUpperCase();
-      selectClauses.push(`${func}(${tableAlias}.${agg.fieldName}) AS ${agg.alias}`);
+      selectClauses.push(
+        `${func}(${tableAlias}.${wrapIdentifierMSSQL(agg.fieldName)}) AS ${agg.alias}`,
+      );
     }
   });
 
-  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}.${field}`).join(", ")}`;
+  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}.${wrapIdentifierMSSQL(field)}`).join(", ")}`;
 
   return `${cteAlias} AS (
     SELECT
       ${selectClauses.join(",\n      ")}
-    FROM ${dottedName} ${tableAlias}
+    FROM ${dottedQuotedName} ${tableAlias}
     ${whereClause}
     ${groupByClause}
   )`;
@@ -60,7 +66,7 @@ const buildGroupedQuery = (
   entities: MergedEntities,
   field: SelectionAnalysis,
   groupByInfo: GroupByInfo,
-  dottedName: string,
+  dottedQuotedName: string,
   tableAlias: string,
   whereClause: string,
 ): string => {
@@ -72,21 +78,24 @@ const buildGroupedQuery = (
   if (hasKey) {
     // Add key object with group by fields
     const keyFields = keys
-      .map((field) => `${cteAlias}.${field.name} AS ${field.alias || field.name}`)
+      .map(
+        (field) =>
+          `${cteAlias}.${wrapIdentifierMSSQL(field.name)} AS ${wrapIdentifierMSSQL(field.alias || field.name)}`,
+      )
       .join(", ");
 
     selectClauses.push(
-      `JSON_QUERY((SELECT ${keyFields} FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)) AS [${keyResolved}]`,
+      `JSON_QUERY((SELECT ${keyFields} FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)) AS ${wrapIdentifierMSSQL(keyResolved)}`,
     );
   }
 
   // Add aggregation results
   aggregations.forEach((agg) => {
     if (agg.name === "count") {
-      selectClauses.push(`${cteAlias}.${agg.alias} AS ${agg.nameResolved}`);
+      selectClauses.push(`${cteAlias}.${agg.alias} AS ${wrapIdentifierMSSQL(agg.nameResolved)}`);
     } else {
       selectClauses.push(
-        `JSON_QUERY((SELECT ${cteAlias}.${agg.alias} AS ${agg.fieldAlias} FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)) AS ${agg.nameResolved}`,
+        `JSON_QUERY((SELECT ${cteAlias}.${agg.alias} AS ${wrapIdentifierMSSQL(agg.fieldAlias)} FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)) AS ${wrapIdentifierMSSQL(agg.nameResolved)}`,
       );
     }
   });
@@ -98,20 +107,24 @@ const buildGroupedQuery = (
     if (itemsSelection?.selections) {
       const itemFields = itemsSelection.selections
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
-        .map((sel) => `${tableAlias}.${sel.name} AS ${sel.alias || sel.name}`)
+        .map(
+          (sel) =>
+            `${tableAlias}.${wrapIdentifierMSSQL(sel.name)} AS ${wrapIdentifierMSSQL(sel.alias || sel.name)}`,
+        )
         .join(", ");
 
       if (itemFields) {
         const joinConditions = groupByFields.map(
-          (field) => `${tableAlias}.${field} = ${cteAlias}.${field}`,
+          (field) =>
+            `${tableAlias}.${wrapIdentifierMSSQL(field)} = ${cteAlias}.${wrapIdentifierMSSQL(field)}`,
         );
 
         selectClauses.push(`JSON_QUERY(ISNULL((
           SELECT ${itemFields}
-          FROM ${dottedName} ${tableAlias}
+          FROM ${dottedQuotedName} ${tableAlias}
           ${whereClause ? [whereClause, ...joinConditions].join(" AND ") : `WHERE ${joinConditions.join(" AND ")}`}
           FOR JSON PATH, INCLUDE_NULL_VALUES
-        ), '[]')) AS ${itemsSelection.alias || itemsSelection.name}`);
+        ), '[]')) AS ${wrapIdentifierMSSQL(itemsSelection.alias || itemsSelection.name)}`);
       }
     }
   }
@@ -168,7 +181,7 @@ export const generateSQL = (
 
     if (groupByInfo) {
       // This field requires a CTE
-      const { dottedName } = entities.queriesMap[field.name]!;
+      const { dottedQuotedName } = entities.queriesMap[field.name]!;
 
       const whereClause = buildWhereClauseMSSQL(
         entities,
@@ -182,7 +195,7 @@ export const generateSQL = (
         {},
       );
 
-      const cte = buildAggregationCTE(groupByInfo, dottedName, tableAlias, whereClause);
+      const cte = buildAggregationCTE(groupByInfo, dottedQuotedName, tableAlias, whereClause);
       ctes.push(cte);
     }
 
@@ -197,7 +210,7 @@ export const generateSQL = (
       {},
     );
 
-    fieldQueries.push(`(${fieldSQL}) as ${field.alias || field.name}`);
+    fieldQueries.push(`(${fieldSQL}) as ${wrapIdentifierMSSQL(field.alias || field.name)}`);
   });
 
   const cteClause = ctes.length > 0 ? `WITH\n${ctes.join(",\n")}\n` : "";
@@ -229,7 +242,7 @@ export const buildSQLForField = (
     throw new Error(`Table not found for field: ${field.name}`);
   }
 
-  const { dottedName, resolverName } = foundTable;
+  const { dottedQuotedName, resolverName } = foundTable;
 
   aliasMap[tableAlias] = resolverName;
 
@@ -254,7 +267,7 @@ export const buildSQLForField = (
       entities,
       field,
       groupByInfo,
-      dottedName,
+      dottedQuotedName,
       tableAlias,
       whereClause,
     );
@@ -282,10 +295,10 @@ export const buildSQLForField = (
         level,
         aliasMap,
       ),
-    ([name, selector]) => `${selector} AS ${name}`,
+    ([name, selector]) => `${selector} AS ${wrapIdentifierMSSQL(name)}`,
   );
 
-  const fromClause = `FROM ${dottedName} ${tableAlias}`;
+  const fromClause = `FROM ${dottedQuotedName} ${tableAlias}`;
 
   const orderByClause = buildOrderByClauseMSSQL(entities, field, tableAlias);
   const paginationClause = buildPaginationClauseMSSQL(field, variablesDefinition);

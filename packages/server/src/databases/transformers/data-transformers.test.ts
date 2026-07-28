@@ -12,6 +12,7 @@ import {
 const db = (overrides: Partial<Database> = {}): Database =>
   ({
     name: "pg",
+    type: "pg",
     fieldNaming: "{schema}_{name}",
     ...overrides,
   }) as unknown as Database;
@@ -159,6 +160,18 @@ describe("buildTableResolver", () => {
     expect(r.resolverName).toBe(r.internalName);
     expect(r.resolverName).toBe("dbo_users");
   });
+
+  it("delimits dottedQuotedName for the table's own engine", () => {
+    const order = mkTable("dbo", "order");
+
+    expect(buildTableResolver([order], order, db()).dottedQuotedName).toBe(`"dbo"."order"`);
+    expect(buildTableResolver([order], order, db({ type: "mysql" })).dottedQuotedName).toBe(
+      "`dbo`.`order`",
+    );
+    expect(buildTableResolver([order], order, db({ type: "mssql" })).dottedQuotedName).toBe(
+      "[dbo].[order]",
+    );
+  });
 });
 
 describe("buildProcedureResolver", () => {
@@ -176,6 +189,15 @@ describe("buildProcedureResolver", () => {
   it("sets dottedName to schema.name", () => {
     const r = buildProcedureResolver(proc, db());
     expect(r.dottedName).toBe("dbo.sp_get_users");
+  });
+
+  it("delimits dottedQuotedName for the procedure's own engine", () => {
+    const order: StoredProcedure = { schema: "dbo", name: "order" } as never;
+
+    expect(buildProcedureResolver(order, db()).dottedQuotedName).toBe(`"dbo"."order"`);
+    expect(buildProcedureResolver(order, db({ type: "mysql" })).dottedQuotedName).toBe(
+      "`dbo`.`order`",
+    );
   });
 
   it("uses internalName as resolverName when fieldNaming is empty/falsy", () => {
