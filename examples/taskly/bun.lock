@@ -6,12 +6,14 @@
       "name": "taskly-run",
       "dependencies": {
         "@graphoria/react": "0.1.0",
-        "@graphoria/server": "0.1.2",
+        "@graphoria/server": "file:../../packages/server",
+        "@types/mssql": "^12.3.0",
         "@urql/exchange-auth": "3.0.0",
         "bun-plugin-tailwind": "0.1.2",
         "cnfast": "0.0.8",
         "gql.tada": "1.11.2",
         "graphql-ws": "6.1.0",
+        "mssql": "12.2.0",
         "react": "19.2.7",
         "react-dom": "19.2.7",
         "tailwindcss": "4.3.2",
@@ -75,7 +77,7 @@
 
     "@graphoria/react": ["@graphoria/react@0.1.0", "", { "peerDependencies": { "react": "^18.0.0 || ^19.0.0", "typescript": "^6.0.0" }, "optionalPeers": ["typescript"] }, "sha512-fz90mkKvnpniDNLa95+r9ODuFk0OIykBZB6oLeU2Eaz7i/M0yJsheCLjqZpu2XvUcqRn7CHcEFanupXxN9HVYQ=="],
 
-    "@graphoria/server": ["@graphoria/server@0.1.2", "", { "dependencies": { "@cfworker/json-schema": "^4.1.1", "@modelcontextprotocol/server": "^2.0.0-alpha.2", "amqplib": "0.10.9", "croner": "9.1.0", "es-toolkit": "1.44.0", "graphql": "^16.13.1", "jose": "6.1.3", "kafkajs": "2.2.4", "lru-cache": "11.2.4", "mssql": "12.2.0", "nanoid": "5.1.6", "openapi-types": "12.1.3", "oxfmt": "^0.51.0", "paseto-ts": "^2.0.5", "path-to-regexp": "8.3.0", "pino": "^10.3.1", "pino-pretty": "^13.1.2", "sql-formatter": "15.7.0", "zod": "4.3.5" }, "optionalDependencies": { "@anthropic-ai/sdk": "^0.32.1", "openai": "^4.77.3" }, "peerDependencies": { "typescript": "^6.0.0" }, "optionalPeers": ["typescript"], "bin": { "graphoria": "cli.ts" } }, "sha512-avbKvsZe/kC6pJiJEOftng9NBFDV0JQGjmP+frxzqxhLPK0lQCkK5Eubqs6Ja+XGvITo9/m9w31U853myIfVjQ=="],
+    "@graphoria/server": ["@graphoria/server@file:../../packages/server", { "dependencies": { "@cfworker/json-schema": "^4.1.1", "@modelcontextprotocol/server": "^2.0.0-alpha.2", "amqplib": "0.10.9", "croner": "9.1.0", "es-toolkit": "1.44.0", "graphql": "^16.13.1", "jose": "6.1.3", "kafkajs": "2.2.4", "lru-cache": "11.2.4", "mssql": "12.2.0", "nanoid": "5.1.6", "openapi-types": "12.1.3", "oxfmt": "^0.51.0", "paseto-ts": "^2.0.5", "path-to-regexp": "8.3.0", "pino": "^10.3.1", "pino-pretty": "^13.1.2", "sql-formatter": "15.7.0", "zod": "4.3.5" }, "devDependencies": { "@types/amqplib": "0.10.8", "@types/kafkajs": "1.9.0", "@types/mssql": "9.1.9" }, "optionalDependencies": { "@anthropic-ai/sdk": "^0.32.1", "openai": "^4.77.3" }, "peerDependencies": { "typescript": "^6.0.0" }, "optionalPeers": ["typescript"], "bin": { "graphoria": "./cli.ts" } }],
 
     "@js-joda/core": ["@js-joda/core@6.1.0", "", {}, "sha512-H8NTMRDJqad/leyv/D/A3kSOsf5/58Ydj4DJGDyaCWk9OU/zuZOLhndVffJgQjsgrn5GC0znHMHie7TfvPPG4w=="],
 
@@ -175,7 +177,13 @@
 
     "@tediousjs/connection-string": ["@tediousjs/connection-string@0.6.0", "", {}, "sha512-GxlsW354Vi6QqbUgdPyQVcQjI7cZBdGV5vOYVYuCVDTylx2wl3WHR2HlhcxxHTrMigbelpXsdcZso+66uxPfow=="],
 
+    "@types/amqplib": ["@types/amqplib@0.10.8", "", { "dependencies": { "@types/node": "*" } }, "sha512-vtDp8Pk1wsE/AuQ8/Rgtm6KUZYqcnTgNvEHwzCkX8rL7AGsC6zqAfKAAJhUZXFhM/Pp++tbnUHiam/8vVpPztA=="],
+
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
+
+    "@types/kafkajs": ["@types/kafkajs@1.9.0", "", { "dependencies": { "kafkajs": "*" } }, "sha512-R9VDNbiw+vNfxWjjFHUrLMF/Dfc7asGXzKtYUwI4FaT24Chf5ZNkfvce54p4dkLMxPcsrEsVazAK0Jp2ib4Zxw=="],
+
+    "@types/mssql": ["@types/mssql@12.3.0", "", { "dependencies": { "@types/node": "*", "tarn": "^3.0.1", "tedious": "*" } }, "sha512-+jy+AJtfuTDI5+nhh0hDNcir1p8P+pf+qsHXpUpYvg7EikxUUePBe+a+Kr6j/Xs89o4EbHlVzrh0HOxbqWM31Q=="],
 
     "@types/node": ["@types/node@26.1.1", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-nxAkRSVkN1Y0JC1W8ky/fTfkGsMmcrRsbx+3XoZE+rMOX71kLYTV7fLXpqud1GpbpP5TuffXFqfX7fH2GgZREw=="],
 
@@ -502,6 +510,8 @@
     "@anthropic-ai/sdk/@types/node": ["@types/node@18.19.130", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg=="],
 
     "@gql.tada/cli-utils/graphql": ["graphql@17.0.2", "", {}, "sha512-FRWbddMxfkjiB7z+aQDWIR+E34xo9I8c9mtK2RPv8PmMzKRvrdsreHL/Ui/TmwHJfhHChEtsFPyMHKI+xuarQQ=="],
+
+    "@graphoria/server/@types/mssql": ["@types/mssql@9.1.9", "", { "dependencies": { "@types/node": "*", "tarn": "^3.0.1", "tedious": "*" } }, "sha512-P0nCgw6vzY23UxZMnbI4N7fnLGANt4LI4yvxze1paPj+LuN28cFv5EI+QidP8udnId/BKhkcRhm/BleNsjK65A=="],
 
     "nearley/commander": ["commander@2.20.3", "", {}, "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ=="],
 

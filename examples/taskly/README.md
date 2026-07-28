@@ -1,8 +1,9 @@
 # Taskly — a feature tour of Graphoria
 
 Taskly is a **multi-tenant team task tracker** built to exercise (nearly) every
-Graphoria feature on a **single PostgreSQL database**. Two tenants — _Acme_ and
-_Globex_ — share one schema; row-level RBAC keeps them apart.
+Graphoria feature across **three databases at once** — PostgreSQL, MySQL and SQL
+Server, each holding the same schema and all merged into one API. Two tenants —
+_Acme_ and _Globex_ — share that schema; row-level RBAC keeps them apart.
 
 **Ready to go.** Clone, `docker compose up`, `bun run index.ts` — you're live with
 a full GraphQL + REST API backed by your own database in minutes. Every feature
@@ -10,23 +11,24 @@ below is exercised by this single runnable project.
 
 This folder is a runnable, documented example:
 
-| File                                 | What it is                                                                                  |
-| ------------------------------------ | ------------------------------------------------------------------------------------------- |
-| [`graphoria.ts`](./graphoria.ts)     | The full assembled configuration — every feature wired up.                                  |
-| [`seed.pg.sql`](./seed.pg.sql)       | Schema (real FKs, except `task_tags`), the virtual-column function, stored proc, seed rows. |
-| [`seed.mssql.sql`](./seed.mssql.sql) | The same schema + seed ported to SQL Server (dialect notes in the file header).             |
-| [`seed.mysql.sql`](./seed.mysql.sql) | The same schema + seed ported to MySQL (dialect notes in the file header).                  |
-| [`index.ts`](./index.ts)             | The entry point — mounts Graphoria's handlers (`createHandlers`) and serves the frontend.   |
-| [`fe/`](./fe)                        | React + urql frontend (login → task dashboard), served at `/`.                              |
+| File                                 | What it is                                                                                   |
+| ------------------------------------ | -------------------------------------------------------------------------------------------- |
+| [`graphoria.ts`](./graphoria.ts)     | The full assembled configuration — every feature wired up.                                   |
+| [`seed.pg.sql`](./seed.pg.sql)       | Schema (real FKs, except `task_tags`), the virtual-column function, stored proc, seed rows.  |
+| [`seed.mssql.sql`](./seed.mssql.sql) | The same schema + seed ported to SQL Server (dialect notes in the file header).              |
+| [`seed.mysql.sql`](./seed.mysql.sql) | The same schema + seed ported to MySQL (dialect notes in the file header).                   |
+| [`index.ts`](./index.ts)             | The entry point — mounts Graphoria's handlers (`createHandlers`) and serves the frontend.    |
+| [`repository/`](./repository)        | Typed raw-SQL repositories, one per engine (`pg/`, `mysql/`, `mssql/`) + shared Zod schemas. |
+| [`operations/`](./operations)        | The two custom operations (`dashboard`, `createTaskWithComment`).                            |
+| [`fe/`](./fe)                        | React + urql frontend (login → task dashboard), served at `/`.                               |
 
 The sections below are a tour: each feature points at the part of
 [`graphoria.ts`](./graphoria.ts) (or [`seed.pg.sql`](./seed.pg.sql)) that turns it on,
 and shows how to exercise it.
 
-> **One Postgres caveat.** The only features Taskly can't show are the
-> MSSQL-only virtual-column helpers (`createOneToBooleanMSSQL`,
-> `createYAndNToBooleanMSSQL`) and the SQL-Server branches of `@pad` / `@dateFormat`
-> / `@ceil`. Everything else runs on Postgres alone.
+> **One caveat.** The only features Taskly doesn't wire up are the MSSQL-only
+> virtual-column helpers (`createOneToBooleanMSSQL`, `createYAndNToBooleanMSSQL`).
+> Everything else is exercised.
 
 ---
 
@@ -35,20 +37,28 @@ and shows how to exercise it.
 All backing services come from the repo's [`examples/docker-compose.yml`](../docker-compose.yml),
 exposed on localhost:
 
-| Service  | Port(s)     | Used for                                    |
-| -------- | ----------- | ------------------------------------------- |
-| Postgres | 5432        | the `taskly` database Graphoria introspects |
-| Redis    | 6379        | auth refresh-token store + operation cache  |
-| RabbitMQ | 5672, 15672 | queues, publishers, GraphQL subscriptions   |
+| Service    | Port(s)     | Used for                                   |
+| ---------- | ----------- | ------------------------------------------ |
+| Postgres   | 5432        | the `pg` database Graphoria introspects    |
+| MySQL      | 3306        | the `mysql` database                       |
+| SQL Server | 1433        | the `mssql` database                       |
+| Redis      | 6379        | auth refresh-token store + operation cache |
+| RabbitMQ   | 5672, 15672 | queues, publishers, GraphQL subscriptions  |
 
 ```bash
 docker compose -f ../docker-compose.yml up -d
+
+# The MSSQL image can't pre-create a database — do it once after boot:
+docker compose -f ../docker-compose.yml exec mssql \
+  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Str0ng!Passw0rd' -C \
+  -Q "CREATE DATABASE my_app"
 ```
 
-Taskly connects straight to the compose Postgres' default `my_app` database
-(`postgres` / `postgrespassword`) — the connection is hard-coded in
-[`graphoria.ts`](./graphoria.ts) under `databases[0].connection`, so there's no
-separate database to create.
+Each engine serves a `my_app` database; Postgres and MySQL create it from the
+compose environment. All three connections are hard-coded in
+[`graphoria.ts`](./graphoria.ts) under `databases[*].connection`.
+
+DBGate (http://localhost:9000) is pre-wired with a connection per engine.
 
 ---
 
@@ -56,10 +66,12 @@ separate database to create.
 
 [`seed.pg.sql`](./seed.pg.sql) creates the tables, the `task_age_days` function (backs
 a virtual column), the `project_stats` stored procedure, and seed rows for both
-tenants. You don't apply it by hand — the database's `onConnect` hook in
-[`graphoria.ts`](./graphoria.ts) runs it inside a transaction on every boot, and
+tenants. You don't apply it by hand — each database's `onConnect` hook in
+[`graphoria.ts`](./graphoria.ts) runs its own seed file on every boot, and
 every statement is idempotent (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`) so
-restarts never clash.
+restarts never clash. Only Postgres wraps the seed in a transaction: MySQL
+implicitly commits on every DDL statement, and MSSQL drives its own explicit
+transaction object.
 
 Tables: `organizations`, `projects`, `tasks`, `comments`, `tags`, `task_tags`,
 `audit_log`. Most relationships are **real foreign keys** — Graphoria introspects
@@ -69,10 +81,29 @@ which carries no FKs; its relationships are declared in
 demonstrate the config-declared relationships feature. `org_id` is denormalized
 onto every tenant-scoped table so each RBAC row filter is a one-liner.
 
-The same schema + seed also exists as dialect ports for SQL Server
+The same schema + seed is ported to SQL Server
 ([`seed.mssql.sql`](./seed.mssql.sql)) and MySQL ([`seed.mysql.sql`](./seed.mysql.sql));
 each file's header lists the dialect differences (identity handling, routine
 shapes, and — for MSSQL — the `dbo.`-qualified `virtualColumnFunction` call).
+
+### Field naming across the three engines
+
+All three engines expose the same table names, so every database sets
+`fieldNaming: "{database}_{name}"` — GraphQL fields key on the config `name`
+rather than the schema, giving three disjoint sets: `pg_tasks`, `mysql_tasks`,
+`mssql_tasks`. Permission keys under `auth.permissions` use these same names.
+
+The one place that doesn't follow `fieldNaming` is the `schema.database` override
+block, which is keyed on the schema-derived name and so always reads
+`{schema}_{name}`:
+
+| Database | GraphQL field / permission key | `schema.database` key |
+| -------- | ------------------------------ | --------------------- |
+| `pg`     | `pg_tasks`                     | `public_tasks`        |
+| `mysql`  | `mysql_tasks`                  | `my_app_tasks`        |
+| `mssql`  | `mssql_tasks`                  | `dbo_tasks`           |
+
+(MySQL has no schema layer — `table_schema` _is_ the database, hence `my_app_`.)
 
 ---
 
@@ -142,7 +173,7 @@ and insert / update / delete mutations for every table, on both `/graphql` and
 
 ```graphql
 query {
-  public_tasks(where: { status: { eq: "todo" } }, order_by: { priority: desc }, limit: 10) {
+  pg_tasks(where: { status: { eq: "todo" } }, order_by: { priority: desc }, limit: 10) {
     id
     title
     priority
@@ -189,7 +220,7 @@ Transform values inline (chain left-to-right) and conditionally include fields:
 
 ```graphql
 query Tour($withDesc: Boolean = false) {
-  public_tasks {
+  pg_tasks {
     title @uppercase @truncate(length: 20)
     created_at @dateFormat(format: "YYYY-MM-DD")
     description @when(and: ["$withDesc"])
@@ -215,14 +246,15 @@ tenant isolation via the hoisted `$session.org_id` claim. `anonymous` is limited
 to `visibility = "public"` projects with a column allow-list; `member` filters
 every tenant table by `org_id` and gets a per-role default `orderBy`.
 
-Verify: `evan` (org 1) and `max` (org 2) running the same `public_tasks` query
+Verify: `evan` (org 1) and `max` (org 2) running the same `pg_tasks` query
 see disjoint rows. `superadmin` (admin-secret header) sees everything.
 
 ### Operations (query + handler, hooks, cache, repository, OpenAPI)
 
 `Dashboard` is a **query operation** — cached, REST + GraphQL, with a
-`beforeRequest` hook. `createTaskWithComment` is a **handler operation** — it uses
-the typed raw-SQL `repository`, runs an `init` hook once at boot, and fans out a
+`beforeRequest` hook. `createTaskWithComment` is a **handler operation** — it writes
+through `repository.mysql` (each database gets its own typed raw-SQL repository,
+reached by config `name`), runs an `init` hook once at boot, and fans out a
 queue event. Both Zod `input`/`output` schemas feed `/openapi.json`. → `operations`.
 
 ```bash
@@ -292,11 +324,12 @@ curl -X POST localhost:3000/ai -H "x-admin-secret: $ADMIN_SECRET" \
 
 | Feature                          | Location                                                         |
 | -------------------------------- | ---------------------------------------------------------------- |
-| Auto CRUD, filter/order/paginate | `graphoria.ts` → `databases[0]`                                  |
+| Auto CRUD, filter/order/paginate | `graphoria.ts` → `databases[*]`                                  |
+| Multi-database + field naming    | `databases[*].name` + `fieldNaming`                              |
 | Description overrides            | `databases[0].schema.database.public_tasks`                      |
 | Relationships (FK + config)      | `seed.pg.sql` FKs · `schema.database.*.relationships`            |
 | Virtual columns (expr + func)    | `public_tasks.columns` + `task_age_days` in `seed.pg.sql`        |
-| Custom repository                | `databases[0].repository`                                        |
+| Custom repository                | `databases[*].repository` → `repository/{pg,mysql,mssql}/`       |
 | Directives                       | query-time (`@uppercase`, `@dateFormat`, `@when`, …)             |
 | Stored procedures                | `project_stats` in `seed.pg.sql` + `storedProcedures` permission |
 | Auth + token strategies          | `tokenStrategy`, `auth`                                          |
