@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@graphoria/react": "0.1.0",
-    "@graphoria/server": "file:../../packages/server",
+    "@graphoria/server": "0.1.3",
     "@types/mssql": "^12.3.0",
     "@urql/exchange-auth": "3.0.0",
     "bun-plugin-tailwind": "0.1.2",
