@@ -19,6 +19,51 @@ import { VirtualColumnZod } from "./virtual-columns";
 export type DatabaseType = "mssql" | "pg" | "mysql";
 
 // ============================================================================
+// Relationship Join Condition (static-value predicate)
+// ============================================================================
+
+/** Comparison operators allowed in a static relationship join condition. */
+export const RELATIONSHIP_CONDITION_OPERATORS = [
+  "eq",
+  "neq",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "like",
+  "is_null",
+  "is_not_null",
+] as const;
+
+/**
+ * A static-value predicate added to a relationship's JOIN. Targets exactly one
+ * side of the relationship — `source` (a column on the declaring table) or
+ * `target` (a column on the referenced table) — and compares it to a literal.
+ * A `value` is required for every operator except `is_null` / `is_not_null`.
+ */
+export const RelationshipConditionZod = z
+  .object({
+    /** Column on the declaring (source) table */
+    source: z.string().optional(),
+    /** Column on the referenced (target) table */
+    target: z.string().optional(),
+    /** Comparison operator (default `eq`) */
+    operator: z.enum(RELATIONSHIP_CONDITION_OPERATORS).optional().default("eq"),
+    /** Literal compared against the column (omit for `is_null` / `is_not_null`) */
+    value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+  })
+  .refine((cond) => (cond.source === undefined) !== (cond.target === undefined), {
+    message: 'Relationship condition must set exactly one of "source" or "target"',
+  })
+  .refine(
+    (cond) =>
+      cond.operator === "is_null" || cond.operator === "is_not_null" || cond.value !== undefined,
+    { message: 'Relationship condition requires a "value" unless operator is is_null/is_not_null' },
+  );
+
+export type RelationshipCondition = z.input<typeof RelationshipConditionZod>;
+
+// ============================================================================
 // Table Relationship (config shape, no transform)
 // ============================================================================
 
@@ -26,6 +71,8 @@ export const TableRelationshipZod = z.object({
   schema: z.string(),
   name: z.string(),
   columns: z.array(z.object({ source: z.string(), target: z.string() })),
+  /** Static-value predicates ANDed into the JOIN condition */
+  conditions: z.array(RelationshipConditionZod).optional(),
 });
 
 export type TableRelationship = z.input<typeof TableRelationshipZod>;
