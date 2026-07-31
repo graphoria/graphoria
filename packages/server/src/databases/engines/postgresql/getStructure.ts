@@ -35,6 +35,7 @@ export const getDatabaseStructure = async (db: Database) => {
             'name', isc.column_name,
             'dataType', isc.data_type,
             'isNullable', isc.is_nullable = 'YES',
+            'collation', isc.collation_name,
             'description', col_desc.description
           )
         ) AS columns

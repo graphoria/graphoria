@@ -26,6 +26,7 @@ export const getDatabaseStructure = async (db: Database) => {
                 c.COLUMN_NAME AS name,
                 c.DATA_TYPE AS dataType,
                 CAST(CASE WHEN c.IS_NULLABLE = 'YES' THEN 1 ELSE 0 END AS bit) AS isNullable,
+                c.COLLATION_NAME AS collation,
                 (
                   SELECT CAST(value AS NVARCHAR(MAX))
                   FROM sys.extended_properties ep
