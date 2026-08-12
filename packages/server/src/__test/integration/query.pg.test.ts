@@ -11,8 +11,7 @@ import { integrationEnabled, startServer } from "./harness";
  * engine actually returns, not on the SQL string Graphoria generates. Several of
  * these cases were red when first written — the generated-SQL assertions in
  * databases/engines/postgresql/query/index.test.ts had been passing against
- * queries that were wrong at runtime. See findings F3-F14 in
- * HARDENING_PROGRESS.md.
+ * queries that were wrong at runtime.
  *
  * One server for the whole file: booting costs a full introspection round-trip.
  */
