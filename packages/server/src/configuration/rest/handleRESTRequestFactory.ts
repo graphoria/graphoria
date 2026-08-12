@@ -293,6 +293,19 @@ export const handleRESTRequestFactory = (
         }
       }
 
+      // Apply the operation's afterRequest hook (if configured) to a GraphQL
+      // result. The hook receives the unwrapped `data` payload; its return
+      // replaces `data`, leaving the rest of the envelope (e.g. `sqlQueries`)
+      // intact.
+      const applyAfterRequest = async (result: Awaited<ReturnType<typeof gql.handler>>) => {
+        if (!route.hooks?.afterRequest) return result;
+
+        return {
+          ...result,
+          data: await route.hooks.afterRequest({ output: result.data }),
+        };
+      };
+
       // Check if this route has caching enabled
       const cache = route.routeKey ? getCache(route.routeKey) : undefined;
 
@@ -306,7 +319,8 @@ export const handleRESTRequestFactory = (
           role: session?.role,
         });
 
-        // Try to get from cache first
+        // Try to get from cache first. A cached entry has already been through
+        // afterRequest, so serve it directly without re-running the hook.
         const cachedResult = await cache.get(cacheKey);
         if (cachedResult) {
           log.debug({ route: route.routeKey }, "rest cache hit");
@@ -315,10 +329,13 @@ export const handleRESTRequestFactory = (
         log.debug({ route: route.routeKey }, "rest cache miss");
 
         try {
-          // Execute the GraphQL request
-          const result = await gql.handler(queryAnalysis!, variables, req, session);
+          // Execute the GraphQL request, then transform via afterRequest before
+          // caching so hits and misses return the same shape.
+          const result = await applyAfterRequest(
+            await gql.handler(queryAnalysis!, variables, req, session),
+          );
 
-          // Cache the result
+          // Cache the (already transformed) result
           await cache.set(cacheKey, result);
 
           return new S200(result);
@@ -328,7 +345,9 @@ export const handleRESTRequestFactory = (
         }
       } else if (queryAnalysis) {
         // No caching for this route, execute normally
-        return new S200(await gql.handler(queryAnalysis, variables, req, session));
+        return new S200(
+          await applyAfterRequest(await gql.handler(queryAnalysis, variables, req, session)),
+        );
       }
 
       // Fallback - should not reach here if endpoint is properly configured

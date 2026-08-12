@@ -455,7 +455,8 @@ operation({
       return { id: context.input.id };
     },
     afterRequest: (context) => {
-      // Transform query output
+      // Transform the output payload. For this query operation `context.output`
+      // is the unwrapped GraphQL `data`; the return replaces `data` in the response.
       return context.output;
     },
   },

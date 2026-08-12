@@ -1,11 +1,15 @@
+import { print } from "graphql";
 import { z } from "zod";
 
+import type { DocumentNode } from "graphql";
 import type {
+  AnyQueryDocument,
   DefaultInput,
   HandlerOperation,
   OperationHandler,
   OperationOptions,
   QueryOperation,
+  QueryResultOf,
   TypedOperation,
 } from "../types/operation";
 
@@ -65,6 +69,7 @@ type OperationHooksConfig<
   TPathParams extends z.ZodType | undefined,
   TQueryParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
+  TAfterInput = TOutput,
 > = {
   init?: (options: OperationOptions) => TInitData | Promise<TInitData>;
   beforeRequest?: (
@@ -76,7 +81,14 @@ type OperationHooksConfig<
     },
     initData: TInitData | undefined,
   ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-  afterRequest?: (context: { output: TOutput }) => TOutput | Promise<TOutput>;
+  /**
+   * Transforms the result after a successful query/handler. `output` is the
+   * upstream value: for query operations the query result (typed from a gql.tada
+   * `query` document, otherwise `unknown`); for handler operations the handler's
+   * return. The value you return becomes the response payload, typed by the
+   * operation's `output` schema.
+   */
+  afterRequest?: (context: { output: TAfterInput }) => TOutput | Promise<TOutput>;
 };
 
 /**
@@ -118,10 +130,13 @@ type QueryOperationConfig<
   TPathParams extends z.ZodType | undefined,
   TQueryParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
+  TQuery extends string | AnyQueryDocument,
 > = Omit<
   QueryOperation<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TInitData>,
-  "input" | "output" | "hooks" | "rest"
+  "input" | "output" | "hooks" | "rest" | "query"
 > & {
+  /** GraphQL query to execute (a string or a gql.tada `graphql()` document) */
+  query: TQuery;
   input?: TInputSchema;
   output?: TOutputSchema;
   hooks?: OperationHooksConfig<
@@ -130,7 +145,8 @@ type QueryOperationConfig<
     TInitData,
     TPathParams,
     TQueryParams,
-    TBody
+    TBody,
+    QueryResultOf<TQuery>
   >;
   rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
 };
@@ -143,6 +159,7 @@ export function operation<
   TPathParams extends z.ZodType | undefined = undefined,
   TQueryParams extends z.ZodType | undefined = undefined,
   TBody extends z.ZodType | undefined = undefined,
+  TQuery extends string | AnyQueryDocument = string,
 >(
   config: QueryOperationConfig<
     TInputSchema,
@@ -150,7 +167,8 @@ export function operation<
     TInitData,
     TPathParams,
     TQueryParams,
-    TBody
+    TBody,
+    TQuery
   >,
 ): QueryOperation<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TInitData>;
 
@@ -176,6 +194,16 @@ export function operation<
 
 // Implementation
 export function operation(config: unknown): unknown {
+  // gql.tada's `graphql()` yields a DocumentNode; normalize it to a string so
+  // the rest of the pipeline (validation, analyzeQuery) keeps working on strings.
+  const query = (config as { query?: unknown } | null | undefined)?.query;
+  if (
+    query != null &&
+    typeof query === "object" &&
+    (query as { kind?: unknown }).kind === "Document"
+  ) {
+    return { ...(config as object), query: print(query as DocumentNode) };
+  }
   return config;
 }
 

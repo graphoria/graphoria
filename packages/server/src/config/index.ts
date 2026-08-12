@@ -22,6 +22,7 @@
 import { z } from "zod";
 
 import type {
+  AnyQueryDocument,
   ConfigurationInput,
   CreateOneToBooleanMSSQLFn,
   CreateYAndNToBooleanMSSQLFn,
@@ -30,6 +31,7 @@ import type {
   OperationGraphQLConfig,
   OperationHandler,
   OperationOptions,
+  QueryResultOf,
   TypedOperation,
   VirtualColumnExpressionFn,
   VirtualColumnFunctionFn,
@@ -90,6 +92,7 @@ type OperationHooks<
   TPathParams extends z.ZodType<any> | undefined,
   TQueryParams extends z.ZodType<any> | undefined,
   TBody extends z.ZodType<any> | undefined,
+  TAfterInput = TOutput,
 > = {
   init?: (options: OperationOptions) => TInitData | Promise<TInitData>;
   beforeRequest?: (
@@ -101,7 +104,14 @@ type OperationHooks<
     },
     initData: TInitData | undefined,
   ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-  afterRequest?: (context: { output: TOutput }) => TOutput | Promise<TOutput>;
+  /**
+   * Transforms the result after a successful query/handler. `output` is the
+   * upstream value: for query operations the query result (typed from a gql.tada
+   * `query` document, otherwise `unknown`); for handler operations the handler's
+   * return. The value you return becomes the response payload, typed by the
+   * operation's `output` schema.
+   */
+  afterRequest?: (context: { output: TAfterInput }) => TOutput | Promise<TOutput>;
 };
 
 /**
@@ -119,9 +129,10 @@ export type OperationFn = {
     TPathParams extends z.ZodType<any> | undefined = undefined,
     TQueryParams extends z.ZodType<any> | undefined = undefined,
     TBody extends z.ZodType<any> | undefined = undefined,
+    TQuery extends string | AnyQueryDocument = string,
   >(config: {
-    /** GraphQL query to execute */
-    query: string;
+    /** GraphQL query to execute (a string or a gql.tada `graphql()` document) */
+    query: TQuery;
     /** Custom handler is not allowed with query */
     handler?: never;
     /** Description for documentation */
@@ -137,7 +148,8 @@ export type OperationFn = {
       TInitData,
       TPathParams,
       TQueryParams,
-      TBody
+      TBody,
+      QueryResultOf<TQuery>
     >;
     /** REST exposure configuration */
     rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
@@ -154,9 +166,10 @@ export type OperationFn = {
     TPathParams extends z.ZodType<any> | undefined = undefined,
     TQueryParams extends z.ZodType<any> | undefined = undefined,
     TBody extends z.ZodType<any> | undefined = undefined,
+    TQuery extends string | AnyQueryDocument = string,
   >(config: {
-    /** GraphQL query to execute */
-    query: string;
+    /** GraphQL query to execute (a string or a gql.tada `graphql()` document) */
+    query: TQuery;
     /** Custom handler is not allowed with query */
     handler?: never;
     /** Description for documentation */
@@ -172,7 +185,8 @@ export type OperationFn = {
       TInitData,
       TPathParams,
       TQueryParams,
-      TBody
+      TBody,
+      QueryResultOf<TQuery>
     >;
     /** REST exposure configuration */
     rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;

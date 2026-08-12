@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "bun:test";
+import { buildSchema } from "graphql";
 import { z } from "zod";
 
 import type { BunRequest } from "bun";
@@ -24,10 +25,25 @@ const stubGql = () =>
     hasErrors: () => ({ hasErrors: false, errors: [] }),
   }) as const;
 
+// oxlint-disable-next-line typescript/no-explicit-any
+const stubGqlWithData = (data: any) =>
+  ({
+    handler: async () => ({ data }),
+    hasErrors: () => ({ hasErrors: false, errors: [] }),
+  }) as const;
+
 const stubGqlEntities = () =>
   ({
     typeDefs: "",
     schema: null,
+    introspection: null,
+  }) as const;
+
+// Query operations run through `analyzeQuery`, which dereferences the schema.
+const stubGqlEntitiesWithSchema = () =>
+  ({
+    typeDefs: "",
+    schema: buildSchema("type Query { ping: Boolean }"),
     introspection: null,
   }) as const;
 
@@ -36,6 +52,8 @@ const stubEntities = (
   operation: {
     // oxlint-disable-next-line typescript/no-explicit-any
     handler?: (...args: any[]) => unknown;
+    query?: string;
+    cache?: Record<string, unknown>;
     hooks?: Hooks;
     rest?: { path: string; method?: string } & Record<string, unknown>;
   },
@@ -48,6 +66,8 @@ const stubEntities = (
       },
     },
     remoteRESTApis: [],
+    queriesMap: {},
+    getResolverSource: () => undefined,
   }) as const;
 
 const fakeReq = (method = "GET"): BunRequest => ({ method }) as unknown as BunRequest;
@@ -257,5 +277,82 @@ describe("handleRESTRequestFactory beforeRequest REST parameter sources", () => 
     expect(observed.pathParams).toBeUndefined();
     expect(observed.queryParams).toEqual({ q: "hello" });
     expect(observed.body).toBeUndefined();
+  });
+});
+
+describe("handleRESTRequestFactory afterRequest (query operations)", () => {
+  it("runs afterRequest and replaces the GraphQL data payload", async () => {
+    let seen: unknown = null;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_after", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        hooks: {
+          afterRequest: ({ output }: { output: Record<string, unknown> }) => {
+            seen = output;
+            return { ...output, injected: true };
+          },
+        },
+      }),
+      stubGqlEntitiesWithSchema(),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const res = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const body = await res.json();
+
+    // Hook receives the unwrapped `data`; its return replaces `data`.
+    expect(seen).toEqual({ ping: true });
+    expect(body).toEqual({ data: { ping: true, injected: true } });
+  });
+
+  it("returns the raw GraphQL envelope when afterRequest is absent", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_raw", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+      }),
+      stubGqlEntitiesWithSchema(),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const res = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ data: { ping: true } });
+  });
+
+  it("caches the transformed result and skips the hook on cache hits", async () => {
+    let calls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_cached", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+        hooks: {
+          afterRequest: ({ output }: { output: Record<string, unknown> }) => {
+            calls++;
+            return { ...output, n: calls };
+          },
+        },
+      }),
+      stubGqlEntitiesWithSchema(),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const first = await (
+      await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"))
+    ).json();
+    const second = await (
+      await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"))
+    ).json();
+
+    // afterRequest runs on the cache miss only; the hit reuses the cached value.
+    expect(calls).toBe(1);
+    expect(first).toEqual({ data: { ping: true, n: 1 } });
+    expect(second).toEqual({ data: { ping: true, n: 1 } });
   });
 });
