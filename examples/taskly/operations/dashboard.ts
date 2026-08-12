@@ -11,7 +11,7 @@ export const dashboard = {
     input: dashboardInputSchema,
     query: `
       query Dashboard($assignee: String!) {
-        public_tasks(
+        pg_tasks(
           where: { assignee: { eq: $assignee }, status: { neq: "done" } }
           orderBy: [{ priority: DESC }]
         ) {

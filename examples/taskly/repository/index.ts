@@ -1,11 +1,15 @@
-import type { SQL } from "bun";
+import type { TasklyRepoPG } from "./pg";
 
-import { insertTask } from "./tasks";
-import { insertComment } from "./comment";
+export { tasklyRepositoryPG, type TasklyRepoPG } from "./pg";
+export { tasklyRepositoryMySQL, type TasklyRepoMySQL } from "./mysql";
+export { tasklyRepositoryMSSQL, type TasklyRepoMSSQL } from "./mssql";
+export {
+  insertTaskSchema,
+  insertCommentSchema,
+  type InsertTaskInput,
+  type InsertCommentInput,
+} from "./schemas";
 
-export const tasklyRepository = (sql: SQL) => ({
-  insertTask: insertTask(sql),
-  insertComment: insertComment(sql),
-});
-
-export type TasklyRepo = ReturnType<typeof tasklyRepository>;
+// The three repositories are structurally identical, so operation handlers can
+// type against this regardless of which engine backs the database they use.
+export type TasklyRepo = TasklyRepoPG;
