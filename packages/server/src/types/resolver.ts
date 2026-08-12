@@ -1,6 +1,6 @@
 import type { RemoteRESTResolved, RemoteRESTRoute } from "../remoteREST/types";
 import type { RemoteSchemaResolved } from "../remoteSchemas/types";
-import type { Publisher } from "./configuration";
+import type { Publisher, Subscriber } from "./configuration";
 import type { ProcedureResolver, TableResolver } from "./db";
 import type { TypedOperation } from "./zod/operation";
 
@@ -14,6 +14,8 @@ export enum EntitySource {
   STORED_PROCEDURE = "stored_procedure",
   /** Message queue (RabbitMQ, Kafka, etc.) */
   QUEUE_PUBLISHER = "queue_publisher",
+  /** Message queue subscriber (exposed as a GraphQL subscription) */
+  QUEUE_SUBSCRIBER = "queue_subscriber",
   /** Authentication mutations (login, refresh, etc.) */
   AUTH = "auth",
   /** Custom operation handlers */
@@ -55,6 +57,14 @@ export type StoredProcedureResolverEntry = ResolverEntryBase & {
 export type QueueResolverEntry = ResolverEntryBase & {
   source: EntitySource.QUEUE_PUBLISHER;
   resolver: Publisher;
+};
+
+/**
+ * Resolver entry for message queue subscribers
+ */
+export type QueueSubscriberResolverEntry = ResolverEntryBase & {
+  source: EntitySource.QUEUE_SUBSCRIBER;
+  resolver: Subscriber;
 };
 
 /**
@@ -114,6 +124,7 @@ export type ResolverEntry =
   | TableResolverEntry
   | StoredProcedureResolverEntry
   | QueueResolverEntry
+  | QueueSubscriberResolverEntry
   | AuthResolverEntry
   | OperationResolverEntry
   | RemoteSchemaResolverEntry
@@ -141,6 +152,11 @@ export const createResolverEntry = {
 
   queuePublisher: (resolver: Publisher): QueueResolverEntry => ({
     source: EntitySource.QUEUE_PUBLISHER,
+    resolver,
+  }),
+
+  queueSubscriber: (resolver: Subscriber): QueueSubscriberResolverEntry => ({
+    source: EntitySource.QUEUE_SUBSCRIBER,
     resolver,
   }),
 

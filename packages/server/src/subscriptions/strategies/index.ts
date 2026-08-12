@@ -14,7 +14,7 @@ export const createSubscriptionStrategyRegistry = (): SubscriptionStrategyRegist
   const queueStrategy = createQueueSubscriptionStrategy();
 
   registry.set(EntitySource.TABLE, databaseStrategy);
-  registry.set(EntitySource.QUEUE_PUBLISHER, queueStrategy);
+  registry.set(EntitySource.QUEUE_SUBSCRIBER, queueStrategy);
 
   return registry;
 };
