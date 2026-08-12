@@ -4,7 +4,13 @@ import type { FilterCondition, OrderByClause } from "../config";
 import type { ConfigurationZod } from "./zod/configuration";
 
 // Re-export base types from the config module
-export type { DirectionUnion, FilterCondition, OrderByClause, VirtualColumnType } from "../config";
+export type {
+  DirectionUnion,
+  FilterCondition,
+  OrderByClause,
+  RelationshipCondition,
+  VirtualColumnType,
+} from "../config";
 
 export type Configuration = z.infer<typeof ConfigurationZod>;
 

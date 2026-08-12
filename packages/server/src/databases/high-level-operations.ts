@@ -105,6 +105,31 @@ export const getDatabasesStructure = async (
                   target: target.name,
                 };
               }),
+              conditions: (fk.conditions ?? []).map((cond) => {
+                if (cond.source !== undefined) {
+                  const sourceColumn = t.columns.find(
+                    (col) => col.name.toLowerCase() === cond.source!.toLowerCase(),
+                  );
+
+                  if (!sourceColumn) {
+                    throw new Error(`Condition column ${cond.source} not found in table ${t.name}`);
+                  }
+
+                  return { ...cond, source: sourceColumn.name };
+                }
+
+                const targetColumn = toTable.columns.find(
+                  (col) => col.name.toLowerCase() === cond.target!.toLowerCase(),
+                );
+
+                if (!targetColumn) {
+                  throw new Error(
+                    `Condition column ${cond.target} not found in table ${toTable.name}`,
+                  );
+                }
+
+                return { ...cond, target: targetColumn.name };
+              }),
             };
           });
 

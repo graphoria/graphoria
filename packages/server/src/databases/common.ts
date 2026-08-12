@@ -2,7 +2,7 @@ import { isBoolean, isString } from "es-toolkit/compat";
 
 import type { SelectionAnalysis, VariableDefinition } from "../analyzeQuery/types";
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
-import type { DatabaseType, VirtualColumn } from "../types/configuration";
+import type { DatabaseType, RelationshipCondition, VirtualColumn } from "../types/configuration";
 
 import { applyDirectives } from "./directives";
 
@@ -240,6 +240,72 @@ const pairsToAnd = (
     .join(" AND ");
 };
 
+const RELATIONSHIP_CONDITION_SQL_OPERATORS: Record<string, string> = {
+  eq: "=",
+  neq: "<>",
+  gt: ">",
+  gte: ">=",
+  lt: "<",
+  lte: "<=",
+  like: "LIKE",
+};
+
+// Static join-condition values are literals (never bound as params at this layer),
+// so render them safely: escape quotes in strings, reject non-finite numbers, and
+// emit dialect-correct booleans (MSSQL has no boolean type — compare against 1/0).
+const sqlLiteral = (dbType: DatabaseType, value: string | number | boolean): string => {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`Relationship condition value must be a finite number, got ${value}`);
+    }
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    if (dbType === "mssql") return value ? "1" : "0";
+    return value ? "TRUE" : "FALSE";
+  }
+  return `'${value.replaceAll("'", "''")}'`;
+};
+
+const renderCondition = (
+  dbType: DatabaseType,
+  alias: string,
+  column: string,
+  operator: string,
+  value: string | number | boolean | undefined,
+): string => {
+  const target = `${alias}.${wrapIdentifierFp(dbType)(column)}`;
+
+  if (operator === "is_null") return `${target} IS NULL`;
+  if (operator === "is_not_null") return `${target} IS NOT NULL`;
+
+  const sqlOperator = RELATIONSHIP_CONDITION_SQL_OPERATORS[operator];
+  if (!sqlOperator || value === undefined) {
+    throw new Error(`Invalid relationship condition operator "${operator}"`);
+  }
+
+  return `${target} ${sqlOperator} ${sqlLiteral(dbType, value)}`;
+};
+
+// A condition targets exactly one side of the relationship: `source` (a column on
+// the declaring table → fromAlias) or `target` (a column on the referenced table →
+// toAlias). The from/to aliases flip between forward and reverse joins.
+const conditionsToAnd = (
+  conditions: readonly RelationshipCondition[] | undefined,
+  fromAlias: string,
+  toAlias: string,
+  dbType: DatabaseType,
+): string =>
+  (conditions ?? [])
+    .map((c) =>
+      c.source !== undefined
+        ? renderCondition(dbType, fromAlias, c.source, c.operator ?? "eq", c.value)
+        : renderCondition(dbType, toAlias, c.target!, c.operator ?? "eq", c.value),
+    )
+    .join(" AND ");
+
+const joinParts = (...parts: string[]): string => parts.filter(Boolean).join(" AND ");
+
 export const findJoinCondition = (
   entities: MergedEntities,
   parentTableName: string,
@@ -254,29 +320,35 @@ export const findJoinCondition = (
 
   return [
     ...(relations.relationships?.map((relation) =>
-      pairsToAnd(
-        relation.columns.map((c) => ({
-          parentAlias,
-          childAlias,
-          parentColumn: c.source,
-          childColumn: c.target,
-          parentCollation: columnCollation(entities, parentTableName, c.source),
-          childCollation: columnCollation(entities, childTableName, c.target),
-        })),
-        dbType,
+      joinParts(
+        pairsToAnd(
+          relation.columns.map((c) => ({
+            parentAlias,
+            childAlias,
+            parentColumn: c.source,
+            childColumn: c.target,
+            parentCollation: columnCollation(entities, parentTableName, c.source),
+            childCollation: columnCollation(entities, childTableName, c.target),
+          })),
+          dbType,
+        ),
+        conditionsToAnd(relation.conditions, parentAlias, childAlias, dbType),
       ),
     ) ?? []),
     ...(relations.relationshipsReversed?.map((relation) =>
-      pairsToAnd(
-        relation.columns.map((c) => ({
-          parentAlias,
-          childAlias,
-          parentColumn: c.target,
-          childColumn: c.source,
-          parentCollation: columnCollation(entities, parentTableName, c.target),
-          childCollation: columnCollation(entities, childTableName, c.source),
-        })),
-        dbType,
+      joinParts(
+        pairsToAnd(
+          relation.columns.map((c) => ({
+            parentAlias,
+            childAlias,
+            parentColumn: c.target,
+            childColumn: c.source,
+            parentCollation: columnCollation(entities, parentTableName, c.target),
+            childCollation: columnCollation(entities, childTableName, c.source),
+          })),
+          dbType,
+        ),
+        conditionsToAnd(relation.conditions, childAlias, parentAlias, dbType),
       ),
     ) ?? []),
   ].join(" AND ");

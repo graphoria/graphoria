@@ -621,5 +621,91 @@ describe("getDatabasesStructure", () => {
 
       expect(run).rejects.toThrow("Column missing_fk not found in table posts");
     });
+
+    it("passes through and resolves a static target-column condition", async () => {
+      const out = await getTables(
+        [table("public", "posts", ["id", "author_id"]), table("public", "users", ["id", "Type"])],
+        dbWith({
+          public_posts: override({
+            relationships: [
+              {
+                schema: "public",
+                name: "users",
+                columns: [{ source: "author_id", target: "id" }],
+                conditions: [{ target: "type", operator: "eq", value: "admin" }],
+              },
+            ],
+          }),
+        }),
+      );
+
+      const posts = out.find((t) => t.resolverName === "public_posts")!;
+      expect(posts.relationships[0]!.conditions).toEqual([
+        { target: "Type", operator: "eq", value: "admin" },
+      ]);
+    });
+
+    it("resolves a static source-column condition against the declaring table", async () => {
+      const out = await getTables(
+        [table("public", "posts", ["id", "author_id", "status"]), table("public", "users", ["id"])],
+        dbWith({
+          public_posts: override({
+            relationships: [
+              {
+                schema: "public",
+                name: "users",
+                columns: [{ source: "author_id", target: "id" }],
+                conditions: [{ source: "STATUS", operator: "eq", value: 1 }],
+              },
+            ],
+          }),
+        }),
+      );
+
+      const posts = out.find((t) => t.resolverName === "public_posts")!;
+      expect(posts.relationships[0]!.conditions).toEqual([
+        { source: "status", operator: "eq", value: 1 },
+      ]);
+    });
+
+    it("throws when a static condition references a missing target column", async () => {
+      const run = getTables(
+        [table("public", "posts", ["id", "author_id"]), table("public", "users", ["id"])],
+        dbWith({
+          public_posts: override({
+            relationships: [
+              {
+                schema: "public",
+                name: "users",
+                columns: [{ source: "author_id", target: "id" }],
+                conditions: [{ target: "ghost", value: "x" }],
+              },
+            ],
+          }),
+        }),
+      );
+
+      expect(run).rejects.toThrow("Condition column ghost not found in table users");
+    });
+
+    it("throws when a static condition references a missing source column", async () => {
+      const run = getTables(
+        [table("public", "posts", ["id", "author_id"]), table("public", "users", ["id"])],
+        dbWith({
+          public_posts: override({
+            relationships: [
+              {
+                schema: "public",
+                name: "users",
+                columns: [{ source: "author_id", target: "id" }],
+                conditions: [{ source: "ghost", value: "x" }],
+              },
+            ],
+          }),
+        }),
+      );
+
+      expect(run).rejects.toThrow("Condition column ghost not found in table posts");
+    });
   });
 });

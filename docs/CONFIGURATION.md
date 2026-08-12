@@ -152,7 +152,13 @@ databases: [
     name: "main",
     type: "pg",
     enabled: true,
-    connection: { host: "localhost", port: 5432, user: "user", password: "pass", database: "db" },
+    connection: {
+      host: "localhost",
+      port: 5432,
+      user: "user",
+      password: "pass",
+      database: "db",
+    },
     repository: (sql) => ({
       // sql is typed as SQL (Bun native)
       getActiveUsers: () => sql`SELECT * FROM users WHERE active = true`,
@@ -175,7 +181,13 @@ databases: [
     name: "main",
     type: "pg",
     enabled: true,
-    connection: { host: "localhost", port: 5432, user: "user", password: "pass", database: "db" },
+    connection: {
+      host: "localhost",
+      port: 5432,
+      user: "user",
+      password: "pass",
+      database: "db",
+    },
     onConnect: async (sql) => {
       await sql`CREATE TABLE IF NOT EXISTS audit_log (id serial primary key, message text)`;
     },
@@ -190,6 +202,26 @@ type TableRelationship = {
   schema: string;
   name: string;
   columns: Array<{ source: string; target: string }>;
+  conditions?: RelationshipCondition[];
+};
+
+// Static-value predicate ANDed into the JOIN. Set exactly one of `source`
+// (a column on the declaring table) or `target` (a column on the referenced
+// table). `value` is required unless `operator` is `is_null` / `is_not_null`.
+type RelationshipCondition = {
+  source?: string;
+  target?: string;
+  operator?:
+    | "eq"
+    | "neq"
+    | "gt"
+    | "gte"
+    | "lt"
+    | "lte"
+    | "like"
+    | "is_null"
+    | "is_not_null"; // default "eq"
+  value?: string | number | boolean;
 };
 ```
 
@@ -207,6 +239,30 @@ schema: {
 }
 ```
 
+#### Static join conditions
+
+Use `conditions` to constrain a relationship with fixed values on top of the column match. Each entry targets one side of the relationship — `source` (declaring table) or `target` (referenced table) — and is ANDed into the JOIN. This is useful when a lookup table is shared across entity kinds and you only want to join the rows of a given type:
+
+```typescript
+schema: {
+  database: {
+    dbo_EDITORIAL_MESSAGE: {
+      relationships: [
+        {
+          schema: "dbo",
+          name: "Types",
+          columns: [{ source: "EDT_TYPE", target: "TypeCode" }],
+          // ON EDITORIAL_MESSAGE.EDT_TYPE = Types.TypeCode AND Types.Type = 'editorial'
+          conditions: [{ target: "Type", value: "editorial" }],
+        },
+      ],
+    },
+  },
+}
+```
+
+Values are rendered as SQL literals (strings quoted and escaped, booleans emitted per dialect), so no user input is bound here — keep `value` fixed in config.
+
 ---
 
 ## Virtual Columns
@@ -220,7 +276,12 @@ virtualColumnExpression(name, dataType, isNullable, expression);
 ```
 
 ```typescript
-virtualColumnExpression("full_name", "varchar", true, "first_name || ' ' || last_name");
+virtualColumnExpression(
+  "full_name",
+  "varchar",
+  true,
+  "first_name || ' ' || last_name",
+);
 ```
 
 ### Function-Based
@@ -230,7 +291,11 @@ virtualColumnFunction(name, dataType, isNullable, functionName, params?)
 ```
 
 ```typescript
-virtualColumnFunction("age", "int", false, "DATEDIFF", ["YEAR", "birth_date", "GETDATE()"]);
+virtualColumnFunction("age", "int", false, "DATEDIFF", [
+  "YEAR",
+  "birth_date",
+  "GETDATE()",
+]);
 ```
 
 ### MSSQL Boolean Helpers
@@ -449,7 +514,11 @@ queues: [
     // or: connection: { hostname: "localhost", port: 5672, username: "guest", password: "guest", vhost: "/" },
     autoSetup: true,
     publishers: {
-      orderCreated: { topic: "orders", routingKey: "order.created", persistent: true },
+      orderCreated: {
+        topic: "orders",
+        routingKey: "order.created",
+        persistent: true,
+      },
     },
     subscribers: {
       onOrderCreated: {
@@ -515,7 +584,9 @@ cron: [
     timezone: "America/New_York",
     query: `mutation { deleteExpiredSessions { affected_rows } }`,
     onTick: async (options, context, response) => {
-      console.log(`Cleaned up ${response?.data?.deleteExpiredSessions?.affected_rows} sessions`);
+      console.log(
+        `Cleaned up ${response?.data?.deleteExpiredSessions?.affected_rows} sessions`,
+      );
     },
   },
   {
