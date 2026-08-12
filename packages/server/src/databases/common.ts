@@ -77,6 +77,12 @@ export const buildConditions = (
         }
       }
     } else if (typeof value === "object" && !Array.isArray(value)) {
+      // Only entities (tables/views) appear in queriesMap. An operator-less filter object on a
+      // column (e.g. `{ col: {} }`) has no operator keys, so it lands here despite not being a
+      // relation; skip it as a no-op instead of dereferencing a missing queriesMap entry.
+      const nestedEntity = entities.queriesMap[fieldName];
+      if (!nestedEntity) continue;
+
       const nestedTableAlias = `t${level}`;
 
       const parentTableName = aliasMap[tableAlias];
@@ -108,7 +114,7 @@ export const buildConditions = (
 
       const existsClause = `EXISTS (
       SELECT 1
-      FROM ${entities.queriesMap[fieldName]!.dottedQuotedName} ${nestedTableAlias}
+      FROM ${nestedEntity.dottedQuotedName} ${nestedTableAlias}
       WHERE ${joinCondition}${nestedConditions ? ` AND (${nestedConditions})` : ""}
     )`;
 

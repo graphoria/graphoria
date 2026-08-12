@@ -202,6 +202,70 @@ describe("buildWhereClauseFp", () => {
     });
   });
 
+  describe("operator-less column filter", () => {
+    // Regression: `{ col: {} }` has no operator keys, so it is not treated as a column filter and
+    // previously fell into the nested-relation branch, throwing on the missing queriesMap entry
+    // (`undefined is not an object (evaluating 'entities.queriesMap[fieldName].dottedQuotedName')`).
+    for (const dbType of ["pg", "mysql", "mssql"] as const) {
+      it(`treats an empty filter object as a no-op for ${dbType}`, () => {
+        const sql = buildWhereClauseFp(dbType)(
+          stubEntities(),
+          [],
+          {},
+          field({ where: { fieldToFilter: {} } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        );
+        expect(sql).toBe("");
+      });
+    }
+
+    it("skips the empty filter object but keeps sibling conditions", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        vars("v"),
+        { v: 1 },
+        field({ where: { fieldToFilter: {}, id: { eq: "$v" } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."id" = $1');
+    });
+
+    it("still emits EXISTS + join for a real relation with an empty object", () => {
+      const entities = stubEntities({
+        queriesMap: {
+          child_table: { dottedQuotedName: "child_table", columns: [] },
+        } as unknown as MergedEntities["queriesMap"],
+        getForeignKeysBetweenTables: (() => ({
+          relationships: [{ columns: [{ source: "child_id", target: "id" }] }],
+          relationshipsReversed: [],
+        })) as unknown as MergedEntities["getForeignKeysBetweenTables"],
+      });
+
+      const sql = buildWhereClauseFp("pg")(
+        entities,
+        [],
+        {},
+        field({ where: { child_table: {} } }, "parent_table"),
+        "t1",
+        null,
+        null,
+        1,
+        { t1: "parent_table" },
+      );
+      expect(sql.replace(/\s+/g, " ").trim()).toBe(
+        'WHERE EXISTS ( SELECT 1 FROM child_table t2 WHERE t1."child_id" = t2."id" )',
+      );
+    });
+  });
+
   describe("join with parent table", () => {
     it("appends join condition when parentTableName + parentTableAlias provided", () => {
       const entities = stubEntities({
