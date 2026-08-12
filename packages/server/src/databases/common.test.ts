@@ -230,6 +230,75 @@ describe("buildWhereClauseFp", () => {
     });
   });
 
+  describe("deeply nested relation filters", () => {
+    // Regression: a where filter nested 3 relations deep (first -> second -> third) must resolve a
+    // join at every hop. The bug left aliasMap[t2] unset, so the innermost EXISTS lost its parent
+    // table and emitted a join-less "WHERE  AND (...)".
+    const squish = (sql: string): string => sql.replace(/\s+/g, " ").trim();
+
+    const deepEntities = stubEntities({
+      queriesMap: {
+        second_table: { dottedQuotedName: "second_table", columns: [] },
+        third_table: { dottedQuotedName: "third_table", columns: [] },
+      } as unknown as MergedEntities["queriesMap"],
+      getForeignKeysBetweenTables: ((table1: string, table2: string) => {
+        if (table1 === "first_table" && table2 === "second_table") {
+          return {
+            relationships: [{ columns: [{ source: "second_id", target: "id" }] }],
+            relationshipsReversed: [],
+          };
+        }
+        if (table1 === "second_table" && table2 === "third_table") {
+          return {
+            relationships: [{ columns: [{ source: "third_id", target: "id" }] }],
+            relationshipsReversed: [],
+          };
+        }
+        return { relationships: [], relationshipsReversed: [] };
+      }) as unknown as MergedEntities["getForeignKeysBetweenTables"],
+    });
+
+    const nestedWhere = field(
+      { where: { second_table: { third_table: { field: { eq: "$v" } } } } },
+      "first_table",
+    );
+
+    const cases: Array<{ dbType: "pg" | "mysql" | "mssql"; expected: string }> = [
+      {
+        dbType: "pg",
+        expected:
+          'WHERE EXISTS ( SELECT 1 FROM second_table t2 WHERE t1."second_id" = t2."id" AND (EXISTS ( SELECT 1 FROM third_table t3 WHERE t2."third_id" = t3."id" AND (t3."field" = $1) )) )',
+      },
+      {
+        dbType: "mysql",
+        expected:
+          "WHERE EXISTS ( SELECT 1 FROM second_table t2 WHERE t1.`second_id` = t2.`id` AND (EXISTS ( SELECT 1 FROM third_table t3 WHERE t2.`third_id` = t3.`id` AND (t3.`field` = $1) )) )",
+      },
+      {
+        dbType: "mssql",
+        expected:
+          "WHERE EXISTS ( SELECT 1 FROM second_table t2 WHERE t1.[second_id] = t2.[id] AND (EXISTS ( SELECT 1 FROM third_table t3 WHERE t2.[third_id] = t3.[id] AND (t3.[field] = @1) )) )",
+      },
+    ];
+
+    for (const { dbType, expected } of cases) {
+      it(`resolves a join at every hop for ${dbType}`, () => {
+        const sql = buildWhereClauseFp(dbType)(
+          deepEntities,
+          vars("v"),
+          { v: 1 },
+          nestedWhere,
+          "t1",
+          null,
+          null,
+          1,
+          { t1: "first_table" },
+        );
+        expect(squish(sql)).toBe(expected);
+      });
+    }
+  });
+
   describe("quoted identifiers", () => {
     it("wraps field names in double quotes for pg", () => {
       const sql = buildWhereClauseFp("pg")(

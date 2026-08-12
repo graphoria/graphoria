@@ -94,6 +94,23 @@ export const prodWhereArgumentNestedEntitiesQuery = analyzeQuery(
   StoreMSSQL.schema,
 );
 
+export const prodWhereArgumentDeeplyNestedEntitiesQuery = analyzeQuery(
+  `
+    {
+      dbo_products(where: { dbo_reviews: { dbo_customers: { email: { eq: "vip@example.com" } } } }) {
+        product_id
+        name
+        sku
+        dbo_order_items {
+          quantity
+        }
+      }
+    }
+  `,
+  StoreMSSQL,
+  StoreMSSQL.schema,
+);
+
 export const prodGroupByQuery = analyzeQuery(
   `
     {

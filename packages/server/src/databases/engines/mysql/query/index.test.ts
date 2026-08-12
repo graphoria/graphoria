@@ -16,6 +16,7 @@ import {
   prodQuery,
   prodReservedWordAliasQuery,
   prodReservedWordColumnQuery,
+  prodWhereArgumentDeeplyNestedEntitiesQuery,
   prodWhereArgumentNestedEntitiesQuery,
   prodWhereArgumentNestedQuery,
   prodWhereArgumentQuery,
@@ -253,6 +254,67 @@ describe("MySQL: Store", () => {
                       AND (t2.\`rating\` >= $1)
                   )
               ), 
+              JSON_ARRAY()
+            )
+          ) as json_result
+      `),
+    );
+  });
+
+  it("Should generate a query with a where argument nested three relations deep", () => {
+    expect(genSql(StoreMySQL, prodWhereArgumentDeeplyNestedEntitiesQuery)).toBe(
+      format(`
+        SELECT
+          JSON_OBJECT(
+            'dbo_products',
+            COALESCE(
+              (
+                SELECT
+                  JSON_ARRAYAGG(
+                    JSON_OBJECT(
+                      'product_id',
+                      t1.\`product_id\`,
+                      'name',
+                      t1.\`name\`,
+                      'sku',
+                      t1.\`sku\`,
+                      'dbo_order_items',
+                      COALESCE(
+                        (
+                          SELECT
+                            JSON_ARRAYAGG(JSON_OBJECT('quantity', t2.\`quantity\`))
+                          FROM
+                            \`dbo\`.\`order_items\` t2
+                          WHERE
+                            t1.\`product_id\` = t2.\`product_id\`
+                        ),
+                        JSON_ARRAY()
+                      )
+                    )
+                  )
+                FROM
+                  \`dbo\`.\`products\` t1
+                WHERE
+                  EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      \`dbo\`.\`reviews\` t2
+                    WHERE
+                      t1.\`product_id\` = t2.\`product_id\`
+                      AND (
+                        EXISTS (
+                          SELECT
+                            1
+                          FROM
+                            \`dbo\`.\`customers\` t3
+                          WHERE
+                            t2.\`customer_id\` = t3.\`customer_id\`
+                            AND (t3.\`email\` = $1)
+                        )
+                      )
+                  )
+              ),
               JSON_ARRAY()
             )
           ) as json_result

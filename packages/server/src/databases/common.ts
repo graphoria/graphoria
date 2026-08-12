@@ -90,6 +90,11 @@ export const buildConditions = (
         dbType,
       );
 
+      // Record this relation's alias→table so a deeper nested where (3+ levels) can resolve
+      // its own parent via aliasMap[tableAlias]; without it the next recursion sees undefined
+      // and emits a join-less "WHERE  AND (...)".
+      aliasMap[nestedTableAlias] = fieldName;
+
       const nestedConditions = buildConditions(
         entities,
         dbType,
