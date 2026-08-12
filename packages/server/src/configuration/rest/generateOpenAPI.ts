@@ -189,23 +189,19 @@ export const generateOpenAPI = ({
               parameters: [
                 ...(Object.entries(
                   pathParametersPOJO.properties ?? ({} as OpenAPIV3_1.SchemaObject),
-                ).map(([key, { type }]) => ({
+                ).map(([key, paramSchema]) => ({
                   name: key,
                   in: "path",
                   required: true,
-                  schema: {
-                    type,
-                  },
+                  schema: paramSchema,
                 })) ?? []),
                 ...Object.entries(
                   queryParametersPOJO.properties ?? ({} as OpenAPIV3_1.SchemaObject),
-                ).map(([key, { type, required }]) => ({
+                ).map(([key, paramSchema]) => ({
                   name: key,
                   in: "query",
-                  required,
-                  schema: {
-                    type,
-                  },
+                  required: queryParametersPOJO.required?.includes(key) ?? false,
+                  schema: paramSchema,
                 })),
               ],
               ...(hasBody && ["POST", "PUT", "PATCH"].includes(value.rest!.method!)
