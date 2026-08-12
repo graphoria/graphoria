@@ -42,7 +42,7 @@ export type CronTickCallback<TVariables = Record<string, unknown>> = (
  * This allows TypeScript to infer the variables type
  */
 export const createTypedCronJobZod = <TVariables extends DefaultVariables>() =>
-  z.object({
+  z.strictObject({
     /**
      * Unique name/identifier for the cron job
      */

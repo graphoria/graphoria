@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking — configuration validation now rejects unknown keys.** Every schema in the
+  `graphoria.ts` configuration is strict: a key that is not part of the shape fails at boot with an
+  error naming the key and its path, instead of being silently discarded. This closes a class of
+  security bug where a typo in a role's permission entry (`filters` instead of `filter`,
+  `storedProcedure` instead of `storedProcedures`) produced a role with no restriction at all rather
+  than a visible failure.
+
+  **Migration:** if your server no longer boots, the error names the offending key and its path in
+  the config. Remove it or correct the spelling. Keys that were previously ignored had no effect on
+  behaviour, so deleting them changes nothing else.
+
+### Added
+
+- `SECURITY.md` — supported versions, private vulnerability reporting channel, and disclosure
+  process.
+- GitHub Actions CI running lint, format check, type-check, and the test suite on every push to
+  `main` and every pull request.
+
 ## [0.1.0] - 2026-07-08
 
 Initial public release. Two packages: `@graphoria/server` (the server, plus the config-authoring surface at `@graphoria/server/config`) and `@graphoria/react` (frontend SDK).

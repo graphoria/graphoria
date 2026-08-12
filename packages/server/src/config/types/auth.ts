@@ -28,7 +28,7 @@ export type DirectionUnion = z.input<typeof DirectionUnionZod>;
 /**
  * Order by clause for role-based default ordering
  */
-export const OrderByClauseZod = z.object({
+export const OrderByClauseZod = z.strictObject({
   column: z.string(),
   direction: DirectionUnionZod,
 });
@@ -50,7 +50,7 @@ export type FilterCondition = z.input<typeof FilterConditionZod>;
 /**
  * Table-level permission configuration
  */
-export const TablePermissionZod = z.object({
+export const TablePermissionZod = z.strictObject({
   /** Allowed columns — "ALL" or array of column names */
   columns: z.union([z.literal("ALL"), z.array(z.string())]),
   /** Role-based query filtering (WHERE clause) */
@@ -65,7 +65,7 @@ export type TablePermission = z.input<typeof TablePermissionZod>;
  * Permission configuration for a role
  */
 export const RolePermissionZod = z
-  .object({
+  .strictObject({
     /** Tables accessible by this role */
     tables: z
       .union([
@@ -120,7 +120,7 @@ export type RolePermission = z.input<typeof RolePermissionZod>;
  * Authentication configuration
  */
 export const AuthConfigZod = z
-  .object({
+  .strictObject({
     /** Whether authentication is enabled */
     enabled: z.boolean(),
     /** Database name where auth tables are stored */

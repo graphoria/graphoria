@@ -42,7 +42,7 @@ export const RELATIONSHIP_CONDITION_OPERATORS = [
  * A `value` is required for every operator except `is_null` / `is_not_null`.
  */
 export const RelationshipConditionZod = z
-  .object({
+  .strictObject({
     /** Column on the declaring (source) table */
     source: z.string().optional(),
     /** Column on the referenced (target) table */
@@ -67,10 +67,10 @@ export type RelationshipCondition = z.input<typeof RelationshipConditionZod>;
 // Table Relationship (config shape, no transform)
 // ============================================================================
 
-export const TableRelationshipZod = z.object({
+export const TableRelationshipZod = z.strictObject({
   schema: z.string(),
   name: z.string(),
-  columns: z.array(z.object({ source: z.string(), target: z.string() })),
+  columns: z.array(z.strictObject({ source: z.string(), target: z.string() })),
   /** Static-value predicates ANDed into the JOIN condition */
   conditions: z.array(RelationshipConditionZod).optional(),
 });
@@ -81,7 +81,7 @@ export type TableRelationship = z.input<typeof TableRelationshipZod>;
 // Table Schema Config
 // ============================================================================
 
-export const TableSchemaConfigZod = z.object({
+export const TableSchemaConfigZod = z.strictObject({
   columns: z.array(VirtualColumnZod).optional().default([]),
   relationships: z.array(TableRelationshipZod).optional().default([]),
   /** Overrides the table description from the database */
@@ -96,7 +96,7 @@ export type TableSchemaConfig = z.input<typeof TableSchemaConfigZod>;
 // Database Schema Config
 // ============================================================================
 
-export const DatabaseSchemaConfigZod = z.object({
+export const DatabaseSchemaConfigZod = z.strictObject({
   database: z
     .record(
       z.string(),
@@ -127,7 +127,7 @@ export type DatabaseSchemaConfig = z.input<typeof DatabaseSchemaConfigZod>;
  * Connection pool and transport options for PostgreSQL and MySQL (Bun SQL).
  * All timeout values are in seconds.
  */
-export const BunSQLConnectionOptionsZod = z.object({
+export const BunSQLConnectionOptionsZod = z.strictObject({
   /** Maximum number of connections in the pool */
   max: z.number().int().positive().default(10),
   /** Maximum time in seconds a connection can be idle before being closed */
@@ -150,10 +150,10 @@ export type BunSQLConnectionOptions = z.input<typeof BunSQLConnectionOptionsZod>
  * Connection pool and transport options for MSSQL.
  * All timeout values are in seconds (converted to milliseconds internally).
  */
-export const MSSQLConnectionOptionsZod = z.object({
+export const MSSQLConnectionOptionsZod = z.strictObject({
   /** Connection pool options */
   pool: z
-    .object({
+    .strictObject({
       /** Maximum number of connections in the pool */
       max: z.number().int().positive().default(10),
       /** Minimum number of connections in the pool */
@@ -228,7 +228,7 @@ export type ConnectionOptionsForType<T extends DatabaseType> = T extends "pg" | 
 // Database Connection Zod Schema
 // ============================================================================
 
-export const DatabaseConnectionZod = z.object({
+export const DatabaseConnectionZod = z.strictObject({
   /** Unique name for the database connection */
   name: z.string(),
   /** Whether the database is enabled */
@@ -236,7 +236,7 @@ export const DatabaseConnectionZod = z.object({
   /** Database type */
   type: z.union([z.literal("mssql"), z.literal("pg"), z.literal("mysql")]),
   /** Connection configuration */
-  connection: z.object({
+  connection: z.strictObject({
     host: z.string(),
     port: z.number(),
     user: z.string(),

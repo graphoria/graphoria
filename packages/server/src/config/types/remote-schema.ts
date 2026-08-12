@@ -4,7 +4,7 @@ import { z } from "zod";
  * Remote GraphQL schema introspection configuration
  */
 export const RemoteSchemaIntrospectionConfigZod = z
-  .object({
+  .strictObject({
     /** Re-introspect interval in ms (0 = only at startup, default: 0) */
     interval: z.number().int().min(0).optional().default(0),
   })
@@ -16,7 +16,7 @@ export type RemoteSchemaIntrospectionConfig = z.input<typeof RemoteSchemaIntrosp
 /**
  * Remote GraphQL schema configuration
  */
-export const RemoteSchemaConfigZod = z.object({
+export const RemoteSchemaConfigZod = z.strictObject({
   /** Unique identifier for this remote schema */
   name: z.string().min(1),
   /** Remote GraphQL endpoint URL */

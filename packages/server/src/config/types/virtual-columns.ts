@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * Virtual column schema for computed/virtual columns in database schema
  */
-export const VirtualColumnZod = z.object({
+export const VirtualColumnZod = z.strictObject({
   name: z.string(),
   dataType: z.string(),
   isNullable: z.boolean(),

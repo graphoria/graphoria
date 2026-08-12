@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * Remote REST API configuration (OpenAPI-based)
  */
-export const RemoteRESTConfigZod = z.object({
+export const RemoteRESTConfigZod = z.strictObject({
   /** Unique identifier for this remote REST API */
   name: z.string().min(1),
   /** Base URL of the remote API for proxying requests */

@@ -11,7 +11,7 @@ import { RemoteRESTConfigZod } from "./remoteREST";
 import { RemoteSchemaConfigZod } from "./remoteSchema";
 
 export const ConfigurationZod = z
-  .object({
+  .strictObject({
     name: z.string(),
     version: z.string(),
     tokenStrategy: TokenStrategyZod.optional().default("jwt"),
