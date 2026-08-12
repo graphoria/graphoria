@@ -108,10 +108,22 @@ export const OperationsZod = z.record(z.string(), OperationZod);
 export type Operations = z.input<typeof OperationsZod>;
 
 /**
- * Context passed to beforeRequest hook
+ * Context passed to beforeRequest hook.
+ *
+ * `input` is the merged view of every REST parameter source. `pathParams`,
+ * `queryParams`, and `body` expose each source separately (parsed with its own
+ * schema), or `undefined` when that source has no schema configured.
  */
-export type BeforeRequestContext<TInput = DefaultInput> = {
+export type BeforeRequestContext<
+  TInput = DefaultInput,
+  TPathParams = unknown,
+  TQueryParams = unknown,
+  TBody = unknown,
+> = {
   input: TInput;
+  pathParams?: TPathParams;
+  queryParams?: TQueryParams;
+  body?: TBody;
 };
 
 /**

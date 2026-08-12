@@ -30,7 +30,6 @@ import type {
   OperationGraphQLConfig,
   OperationHandler,
   OperationOptions,
-  OperationRestConfig,
   TypedOperation,
   VirtualColumnExpressionFn,
   VirtualColumnFunctionFn,
@@ -53,6 +52,59 @@ type InferOutput<TOutputSchema> =
   TOutputSchema extends z.ZodType<any> ? InferZodOutput<TOutputSchema> : unknown;
 
 /**
+ * Infer the parsed shape of an optional REST parameter schema.
+ * Resolves to `undefined` when that source has no schema configured.
+ */
+type InferRestParam<T> = T extends z.ZodType<any> ? z.infer<T> : undefined;
+
+/**
+ * REST exposure config with per-source schema generics, so `pathParams`,
+ * `queryParams`, and `body` can be inferred into the `beforeRequest` context.
+ */
+type RestConfigInput<
+  TPathParams extends z.ZodType<any> | undefined,
+  TQueryParams extends z.ZodType<any> | undefined,
+  TBody extends z.ZodType<any> | undefined,
+> = {
+  /** Route path (e.g. `/users/:id`) */
+  path: string;
+  /** HTTP method (defaults to GET) */
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  /** Zod schema for path parameters */
+  pathParams?: TPathParams;
+  /** Zod schema for query-string parameters */
+  queryParams?: TQueryParams;
+  /** Zod schema for the request body */
+  body?: TBody;
+};
+
+/**
+ * Hooks config shared by every operation overload. `beforeRequest` receives the
+ * merged `input` plus each REST source (`pathParams` / `queryParams` / `body`)
+ * typed from its schema, or `undefined` when that source's schema is omitted.
+ */
+type OperationHooks<
+  TInput,
+  TOutput,
+  TInitData,
+  TPathParams extends z.ZodType<any> | undefined,
+  TQueryParams extends z.ZodType<any> | undefined,
+  TBody extends z.ZodType<any> | undefined,
+> = {
+  init?: (options: OperationOptions) => TInitData | Promise<TInitData>;
+  beforeRequest?: (
+    context: {
+      input: TInput;
+      pathParams: InferRestParam<TPathParams>;
+      queryParams: InferRestParam<TQueryParams>;
+      body: InferRestParam<TBody>;
+    },
+    initData: TInitData | undefined,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  afterRequest?: (context: { output: TOutput }) => TOutput | Promise<TOutput>;
+};
+
+/**
  * Type for the operation helper function provided by @graphoria/server.
  *
  * This uses a simplified approach where we accept any ZodObject for input/output
@@ -64,6 +116,9 @@ export type OperationFn = {
     TInputSchema extends z.ZodObject<any>,
     TOutputSchema extends z.ZodType<any> | undefined = undefined,
     TInitData = unknown,
+    TPathParams extends z.ZodType<any> | undefined = undefined,
+    TQueryParams extends z.ZodType<any> | undefined = undefined,
+    TBody extends z.ZodType<any> | undefined = undefined,
   >(config: {
     /** GraphQL query to execute */
     query: string;
@@ -76,18 +131,16 @@ export type OperationFn = {
     /** Output schema (Zod) */
     output?: TOutputSchema;
     /** Hooks for initialization and request transformation */
-    hooks?: {
-      init?: (options: OperationOptions) => TInitData | Promise<TInitData>;
-      beforeRequest?: (
-        context: { input: z.infer<TInputSchema> },
-        initData: TInitData | undefined,
-      ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-      afterRequest?: (context: {
-        output: InferOutput<TOutputSchema>;
-      }) => InferOutput<TOutputSchema> | Promise<InferOutput<TOutputSchema>>;
-    };
+    hooks?: OperationHooks<
+      z.infer<TInputSchema>,
+      InferOutput<TOutputSchema>,
+      TInitData,
+      TPathParams,
+      TQueryParams,
+      TBody
+    >;
     /** REST exposure configuration */
-    rest?: OperationRestConfig;
+    rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
     /** GraphQL exposure configuration (enabled by default) */
     graphql?: OperationGraphQLConfig;
     /** Cache configuration */
@@ -95,7 +148,13 @@ export type OperationFn = {
   }): TypedOperation<z.infer<TInputSchema>, InferOutput<TOutputSchema>, TInitData, unknown>;
 
   // Query operation overload - without input schema
-  <TOutputSchema extends z.ZodType<any> | undefined = undefined, TInitData = unknown>(config: {
+  <
+    TOutputSchema extends z.ZodType<any> | undefined = undefined,
+    TInitData = unknown,
+    TPathParams extends z.ZodType<any> | undefined = undefined,
+    TQueryParams extends z.ZodType<any> | undefined = undefined,
+    TBody extends z.ZodType<any> | undefined = undefined,
+  >(config: {
     /** GraphQL query to execute */
     query: string;
     /** Custom handler is not allowed with query */
@@ -107,18 +166,16 @@ export type OperationFn = {
     /** Output schema (Zod) */
     output?: TOutputSchema;
     /** Hooks for initialization and request transformation */
-    hooks?: {
-      init?: (options: OperationOptions) => TInitData | Promise<TInitData>;
-      beforeRequest?: (
-        context: { input: DefaultInput },
-        initData: TInitData | undefined,
-      ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-      afterRequest?: (context: {
-        output: InferOutput<TOutputSchema>;
-      }) => InferOutput<TOutputSchema> | Promise<InferOutput<TOutputSchema>>;
-    };
+    hooks?: OperationHooks<
+      DefaultInput,
+      InferOutput<TOutputSchema>,
+      TInitData,
+      TPathParams,
+      TQueryParams,
+      TBody
+    >;
     /** REST exposure configuration */
-    rest?: OperationRestConfig;
+    rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
     /** GraphQL exposure configuration (enabled by default) */
     graphql?: OperationGraphQLConfig;
     /** Cache configuration */
@@ -130,6 +187,9 @@ export type OperationFn = {
     TInputSchema extends z.ZodObject<any>,
     TOutputSchema extends z.ZodType<any> | undefined = undefined,
     TInitData = unknown,
+    TPathParams extends z.ZodType<any> | undefined = undefined,
+    TQueryParams extends z.ZodType<any> | undefined = undefined,
+    TBody extends z.ZodType<any> | undefined = undefined,
   >(config: {
     /** Query is not allowed with handler */
     query?: never;
@@ -142,18 +202,16 @@ export type OperationFn = {
     /** Output schema (Zod) */
     output?: TOutputSchema;
     /** Hooks for initialization and request transformation */
-    hooks?: {
-      init?: (options: OperationOptions) => TInitData | Promise<TInitData>;
-      beforeRequest?: (
-        context: { input: z.infer<TInputSchema> },
-        initData: TInitData | undefined,
-      ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-      afterRequest?: (context: {
-        output: InferOutput<TOutputSchema>;
-      }) => InferOutput<TOutputSchema> | Promise<InferOutput<TOutputSchema>>;
-    };
+    hooks?: OperationHooks<
+      z.infer<TInputSchema>,
+      InferOutput<TOutputSchema>,
+      TInitData,
+      TPathParams,
+      TQueryParams,
+      TBody
+    >;
     /** REST exposure configuration */
-    rest?: OperationRestConfig;
+    rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
     /** GraphQL exposure configuration (enabled by default) */
     graphql?: OperationGraphQLConfig;
     /** Cache configuration */
@@ -161,7 +219,13 @@ export type OperationFn = {
   }): TypedOperation<z.infer<TInputSchema>, InferOutput<TOutputSchema>, TInitData, unknown>;
 
   // Handler operation overload - without input schema
-  <TOutputSchema extends z.ZodType<any> | undefined = undefined, TInitData = unknown>(config: {
+  <
+    TOutputSchema extends z.ZodType<any> | undefined = undefined,
+    TInitData = unknown,
+    TPathParams extends z.ZodType<any> | undefined = undefined,
+    TQueryParams extends z.ZodType<any> | undefined = undefined,
+    TBody extends z.ZodType<any> | undefined = undefined,
+  >(config: {
     /** Query is not allowed with handler */
     query?: never;
     /** Custom handler function */
@@ -173,18 +237,16 @@ export type OperationFn = {
     /** Output schema (Zod) */
     output?: TOutputSchema;
     /** Hooks for initialization and request transformation */
-    hooks?: {
-      init?: (options: OperationOptions) => TInitData | Promise<TInitData>;
-      beforeRequest?: (
-        context: { input: DefaultInput },
-        initData: TInitData | undefined,
-      ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-      afterRequest?: (context: {
-        output: InferOutput<TOutputSchema>;
-      }) => InferOutput<TOutputSchema> | Promise<InferOutput<TOutputSchema>>;
-    };
+    hooks?: OperationHooks<
+      DefaultInput,
+      InferOutput<TOutputSchema>,
+      TInitData,
+      TPathParams,
+      TQueryParams,
+      TBody
+    >;
     /** REST exposure configuration */
-    rest?: OperationRestConfig;
+    rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
     /** GraphQL exposure configuration (enabled by default) */
     graphql?: OperationGraphQLConfig;
     /** Cache configuration */
@@ -203,6 +265,9 @@ export type OperationFn = {
     TInputSchema extends z.ZodObject<any>,
     TOutputSchema extends z.ZodType<any> | undefined = undefined,
     TInitData = unknown,
+    TPathParams extends z.ZodType<any> | undefined = undefined,
+    TQueryParams extends z.ZodType<any> | undefined = undefined,
+    TBody extends z.ZodType<any> | undefined = undefined,
   >(config: {
     /** Query is not allowed with handler */
     query?: never;
@@ -215,18 +280,16 @@ export type OperationFn = {
     /** Output schema (Zod) */
     output?: TOutputSchema;
     /** Hooks for initialization and request transformation */
-    hooks?: {
-      init?: (options: OperationOptions) => TInitData | Promise<TInitData>;
-      beforeRequest?: (
-        context: { input: z.infer<TInputSchema> },
-        initData: TInitData | undefined,
-      ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-      afterRequest?: (context: {
-        output: InferOutput<TOutputSchema>;
-      }) => InferOutput<TOutputSchema> | Promise<InferOutput<TOutputSchema>>;
-    };
+    hooks?: OperationHooks<
+      z.infer<TInputSchema>,
+      InferOutput<TOutputSchema>,
+      TInitData,
+      TPathParams,
+      TQueryParams,
+      TBody
+    >;
     /** REST exposure configuration */
-    rest?: OperationRestConfig;
+    rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
     /** GraphQL exposure configuration (enabled by default) */
     graphql?: OperationGraphQLConfig;
     /** Cache configuration */

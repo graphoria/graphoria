@@ -114,24 +114,28 @@ export const handleRESTRequestFactory = (
         });
       }
 
-      // Validate and parse path parameters with Zod
-      const pathVariables = route.rest!.pathParams?.parse(pathParameters) as Record<
-        string,
-        unknown
-      >;
+      // Validate and parse each REST parameter source with Zod. A source is
+      // left `undefined` when its schema is not configured; that `undefined` is
+      // forwarded to `beforeRequest` so the hook can tell the sources apart,
+      // while `allVariables` stays identical because spreading `undefined` is a
+      // no-op.
+      const pathVariables = route.rest!.pathParams?.parse(pathParameters) as
+        | Record<string, unknown>
+        | undefined;
 
       const paramsQuery = new URLSearchParams(url.search);
       const paramsQueryDictionary = Object.fromEntries(paramsQuery.entries());
 
-      const queryVariables = (route.rest!.queryParams?.parse(paramsQueryDictionary) ??
-        {}) as Record<string, unknown>;
+      const queryVariables = route.rest!.queryParams?.parse(paramsQueryDictionary) as
+        | Record<string, unknown>
+        | undefined;
 
-      let bodyVariables: Record<string, unknown> = {};
+      let bodyVariables: Record<string, unknown> | undefined;
 
       if (req.method === "POST") {
         const body = req.body ? await req.json() : {};
 
-        bodyVariables = (route.rest!.body?.parse(body) ?? {}) as Record<string, unknown>;
+        bodyVariables = route.rest!.body?.parse(body) as Record<string, unknown> | undefined;
       }
 
       // Prepare all variables for the request
@@ -150,6 +154,9 @@ export const handleRESTRequestFactory = (
         (await route.hooks?.beforeRequest?.(
           {
             input: allVariables,
+            pathParams: pathVariables,
+            queryParams: queryVariables,
+            body: bodyVariables,
           },
           routesInitDataPromises[route.routeKey],
         )) ?? allVariables;
