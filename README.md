@@ -47,7 +47,9 @@
 
 Graphoria connects to your database, introspects the schema, and generates a complete GraphQL and REST API layer — including CRUD operations, relationships, filtering, and ordering. On top of that, it integrates RabbitMQ and Kafka for event-driven workflows, supports scheduled background tasks with cron, and provides custom operations with type-safe handlers.
 
-Built with [Bun](https://bun.sh/) and TypeScript for maximum performance.
+Built with [Bun](https://bun.sh/) and TypeScript. Nested relationships resolve as a single SQL
+statement per request rather than one query per parent row; there is no published benchmark yet, so
+treat that as a design property, not a measured comparison.
 
 > **v0.1.0** — All features are working. Breaking changes are expected before v1.0. See [below](#pre-10-stability) for details.
 
@@ -87,7 +89,7 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 
 ## Why Graphoria?
 
-Graphoria gives you a **Hasura-grade GraphQL API** — plus queues, cron, an AI agent, an MCP server, and an admin console — in a single Bun binary. No stitching together five services. No YAML-driven middleware. Write a TypeScript config file and you're done.
+Graphoria gives you an **auto-generated GraphQL API** with a feature surface comparable to Hasura CE — plus queues, cron, an AI agent, an MCP server, and an admin console — in a single Bun binary. No stitching together five services. No YAML-driven middleware. Write a TypeScript config file and you're done.
 
 | You want…                                | Hasura CE | PostGraphile | Graphoria |
 | ---------------------------------------- | :-------: | :----------: | :-------: |
@@ -107,7 +109,7 @@ Graphoria gives you a **Hasura-grade GraphQL API** — plus queues, cron, an AI 
 
 Graphoria is for **backend developers and small-to-medium teams** who want:
 
-- A **Hasura-grade GraphQL API** without the operational overhead of Haskell or the limitations of the Community Edition.
+- A **comparable feature set to Hasura CE** without the operational overhead of Haskell or the limitations of the Community Edition. The comparison is on features, not on benchmarked throughput.
 - **One binary** that handles the API layer, authentication, async workloads (queues + cron), and AI integration — no stitching together five services.
 - **TypeScript-native configuration** — no YAML, no DSL, just a `graphoria.ts` file with full autocomplete.
 - **AI-ready schemas** — the built-in MCP server exposes your database as tools to AI editors with zero extra setup.
