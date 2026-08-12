@@ -5,6 +5,25 @@ import { z } from "zod";
  */
 export type DefaultInput = Record<string, unknown>;
 
+/**
+ * A gql.tada / `TypedDocumentNode` query document. Every GraphQL AST node has a
+ * `kind`, which distinguishes a document from a plain string query; documents
+ * additionally carry their result type on the `__apiType` phantom property.
+ */
+export type AnyQueryDocument = { readonly kind: string };
+
+/**
+ * Extracts a query document's result type (the GraphQL `data` payload) from its
+ * gql.tada / TypedDocumentNode `__apiType` phantom. A plain string query (or a
+ * document without embedded types) resolves to `unknown`.
+ */
+export type QueryResultOf<TQuery> = TQuery extends string
+  ? unknown
+  : // oxlint-disable-next-line typescript/no-explicit-any
+    TQuery extends { __apiType?: (variables: any) => infer TResult }
+    ? TResult
+    : unknown;
+
 // ============================================================================
 // Zod Schemas for Runtime Validation
 // ============================================================================
@@ -127,7 +146,11 @@ export type BeforeRequestContext<
 };
 
 /**
- * Context passed to afterRequest hook
+ * Context passed to the afterRequest hook.
+ *
+ * `output` is the operation's output payload — for query-based operations the
+ * unwrapped GraphQL `data` (the hook's return replaces `data` in the response
+ * envelope); for handler-based operations the value the handler returned.
  */
 export type AfterRequestContext<TOutput = unknown> = {
   output: TOutput;
@@ -185,7 +208,12 @@ export type OperationBeforeRequestHook<
 ) => TVariables | Promise<TVariables>;
 
 /**
- * AfterRequest hook - transforms output after execution
+ * AfterRequest hook — transforms the output after a successful query/handler.
+ *
+ * Receives the output payload and returns the (possibly transformed) payload.
+ * Runs on success only; throw to turn a successful response into an error. For
+ * cached query operations it runs on the cache miss and the transformed result
+ * is cached, so cache hits reuse it without re-invoking the hook.
  */
 export type OperationAfterRequestHook<TOutput = unknown> = (
   context: AfterRequestContext<TOutput>,

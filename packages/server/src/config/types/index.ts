@@ -18,6 +18,8 @@ export {
 // Operation types and Zod schemas
 export type {
   DefaultInput,
+  AnyQueryDocument,
+  QueryResultOf,
   OperationRestConfig,
   OperationGraphQLConfig,
   OperationCacheConfig,

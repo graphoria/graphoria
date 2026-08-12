@@ -221,8 +221,9 @@ operation({
       return { ...input, requestedAt: new Date().toISOString() };
     },
     afterRequest: ({ output }) => {
-      // Runs after the query/handler succeeds.
-      // Return the (possibly transformed) output to send to the client.
+      // Runs after the query/handler succeeds. `output` is the output payload:
+      // for query operations the unwrapped GraphQL `data` (the return replaces
+      // `data` in the response); for handler operations the handler's return.
       return { ...output, processedAt: new Date().toISOString() };
     },
   },
@@ -233,7 +234,40 @@ operation({
 
 `beforeRequest` is a transform from the validated `input` to the actual variables (or handler input). Alongside the merged `input`, the context exposes each REST source separately — `pathParams`, `queryParams`, and `body`, each parsed with its own `rest.*` schema (or `undefined` when that schema is omitted). Use it to inject server-side context, normalize input, or short-circuit the request by throwing.
 
-`afterRequest` runs only on success. Throw to convert a successful response into an error.
+`afterRequest` runs only on success, for both query- and handler-based operations. Throw to convert a successful response into an error. Its `output` is the operation's output payload: for query operations the unwrapped GraphQL `data` — the value you return replaces `data` in the response envelope (other fields are preserved); for handler operations it's whatever the handler returned. When a query operation is cached, `afterRequest` runs on the cache miss and its transformed result is what gets cached, so cache hits reuse it without re-invoking the hook — avoid per-request values (e.g. timestamps) there if the route is cached.
+
+### Typing `afterRequest` with gql.tada
+
+An operation's `query` accepts a plain string **or** a typed document from [gql.tada](https://gql-tada.0no.co)'s `graphql()`. When you pass a typed document, `afterRequest`'s `output` is inferred as the query result while its return type stays bound to the `output` Zod schema — so the hook maps the raw query shape onto your declared response:
+
+```typescript
+import { graphql } from "./graphql"; // your gql.tada setup
+
+const Dashboard = graphql(`
+  query Dashboard($assignee: String!) {
+    pg_tasks(where: { assignee: { eq: $assignee } }) {
+      id
+      title
+    }
+  }
+`);
+
+operation({
+  query: Dashboard, // typed document (or a plain string)
+  input: z.object({ assignee: z.string() }),
+  output: z.object({ count: z.number() }),
+  rest: { path: "/dashboard", queryParams: z.object({ assignee: z.string() }) },
+  hooks: {
+    afterRequest: ({ output }) => {
+      // `output` is typed as the query result:
+      //   { pg_tasks: { id: string; title: string }[] }
+      return { count: output.pg_tasks.length }; // return typed by the `output` schema
+    },
+  },
+});
+```
+
+A plain string `query` carries no compile-time type information, so `output` is `unknown` there. Either way the document is printed to a string at startup, so runtime behavior is identical.
 
 ## Caching
 
