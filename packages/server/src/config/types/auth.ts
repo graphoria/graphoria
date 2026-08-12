@@ -36,10 +36,41 @@ export const OrderByClauseZod = z.strictObject({
 export type OrderByClause = z.input<typeof OrderByClauseZod>;
 
 /**
- * Filter condition — matches GraphQL where argument structure.
- * Supports operators: eq, neq, gt, gte, lt, lte, like, in, is_null, not_null.
+ * Every operator the query builder implements. `databases/common.ts` imports this
+ * list rather than keeping its own: an operator that exists in one place and not
+ * the other is how a role filter ends up matching every row.
  */
-export const FilterConditionZod = z.record(z.string(), z.record(z.string(), z.unknown()));
+export const FILTER_OPERATORS = [
+  "eq",
+  "neq",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "like",
+  "in",
+  "between",
+  "is_null",
+  "is_not_null",
+  "not_null",
+] as const;
+
+export type FilterOperator = (typeof FILTER_OPERATORS)[number];
+
+/**
+ * Filter condition — matches GraphQL where argument structure.
+ *
+ * A value is either a column filter (`{ eq: … }`) or a nested relation filter
+ * holding more of the same. Operators are constrained to the implemented set so
+ * a typo fails at boot instead of evaluating to no condition, which would hand
+ * the role the whole table.
+ */
+export const FilterConditionZod: z.ZodType<Record<string, unknown>> = z.lazy(() =>
+  z.record(
+    z.string(),
+    z.union([z.record(z.enum(FILTER_OPERATORS), z.unknown()), FilterConditionZod]),
+  ),
+);
 
 export type FilterCondition = z.input<typeof FilterConditionZod>;
 

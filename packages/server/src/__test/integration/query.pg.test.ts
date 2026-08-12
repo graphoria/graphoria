@@ -76,20 +76,28 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
       expect(ids(data.text)).toEqual([1, 4]);
     });
 
-    it("is_null", async () => {
+    it("is_null, in both directions", async () => {
       const data = await run<Record<string, { id: number }[]>>(`
-        query { app_tasks(where: { estimate_hours: { is_null: true } }) { id } }
+        query {
+          isNull:    app_tasks(where: { estimate_hours: { is_null: true } })  { id }
+          isNotNull: app_tasks(where: { estimate_hours: { is_null: false } }) { id }
+        }
       `);
 
-      expect(ids(data.app_tasks)).toEqual([2, 5, 10]);
+      expect(ids(data.isNull)).toEqual([2, 5, 10]);
+      expect(ids(data.isNotNull)).toEqual([1, 3, 4, 6, 7, 8, 9]);
     });
 
-    it("not_null", async () => {
+    it("not_null, in both directions", async () => {
       const data = await run<Record<string, { id: number }[]>>(`
-        query { app_tasks(where: { estimate_hours: { not_null: true } }) { id } }
+        query {
+          notNull: app_tasks(where: { estimate_hours: { not_null: true } })  { id }
+          nulls:   app_tasks(where: { estimate_hours: { not_null: false } }) { id }
+        }
       `);
 
-      expect(ids(data.app_tasks)).toEqual([1, 3, 4, 6, 7, 8, 9]);
+      expect(ids(data.notNull)).toEqual([1, 3, 4, 6, 7, 8, 9]);
+      expect(ids(data.nulls)).toEqual([2, 5, 10]);
     });
 
     it("between", async () => {
@@ -647,12 +655,7 @@ describe.skipIf(!integrationEnabled)("query · pg · virtual columns", () => {
     });
   });
 
-  // F6: docs/VIRTUAL_COLUMNS.md promises a virtual column is available to
-  // "GraphQL filters and ordering". buildConditions has no virtual-column
-  // branch, so `where` emits the alias as if it were a physical column and
-  // PostgreSQL rejects the statement with `column t1.name_length does not
-  // exist`. Ordering by one takes the same path when it reaches the database.
-  it.failing("filters and orders by a virtual column", async () => {
+  it("filters and orders by a virtual column", async () => {
     const response = await started.context.gql<{
       filtered: { id: number }[];
       ordered: { name_length: number }[];
@@ -665,6 +668,6 @@ describe.skipIf(!integrationEnabled)("query · pg · virtual columns", () => {
 
     expect(response.errors ?? []).toEqual([]);
     expect(response.data?.filtered.map((row) => row.id)).toEqual([1]);
-    expect(response.data?.ordered.map((row) => row.name_length)).toEqual([20, 15, 15, 14, 13, 9]);
+    expect(response.data?.ordered.map((row) => row.name_length)).toEqual([19, 15, 15, 14, 13, 9]);
   });
 });
