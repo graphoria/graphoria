@@ -141,6 +141,8 @@ export const callStoredProcedure = async (
       }
     }
 
+    // Unquoted on purpose: tedious sends this as the TDS RPC procedure name,
+    // never as SQL text, so reserved words need no delimiting here.
     const data = await request.execute(sp.dottedName);
 
     return data?.recordset ?? false;

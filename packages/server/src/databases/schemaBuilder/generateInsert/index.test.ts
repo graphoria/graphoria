@@ -44,7 +44,21 @@ describe("generateInsertSQL: MSSQL", () => {
 
     expect(formatMSSQL(sql)).toEqual(
       formatMSSQL(`
-        INSERT INTO dbo.categories (category_id,name,slug,parent_category_id) VALUES
+        INSERT INTO [dbo].[categories] ([category_id],[name],[slug],[parent_category_id]) VALUES
+        (1,N'Electronics',N'electronics',0),
+        (2,N'Laptops',N'laptops',1)
+      `),
+    );
+  });
+});
+
+describe("generateInsertSQL: cross-engine", () => {
+  it("quotes for the target engine, not the source table's", () => {
+    const sql = generateInsertSQLMSSQL(testTablePG, testData);
+
+    expect(formatMSSQL(sql)).toEqual(
+      formatMSSQL(`
+        INSERT INTO [dbo].[categories] ([category_id],[name],[slug],[parent_category_id]) VALUES
         (1,N'Electronics',N'electronics',0),
         (2,N'Laptops',N'laptops',1)
       `),

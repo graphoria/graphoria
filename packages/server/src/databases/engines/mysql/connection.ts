@@ -85,7 +85,7 @@ export const callStoredProcedure = async (
 ) => {
   try {
     const data = await executeQuery(
-      `CALL ${sp.dottedName}(${Object.keys(variables)
+      `CALL ${sp.dottedQuotedName}(${Object.keys(variables)
         .map((_, i) => `$${i + 1}`)
         .join(", ")});`,
       sp.db!,
