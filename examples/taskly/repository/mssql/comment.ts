@@ -22,8 +22,7 @@ export const insertComment =
       .input("org_id", c.org_id)
       .input("task_id", c.task_id)
       .input("author", c.author)
-      .input("body", c.body)
-      .query<Public_Comments>(`
+      .input("body", c.body).query<Public_Comments>(`
         INSERT INTO dbo.comments (org_id, task_id, author, body, created_at)
         OUTPUT INSERTED.*
         VALUES (@org_id, @task_id, @author, @body, SYSDATETIMEOFFSET())

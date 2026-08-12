@@ -1,0 +1,84 @@
+# Backing services for the integration test suite.
+#
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   INTEGRATION=1 bun test packages/server/src/__test/integration
+#   docker compose -f docker-compose.test.yml down -v
+#
+# Ports are deliberately non-default so this stack can run alongside a
+# developer's own database instances. Nothing is persisted to a volume — the
+# suite recreates its schema on every run, and `down` should leave no state
+# behind.
+#
+# Credentials are duplicated in packages/server/src/__test/integration/config.ts.
+# Change them in both places or the suite will not connect.
+name: graphoria-test
+
+services:
+  postgres:
+    image: postgres:18
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: graphoria_test
+      POSTGRES_DB: graphoria_test
+    ports:
+      - "55432:5432"
+    # postgres:18 wants the mount one level up from the data directory.
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d graphoria_test"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  mysql:
+    image: mysql:8
+    command: --local-infile=0 --sql-mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+    environment:
+      MYSQL_ROOT_PASSWORD: graphoria_test
+      MYSQL_DATABASE: graphoria_test
+    ports:
+      - "53306:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pgraphoria_test", "--silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # The SQL Server image cannot pre-create a database, so the suite issues
+  # CREATE DATABASE against `master` during setup. The healthcheck only proves
+  # the engine is accepting connections.
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Graphoria_test1"
+      MSSQL_PID: Developer
+    ports:
+      - "51433:1433"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -N -Q "SELECT 1" -b -o /dev/null',
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  redis:
+    image: redis:7
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20

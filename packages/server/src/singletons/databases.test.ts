@@ -2,7 +2,12 @@ import { describe, expect, it, mock } from "bun:test";
 
 const fakeConnection = { tag: "fake-sql" } as unknown as import("bun").SQL;
 
+// mock.module is process-global and permanent; spread the real module so other
+// test files loading after this one still see every export.
+const actualConnection = await import("../databases/engines/postgresql/connection");
+
 mock.module("../databases/engines/postgresql/connection.ts", () => ({
+  ...actualConnection,
   getPool: async () => fakeConnection,
 }));
 

@@ -91,9 +91,7 @@ type Prefixes = {
 Inject a custom pino logger or options before any `logger` call. First call wins — subsequent calls are ignored.
 
 ```typescript
-function configureLogging(
-  loggerOrOptions: pino.Logger | pino.LoggerOptions,
-): void;
+function configureLogging(loggerOrOptions: pino.Logger | pino.LoggerOptions): void;
 ```
 
 ```typescript
@@ -101,9 +99,7 @@ import { configureLogging } from "@graphoria/server";
 import pino from "pino";
 
 // Pass a pre-configured pino instance
-configureLogging(
-  pino({ level: "trace", redact: ["req.headers.authorization"] }),
-);
+configureLogging(pino({ level: "trace", redact: ["req.headers.authorization"] }));
 
 // Or pass pino options
 configureLogging({ level: "trace" });
@@ -341,14 +337,8 @@ function Authorize<TRole extends string = string>(props: {
 Render children based on auth state. `fallback` (default `null`) renders otherwise.
 
 ```typescript
-function Authenticated(props: {
-  fallback?: ReactNode;
-  children: ReactNode;
-}): JSX.Element;
-function Unauthenticated(props: {
-  fallback?: ReactNode;
-  children: ReactNode;
-}): JSX.Element;
+function Authenticated(props: { fallback?: ReactNode; children: ReactNode }): JSX.Element;
+function Unauthenticated(props: { fallback?: ReactNode; children: ReactNode }): JSX.Element;
 ```
 
 ### Hooks
@@ -380,9 +370,7 @@ Returns:
 Access route configuration and permission helpers.
 
 ```typescript
-function useRouteConfig<
-  TRole extends string = string,
->(): RouteConfigContextType<TRole>;
+function useRouteConfig<TRole extends string = string>(): RouteConfigContextType<TRole>;
 ```
 
 Returns:
@@ -439,9 +427,7 @@ interface AuthState<TRole extends string = string> {
   error: string | null;
 }
 
-interface AuthContextType<
-  TRole extends string = string,
-> extends AuthState<TRole> {
+interface AuthContextType<TRole extends string = string> extends AuthState<TRole> {
   login: (username: string, password: string) => Promise<User<TRole> | null>;
   logout: () => Promise<void>;
   hasRole: (role: TRole) => boolean;
