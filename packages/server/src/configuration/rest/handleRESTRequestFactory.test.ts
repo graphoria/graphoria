@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import type { BunRequest } from "bun";
 
@@ -36,7 +37,7 @@ const stubEntities = (
     // oxlint-disable-next-line typescript/no-explicit-any
     handler?: (...args: any[]) => unknown;
     hooks?: Hooks;
-    rest?: { path: string; method?: string };
+    rest?: { path: string; method?: string } & Record<string, unknown>;
   },
 ) =>
   ({
@@ -50,6 +51,9 @@ const stubEntities = (
   }) as const;
 
 const fakeReq = (method = "GET"): BunRequest => ({ method }) as unknown as BunRequest;
+
+const fakeJsonReq = (method: string, body: unknown): BunRequest =>
+  ({ method, body: JSON.stringify(body), json: async () => body }) as unknown as BunRequest;
 
 describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
   it("invokes init then beforeRequest then handler then afterRequest, in order", async () => {
@@ -185,5 +189,73 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
     );
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe("handleRESTRequestFactory beforeRequest REST parameter sources", () => {
+  it("passes pathParams, queryParams, and body separately to beforeRequest", async () => {
+    let observed: Record<string, unknown> = {};
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_params", {
+        handler: () => ({ ok: true }),
+        rest: {
+          path: "/things/:id",
+          method: "POST",
+          pathParams: z.object({ id: z.string() }),
+          queryParams: z.object({ q: z.string() }),
+          body: z.object({ name: z.string() }),
+        },
+        hooks: {
+          beforeRequest: (context: Record<string, unknown>) => {
+            observed = context;
+            return context.input as Record<string, unknown>;
+          },
+        },
+      }),
+      stubGqlEntities(),
+      stubGql(),
+    );
+
+    await factory.handler(
+      new URL("http://x/things/42?q=hello"),
+      "/things/42",
+      "POST",
+      fakeJsonReq("POST", { name: "widget" }),
+    );
+
+    expect(observed.pathParams).toEqual({ id: "42" });
+    expect(observed.queryParams).toEqual({ q: "hello" });
+    expect(observed.body).toEqual({ name: "widget" });
+    expect(observed.input).toEqual({ id: "42", q: "hello", name: "widget" });
+  });
+
+  it("leaves unconfigured parameter sources undefined", async () => {
+    let observed: Record<string, unknown> = {};
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_params_partial", {
+        handler: () => ({ ok: true }),
+        rest: {
+          path: "/things",
+          method: "GET",
+          queryParams: z.object({ q: z.string() }),
+        },
+        hooks: {
+          beforeRequest: (context: Record<string, unknown>) => {
+            observed = context;
+            return context.input as Record<string, unknown>;
+          },
+        },
+      }),
+      stubGqlEntities(),
+      stubGql(),
+    );
+
+    await factory.handler(new URL("http://x/things?q=hello"), "/things", "GET", fakeReq("GET"));
+
+    expect(observed.pathParams).toBeUndefined();
+    expect(observed.queryParams).toEqual({ q: "hello" });
+    expect(observed.body).toBeUndefined();
   });
 });

@@ -449,7 +449,9 @@ operation({
       return { cache: new Map() };
     },
     beforeRequest: (context, initData) => {
-      // Transform input → query variables
+      // Transform input → query variables. `context.input` is the merged view;
+      // `context.pathParams` / `context.queryParams` / `context.body` expose the
+      // individual REST sources, each typed from its `rest.*` schema.
       return { id: context.input.id };
     },
     afterRequest: (context) => {

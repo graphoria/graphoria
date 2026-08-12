@@ -164,7 +164,9 @@ export default (({ operation, z }) => ({
     listOrders: operation.typed<{ main: Repo }>()({
       input: z.object({ customerId: z.string() }),
       handler: async ({ repository }, input) => {
-        return { orders: await repository.main.ordersByCustomer(input.customerId) };
+        return {
+          orders: await repository.main.ordersByCustomer(input.customerId),
+        };
       },
     }),
   },
@@ -211,8 +213,10 @@ operation({
       // Runs once on server boot. Return value is cached and passed to beforeRequest.
       return await loadStaticConfig();
     },
-    beforeRequest: ({ input }, initData) => {
-      // Runs on every request, before the query/handler.
+    beforeRequest: ({ input, pathParams, queryParams, body }, initData) => {
+      // Runs on every request, before the query/handler. `input` is the merged
+      // view; `pathParams` / `queryParams` / `body` are the individual REST
+      // sources, each typed from its `rest.*` schema (or `undefined` if omitted).
       // Return the (possibly transformed) variables for the query.
       return { ...input, requestedAt: new Date().toISOString() };
     },
@@ -227,7 +231,7 @@ operation({
 
 `init` is the right place for one-time work: priming a cache, loading static metadata, opening a connection to a third-party service. Its return value is preserved between requests and passed as the second argument to `beforeRequest`.
 
-`beforeRequest` is a transform from the validated `input` to the actual variables (or handler input). Use it to inject server-side context, normalize input, or short-circuit the request by throwing.
+`beforeRequest` is a transform from the validated `input` to the actual variables (or handler input). Alongside the merged `input`, the context exposes each REST source separately — `pathParams`, `queryParams`, and `body`, each parsed with its own `rest.*` schema (or `undefined` when that schema is omitted). Use it to inject server-side context, normalize input, or short-circuit the request by throwing.
 
 `afterRequest` runs only on success. Throw to convert a successful response into an error.
 
