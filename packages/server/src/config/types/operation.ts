@@ -31,7 +31,7 @@ export type QueryResultOf<TQuery> = TQuery extends string
 /**
  * Zod schema for REST configuration
  */
-export const OperationRestConfigZod = z.object({
+export const OperationRestConfigZod = z.strictObject({
   path: z.string(),
   method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("GET"),
   pathParams: z.custom<z.ZodType>().optional(),
@@ -42,7 +42,7 @@ export const OperationRestConfigZod = z.object({
 /**
  * Zod schema for GraphQL configuration
  */
-export const OperationGraphQLConfigZod = z.object({
+export const OperationGraphQLConfigZod = z.strictObject({
   enabled: z.boolean().optional().default(true),
   name: z.string().optional(),
 });
@@ -50,7 +50,7 @@ export const OperationGraphQLConfigZod = z.object({
 /**
  * Zod schema for cache configuration
  */
-export const OperationCacheConfigZod = z.object({
+export const OperationCacheConfigZod = z.strictObject({
   max: z.number().int().positive().optional(),
   maxSize: z.number().int().positive().optional(),
   ttl: z.number().int().positive().optional(),
@@ -84,7 +84,7 @@ export type OperationCacheConfig = z.input<typeof OperationCacheConfigZod>;
 // ============================================================================
 
 export const OperationZod = z
-  .object({
+  .strictObject({
     description: z.string().optional(),
     query: z.string().optional(),
     // oxlint-disable-next-line typescript/no-explicit-any
@@ -94,7 +94,7 @@ export const OperationZod = z
     // oxlint-disable-next-line typescript/no-explicit-any
     output: z.custom<z.ZodType<any>>().optional(),
     hooks: z
-      .object({
+      .strictObject({
         // oxlint-disable-next-line typescript/no-explicit-any
         init: z.custom<OperationInitHook<any>>().optional(),
         beforeRequest: z

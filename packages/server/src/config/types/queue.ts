@@ -10,7 +10,7 @@ import { z } from "zod";
 /**
  * Reconnection configuration
  */
-export const ReconnectConfigZod = z.object({
+export const ReconnectConfigZod = z.strictObject({
   /** Initial delay before first reconnect attempt (ms) */
   initialDelay: z.number().int().positive().default(1000),
   /** Maximum delay between reconnect attempts (ms) */
@@ -26,7 +26,7 @@ export type ReconnectConfig = z.input<typeof ReconnectConfigZod>;
 /**
  * Publisher configuration — defines how to send messages
  */
-export const PublisherConfigZod = z.object({
+export const PublisherConfigZod = z.strictObject({
   /** Topic/Exchange name to publish to */
   topic: z.string(),
   /** Routing key (RabbitMQ) or message key (Kafka) */
@@ -58,7 +58,7 @@ export type SubscriberHandler = (
 /**
  * Subscriber configuration — defines how to receive messages
  */
-export const SubscriberConfigZod = z.object({
+export const SubscriberConfigZod = z.strictObject({
   /** Topic/Exchange name to subscribe to */
   topic: z.string(),
   /** Pattern for filtering messages (routing key pattern for RabbitMQ) */
@@ -80,7 +80,7 @@ export type SubscriberConfig = z.input<typeof SubscriberConfigZod>;
 /**
  * Topic/Exchange configuration — for auto-setup
  */
-export const TopicConfigZod = z.object({
+export const TopicConfigZod = z.strictObject({
   /** Exchange type (RabbitMQ only) */
   type: z.enum(["direct", "fanout", "topic", "headers"]).optional().default("topic"),
   /** Whether exchange should survive broker restart */
@@ -94,7 +94,7 @@ export type TopicConfig = z.input<typeof TopicConfigZod>;
 /**
  * Base queue configuration shared by all providers
  */
-export const BaseQueueConfigZod = z.object({
+export const BaseQueueConfigZod = z.strictObject({
   /** Unique name for this queue connection */
   name: z.string(),
   /** Whether to auto-create topics/exchanges/queues */
@@ -118,7 +118,7 @@ export const BaseQueueConfigZod = z.object({
 /**
  * RabbitMQ connection configuration (object form)
  */
-export const RabbitMQConnectionZod = z.object({
+export const RabbitMQConnectionZod = z.strictObject({
   hostname: z.string().default("localhost"),
   port: z.number().default(5672),
   username: z.string().optional(),
@@ -131,7 +131,7 @@ export type RabbitMQConnection = z.input<typeof RabbitMQConnectionZod>;
 /**
  * Kafka connection configuration
  */
-export const KafkaConnectionZod = z.object({
+export const KafkaConnectionZod = z.strictObject({
   /** Broker addresses — "host:port" or ["host1:port1", "host2:port2"] */
   brokers: z.union([z.string(), z.array(z.string())]),
   /** Client identifier sent to the broker (default: "datagraph-<queue name>") */
@@ -140,7 +140,7 @@ export const KafkaConnectionZod = z.object({
   ssl: z.boolean().optional().default(false),
   /** SASL authentication (optional) */
   sasl: z
-    .object({
+    .strictObject({
       mechanism: z.enum(["plain", "scram-sha-256", "scram-sha-512"]).optional().default("plain"),
       username: z.string(),
       password: z.string(),

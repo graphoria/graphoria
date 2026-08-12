@@ -4,7 +4,7 @@ import { z } from "zod";
  * Model Context Protocol (MCP) server configuration, nested under `ai.mcp`.
  * When enabled, exposes a `/mcp` endpoint for LLM agents.
  */
-export const MCPZod = z.object({
+export const MCPZod = z.strictObject({
   /** Whether the MCP server is enabled. Off by default. */
   enabled: z.boolean().default(false),
 });
@@ -20,7 +20,7 @@ export type MCPConfig = z.input<typeof MCPZod>;
  * (`LLM_PROVIDER`, `LLM_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
  * `DEEPSEEK_API_KEY`, `OLLAMA_HOST`), not from this config.
  */
-export const AIZod = z.object({
+export const AIZod = z.strictObject({
   /** Whether the AI agent is enabled. Off by default. */
   enabled: z.boolean().default(false),
   /** Overrides the built-in system prompt sent to the LLM. */
