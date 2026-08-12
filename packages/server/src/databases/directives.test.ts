@@ -540,6 +540,10 @@ describe("applyDirectives", () => {
       expect(result).toBe("REPLACE(email, $1, $2)");
     });
 
+    // PostgreSQL resolves CONCAT through the variadic "any" pseudo-type, which
+    // gives it nothing to infer a bare placeholder from:
+    // `could not determine data type of parameter $1`. The cast annotates the
+    // parameter's type at Parse time and leaves the value bound.
     test("should leave enum values as literals (not parameterized)", () => {
       const result = applyDirectives(
         "name",
@@ -548,7 +552,42 @@ describe("applyDirectives", () => {
         [{ name: "static_0", type: "String", required: false, defaultValue: "Dr. " }],
       );
       // "before" is an enum value — stays literal; "$static_0" becomes $1
-      expect(result).toBe("CONCAT($1, name)");
+      expect(result).toBe("CONCAT($1::TEXT, name)");
+    });
+
+    test("should cast a parameterized concat argument on pg in the after position", () => {
+      const result = applyDirectives(
+        "name",
+        [{ name: "concat", arguments: { with: "$static_0" } }],
+        "pg",
+        [{ name: "static_0", type: "String", required: false, defaultValue: " Jr." }],
+      );
+      expect(result).toBe("CONCAT(name, $1::TEXT)");
+    });
+
+    test("should not cast a concat literal", () => {
+      const result = applyDirectives("name", [{ name: "concat", arguments: { with: " Jr." } }], "pg");
+      expect(result).toBe("CONCAT(name, ' Jr.')");
+    });
+
+    test("should not cast a parameterized concat argument on mysql or mssql", () => {
+      expect(
+        applyDirectives(
+          "name",
+          [{ name: "concat", arguments: { with: "$static_0" } }],
+          "mssql",
+          [{ name: "static_0", type: "String", required: false, defaultValue: " Jr." }],
+        ),
+      ).toBe("CONCAT(name, @1)");
+
+      expect(
+        applyDirectives(
+          "name",
+          [{ name: "concat", arguments: { with: "$static_0" } }],
+          "mysql",
+          [{ name: "static_0", type: "String", required: false, defaultValue: " Jr." }],
+        ),
+      ).toBe("CONCAT(name, $1)");
     });
 
     test("should leave non-$ values untouched", () => {

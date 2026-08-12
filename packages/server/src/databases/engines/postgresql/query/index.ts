@@ -300,6 +300,24 @@ export const buildSQLForField = (
 
   const isArraySelection = !!field.isArray && !withoutArrayWrapper;
 
+  // json_agg collapses the rows into one, so LIMIT/OFFSET applied next to it
+  // trims aggregate rows rather than table rows: the limit does nothing and any
+  // non-zero offset skips the only row there is. Paginate inside a derived table
+  // and aggregate that. ROW_NUMBER over the same ordering carries the order out
+  // to the aggregate, which PostgreSQL does not otherwise guarantee.
+  if (isArraySelection && paginationClause) {
+    const pageAlias = `${tableAlias}_page`;
+
+    return `
+    COALESCE((
+      SELECT json_agg(${pageAlias}.obj ORDER BY ${pageAlias}.__ord)
+      FROM (
+        SELECT json_build_object(${selectList}) AS obj, ROW_NUMBER() OVER (${orderByClause}) AS __ord ${fromClause} ${whereClause} ${orderByClause} ${paginationClause}
+      ) ${pageAlias}
+    ), '[]'::json)
+  `;
+  }
+
   return `
     COALESCE((
       SELECT ${isArraySelection ? `json_agg(json_build_object(${selectList}) ${orderByClause})` : `json_build_object(${selectList})`} ${fromClause} ${whereClause} ${withoutArrayWrapper ? " LIMIT 1" : ""} ${paginationClause ? ` ${paginationClause}` : ""}

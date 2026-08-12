@@ -146,11 +146,7 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
   });
 
   describe("pagination", () => {
-    // F3: the PostgreSQL builder appends `LIMIT n OFFSET m` outside the
-    // `json_agg(...)` that collapses the rows into one JSON array, so the limit
-    // applies to the single aggregate row. `limit` alone is a no-op and any
-    // non-zero `offset` skips the only row, returning [].
-    it.failing("limit caps the row count", async () => {
+    it("limit caps the row count", async () => {
       const data = await run<Record<string, { id: number }[]>>(`
         query { app_tasks(limit: 3, orderBy: [{ id: ASC }]) { id } }
       `);
@@ -158,12 +154,32 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
       expect(data.app_tasks?.map((row) => row.id)).toEqual([1, 2, 3]);
     });
 
-    it.failing("offset skips rows", async () => {
+    it("offset skips rows", async () => {
       const data = await run<Record<string, { id: number }[]>>(`
         query { app_tasks(limit: 3, offset: 2, orderBy: [{ id: ASC }]) { id } }
       `);
 
       expect(data.app_tasks?.map((row) => row.id)).toEqual([3, 4, 5]);
+    });
+
+    it("keeps the requested order across the page boundary", async () => {
+      const data = await run<Record<string, { id: number }[]>>(`
+        query {
+          page1: app_tasks(limit: 4, orderBy: [{ priority: DESC }, { id: ASC }]) { id }
+          page2: app_tasks(limit: 4, offset: 4, orderBy: [{ priority: DESC }, { id: ASC }]) { id }
+        }
+      `);
+
+      expect(data.page1?.map((row) => row.id)).toEqual([1, 6, 7, 4]);
+      expect(data.page2?.map((row) => row.id)).toEqual([9, 2, 5, 8]);
+    });
+
+    it("paginates without an order argument", async () => {
+      const data = await run<Record<string, { id: number }[]>>(`
+        query { app_tasks(limit: 2) { id } }
+      `);
+
+      expect(data.app_tasks).toHaveLength(2);
     });
   });
 
@@ -429,11 +445,7 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
       expect(data.nullable).toEqual({ notes: "none" });
     });
 
-    // F5: @concat parameterises its `with` argument, and PostgreSQL cannot
-    // infer a type for a bare placeholder inside CONCAT() — the query dies with
-    // `could not determine data type of parameter $n`. Every other directive
-    // interpolates its arguments as literals and works.
-    it.failing("@concat prepends and appends", async () => {
+    it("@concat prepends and appends", async () => {
       const data = await run<{ app_users_single: { prefixed: string; suffixed: string } }>(`
         query {
           app_users_single(where: { id: { eq: 1 } }) {
