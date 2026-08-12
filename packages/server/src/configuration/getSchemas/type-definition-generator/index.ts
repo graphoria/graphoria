@@ -143,7 +143,14 @@ export const generateOrderByInputType = (mergedEntities: MergedEntities) =>
     ),
   );
 
-const aggTypes: string[] = ["Min", "Max", "Sum", "Avg"];
+// An average is fractional whatever the column holds, so it cannot inherit the
+// column's type the way min/max/sum do.
+const aggTypes: { name: string; graphQLType?: string }[] = [
+  { name: "Min" },
+  { name: "Max" },
+  { name: "Sum" },
+  { name: "Avg", graphQLType: "Float" },
+];
 
 // Generate aggregation types for each table
 export const generateAggregationTypes = (mergedEntities: MergedEntities) => {
@@ -155,10 +162,10 @@ export const generateAggregationTypes = (mergedEntities: MergedEntities) => {
         numericColumns.length
           ? aggTypes
               .map(
-                (agg) =>
+                ({ name: agg, graphQLType }) =>
                   `
                   type ${resolverName}${agg} {
-                    ${lj(numericColumns, ({ name }) => `${name}: ${mapSQLTypeToGraphQLType(columns.find((c) => c.name === name)?.dataType || "")}`)}
+                    ${lj(numericColumns, ({ name }) => `${name}: ${graphQLType ?? mapSQLTypeToGraphQLType(columns.find((c) => c.name === name)?.dataType || "")}`)}
                   }
                 `,
               )
@@ -171,7 +178,9 @@ export const generateAggregationTypes = (mergedEntities: MergedEntities) => {
         count: Int
         ${
           numericColumns.length
-            ? aggTypes.map((agg) => `${agg.toLowerCase()}: ${resolverName}${agg}`).join("\n")
+            ? aggTypes
+                .map(({ name: agg }) => `${agg.toLowerCase()}: ${resolverName}${agg}`)
+                .join("\n")
             : ""
         }
         items: [${resolverName}]

@@ -27,7 +27,6 @@ export const categorizeSqlType = (dataType: string): SqlTypeCategory => {
     lowerType === "bigint" ||
     lowerType === "tinyint" ||
     lowerType === "mediumint" ||
-    lowerType === "numeric" ||
     lowerType === "number"
   ) {
     return SqlTypeCategory.INTEGER;
@@ -40,6 +39,9 @@ export const categorizeSqlType = (dataType: string): SqlTypeCategory => {
     lowerType === "double" ||
     lowerType === "double precision" ||
     lowerType === "decimal" ||
+    // PostgreSQL's information_schema reports DECIMAL(p, s) as "numeric", so
+    // classifying it as an integer typed every PG decimal column as GraphQL Int.
+    lowerType === "numeric" ||
     lowerType === "money" ||
     lowerType === "smallmoney"
   ) {

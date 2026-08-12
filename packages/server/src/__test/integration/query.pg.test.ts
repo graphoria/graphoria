@@ -568,6 +568,42 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
       }
     });
 
+    // The runtime builds the response JSON itself rather than running graphql-js
+    // serialization, so a wrong scalar in the SDL never errors — it just makes
+    // the published schema a lie and breaks client codegen.
+    it("declares the type it actually returns", async () => {
+      const introspection = await run<{
+        __schema: {
+          types: {
+            name: string;
+            fields?: { name: string; type: { name: string | null; ofType: { name: string } | null } }[];
+          }[];
+        };
+      }>(`query { __schema { queryType { name } } }`);
+
+      const fieldType = (typeName: string, fieldName: string) => {
+        const type = introspection.__schema.types.find((t) => t.name === typeName);
+        const field = type?.fields?.find((f) => f.name === fieldName);
+        return field?.type.name ?? field?.type.ofType?.name;
+      };
+
+      expect(fieldType("app_projects", "budget")).toBe("Float");
+      expect(fieldType("catalog_type_showcase", "decimal_val")).toBe("Float");
+      expect(fieldType("app_tasksAvg", "priority")).toBe("Float");
+      expect(fieldType("app_tasksMin", "priority")).toBe("Int");
+      expect(fieldType("app_tasksSum", "priority")).toBe("Int");
+    });
+
+    it("accepts a fractional filter on a decimal column", async () => {
+      const data = await run<Record<string, { id: number }[]>>(`
+        query {
+          app_projects(where: { budget: { gt: 10000.25 } }) { id }
+        }
+      `);
+
+      expect(ids(data.app_projects)).toEqual([1]);
+    });
+
     it("serves reserved words and mixed-case identifiers", async () => {
       const data = await run<{
         catalog_order: { id: number; user: string; select: number }[];
