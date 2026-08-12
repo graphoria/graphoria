@@ -47,7 +47,6 @@ export const buildConditions = (
   tableAlias: string,
   level: number,
   aliasMap: { [alias: string]: string },
-  quoted = false,
 ): string => {
   if (!whereArgs) return "";
 
@@ -71,7 +70,7 @@ export const buildConditions = (
             ? `${mappingDbTypeCharVar[dbType]}${variablesDefinition.findIndex((v) => v.name === operand.substring(1)) + 1}`
             : operand;
 
-        const condition = buildCondition(tableAlias, fieldName, operator, resolvedValue, quoted);
+        const condition = buildCondition(tableAlias, fieldName, operator, resolvedValue, dbType);
 
         if (condition) {
           conditions.push(condition);
@@ -88,7 +87,7 @@ export const buildConditions = (
         fieldName,
         tableAlias,
         nestedTableAlias,
-        quoted,
+        dbType,
       );
 
       const nestedConditions = buildConditions(
@@ -100,7 +99,6 @@ export const buildConditions = (
         nestedTableAlias,
         level + 1,
         aliasMap,
-        quoted,
       );
 
       const existsClause = `EXISTS (
@@ -116,7 +114,24 @@ export const buildConditions = (
   return conditions.length > 0 ? conditions.join(" AND ") : "";
 };
 
-const wrapIf = (value: string, quoted: boolean): string => (quoted ? `"${value}"` : value);
+// Reserved words (e.g. PRINT, ORDER) are valid GraphQL names; always delimit
+// identifiers so they parse as identifiers in every dialect.
+const identifierDelimiters: Record<DatabaseType, [string, string]> = {
+  pg: ['"', '"'],
+  mysql: ["`", "`"],
+  mssql: ["[", "]"],
+};
+
+export const wrapIdentifierFp =
+  (dbType: DatabaseType) =>
+  (value: string): string => {
+    const [open, close] = identifierDelimiters[dbType];
+    return `${open}${value}${close}`;
+  };
+
+export const wrapIdentifierPG = wrapIdentifierFp("pg");
+export const wrapIdentifierMSSQL = wrapIdentifierFp("mssql");
+export const wrapIdentifierMySQL = wrapIdentifierFp("mysql");
 
 // Helper to resolve variable values
 const resolveVariable = <T>(value: unknown, variables: Record<string, unknown>): T => {
@@ -131,9 +146,9 @@ const buildCondition = (
   field: string,
   operator: string,
   value: unknown,
-  quoted = false,
+  dbType: DatabaseType,
 ): string | null => {
-  const wrappedField = wrapIf(field, quoted);
+  const wrappedField = wrapIdentifierFp(dbType)(field);
 
   switch (operator) {
     case "eq":
@@ -174,14 +189,13 @@ const pairsToAnd = (
     parentColumn: string;
     childColumn: string;
   }[],
-  quoted = false,
-) =>
-  pairs
-    .map(
-      (p) =>
-        `${p.parentAlias}.${wrapIf(p.parentColumn, quoted)} = ${p.childAlias}.${wrapIf(p.childColumn, quoted)}`,
-    )
+  dbType: DatabaseType,
+) => {
+  const wrap = wrapIdentifierFp(dbType);
+  return pairs
+    .map((p) => `${p.parentAlias}.${wrap(p.parentColumn)} = ${p.childAlias}.${wrap(p.childColumn)}`)
     .join(" AND ");
+};
 
 export const findJoinCondition = (
   entities: MergedEntities,
@@ -189,7 +203,7 @@ export const findJoinCondition = (
   childTableName: string,
   parentAlias: string,
   childAlias: string,
-  quoted = false,
+  dbType: DatabaseType,
 ): string => {
   const relations = entities.getForeignKeysBetweenTables(parentTableName, childTableName);
 
@@ -204,7 +218,7 @@ export const findJoinCondition = (
           parentColumn: c.source,
           childColumn: c.target,
         })),
-        quoted,
+        dbType,
       ),
     ) ?? []),
     ...(relations.relationshipsReversed?.map((relation) =>
@@ -215,7 +229,7 @@ export const findJoinCondition = (
           parentColumn: c.target,
           childColumn: c.source,
         })),
-        quoted,
+        dbType,
       ),
     ) ?? []),
   ].join(" AND ");
@@ -233,7 +247,6 @@ export const buildWhereClauseFp =
     parentTableAlias: string | null,
     level: number,
     aliasMap: { [alias: string]: string },
-    quoted = false,
   ): string => {
     const whereConditions: string[] = [
       buildConditions(
@@ -245,7 +258,6 @@ export const buildWhereClauseFp =
         tableAlias,
         level + 1,
         aliasMap,
-        quoted,
       ),
       parentTableName && parentTableAlias
         ? findJoinCondition(
@@ -254,7 +266,7 @@ export const buildWhereClauseFp =
             field.name,
             parentTableAlias,
             tableAlias,
-            quoted,
+            dbType,
           )
         : null,
     ].filter(Boolean) as string[];
@@ -282,6 +294,7 @@ const parseOrderDirection = (direction: string): { sort: string; nulls?: string 
 export const buildOrderByClauseFp =
   (dbType: DatabaseType = "pg") =>
   (entities: MergedEntities, field: SelectionAnalysis, tableAlias: string): string => {
+    const wrap = wrapIdentifierFp(dbType);
     if (field.arguments?.["orderBy"]) {
       const orderBy = field.arguments?.["orderBy"];
       // orderBy is an array or object of { column: direction } - no variable resolution needed
@@ -306,11 +319,11 @@ export const buildOrderByClauseFp =
           if (nulls) {
             if (dbType === "pg") {
               // PostgreSQL supports NULLS FIRST/LAST natively
-              return `${tableAlias}."${colName}" ${sort} NULLS ${nulls}`;
+              return `${tableAlias}.${wrap(colName)} ${sort} NULLS ${nulls}`;
             } else if (dbType === "mysql") {
               // MySQL: Use CASE statement for NULL handling
               const nullFirst = nulls === "FIRST";
-              return `CASE WHEN ${tableAlias}.${colName} IS NULL THEN ${nullFirst ? 0 : 1} ELSE ${nullFirst ? 1 : 0} END, ${tableAlias}.${colName} ${sort}`;
+              return `CASE WHEN ${tableAlias}.${wrap(colName)} IS NULL THEN ${nullFirst ? 0 : 1} ELSE ${nullFirst ? 1 : 0} END, ${tableAlias}.${wrap(colName)} ${sort}`;
             } else {
               // MSSQL requires CASE statements for NULL handling
               const nullFirst = nulls === "FIRST";
@@ -318,10 +331,10 @@ export const buildOrderByClauseFp =
 
               if ((nullFirst && isAsc) || (!nullFirst && !isAsc)) {
                 // NULLs naturally come first in this combination
-                return `${tableAlias}.[${colName}] ${sort}`;
+                return `${tableAlias}.${wrap(colName)} ${sort}`;
               } else {
                 // Need to force NULL positioning with CASE
-                return `CASE WHEN ${tableAlias}.${colName} IS NULL THEN ${nullFirst ? 0 : 1} ELSE ${nullFirst ? 1 : 0} END, ${tableAlias}.${colName} ${sort}`;
+                return `CASE WHEN ${tableAlias}.${wrap(colName)} IS NULL THEN ${nullFirst ? 0 : 1} ELSE ${nullFirst ? 1 : 0} END, ${tableAlias}.${wrap(colName)} ${sort}`;
               }
             }
           } else {
@@ -333,13 +346,7 @@ export const buildOrderByClauseFp =
               ) ${sort}`;
             }
 
-            if (dbType === "pg") {
-              return `${tableAlias}."${colName}" ${sort}`;
-            } else if (dbType === "mysql") {
-              return `${tableAlias}.${colName} ${sort}`;
-            } else {
-              return `${tableAlias}.${colName} ${sort}`;
-            }
+            return `${tableAlias}.${wrap(colName)} ${sort}`;
           }
         })
         .join(", ");
@@ -463,7 +470,6 @@ export const processFieldSelectionsFp =
     level: number,
     buildSubquery: (sel: SelectionAnalysis, level: number) => string,
     selectBuilder: (entry: [name: string, selector: string]) => string,
-    quoted = false,
   ): string => {
     const selectClauses: [string, string][] = [];
     const subQueries: [string, string][] = [];
@@ -487,7 +493,7 @@ export const processFieldSelectionsFp =
               selectClauses.push([`${colName}`, `(${vc.expression})`]);
             }
           } else {
-            let querySelector = `${tableAlias}.${wrapIf(sel.name, quoted)}`;
+            let querySelector = `${tableAlias}.${wrapIdentifierFp(dbType)(sel.name)}`;
 
             // Apply all directives using the handler registry
             querySelector = applyDirectives(

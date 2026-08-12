@@ -14,6 +14,8 @@ import {
   ordWithWhenOrDirectiveQuery,
   prodLimitQuery,
   prodQuery,
+  prodReservedWordAliasQuery,
+  prodReservedWordColumnQuery,
   prodWhereArgumentNestedEntitiesQuery,
   prodWhereArgumentNestedQuery,
   prodWhereArgumentQuery,
@@ -50,13 +52,13 @@ describe("MySQL: Store", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      t1.name, 
+                      t1.\`name\`, 
                       'sku', 
-                      t1.sku, 
+                      t1.\`sku\`, 
                       'price', 
-                      t1.price, 
+                      t1.\`price\`, 
                       'dbo_product_categories', 
                       COALESCE(
                         (
@@ -64,16 +66,16 @@ describe("MySQL: Store", () => {
                             JSON_ARRAYAGG(
                               JSON_OBJECT(
                                 'category_id', 
-                                t2.category_id, 
+                                t2.\`category_id\`, 
                                 'dbo_categories', 
                                 COALESCE(
                                   (
                                     SELECT 
-                                      JSON_OBJECT('name', t3.name) 
+                                      JSON_OBJECT('name', t3.\`name\`) 
                                     FROM 
                                       dbo.categories t3 
                                     WHERE 
-                                      t2.category_id = t3.category_id
+                                      t2.\`category_id\` = t3.\`category_id\`
                                   ), 
                                   null
                                 )
@@ -82,7 +84,7 @@ describe("MySQL: Store", () => {
                           FROM 
                             dbo.product_categories t2 
                           WHERE 
-                            t1.product_id = t2.product_id
+                            t1.\`product_id\` = t2.\`product_id\`
                         ), 
                         JSON_ARRAY()
                       )
@@ -110,11 +112,11 @@ describe("MySQL: Store", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      t1.name, 
+                      t1.\`name\`, 
                       'sku', 
-                      t1.sku, 
+                      t1.\`sku\`, 
                       'dbo_product_categories', 
                       COALESCE(
                         (
@@ -122,16 +124,16 @@ describe("MySQL: Store", () => {
                             JSON_ARRAYAGG(
                               JSON_OBJECT(
                                 'category_id', 
-                                t2.category_id, 
+                                t2.\`category_id\`, 
                                 'dbo_categories', 
                                 COALESCE(
                                   (
                                     SELECT 
-                                      JSON_OBJECT('name', t3.name) 
+                                      JSON_OBJECT('name', t3.\`name\`) 
                                     FROM 
                                       dbo.categories t3 
                                     WHERE 
-                                      t2.category_id = t3.category_id
+                                      t2.\`category_id\` = t3.\`category_id\`
                                   ), 
                                   null
                                 )
@@ -140,7 +142,7 @@ describe("MySQL: Store", () => {
                           FROM 
                             dbo.product_categories t2 
                           WHERE 
-                            t1.product_id = t2.product_id
+                            t1.\`product_id\` = t2.\`product_id\`
                         ), 
                         JSON_ARRAY()
                       )
@@ -149,7 +151,7 @@ describe("MySQL: Store", () => {
                 FROM 
                   dbo.products t1 
                 WHERE 
-                  t1.name = $1
+                  t1.\`name\` = $1
               ), 
               JSON_ARRAY()
             )
@@ -170,26 +172,26 @@ describe("MySQL: Store", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      t1.name, 
+                      t1.\`name\`, 
                       'sku', 
-                      t1.sku, 
+                      t1.\`sku\`, 
                       'dbo_order_items', 
                       COALESCE(
                         (
                           SELECT 
                             JSON_ARRAYAGG(
                               JSON_OBJECT(
-                                'quantity', t2.quantity, 'unit_price', 
-                                t2.unit_price
+                                'quantity', t2.\`quantity\`, 'unit_price', 
+                                t2.\`unit_price\`
                               )
                             ) 
                           FROM 
                             dbo.order_items t2 
                           WHERE 
-                            t2.quantity > $1 
-                            AND t1.product_id = t2.product_id
+                            t2.\`quantity\` > $1 
+                            AND t1.\`product_id\` = t2.\`product_id\`
                         ), 
                         JSON_ARRAY()
                       )
@@ -217,22 +219,22 @@ describe("MySQL: Store", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      t1.name, 
+                      t1.\`name\`, 
                       'sku', 
-                      t1.sku, 
+                      t1.\`sku\`, 
                       'dbo_order_items', 
                       COALESCE(
                         (
                           SELECT 
                             JSON_ARRAYAGG(
-                              JSON_OBJECT('quantity', t2.quantity)
+                              JSON_OBJECT('quantity', t2.\`quantity\`)
                             ) 
                           FROM 
                             dbo.order_items t2 
                           WHERE 
-                            t1.product_id = t2.product_id
+                            t1.\`product_id\` = t2.\`product_id\`
                         ), 
                         JSON_ARRAY()
                       )
@@ -247,8 +249,8 @@ describe("MySQL: Store", () => {
                     FROM 
                       dbo.reviews t2 
                     WHERE 
-                      t1.product_id = t2.product_id 
-                      AND (t2.rating >= $1)
+                      t1.\`product_id\` = t2.\`product_id\` 
+                      AND (t2.\`rating\` >= $1)
                   )
               ), 
               JSON_ARRAY()
@@ -272,23 +274,23 @@ describe("MySQL: Orders", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'order_id', 
-                      t1.order_id, 
+                      t1.\`order_id\`, 
                       'customer_id', 
-                      t1.customer_id, 
+                      t1.\`customer_id\`, 
                       'total_amount', 
-                      t1.total_amount, 
+                      t1.\`total_amount\`, 
                       'dbo_customers', 
                       COALESCE(
                         (
                           SELECT 
                             JSON_OBJECT(
-                              'first_name', t2.first_name, 'last_name', 
-                              t2.last_name
+                              'first_name', t2.\`first_name\`, 'last_name', 
+                              t2.\`last_name\`
                             ) 
                           FROM 
                             dbo.customers t2 
                           WHERE 
-                            t1.customer_id = t2.customer_id
+                            t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
                         null
                       )
@@ -318,13 +320,13 @@ describe("MySQL: Common", () => {
                     JSON_ARRAYAGG(
                       JSON_OBJECT(
                         'product_id', 
-                        t1.product_id, 
+                        t1.\`product_id\`, 
                         'name', 
-                        t1.name, 
+                        t1.\`name\`, 
                         'sku', 
-                        t1.sku, 
+                        t1.\`sku\`, 
                         'price', 
-                        t1.price, 
+                        t1.\`price\`, 
                         'dbo_product_categories', 
                         COALESCE(
                           (
@@ -332,16 +334,16 @@ describe("MySQL: Common", () => {
                               JSON_ARRAYAGG(
                                 JSON_OBJECT(
                                   'category_id', 
-                                  t2.category_id, 
+                                  t2.\`category_id\`, 
                                   'dbo_categories', 
                                   COALESCE(
                                     (
                                       SELECT 
-                                        JSON_OBJECT('name', t3.name) 
+                                        JSON_OBJECT('name', t3.\`name\`) 
                                       FROM 
                                         dbo.categories t3 
                                       WHERE 
-                                        t2.category_id = t3.category_id
+                                        t2.\`category_id\` = t3.\`category_id\`
                                     ), 
                                     null
                                   )
@@ -350,7 +352,7 @@ describe("MySQL: Common", () => {
                             FROM 
                               dbo.product_categories t2 
                             WHERE 
-                              t1.product_id = t2.product_id
+                              t1.\`product_id\` = t2.\`product_id\`
                           ), 
                           JSON_ARRAY()
                         )
@@ -378,8 +380,8 @@ describe("MySQL: Common", () => {
                 SELECT 
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
-                      'order_id', t1.order_id, 'customer_id', 
-                      t1.customer_id
+                      'order_id', t1.\`order_id\`, 'customer_id', 
+                      t1.\`customer_id\`
                     )
                   ) 
                 FROM 
@@ -405,18 +407,18 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'order_id', 
-                      t1.order_id, 
+                      t1.\`order_id\`, 
                       'customer_id', 
-                      t1.customer_id, 
+                      t1.\`customer_id\`, 
                       'dbo_customers', 
                       COALESCE(
                         (
                           SELECT 
-                            JSON_OBJECT('first_name', t2.first_name) 
+                            JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
                             dbo.customers t2 
                           WHERE 
-                            t1.customer_id = t2.customer_id
+                            t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
                         null
                       )
@@ -444,18 +446,18 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'order_id', 
-                      t1.order_id, 
+                      t1.\`order_id\`, 
                       'customer_id', 
-                      t1.customer_id, 
+                      t1.\`customer_id\`, 
                       'dbo_customers', 
                       COALESCE(
                         (
                           SELECT 
-                            JSON_OBJECT('first_name', t2.first_name) 
+                            JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
                             dbo.customers t2 
                           WHERE 
-                            t1.customer_id = t2.customer_id
+                            t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
                         null
                       )
@@ -482,8 +484,8 @@ describe("MySQL: Common", () => {
                 SELECT 
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
-                      'order_id', t1.order_id, 'customer_id', 
-                      t1.customer_id
+                      'order_id', t1.\`order_id\`, 'customer_id', 
+                      t1.\`customer_id\`
                     )
                   ) 
                 FROM 
@@ -513,18 +515,18 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'order_id', 
-                      t1.order_id, 
+                      t1.\`order_id\`, 
                       'customer_id', 
-                      t1.customer_id, 
+                      t1.\`customer_id\`, 
                       'dbo_customers', 
                       COALESCE(
                         (
                           SELECT 
-                            JSON_OBJECT('first_name', t2.first_name) 
+                            JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
                             dbo.customers t2 
                           WHERE 
-                            t1.customer_id = t2.customer_id
+                            t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
                         null
                       )
@@ -556,8 +558,8 @@ describe("MySQL: Common", () => {
                 SELECT 
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
-                      'order_id', t1.order_id, 'customer_id', 
-                      t1.customer_id
+                      'order_id', t1.\`order_id\`, 'customer_id', 
+                      t1.\`customer_id\`
                     )
                   ) 
                 FROM 
@@ -587,18 +589,18 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'order_id', 
-                      t1.order_id, 
+                      t1.\`order_id\`, 
                       'customer_id', 
-                      t1.customer_id, 
+                      t1.\`customer_id\`, 
                       'dbo_customers', 
                       COALESCE(
                         (
                           SELECT 
-                            JSON_OBJECT('first_name', t2.first_name) 
+                            JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
                             dbo.customers t2 
                           WHERE 
-                            t1.customer_id = t2.customer_id
+                            t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
                         null
                       )
@@ -630,8 +632,8 @@ describe("MySQL: Common", () => {
                 SELECT 
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
-                      'order_id', t1.order_id, 'customer_id', 
-                      t1.customer_id
+                      'order_id', t1.\`order_id\`, 'customer_id', 
+                      t1.\`customer_id\`
                     )
                   ) 
                 FROM 
@@ -655,8 +657,8 @@ describe("MySQL: Common", () => {
                 SELECT 
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
-                      'order_id', t1.order_id, 'customer_id', 
-                      t1.customer_id
+                      'order_id', t1.\`order_id\`, 'customer_id', 
+                      t1.\`customer_id\`
                     )
                   ) 
                 FROM 
@@ -682,18 +684,18 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'order_id', 
-                      t1.order_id, 
+                      t1.\`order_id\`, 
                       'customer_id', 
-                      t1.customer_id, 
+                      t1.\`customer_id\`, 
                       'dbo_customers', 
                       COALESCE(
                         (
                           SELECT 
-                            JSON_OBJECT('first_name', t2.first_name) 
+                            JSON_OBJECT('first_name', t2.\`first_name\`) 
                           FROM 
                             dbo.customers t2 
                           WHERE 
-                            t1.customer_id = t2.customer_id
+                            t1.\`customer_id\` = t2.\`customer_id\`
                         ), 
                         null
                       )
@@ -720,8 +722,8 @@ describe("MySQL: Common", () => {
                 SELECT 
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
-                      'order_id', t1.order_id, 'customer_id', 
-                      t1.customer_id
+                      'order_id', t1.\`order_id\`, 'customer_id', 
+                      t1.\`customer_id\`
                     )
                   ) 
                 FROM 
@@ -745,14 +747,14 @@ describe("MySQL: Common", () => {
                 SELECT 
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
-                      'product_id', t1.product_id, 'name', 
-                      t1.name
+                      'product_id', t1.\`product_id\`, 'name', 
+                      t1.\`name\`
                     )
                   ) 
                 FROM 
                   dbo.products t1 
                 ORDER BY 
-                  t1.product_id ASC 
+                  t1.\`product_id\` ASC 
                 LIMIT 
                   $1 OFFSET 0
               ), 
@@ -768,14 +770,14 @@ describe("MySQL: Common", () => {
       format(`
         WITH t1_agg AS (
           SELECT 
-            t1.customer_id, 
+            t1.\`customer_id\`, 
             COUNT(*) AS count, 
-            MIN(t1.order_id) AS min_order_id, 
-            SUM(t1.total_amount) AS sum_total_amount 
+            MIN(t1.\`order_id\`) AS min_order_id, 
+            SUM(t1.\`total_amount\`) AS sum_total_amount 
           FROM 
             dbo.orders t1 
           GROUP BY 
-            t1.customer_id
+            t1.\`customer_id\`
         ) 
         SELECT 
           JSON_OBJECT(
@@ -803,15 +805,15 @@ describe("MySQL: Common", () => {
                           SELECT 
                             JSON_ARRAYAGG(
                               JSON_OBJECT(
-                                'order_id', t1.order_id, 'customer_id', 
-                                t1.customer_id, 'total_amount', 
-                                t1.total_amount
+                                'order_id', t1.\`order_id\`, 'customer_id', 
+                                t1.\`customer_id\`, 'total_amount', 
+                                t1.\`total_amount\`
                               )
                             ) 
                           FROM 
                             dbo.orders t1 
                           WHERE 
-                            t1.customer_id = t1_agg.customer_id
+                            t1.\`customer_id\` = t1_agg.\`customer_id\`
                         ), 
                         JSON_ARRAY()
                       )
@@ -839,11 +841,11 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      UPPER(t1.name), 
+                      UPPER(t1.\`name\`), 
                       'sku', 
-                      t1.sku
+                      t1.\`sku\`
                     )
                   ) 
                 FROM 
@@ -868,11 +870,11 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      LOWER(t1.name), 
+                      LOWER(t1.\`name\`), 
                       'sku', 
-                      t1.sku
+                      t1.\`sku\`
                     )
                   ) 
                 FROM 
@@ -897,11 +899,11 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      LEFT(t1.name, $1), 
+                      LEFT(t1.\`name\`, $1), 
                       'sku', 
-                      t1.sku
+                      t1.\`sku\`
                     )
                   ) 
                 FROM 
@@ -926,11 +928,11 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      COALESCE(t1.name, $1), 
+                      COALESCE(t1.\`name\`, $1), 
                       'sku', 
-                      t1.sku
+                      t1.\`sku\`
                     )
                   ) 
                 FROM 
@@ -955,11 +957,11 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      TRIM(t1.name), 
+                      TRIM(t1.\`name\`), 
                       'sku', 
-                      t1.sku
+                      t1.\`sku\`
                     )
                   ) 
                 FROM 
@@ -984,9 +986,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'sku', 
-                      SUBSTRING(t1.sku, $1, $2)
+                      SUBSTRING(t1.\`sku\`, $1, $2)
                     )
                   ) 
                 FROM 
@@ -1011,11 +1013,11 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      REPLACE(t1.name, $1, $2), 
+                      REPLACE(t1.\`name\`, $1, $2), 
                       'sku', 
-                      t1.sku
+                      t1.\`sku\`
                     )
                   ) 
                 FROM 
@@ -1040,9 +1042,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'sku', 
-                      CONCAT(t1.sku, $1)
+                      CONCAT(t1.\`sku\`, $1)
                     )
                   ) 
                 FROM 
@@ -1067,9 +1069,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      RIGHT(REPLICATE($2, $1) + CAST(t1.product_id AS VARCHAR(MAX)), $1), 
+                      RIGHT(REPLICATE($2, $1) + CAST(t1.\`product_id\` AS VARCHAR(MAX)), $1), 
                       'name', 
-                      t1.name
+                      t1.\`name\`
                     )
                   ) 
                 FROM 
@@ -1094,9 +1096,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'price', 
-                      ROUND(t1.price, $1)
+                      ROUND(t1.\`price\`, $1)
                     )
                   ) 
                 FROM 
@@ -1121,9 +1123,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'price', 
-                      CEILING(t1.price)
+                      CEILING(t1.\`price\`)
                     )
                   ) 
                 FROM 
@@ -1148,9 +1150,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'price', 
-                      FLOOR(t1.price)
+                      FLOOR(t1.\`price\`)
                     )
                   ) 
                 FROM 
@@ -1175,9 +1177,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'price', 
-                      ABS(t1.price)
+                      ABS(t1.\`price\`)
                     )
                   ) 
                 FROM 
@@ -1202,9 +1204,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'price', 
-                      (t1.price * $1)
+                      (t1.\`price\` * $1)
                     )
                   ) 
                 FROM 
@@ -1229,9 +1231,9 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'price', 
-                      (t1.price / $1)
+                      (t1.\`price\` / $1)
                     )
                   ) 
                 FROM 
@@ -1256,11 +1258,11 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'name', 
-                      LEFT(UPPER(TRIM(t1.name)), $1), 
+                      LEFT(UPPER(TRIM(t1.\`name\`)), $1), 
                       'sku', 
-                      t1.sku
+                      t1.\`sku\`
                     )
                   ) 
                 FROM 
@@ -1285,14 +1287,60 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      t1.product_id, 
+                      t1.\`product_id\`, 
                       'price', 
-                      ROUND((t1.price * $1), $2)
+                      ROUND((t1.\`price\` * $1), $2)
                     )
-                  ) 
-                FROM 
+                  )
+                FROM
                   dbo.products t1
-              ), 
+              ),
+              JSON_ARRAY()
+            )
+          ) as json_result
+      `),
+    );
+  });
+
+  it("Should escape reserved word column names", () => {
+    expect(genSql(StoreMySQL, prodReservedWordColumnQuery)).toBe(
+      format(`
+        SELECT
+          JSON_OBJECT(
+            'dbo_products',
+            COALESCE(
+              (
+                SELECT
+                  JSON_ARRAYAGG(
+                    JSON_OBJECT('order', t1.\`order\`, 'name', t1.\`name\`)
+                  )
+                FROM
+                  dbo.products t1
+                ORDER BY
+                  t1.\`order\` ASC
+              ),
+              JSON_ARRAY()
+            )
+          ) as json_result
+      `),
+    );
+  });
+
+  it("Should handle reserved word aliases as JSON keys", () => {
+    expect(genSql(StoreMySQL, prodReservedWordAliasQuery)).toBe(
+      format(`
+        SELECT
+          JSON_OBJECT(
+            'order',
+            COALESCE(
+              (
+                SELECT
+                  JSON_ARRAYAGG(
+                    JSON_OBJECT('print', t1.\`name\`, 'group', t1.\`sku\`)
+                  )
+                FROM
+                  dbo.products t1
+              ),
               JSON_ARRAY()
             )
           ) as json_result

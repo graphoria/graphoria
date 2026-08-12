@@ -206,6 +206,7 @@ export const structure = DatabaseStructureZod.parse({
         { name: "json_attributes", dataType: "nvarchar", isNullable: true },
         { name: "created_at", dataType: "datetime2", isNullable: false },
         { name: "is_active", dataType: "bit", isNullable: true },
+        { name: "order", dataType: "int", isNullable: true },
       ],
       foreignKeys: [],
     },

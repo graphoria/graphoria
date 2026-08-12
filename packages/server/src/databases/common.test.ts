@@ -38,7 +38,7 @@ describe("buildWhereClauseFp", () => {
         0,
         {},
       );
-      expect(sql).toBe("WHERE t1.id = $1");
+      expect(sql).toBe('WHERE t1."id" = $1');
     });
 
     it("emits $N for mysql", () => {
@@ -53,7 +53,7 @@ describe("buildWhereClauseFp", () => {
         0,
         {},
       );
-      expect(sql).toBe("WHERE t1.id = $1");
+      expect(sql).toBe("WHERE t1.`id` = $1");
     });
 
     it("emits @N for mssql", () => {
@@ -68,7 +68,7 @@ describe("buildWhereClauseFp", () => {
         0,
         {},
       );
-      expect(sql).toBe("WHERE t1.id = @1");
+      expect(sql).toBe("WHERE t1.[id] = @1");
     });
   });
 
@@ -85,19 +85,19 @@ describe("buildWhereClauseFp", () => {
         0,
         {},
       );
-      expect(sql).toBe("WHERE t1.id = $3");
+      expect(sql).toBe('WHERE t1."id" = $3');
     });
   });
 
   describe("operators", () => {
     const cases: Array<{ op: string; expected: string }> = [
-      { op: "eq", expected: "WHERE t1.id = $1" },
-      { op: "neq", expected: "WHERE t1.id <> $1" },
-      { op: "gt", expected: "WHERE t1.id > $1" },
-      { op: "gte", expected: "WHERE t1.id >= $1" },
-      { op: "lt", expected: "WHERE t1.id < $1" },
-      { op: "lte", expected: "WHERE t1.id <= $1" },
-      { op: "like", expected: "WHERE t1.id LIKE $1" },
+      { op: "eq", expected: 'WHERE t1."id" = $1' },
+      { op: "neq", expected: 'WHERE t1."id" <> $1' },
+      { op: "gt", expected: 'WHERE t1."id" > $1' },
+      { op: "gte", expected: 'WHERE t1."id" >= $1' },
+      { op: "lt", expected: 'WHERE t1."id" < $1' },
+      { op: "lte", expected: 'WHERE t1."id" <= $1' },
+      { op: "like", expected: 'WHERE t1."id" LIKE $1' },
     ];
 
     for (const { op, expected } of cases) {
@@ -129,7 +129,7 @@ describe("buildWhereClauseFp", () => {
         0,
         {},
       );
-      expect(sql).toBe("WHERE t1.id IN ($1, $2, $3)");
+      expect(sql).toBe('WHERE t1."id" IN ($1, $2, $3)');
     });
 
     it("renders is_null true → IS NULL", () => {
@@ -144,7 +144,7 @@ describe("buildWhereClauseFp", () => {
         0,
         {},
       );
-      expect(sql).toBe("WHERE t1.name IS NULL");
+      expect(sql).toBe('WHERE t1."name" IS NULL');
     });
 
     it("renders is_null false → IS NOT NULL", () => {
@@ -159,7 +159,7 @@ describe("buildWhereClauseFp", () => {
         0,
         {},
       );
-      expect(sql).toBe("WHERE t1.name IS NOT NULL");
+      expect(sql).toBe('WHERE t1."name" IS NOT NULL');
     });
   });
 
@@ -219,12 +219,12 @@ describe("buildWhereClauseFp", () => {
         0,
         {},
       );
-      expect(sql).toBe("WHERE t2.id = $1 AND t1.parent_id = t2.id");
+      expect(sql).toBe('WHERE t2."id" = $1 AND t1."parent_id" = t2."id"');
     });
   });
 
   describe("quoted identifiers", () => {
-    it("wraps field names in double quotes when quoted=true", () => {
+    it("wraps field names in double quotes for pg", () => {
       const sql = buildWhereClauseFp("pg")(
         stubEntities(),
         vars("v"),
@@ -235,7 +235,6 @@ describe("buildWhereClauseFp", () => {
         null,
         0,
         {},
-        true,
       );
       expect(sql).toBe(`WHERE t1."name" = $1`);
     });
@@ -281,7 +280,7 @@ describe("buildOrderByClauseFp", () => {
         field({ orderBy: { name: "ASC_NULLS_FIRST" } }),
         "t1",
       );
-      expect(sql).toBe("ORDER BY CASE WHEN t1.name IS NULL THEN 0 ELSE 1 END, t1.name ASC");
+      expect(sql).toBe("ORDER BY CASE WHEN t1.`name` IS NULL THEN 0 ELSE 1 END, t1.`name` ASC");
     });
 
     it("DESC NULLS LAST → CASE WHEN ... THEN 1 ELSE 0", () => {
@@ -290,7 +289,7 @@ describe("buildOrderByClauseFp", () => {
         field({ orderBy: { name: "DESC_NULLS_LAST" } }),
         "t1",
       );
-      expect(sql).toBe("ORDER BY CASE WHEN t1.name IS NULL THEN 1 ELSE 0 END, t1.name DESC");
+      expect(sql).toBe("ORDER BY CASE WHEN t1.`name` IS NULL THEN 1 ELSE 0 END, t1.`name` DESC");
     });
   });
 
@@ -319,7 +318,7 @@ describe("buildOrderByClauseFp", () => {
         field({ orderBy: { name: "ASC_NULLS_LAST" } }),
         "t1",
       );
-      expect(sql).toBe("ORDER BY CASE WHEN t1.name IS NULL THEN 1 ELSE 0 END, t1.name ASC");
+      expect(sql).toBe("ORDER BY CASE WHEN t1.[name] IS NULL THEN 1 ELSE 0 END, t1.[name] ASC");
     });
 
     it("DESC NULLS FIRST → CASE forced", () => {
@@ -328,7 +327,7 @@ describe("buildOrderByClauseFp", () => {
         field({ orderBy: { name: "DESC_NULLS_FIRST" } }),
         "t1",
       );
-      expect(sql).toBe("ORDER BY CASE WHEN t1.name IS NULL THEN 0 ELSE 1 END, t1.name DESC");
+      expect(sql).toBe("ORDER BY CASE WHEN t1.[name] IS NULL THEN 0 ELSE 1 END, t1.[name] DESC");
     });
   });
 
