@@ -870,13 +870,15 @@ describe("Edge Cases and Real-World Scenarios", () => {
         expect(result).toBe("LPAD(id::TEXT, 5, '0')");
       });
 
+      // REPLICATE and VARCHAR(MAX) are SQL Server only; MySQL has LPAD/RPAD and
+      // used to be handed the MSSQL branch, producing a syntax error.
       test("should handle left padding in MySQL", () => {
         const result = applyDirectives(
           "id",
           [{ name: "pad", arguments: { length: 5, char: "0" } }],
           "mysql",
         );
-        expect(result).toBe("RIGHT(REPLICATE('0', 5) + CAST(id AS VARCHAR(MAX)), 5)");
+        expect(result).toBe("LPAD(id, 5, '0')");
       });
 
       test("should handle left padding in MSSQL", () => {
@@ -903,7 +905,7 @@ describe("Edge Cases and Real-World Scenarios", () => {
           [{ name: "pad", arguments: { length: 8, side: "right", char: "X" } }],
           "mysql",
         );
-        expect(result).toBe("LEFT(CAST(code AS VARCHAR(MAX)) + REPLICATE('X', 8), 8)");
+        expect(result).toBe("RPAD(code, 8, 'X')");
       });
 
       test("should handle right padding in MSSQL", () => {
@@ -1019,7 +1021,7 @@ describe("Edge Cases and Real-World Scenarios", () => {
         "mysql",
       );
       expect(result).toBe(
-        "CONCAT('PROD-', RIGHT(REPLICATE('0', 10) + CAST(UPPER(TRIM(product_code)) AS VARCHAR(MAX)), 10))",
+        "CONCAT('PROD-', LPAD(UPPER(TRIM(product_code)), 10, '0'))",
       );
     });
 

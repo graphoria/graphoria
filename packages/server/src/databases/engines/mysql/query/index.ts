@@ -297,16 +297,41 @@ export const buildSQLForField = (
     ([name, selector]) => `'${name}', ${selector}`,
   );
 
-  const fromClause = `FROM ${dottedQuotedName} ${tableAlias}${withoutArrayWrapper ? " LIMIT 1" : ""}`;
+  const fromClause = `FROM ${dottedQuotedName} ${tableAlias}`;
 
   const orderByClause = buildOrderByClauseMySQL(entities, field, tableAlias);
   const paginationClause = buildPaginationClauseMySQL(field, variablesDefinition);
 
   const isArraySelection = !!field.isArray && !withoutArrayWrapper;
 
+  // JSON_ARRAYAGG accepts no ORDER BY of its own and collapses the rows before
+  // LIMIT can trim them, so both ordering and pagination have to happen in a
+  // derived table that the aggregate then reads.
+  if (isArraySelection && (orderByClause || paginationClause)) {
+    const pageAlias = `${tableAlias}_page`;
+    // A nested selection is correlated to its parent through the where clause,
+    // and a plain derived table may not carry an outer reference. LATERAL lifts
+    // that restriction — MySQL 8.0.14 and newer. Unordered, unpaginated nested
+    // selections never take this branch, so older servers keep working for them.
+    const lateral = parentTableName ? "LATERAL " : "";
+
+    // NO_MERGE is load-bearing, not a hint about performance: without it MySQL
+    // merges the derived table into the outer query and discards its ORDER BY,
+    // so the array comes back in storage order. A LIMIT blocks the merge on its
+    // own, which is why only the unpaginated ordering was affected.
+    return `
+    COALESCE((
+      SELECT /*+ NO_MERGE(${pageAlias}) */ JSON_ARRAYAGG(${pageAlias}.obj)
+      FROM ${lateral}(
+        SELECT JSON_OBJECT(${selectList}) AS obj ${fromClause} ${whereClause} ${orderByClause} ${paginationClause}
+      ) ${pageAlias}
+    ), JSON_ARRAY())
+  `;
+  }
+
   return `
     COALESCE((
-      SELECT ${isArraySelection ? `JSON_ARRAYAGG(JSON_OBJECT(${selectList}))` : `JSON_OBJECT(${selectList})`} ${fromClause} ${orderByClause} ${whereClause} ${paginationClause ? ` ${paginationClause}` : ""}
+      SELECT ${isArraySelection ? `JSON_ARRAYAGG(JSON_OBJECT(${selectList}))` : `JSON_OBJECT(${selectList})`} ${fromClause} ${whereClause} ${orderByClause}${withoutArrayWrapper ? " LIMIT 1" : ""}
     ), ${isArraySelection ? "JSON_ARRAY()" : "null"})
   `;
 };

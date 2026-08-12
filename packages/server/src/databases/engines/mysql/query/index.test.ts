@@ -808,19 +808,19 @@ describe("MySQL: Common", () => {
             'dbo_products', 
             COALESCE(
               (
-                SELECT 
-                  JSON_ARRAYAGG(
-                    JSON_OBJECT(
-                      'product_id', t1.\`product_id\`, 'name', 
-                      t1.\`name\`
-                    )
-                  ) 
+                SELECT /*+ NO_MERGE(t1_page) */
+                  JSON_ARRAYAGG(t1_page.obj) 
                 FROM 
-                  \`dbo\`.\`products\` t1 
-                ORDER BY 
-                  t1.\`product_id\` ASC 
-                LIMIT 
-                  $1 OFFSET 0
+                  (
+                    SELECT 
+                      JSON_OBJECT('product_id', t1.\`product_id\`, 'name', t1.\`name\`) AS obj 
+                    FROM 
+                      \`dbo\`.\`products\` t1 
+                    ORDER BY 
+                      t1.\`product_id\` ASC 
+                    LIMIT 
+                      $1 OFFSET 0
+                  ) t1_page
               ), 
               JSON_ARRAY()
             )
@@ -1197,7 +1197,7 @@ describe("MySQL: Common", () => {
                   JSON_ARRAYAGG(
                     JSON_OBJECT(
                       'product_id', 
-                      RIGHT(REPLICATE($2, $1) + CAST(t1.\`product_id\` AS VARCHAR(MAX)), $1), 
+                      LPAD(t1.\`product_id\`, $1, $2), 
                       'name', 
                       t1.\`name\`
                     )
@@ -1438,14 +1438,17 @@ describe("MySQL: Common", () => {
             'dbo_products',
             COALESCE(
               (
-                SELECT
-                  JSON_ARRAYAGG(
-                    JSON_OBJECT('order', t1.\`order\`, 'name', t1.\`name\`)
-                  )
+                SELECT /*+ NO_MERGE(t1_page) */
+                  JSON_ARRAYAGG(t1_page.obj)
                 FROM
-                  \`dbo\`.\`products\` t1
-                ORDER BY
-                  t1.\`order\` ASC
+                  (
+                    SELECT
+                      JSON_OBJECT('order', t1.\`order\`, 'name', t1.\`name\`) AS obj
+                    FROM
+                      \`dbo\`.\`products\` t1
+                    ORDER BY
+                      t1.\`order\` ASC
+                  ) t1_page
               ),
               JSON_ARRAY()
             )

@@ -55,11 +55,18 @@ export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
       return side === "left"
         ? `LPAD(${querySelector}::TEXT, ${length}, ${char})`
         : `RPAD(${querySelector}::TEXT, ${length}, ${char})`;
-    } else {
-      return side === "left"
-        ? `RIGHT(REPLICATE(${char}, ${length}) + CAST(${querySelector} AS VARCHAR(MAX)), ${length})`
-        : `LEFT(CAST(${querySelector} AS VARCHAR(MAX)) + REPLICATE(${char}, ${length}), ${length})`;
     }
+    // MySQL has LPAD/RPAD too, and needs no cast. It used to fall through to the
+    // SQL Server branch, where REPLICATE and VARCHAR(MAX) are syntax errors.
+    if (dbType === "mysql") {
+      return side === "left"
+        ? `LPAD(${querySelector}, ${length}, ${char})`
+        : `RPAD(${querySelector}, ${length}, ${char})`;
+    }
+    // SQL Server: LPAD/RPAD only exist from 2022.
+    return side === "left"
+      ? `RIGHT(REPLICATE(${char}, ${length}) + CAST(${querySelector} AS VARCHAR(MAX)), ${length})`
+      : `LEFT(CAST(${querySelector} AS VARCHAR(MAX)) + REPLICATE(${char}, ${length}), ${length})`;
   },
   dateFormat: (querySelector, directive, dbType) => {
     if (dbType === "mysql") {

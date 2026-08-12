@@ -41,7 +41,7 @@ export const checkUserCredentials = async (
   const schema = assertSafeIdentifier(auth.schema!, "schema");
 
   const result = await pool.unsafe<UserRecord[]>(
-    `SELECT * FROM \`${schema}\`.\`user\` WHERE username = $1 AND is_active = TRUE`,
+    `SELECT * FROM \`${schema}\`.\`user\` WHERE username = ? AND is_active = TRUE`,
     [username],
   );
 
@@ -94,7 +94,7 @@ export const insertAuthUser = async (
 
   await pool.unsafe(
     `INSERT INTO \`${schema}\`.\`user\` (username, password, role, is_active, claims)
-       VALUES ($1, $2, $3, TRUE, $4)`,
+       VALUES (?, ?, ?, TRUE, ?)`,
     [input.username, hashed, input.role, JSON.stringify(input.claims ?? {})],
   );
 };

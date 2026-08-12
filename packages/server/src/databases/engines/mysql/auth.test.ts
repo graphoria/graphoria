@@ -61,8 +61,10 @@ describe("mysql insertAuthUser", () => {
     const [call] = calls;
 
     expect(call.query).toContain("`auth`.`user`");
-    expect(call.query).toContain("$1");
-    expect(call.query).toContain("$4");
+    // Bun's MySQL adapter binds `?` positionally; `$n` reaches the server as an
+    // identifier and the statement fails with "Unknown column '$1'".
+    expect(call.query).not.toContain("$1");
+    expect(call.query.match(/\?/g)).toHaveLength(4);
 
     expect(call.params[0]).toBe("alice");
     expect(call.params[2]).toBe("admin");
