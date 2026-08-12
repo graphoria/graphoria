@@ -87,6 +87,12 @@ export const mergeEntities = (
         acc[publisher.resolverName] = publisher;
       });
     });
+    // Subscribers become subscriptions (not mutations): register in the resolver
+    // registry only — not queuesMap — so getResolverSource routes them to the queue strategy.
+    queue.queues.forEach((subscriber) => {
+      resolverRegistry[`${queue.name}_${subscriber.name}`] =
+        createResolverEntry.queueSubscriber(subscriber);
+    });
     return acc;
   }, {});
 

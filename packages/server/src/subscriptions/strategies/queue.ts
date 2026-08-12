@@ -23,7 +23,7 @@ const buildCompositeKey = (context: SubscriptionContext): string => {
  * - This strategy manages connection registration with the event emitter
  */
 export const createQueueSubscriptionStrategy = (): SubscriptionStrategy => ({
-  source: EntitySource.QUEUE_PUBLISHER,
+  source: EntitySource.QUEUE_SUBSCRIBER,
 
   getSubscriptionKey(context) {
     return buildCompositeKey(context);
