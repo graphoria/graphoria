@@ -145,7 +145,7 @@ export const callStoredProcedure = async (
     // never as SQL text, so reserved words need no delimiting here.
     const data = await request.execute(sp.dottedName);
 
-    return data?.recordset ?? false;
+    return !data?.returnValue;
   } catch (e: unknown) {
     logger("mssql").error({ err: e }, "stored procedure execution failed");
     return false;
