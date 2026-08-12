@@ -54,6 +54,9 @@ export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
     }
   },
   dateFormat: (querySelector, directive, dbType) => {
+    if (dbType === "mysql") {
+      throw new Error("@dateFormat is not supported on MySQL. Expose a virtual column instead.");
+    }
     const format = directive.arguments!["format"] as string;
     return dbType === "pg"
       ? `TO_CHAR(${querySelector}, ${sqlString(format)})`

@@ -4,6 +4,8 @@ import { StoreMySQL } from "../../../../__test/dataset/store";
 import {
   ordDirectiveOptionalQuery,
   ordDirectiveRequiredQuery,
+  ordGroupByDateFormatQuery,
+  ordGroupByMultiplyQuery,
   ordGroupByQuery,
   ordQuery,
   ordWithIncludeFalseDirectiveQuery,
@@ -888,6 +890,70 @@ describe("MySQL: Common", () => {
             )
           ) as json_result
       `),
+    );
+  });
+
+  it("Should apply directives to GROUP BY key and items", () => {
+    expect(genSql(StoreMySQL, ordGroupByMultiplyQuery)).toBe(
+      format(`
+        WITH t1_agg AS (
+          SELECT
+            t1.\`customer_id\`,
+            COUNT(*) AS count
+          FROM
+            \`dbo\`.\`orders\` t1
+          GROUP BY
+            t1.\`customer_id\`
+        )
+        SELECT
+          JSON_OBJECT(
+            'orders',
+            COALESCE(
+              (
+                SELECT
+                  JSON_ARRAYAGG(
+                    JSON_OBJECT(
+                      'key',
+                      JSON_OBJECT(
+                        'customer_id',
+                        (t1_agg.\`customer_id\` * $1)
+                      ),
+                      'count',
+                      t1_agg.count,
+                      'items',
+                      COALESCE(
+                        (
+                          SELECT
+                            JSON_ARRAYAGG(
+                              JSON_OBJECT(
+                                'order_id',
+                                t1.\`order_id\`,
+                                'total_amount',
+                                (t1.\`total_amount\` * $2)
+                              )
+                            )
+                          FROM
+                            \`dbo\`.\`orders\` t1
+                          WHERE
+                            t1.\`customer_id\` = t1_agg.\`customer_id\`
+                        ),
+                        JSON_ARRAY()
+                      )
+                    )
+                  )
+                FROM
+                  t1_agg
+              ),
+              JSON_ARRAY()
+            )
+          ) as json_result
+      `),
+    );
+  });
+
+  it("Should throw when @dateFormat is used in a GROUP BY key on MySQL", () => {
+    expect(() => genSql(StoreMySQL, ordGroupByDateFormatQuery)).toThrow(
+      "@dateFormat is not supported on MySQL",
     );
   });
 
