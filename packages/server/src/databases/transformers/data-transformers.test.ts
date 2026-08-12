@@ -191,6 +191,15 @@ describe("buildProcedureResolver", () => {
     expect(r.dottedName).toBe("dbo.sp_get_users");
   });
 
+  it("delimits dottedQuotedName for the procedure's own engine", () => {
+    const order: StoredProcedure = { schema: "dbo", name: "order" } as never;
+
+    expect(buildProcedureResolver(order, db()).dottedQuotedName).toBe(`"dbo"."order"`);
+    expect(buildProcedureResolver(order, db({ type: "mysql" })).dottedQuotedName).toBe(
+      "`dbo`.`order`",
+    );
+  });
+
   it("uses internalName as resolverName when fieldNaming is empty/falsy", () => {
     const r = buildProcedureResolver(proc, db({ fieldNaming: "" }));
     expect(r.resolverName).toBe(r.internalName);
