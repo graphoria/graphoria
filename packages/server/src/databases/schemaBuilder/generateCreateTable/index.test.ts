@@ -2,23 +2,12 @@ import { describe, expect, it } from "bun:test";
 
 import { generateCreateTableMSSQL, generateCreateTablePostgreSQL } from ".";
 import { dbMSSQL, dbPostgreSQL } from "../../../__test/dbMocks";
-import { enrichTable } from "../../../types/zod/db";
+import { structure } from "../../../__test/dataset/store";
 import { format as formatMSSQL } from "../../engines/mssql/format";
 import { format as formatPostgreSQL } from "../../engines/postgresql/format";
 import { buildTableResolver } from "../../transformers/data-transformers";
 
-const testTableRaw = enrichTable({
-  schema: "dbo",
-  name: "pbcatfmt",
-  columns: [
-    { name: "pbf_name", dataType: "varchar", isNullable: false, description: null },
-    { name: "pbf_frmt", dataType: "varchar", isNullable: false, description: null },
-    { name: "pbf_type", dataType: "smallint", isNullable: false, description: null },
-    { name: "pbf_cntr", dataType: "int", isNullable: false, description: null },
-  ],
-  entityType: "table",
-  foreignKeys: [],
-});
+const testTableRaw = structure.tables.find((t) => t.name === "categories")!;
 
 const testTableMSSQL = buildTableResolver([testTableRaw], testTableRaw, dbMSSQL);
 const testTablePG = buildTableResolver([testTableRaw], testTableRaw, dbPostgreSQL);
@@ -35,11 +24,11 @@ describe("generateCreateTableSQL: MSSQL", () => {
       ),
     ).toEqual(
       formatMSSQL(`
-        CREATE TABLE dbo.pbcatfmt (
-          pbf_name VARCHAR(MAX),
-          pbf_frmt VARCHAR(MAX),
-          pbf_type SMALLINT,
-          pbf_cntr INT
+        CREATE TABLE dbo.categories (
+          category_id INT,
+          name NVARCHAR(MAX),
+          slug NVARCHAR(MAX),
+          parent_category_id INT
         );
       `),
     );
@@ -56,12 +45,12 @@ describe("generateCreateTableSQL: MSSQL", () => {
       ),
     ).toEqual(
       formatMSSQL(`
-        IF NOT EXISTS (SELECT * FROM sys.tables WHERE object_id = OBJECT_ID('dbo.pbcatfmt'))
-          CREATE TABLE dbo.pbcatfmt (
-            pbf_name VARCHAR(MAX),
-            pbf_frmt VARCHAR(MAX),
-            pbf_type SMALLINT,
-            pbf_cntr INT
+        IF NOT EXISTS (SELECT * FROM sys.tables WHERE object_id = OBJECT_ID('dbo.categories'))
+          CREATE TABLE dbo.categories (
+            category_id INT,
+            name NVARCHAR(MAX),
+            slug NVARCHAR(MAX),
+            parent_category_id INT
           );
       `),
     );
@@ -80,11 +69,11 @@ describe("generateCreateTableSQL: MSSQL", () => {
       formatMSSQL(`
         CREATE SCHEMA dbo;
 
-        CREATE TABLE dbo.pbcatfmt (
-          pbf_name VARCHAR(MAX),
-          pbf_frmt VARCHAR(MAX),
-          pbf_type SMALLINT,
-          pbf_cntr INT
+        CREATE TABLE dbo.categories (
+          category_id INT,
+          name NVARCHAR(MAX),
+          slug NVARCHAR(MAX),
+          parent_category_id INT
         );
       `),
     );
@@ -104,12 +93,12 @@ describe("generateCreateTableSQL: MSSQL", () => {
         IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'dbo')
           EXEC('CREATE SCHEMA [dbo]');
 
-        IF NOT EXISTS (SELECT * FROM sys.tables WHERE object_id = OBJECT_ID('dbo.pbcatfmt'))
-          CREATE TABLE dbo.pbcatfmt (
-            pbf_name VARCHAR(MAX),
-            pbf_frmt VARCHAR(MAX),
-            pbf_type SMALLINT,
-            pbf_cntr INT
+        IF NOT EXISTS (SELECT * FROM sys.tables WHERE object_id = OBJECT_ID('dbo.categories'))
+          CREATE TABLE dbo.categories (
+            category_id INT,
+            name NVARCHAR(MAX),
+            slug NVARCHAR(MAX),
+            parent_category_id INT
           );
       `),
     );
@@ -128,11 +117,11 @@ describe("generateCreateTableSQL: PostgreSQL", () => {
       ),
     ).toEqual(
       formatPostgreSQL(`
-        CREATE TABLE "dbo"."pbcatfmt" (
-          "pbf_name" VARCHAR NOT NULL,
-          "pbf_frmt" VARCHAR NOT NULL,
-          "pbf_type" SMALLINT NOT NULL,
-          "pbf_cntr" INTEGER NOT NULL
+        CREATE TABLE "dbo"."categories" (
+          "category_id" INTEGER NOT NULL,
+          "name" VARCHAR NOT NULL,
+          "slug" VARCHAR NOT NULL,
+          "parent_category_id" INTEGER NULL
         );
       `),
     );
@@ -149,11 +138,11 @@ describe("generateCreateTableSQL: PostgreSQL", () => {
       ),
     ).toEqual(
       formatPostgreSQL(`
-        CREATE TABLE IF NOT EXISTS "dbo"."pbcatfmt" (
-          "pbf_name" VARCHAR NOT NULL,
-          "pbf_frmt" VARCHAR NOT NULL,
-          "pbf_type" SMALLINT NOT NULL,
-          "pbf_cntr" INTEGER NOT NULL
+        CREATE TABLE IF NOT EXISTS "dbo"."categories" (
+          "category_id" INTEGER NOT NULL,
+          "name" VARCHAR NOT NULL,
+          "slug" VARCHAR NOT NULL,
+          "parent_category_id" INTEGER NULL
         );
       `),
     );
@@ -172,11 +161,11 @@ describe("generateCreateTableSQL: PostgreSQL", () => {
       formatPostgreSQL(`
         CREATE SCHEMA "dbo";
         
-        CREATE TABLE "dbo"."pbcatfmt" (
-          "pbf_name" VARCHAR NOT NULL,
-          "pbf_frmt" VARCHAR NOT NULL,
-          "pbf_type" SMALLINT NOT NULL,
-          "pbf_cntr" INTEGER NOT NULL
+        CREATE TABLE "dbo"."categories" (
+          "category_id" INTEGER NOT NULL,
+          "name" VARCHAR NOT NULL,
+          "slug" VARCHAR NOT NULL,
+          "parent_category_id" INTEGER NULL
         );
       `),
     );
@@ -195,11 +184,11 @@ describe("generateCreateTableSQL: PostgreSQL", () => {
       formatPostgreSQL(`
         CREATE SCHEMA IF NOT EXISTS "dbo";
         
-        CREATE TABLE IF NOT EXISTS "dbo"."pbcatfmt" (
-          "pbf_name" VARCHAR NOT NULL,
-          "pbf_frmt" VARCHAR NOT NULL,
-          "pbf_type" SMALLINT NOT NULL,
-          "pbf_cntr" INTEGER NOT NULL
+        CREATE TABLE IF NOT EXISTS "dbo"."categories" (
+          "category_id" INTEGER NOT NULL,
+          "name" VARCHAR NOT NULL,
+          "slug" VARCHAR NOT NULL,
+          "parent_category_id" INTEGER NULL
         );
       `),
     );
