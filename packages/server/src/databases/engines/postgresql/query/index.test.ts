@@ -772,6 +772,9 @@ describe("PostgreSQL: Common", () => {
     );
   });
 
+  // The paginated shape differs from every other array selection: LIMIT/OFFSET
+  // has to trim rows before json_agg collapses them, so the rows are built in a
+  // derived table and ROW_NUMBER carries the ordering out to the aggregate.
   it("Should generate query with limit", () => {
     expect(genSql(StorePG, prodLimitQuery)).toBe(
       format(`
@@ -782,21 +785,27 @@ describe("PostgreSQL: Common", () => {
               (
                 SELECT
                   json_agg(
-                    json_build_object(
-                      'product_id',
-                      t1."product_id",
-                      'name',
-                      t1."name"
-                    )
+                    t1_page.obj
                     ORDER BY
-                      t1."product_id" ASC
+                      t1_page.__ord
                   )
                 FROM
-                  "dbo"."products" t1
-                LIMIT
-                  $1
-                OFFSET
-                  0
+                  (
+                    SELECT
+                      json_build_object('product_id', t1."product_id", 'name', t1."name") AS obj,
+                      ROW_NUMBER() OVER (
+                        ORDER BY
+                          t1."product_id" ASC
+                      ) AS __ord
+                    FROM
+                      "dbo"."products" t1
+                    ORDER BY
+                      t1."product_id" ASC
+                    LIMIT
+                      $1
+                    OFFSET
+                      0
+                  ) t1_page
               ),
               '[]'::json
             )
@@ -1141,7 +1150,7 @@ describe("PostgreSQL: Common", () => {
                       'product_id',
                       t1."product_id",
                       'sku',
-                      CONCAT(t1."sku", $1)
+                      CONCAT(t1."sku", $1::TEXT)
                     )
                   )
                 FROM

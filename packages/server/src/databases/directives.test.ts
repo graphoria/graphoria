@@ -540,6 +540,10 @@ describe("applyDirectives", () => {
       expect(result).toBe("REPLACE(email, $1, $2)");
     });
 
+    // PostgreSQL resolves CONCAT through the variadic "any" pseudo-type, which
+    // gives it nothing to infer a bare placeholder from:
+    // `could not determine data type of parameter $1`. The cast annotates the
+    // parameter's type at Parse time and leaves the value bound.
     test("should leave enum values as literals (not parameterized)", () => {
       const result = applyDirectives(
         "name",
@@ -548,7 +552,40 @@ describe("applyDirectives", () => {
         [{ name: "static_0", type: "String", required: false, defaultValue: "Dr. " }],
       );
       // "before" is an enum value — stays literal; "$static_0" becomes $1
-      expect(result).toBe("CONCAT($1, name)");
+      expect(result).toBe("CONCAT($1::TEXT, name)");
+    });
+
+    test("should cast a parameterized concat argument on pg in the after position", () => {
+      const result = applyDirectives(
+        "name",
+        [{ name: "concat", arguments: { with: "$static_0" } }],
+        "pg",
+        [{ name: "static_0", type: "String", required: false, defaultValue: " Jr." }],
+      );
+      expect(result).toBe("CONCAT(name, $1::TEXT)");
+    });
+
+    test("should not cast a concat literal", () => {
+      const result = applyDirectives(
+        "name",
+        [{ name: "concat", arguments: { with: " Jr." } }],
+        "pg",
+      );
+      expect(result).toBe("CONCAT(name, ' Jr.')");
+    });
+
+    test("should not cast a parameterized concat argument on mysql or mssql", () => {
+      expect(
+        applyDirectives("name", [{ name: "concat", arguments: { with: "$static_0" } }], "mssql", [
+          { name: "static_0", type: "String", required: false, defaultValue: " Jr." },
+        ]),
+      ).toBe("CONCAT(name, @1)");
+
+      expect(
+        applyDirectives("name", [{ name: "concat", arguments: { with: "$static_0" } }], "mysql", [
+          { name: "static_0", type: "String", required: false, defaultValue: " Jr." },
+        ]),
+      ).toBe("CONCAT(name, $1)");
     });
 
     test("should leave non-$ values untouched", () => {
@@ -831,13 +868,15 @@ describe("Edge Cases and Real-World Scenarios", () => {
         expect(result).toBe("LPAD(id::TEXT, 5, '0')");
       });
 
+      // REPLICATE and VARCHAR(MAX) are SQL Server only; MySQL has LPAD/RPAD and
+      // used to be handed the MSSQL branch, producing a syntax error.
       test("should handle left padding in MySQL", () => {
         const result = applyDirectives(
           "id",
           [{ name: "pad", arguments: { length: 5, char: "0" } }],
           "mysql",
         );
-        expect(result).toBe("RIGHT(REPLICATE('0', 5) + CAST(id AS VARCHAR(MAX)), 5)");
+        expect(result).toBe("LPAD(id, 5, '0')");
       });
 
       test("should handle left padding in MSSQL", () => {
@@ -864,7 +903,7 @@ describe("Edge Cases and Real-World Scenarios", () => {
           [{ name: "pad", arguments: { length: 8, side: "right", char: "X" } }],
           "mysql",
         );
-        expect(result).toBe("LEFT(CAST(code AS VARCHAR(MAX)) + REPLICATE('X', 8), 8)");
+        expect(result).toBe("RPAD(code, 8, 'X')");
       });
 
       test("should handle right padding in MSSQL", () => {
@@ -979,9 +1018,7 @@ describe("Edge Cases and Real-World Scenarios", () => {
         ],
         "mysql",
       );
-      expect(result).toBe(
-        "CONCAT('PROD-', RIGHT(REPLICATE('0', 10) + CAST(UPPER(TRIM(product_code)) AS VARCHAR(MAX)), 10))",
-      );
+      expect(result).toBe("CONCAT('PROD-', LPAD(UPPER(TRIM(product_code)), 10, '0'))");
     });
 
     test("should handle mixed directives in MSSQL", () => {

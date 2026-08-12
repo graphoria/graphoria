@@ -5,6 +5,7 @@ import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
 
 import {
   buildOrderByClauseFp,
+  buildPaginationClauseFp,
   buildWhereClauseFp,
   filterBasedOnDirective,
   findJoinCondition,
@@ -124,6 +125,28 @@ describe("buildWhereClauseFp", () => {
       });
     }
 
+    // T-SQL has no default LIKE escape character: without an explicit ESCAPE the
+    // backslash in `100\%` is matched literally and the pattern finds nothing,
+    // where PostgreSQL and MySQL both treat it as an escape.
+    it("renders like with an explicit ESCAPE on mssql only", () => {
+      const forDialect = (dbType: "pg" | "mysql" | "mssql") =>
+        buildWhereClauseFp(dbType)(
+          stubEntities(),
+          vars("v"),
+          { v: "100\\%" },
+          field({ where: { name: { like: "$v" } } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        );
+
+      expect(forDialect("mssql")).toBe("WHERE t1.[name] LIKE @1 ESCAPE '\\'");
+      expect(forDialect("pg")).toBe('WHERE t1."name" LIKE $1');
+      expect(forDialect("mysql")).toBe("WHERE t1.`name` LIKE $1");
+    });
+
     it("renders IN with array of variable references", () => {
       const sql = buildWhereClauseFp("pg")(
         stubEntities(),
@@ -167,6 +190,136 @@ describe("buildWhereClauseFp", () => {
         {},
       );
       expect(sql).toBe('WHERE t1."name" IS NOT NULL');
+    });
+
+    // Regression: the null-check operators used to test the truthiness of the
+    // POSITIONAL PLACEHOLDER string ("$1"), which is always truthy, so
+    // `is_null: false` emitted IS NULL and returned exactly the rows it was
+    // asked to exclude. Every literal is hoisted into a generated variable by
+    // valueExtractors, so this is the normal path, not an edge case.
+    it("resolves a variable-supplied is_null false → IS NOT NULL", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        vars("flag"),
+        { flag: false },
+        field({ where: { name: { is_null: "$flag" } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."name" IS NOT NULL');
+    });
+
+    it("falls back to a generated variable's default when no value was supplied", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        [{ name: "static_0", type: "Boolean", required: false, defaultValue: false }],
+        {},
+        field({ where: { name: { is_null: "$static_0" } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."name" IS NOT NULL');
+    });
+
+    it("resolves a variable-supplied not_null false → IS NULL", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        vars("flag"),
+        { flag: false },
+        field({ where: { name: { not_null: "$flag" } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."name" IS NULL');
+    });
+
+    it("renders not_null true → IS NOT NULL", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        [],
+        {},
+        field({ where: { name: { not_null: true } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."name" IS NOT NULL');
+    });
+
+    it("renders not_null false → IS NULL", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        [],
+        {},
+        field({ where: { name: { not_null: false } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."name" IS NULL');
+    });
+
+    it("renders between with two variable references", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        vars("a", "b"),
+        { a: 1, b: 5 },
+        field({ where: { id: { between: ["$a", "$b"] } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."id" BETWEEN $1 AND $2');
+    });
+
+    it("throws when between receives other than two bounds", () => {
+      expect(() =>
+        buildWhereClauseFp("pg")(
+          stubEntities(),
+          vars("a"),
+          { a: 1 },
+          field({ where: { id: { between: ["$a"] } } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        ),
+      ).toThrow('Filter operator "between" on column "id" expects exactly two values');
+    });
+
+    // An operator the builder does not implement used to fall through to
+    // `default: return null`, which dropped the condition and returned the whole
+    // table. A filter that cannot be honoured must fail, not widen.
+    it("throws on an operator it does not implement", () => {
+      expect(() =>
+        buildWhereClauseFp("pg")(
+          stubEntities(),
+          vars("v"),
+          { v: 1 },
+          field({ where: { id: { starts_with: "$v" } } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        ),
+      ).toThrow('Unsupported filter operator "starts_with" on column "id"');
     });
   });
 
@@ -378,6 +531,42 @@ describe("buildWhereClauseFp", () => {
       );
       expect(sql).toBe(`WHERE t1."name" = $1`);
     });
+  });
+});
+
+describe("buildPaginationClauseFp", () => {
+  const paginated = (args: Record<string, unknown>) => field(args);
+
+  it("emits LIMIT/OFFSET for pg and mysql", () => {
+    for (const dbType of ["pg", "mysql"] as const) {
+      expect(
+        buildPaginationClauseFp(dbType)(paginated({ limit: "$l", offset: "$o" }), vars("l", "o")),
+      ).toBe("LIMIT $1 OFFSET $2");
+    }
+  });
+
+  it("emits OFFSET/FETCH for mssql", () => {
+    expect(
+      buildPaginationClauseFp("mssql")(
+        paginated({ limit: "$l", orderBy: { id: "ASC" } }),
+        vars("l"),
+      ),
+    ).toBe("OFFSET 0 ROWS FETCH NEXT @1 ROWS ONLY");
+  });
+
+  // OFFSET/FETCH is only legal after an ORDER BY in T-SQL. Returning "" when the
+  // query has no orderBy dropped the limit and returned the whole table, so
+  // supply the ordering-agnostic ORDER BY that T-SQL accepts instead.
+  it("supplies a placeholder ORDER BY for mssql when the query has none", () => {
+    expect(buildPaginationClauseFp("mssql")(paginated({ limit: "$l" }), vars("l"))).toBe(
+      "ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT @1 ROWS ONLY",
+    );
+  });
+
+  it("returns '' when there is no limit", () => {
+    for (const dbType of ["pg", "mysql", "mssql"] as const) {
+      expect(buildPaginationClauseFp(dbType)(paginated({ offset: "$o" }), vars("o"))).toBe("");
+    }
   });
 });
 
@@ -686,22 +875,99 @@ describe("buildOrderByClauseFp", () => {
   });
 
   describe("virtual columns", () => {
-    it("substitutes the virtual column expression", () => {
-      const entities = entitiesWith({
-        queriesMap: {},
-        isVirtualColumn: ((_t: string, c: string) =>
-          c === "full_name"
-            ? { virtual: true, expression: "first_name || ' ' || last_name" }
-            : undefined) as unknown as MergedEntities["isVirtualColumn"],
-      });
+    const virtualEntities = entitiesWith({
+      queriesMap: {},
+      isVirtualColumn: ((_t: string, c: string) => {
+        if (c === "full_name") {
+          return { virtual: true, expression: "first_name || ' ' || last_name" };
+        }
+        if (c === "name_length") {
+          return { virtual: true, function: "LENGTH", params: ["display_name"] };
+        }
+        return undefined;
+      }) as unknown as MergedEntities["isVirtualColumn"],
+    });
 
+    it("substitutes the virtual column expression", () => {
       const sql = buildOrderByClauseFp("pg")(
-        entities,
+        virtualEntities,
         field({ orderBy: { full_name: "ASC" } }),
         "t1",
       );
       expect(sql).toContain("first_name || ' ' || last_name");
       expect(sql).toContain("ASC");
+    });
+
+    it("substitutes the virtual column function form", () => {
+      const sql = buildOrderByClauseFp("pg")(
+        virtualEntities,
+        field({ orderBy: { name_length: "DESC" } }),
+        "t1",
+      );
+      expect(sql).toBe("ORDER BY (LENGTH(display_name)) DESC");
+    });
+
+    // The NULLS branch used to skip the virtual-column substitution entirely and
+    // emit the alias as if it were a physical column, which the database rejects.
+    it("substitutes in the pg NULLS branch", () => {
+      const sql = buildOrderByClauseFp("pg")(
+        virtualEntities,
+        field({ orderBy: { name_length: "ASC_NULLS_FIRST" } }),
+        "t1",
+      );
+      expect(sql).toBe("ORDER BY (LENGTH(display_name)) ASC NULLS FIRST");
+    });
+
+    it("substitutes in the mysql CASE synthesis", () => {
+      const sql = buildOrderByClauseFp("mysql")(
+        virtualEntities,
+        field({ orderBy: { name_length: "ASC_NULLS_LAST" } }),
+        "t1",
+      );
+      expect(sql).toBe(
+        "ORDER BY CASE WHEN (LENGTH(display_name)) IS NULL THEN 1 ELSE 0 END, (LENGTH(display_name)) ASC",
+      );
+    });
+
+    it("substitutes in the mssql CASE synthesis", () => {
+      const sql = buildOrderByClauseFp("mssql")(
+        virtualEntities,
+        field({ orderBy: { name_length: "DESC_NULLS_FIRST" } }),
+        "t1",
+      );
+      expect(sql).toBe(
+        "ORDER BY CASE WHEN (LENGTH(display_name)) IS NULL THEN 0 ELSE 1 END, (LENGTH(display_name)) DESC",
+      );
+    });
+
+    it("substitutes in a where clause", () => {
+      const sql = buildWhereClauseFp("pg")(
+        virtualEntities,
+        vars("v"),
+        { v: 9 },
+        field({ where: { name_length: { eq: "$v" } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe("WHERE (LENGTH(display_name)) = $1");
+    });
+
+    it("substitutes in a where clause null check", () => {
+      const sql = buildWhereClauseFp("pg")(
+        virtualEntities,
+        [],
+        {},
+        field({ where: { full_name: { is_null: true } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe("WHERE (first_name || ' ' || last_name) IS NULL");
     });
   });
 

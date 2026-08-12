@@ -10,10 +10,12 @@ export type DirectiveHandler = (
   dbType: DatabaseType,
 ) => string;
 
+const PLACEHOLDER_RE = /^[$@]\d+$/;
+
 // Wrap a value in SQL string quotes unless it's a positional placeholder ($1, @1, etc.)
 const sqlString = (value: unknown): string => {
   const s = String(value);
-  if (/^[$@]\d+$/.test(s)) return s;
+  if (PLACEHOLDER_RE.test(s)) return s;
   return `'${s}'`;
 };
 
@@ -32,12 +34,18 @@ export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
     `SUBSTRING(${querySelector}, ${directive.arguments!["start"]}, ${directive.arguments!["length"]})`,
   replace: (querySelector, directive) =>
     `REPLACE(${querySelector}, ${sqlString(directive.arguments!["find"])}, ${sqlString(directive.arguments!["replaceWith"])})`,
-  concat: (querySelector, directive) => {
-    const withValue = directive.arguments!["with"] as string;
+  concat: (querySelector, directive, dbType) => {
+    const rendered = sqlString(directive.arguments!["with"]);
+    // CONCAT is variadic "any" in PostgreSQL, so it gives the planner nothing to
+    // infer a bare placeholder from and the statement dies with
+    // "could not determine data type of parameter $n". The cast annotates the
+    // parameter type without unbinding the value.
+    const withValue =
+      dbType === "pg" && PLACEHOLDER_RE.test(rendered) ? `${rendered}::TEXT` : rendered;
     const position = (directive.arguments?.["position"] as string) ?? "after";
     return position === "before"
-      ? `CONCAT(${sqlString(withValue)}, ${querySelector})`
-      : `CONCAT(${querySelector}, ${sqlString(withValue)})`;
+      ? `CONCAT(${withValue}, ${querySelector})`
+      : `CONCAT(${querySelector}, ${withValue})`;
   },
   pad: (querySelector, directive, dbType) => {
     const length = directive.arguments!["length"] as number;
@@ -47,11 +55,18 @@ export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
       return side === "left"
         ? `LPAD(${querySelector}::TEXT, ${length}, ${char})`
         : `RPAD(${querySelector}::TEXT, ${length}, ${char})`;
-    } else {
-      return side === "left"
-        ? `RIGHT(REPLICATE(${char}, ${length}) + CAST(${querySelector} AS VARCHAR(MAX)), ${length})`
-        : `LEFT(CAST(${querySelector} AS VARCHAR(MAX)) + REPLICATE(${char}, ${length}), ${length})`;
     }
+    // MySQL has LPAD/RPAD too, and needs no cast. It used to fall through to the
+    // SQL Server branch, where REPLICATE and VARCHAR(MAX) are syntax errors.
+    if (dbType === "mysql") {
+      return side === "left"
+        ? `LPAD(${querySelector}, ${length}, ${char})`
+        : `RPAD(${querySelector}, ${length}, ${char})`;
+    }
+    // SQL Server: LPAD/RPAD only exist from 2022.
+    return side === "left"
+      ? `RIGHT(REPLICATE(${char}, ${length}) + CAST(${querySelector} AS VARCHAR(MAX)), ${length})`
+      : `LEFT(CAST(${querySelector} AS VARCHAR(MAX)) + REPLICATE(${char}, ${length}), ${length})`;
   },
   dateFormat: (querySelector, directive, dbType) => {
     if (dbType === "mysql") {

@@ -4,6 +4,7 @@ import type { SelectionAnalysis, VariableDefinition } from "../analyzeQuery/type
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
 import type { DatabaseType, RelationshipCondition, VirtualColumn } from "../types/configuration";
 
+import { FILTER_OPERATORS } from "../config/types/auth";
 import { applyDirectives } from "./directives";
 
 // Common aggregation types
@@ -25,10 +26,36 @@ export interface GroupByInfo {
   cteAlias: string;
 }
 
+// isOperatorObject decides whether a filter object is a column filter or a nested
+// relation, so an operator missing from this set is not merely unhandled — the
+// whole filter is routed to the relation branch and dropped. Shared with the
+// config schema so the two cannot drift.
+const OPERATORS = new Set<string>(FILTER_OPERATORS);
+
 const isOperatorObject = (obj: object): boolean =>
-  Object.keys(obj).some((key) =>
-    ["eq", "neq", "gt", "gte", "lt", "lte", "like", "in", "is_null", "is_not_null"].includes(key),
-  );
+  Object.keys(obj).some((key) => OPERATORS.has(key));
+
+// These operators branch on the operand instead of binding it. Every literal in a
+// query document is hoisted into a generated variable (analyzeQuery/valueExtractors),
+// so the operand arrives as "$name" — testing that string for truthiness would make
+// `is_null: false` behave exactly like `is_null: true`. Resolve the real boolean.
+const NULL_CHECK_OPERATORS = new Set(["is_null", "is_not_null", "not_null"]);
+
+const resolveBooleanOperand = (
+  operand: unknown,
+  variables: Record<string, unknown>,
+  variablesDefinition: VariableDefinition[],
+): boolean => {
+  if (!isString(operand) || !operand.startsWith("$")) return Boolean(operand);
+
+  const name = operand.substring(1);
+
+  // The hash-key path passes the request variables without the generated defaults,
+  // so fall back to the definition's defaultValue for hoisted literals.
+  return name in variables
+    ? Boolean(variables[name])
+    : Boolean(variablesDefinition.find((v) => v.name === name)?.defaultValue);
+};
 
 export const generateTableAlias = (level: number): string => `t${level}`;
 
@@ -47,6 +74,8 @@ export const buildConditions = (
   tableAlias: string,
   level: number,
   aliasMap: { [alias: string]: string },
+  /** Query name of the table being filtered — resolves its virtual columns. */
+  tableName?: string,
 ): string => {
   if (!whereArgs) return "";
 
@@ -58,19 +87,27 @@ export const buildConditions = (
     if (isOperatorObject(value)) {
       for (const [operator, operand] of Object.entries(value)) {
         // All values are now variable references (e.g., "$varName" or ["$var1", "$var2"])
-        const resolvedValue = Array.isArray(operand)
-          ? operand.map((op) => {
-              if (isString(op) && op.startsWith("$")) {
-                const index = variablesDefinition.findIndex((v) => v.name === op.substring(1));
-                return `${mappingDbTypeCharVar[dbType]}${index + 1}`;
-              }
-              return op;
-            })
-          : isString(operand) && operand.startsWith("$")
-            ? `${mappingDbTypeCharVar[dbType]}${variablesDefinition.findIndex((v) => v.name === operand.substring(1)) + 1}`
-            : operand;
+        const resolvedValue = NULL_CHECK_OPERATORS.has(operator)
+          ? resolveBooleanOperand(operand, variables, variablesDefinition)
+          : Array.isArray(operand)
+            ? operand.map((op) => {
+                if (isString(op) && op.startsWith("$")) {
+                  const index = variablesDefinition.findIndex((v) => v.name === op.substring(1));
+                  return `${mappingDbTypeCharVar[dbType]}${index + 1}`;
+                }
+                return op;
+              })
+            : isString(operand) && operand.startsWith("$")
+              ? `${mappingDbTypeCharVar[dbType]}${variablesDefinition.findIndex((v) => v.name === operand.substring(1)) + 1}`
+              : operand;
 
-        const condition = buildCondition(tableAlias, fieldName, operator, resolvedValue, dbType);
+        const condition = buildCondition(
+          columnTargetFp(dbType)(entities, tableName, fieldName, tableAlias),
+          fieldName,
+          operator,
+          resolvedValue,
+          dbType,
+        );
 
         if (condition) {
           conditions.push(condition);
@@ -81,7 +118,18 @@ export const buildConditions = (
       // column (e.g. `{ col: {} }`) has no operator keys, so it lands here despite not being a
       // relation; skip it as a no-op instead of dereferencing a missing queriesMap entry.
       const nestedEntity = entities.queriesMap[fieldName];
-      if (!nestedEntity) continue;
+      if (!nestedEntity) {
+        const [unknownOperator] = Object.keys(value as object);
+        // A non-empty filter object on something that is not a relation can only
+        // be a column filter whose operator we do not implement. Dropping it here
+        // would return every row.
+        if (unknownOperator) {
+          throw new Error(
+            `Unsupported filter operator "${unknownOperator}" on column "${fieldName}"`,
+          );
+        }
+        continue;
+      }
 
       const nestedTableAlias = `t${level}`;
 
@@ -110,6 +158,7 @@ export const buildConditions = (
         nestedTableAlias,
         level + 1,
         aliasMap,
+        fieldName,
       );
 
       const existsClause = `EXISTS (
@@ -153,6 +202,31 @@ export const qualifiedNameFp =
     return `${wrap(schema)}.${wrap(name)}`;
   };
 
+const renderVirtualColumn = (vc: VirtualColumn): string =>
+  vc.function ? `(${vc.function}(${vc.params?.join(", ")}))` : `(${vc.expression})`;
+
+/**
+ * What a column name compiles to on the left of a comparison or in ORDER BY.
+ *
+ * A virtual column has no physical counterpart, so emitting `alias."name"` for
+ * one produces `column t1.name does not exist`. WHERE and ORDER BY both go
+ * through here so they cannot disagree about what a column is.
+ */
+const columnTargetFp =
+  (dbType: DatabaseType) =>
+  (
+    entities: MergedEntities,
+    tableName: string | undefined,
+    colName: string,
+    tableAlias: string,
+  ): string => {
+    const virtualColumn = tableName ? entities.isVirtualColumn(tableName, colName) : undefined;
+
+    return virtualColumn
+      ? renderVirtualColumn(virtualColumn as VirtualColumn)
+      : `${tableAlias}.${wrapIdentifierFp(dbType)(colName)}`;
+  };
+
 // Helper to resolve variable values
 const resolveVariable = <T>(value: unknown, variables: Record<string, unknown>): T => {
   if (isString(value) && value.startsWith("$")) {
@@ -162,43 +236,51 @@ const resolveVariable = <T>(value: unknown, variables: Record<string, unknown>):
 };
 
 const buildCondition = (
-  tableAlias: string,
+  target: string,
   field: string,
   operator: string,
   value: unknown,
   dbType: DatabaseType,
 ): string | null => {
-  const wrappedField = wrapIdentifierFp(dbType)(field);
-
   switch (operator) {
     case "eq":
-      return `${tableAlias}.${wrappedField} = ${value}`;
+      return `${target} = ${value}`;
     case "neq":
-      return `${tableAlias}.${wrappedField} <> ${value}`;
+      return `${target} <> ${value}`;
     case "gt":
-      return `${tableAlias}.${wrappedField} > ${value}`;
+      return `${target} > ${value}`;
     case "gte":
-      return `${tableAlias}.${wrappedField} >= ${value}`;
+      return `${target} >= ${value}`;
     case "lt":
-      return `${tableAlias}.${wrappedField} < ${value}`;
+      return `${target} < ${value}`;
     case "lte":
-      return `${tableAlias}.${wrappedField} <= ${value}`;
+      return `${target} <= ${value}`;
+    // PostgreSQL and MySQL treat a backslash as the LIKE escape by default;
+    // T-SQL has no default escape character at all, so `100\%` matched a literal
+    // backslash and found nothing. Declare the escape to make the three agree.
     case "like":
-      return `${tableAlias}.${wrappedField} LIKE ${value}`;
+      return dbType === "mssql" ? `${target} LIKE ${value} ESCAPE '\\'` : `${target} LIKE ${value}`;
     case "in":
-      return `${tableAlias}.${wrappedField} IN (${
-        Array.isArray(value) ? value.join(", ") : value
-      })`;
+      return `${target} IN (${Array.isArray(value) ? value.join(", ") : value})`;
     case "is_null":
-      return value
-        ? `${tableAlias}.${wrappedField} IS NULL`
-        : `${tableAlias}.${wrappedField} IS NOT NULL`;
+      return value ? `${target} IS NULL` : `${target} IS NOT NULL`;
     case "is_not_null":
-      return value
-        ? `${tableAlias}.${wrappedField} IS NOT NULL`
-        : `${tableAlias}.${wrappedField} IS NULL`;
+    case "not_null":
+      return value ? `${target} IS NOT NULL` : `${target} IS NULL`;
+    case "between": {
+      const bounds = Array.isArray(value) ? value : [];
+      if (bounds.length !== 2) {
+        throw new Error(
+          `Filter operator "between" on column "${field}" expects exactly two values, received ${bounds.length}`,
+        );
+      }
+      return `${target} BETWEEN ${bounds[0]} AND ${bounds[1]}`;
+    }
+    // Returning null here would drop the condition, so a filter Graphoria cannot
+    // honour would widen the result set instead of failing — a role filter naming
+    // an unimplemented operator would return the whole table.
     default:
-      return null;
+      throw new Error(`Unsupported filter operator "${operator}" on column "${field}"`);
   }
 };
 
@@ -388,6 +470,7 @@ export const buildWhereClauseFp =
         tableAlias,
         level + 1,
         aliasMap,
+        field.name ?? aliasMap[tableAlias],
       ),
       parentTableName && parentTableAlias
         ? findJoinCondition(
@@ -424,7 +507,6 @@ const parseOrderDirection = (direction: string): { sort: string; nulls?: string 
 export const buildOrderByClauseFp =
   (dbType: DatabaseType = "pg") =>
   (entities: MergedEntities, field: SelectionAnalysis, tableAlias: string): string => {
-    const wrap = wrapIdentifierFp(dbType);
     if (field.arguments?.["orderBy"]) {
       const orderBy = field.arguments?.["orderBy"];
       // orderBy is an array or object of { column: direction } - no variable resolution needed
@@ -444,16 +526,18 @@ export const buildOrderByClauseFp =
           const [colName, direction] = Object.entries(ob)[0];
           const { sort, nulls } = parseOrderDirection(direction as string);
 
-          const virtualColumn = entities.isVirtualColumn(field.name, colName);
+          // Resolved once, above the NULLS branch: a virtual column has to expand
+          // to its expression in every emission below, not only the default one.
+          const target = columnTargetFp(dbType)(entities, field.name, colName, tableAlias);
 
           if (nulls) {
             if (dbType === "pg") {
               // PostgreSQL supports NULLS FIRST/LAST natively
-              return `${tableAlias}.${wrap(colName)} ${sort} NULLS ${nulls}`;
+              return `${target} ${sort} NULLS ${nulls}`;
             } else if (dbType === "mysql") {
               // MySQL: Use CASE statement for NULL handling
               const nullFirst = nulls === "FIRST";
-              return `CASE WHEN ${tableAlias}.${wrap(colName)} IS NULL THEN ${nullFirst ? 0 : 1} ELSE ${nullFirst ? 1 : 0} END, ${tableAlias}.${wrap(colName)} ${sort}`;
+              return `CASE WHEN ${target} IS NULL THEN ${nullFirst ? 0 : 1} ELSE ${nullFirst ? 1 : 0} END, ${target} ${sort}`;
             } else {
               // MSSQL requires CASE statements for NULL handling
               const nullFirst = nulls === "FIRST";
@@ -461,23 +545,16 @@ export const buildOrderByClauseFp =
 
               if ((nullFirst && isAsc) || (!nullFirst && !isAsc)) {
                 // NULLs naturally come first in this combination
-                return `${tableAlias}.${wrap(colName)} ${sort}`;
+                return `${target} ${sort}`;
               } else {
                 // Need to force NULL positioning with CASE
-                return `CASE WHEN ${tableAlias}.${wrap(colName)} IS NULL THEN ${nullFirst ? 0 : 1} ELSE ${nullFirst ? 1 : 0} END, ${tableAlias}.${wrap(colName)} ${sort}`;
+                return `CASE WHEN ${target} IS NULL THEN ${nullFirst ? 0 : 1} ELSE ${nullFirst ? 1 : 0} END, ${target} ${sort}`;
               }
             }
-          } else {
-            // No explicit NULL handling - use database defaults
-            if (virtualColumn) {
-              const vc = virtualColumn as VirtualColumn;
-              return `(
-                ${vc.function ? `${vc.function}(${vc.params?.join(", ")})` : `${vc.expression}`}
-              ) ${sort}`;
-            }
-
-            return `${tableAlias}.${wrap(colName)} ${sort}`;
           }
+
+          // No explicit NULL handling - use database defaults
+          return `${target} ${sort}`;
         })
         .join(", ");
 
@@ -744,14 +821,6 @@ export const buildPaginationClauseFp =
   (field: SelectionAnalysis, variablesDefinition: VariableDefinition[] = []): string => {
     const args = field.arguments;
 
-    // MSSQL requires ORDER BY for pagination
-    if (
-      dbType === "mssql" &&
-      (!args || args["limit"] === undefined || args["orderBy"] === undefined)
-    ) {
-      return "";
-    }
-
     if (!args || args["limit"] === undefined) {
       return "";
     }
@@ -767,10 +836,16 @@ export const buildPaginationClauseFp =
       ? toPositionalPlaceholder(args["offset"], variablesDefinition, dbType)
       : "0";
 
-    // Return database-specific syntax
-    return dbType === "mssql"
-      ? `OFFSET ${offsetPlaceholder} ROWS FETCH NEXT ${limitPlaceholder} ROWS ONLY`
-      : `LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`;
+    if (dbType !== "mssql") {
+      return `LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`;
+    }
+
+    // T-SQL only accepts OFFSET/FETCH after an ORDER BY. Dropping the limit when
+    // the query has none returned the whole table instead, so supply the
+    // order-agnostic ORDER BY that T-SQL accepts for exactly this case.
+    const orderByFallback = args["orderBy"] === undefined ? "ORDER BY (SELECT NULL) " : "";
+
+    return `${orderByFallback}OFFSET ${offsetPlaceholder} ROWS FETCH NEXT ${limitPlaceholder} ROWS ONLY`;
   };
 
 export const buildPaginationClausePG = buildPaginationClauseFp("pg");

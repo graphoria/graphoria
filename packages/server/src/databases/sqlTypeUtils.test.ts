@@ -11,7 +11,6 @@ describe("categorizeSqlType", () => {
       "bigint",
       "tinyint",
       "mediumint",
-      "numeric",
       "number",
       "INT", // case-insensitive
       "BigInt",
@@ -30,6 +29,7 @@ describe("categorizeSqlType", () => {
       "double",
       "double precision",
       "decimal",
+      "numeric",
       "money",
       "smallmoney",
       "DECIMAL",

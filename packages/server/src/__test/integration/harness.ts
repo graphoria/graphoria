@@ -122,14 +122,20 @@ const rawClient = async (engine: DatabaseType) => {
   };
 };
 
+export type StartedServer = {
+  context: IntegrationContext;
+  /** Closes the raw client, the server, and every database pool. */
+  stop: () => Promise<void>;
+};
+
 /**
- * Boots a server for `engine`, hands the context to `fn`, and tears everything
- * down again — including database pools, so a test file leaves no open handles.
+ * Boots a server for `engine` and hands back the context plus its teardown.
+ *
+ * Use this from `beforeAll`/`afterAll` when a file runs many assertions against
+ * one database — booting per test costs an introspection round-trip each time.
+ * `withServer` wraps it for the single-shot case.
  */
-export const withServer = async <T>(
-  options: WithServerOptions,
-  fn: (context: IntegrationContext) => Promise<T>,
-): Promise<T> => {
+export const startServer = async (options: WithServerOptions): Promise<StartedServer> => {
   const { engine, config, skipSeed } = options;
 
   if (!skipSeed) await seedEngine(engine);
@@ -172,12 +178,30 @@ export const withServer = async <T>(
     sql: (statement) => raw.query(statement),
   };
 
+  return {
+    context,
+    stop: async () => {
+      await raw.close();
+      server.stop(true);
+      await disconnectDatabases();
+    },
+  };
+};
+
+/**
+ * Boots a server for `engine`, hands the context to `fn`, and tears everything
+ * down again — including database pools, so a test file leaves no open handles.
+ */
+export const withServer = async <T>(
+  options: WithServerOptions,
+  fn: (context: IntegrationContext) => Promise<T>,
+): Promise<T> => {
+  const { context, stop } = await startServer(options);
+
   try {
     return await fn(context);
   } finally {
-    await raw.close();
-    server.stop(true);
-    await disconnectDatabases();
+    await stop();
   }
 };
 

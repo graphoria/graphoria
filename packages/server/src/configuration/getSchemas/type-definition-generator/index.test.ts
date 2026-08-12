@@ -1,6 +1,7 @@
 import { describe, expect, test as it } from "bun:test";
 
 import {
+  generateAggregationTypes,
   generateOrderByInputType,
   generateQueryType,
   generateTableType,
@@ -21,12 +22,38 @@ describe("Type definition generator", () => {
       expect(mapSQLTypeToGraphQLType("unknown")).toBe("String");
     });
 
+    // PostgreSQL reports every DECIMAL(p, s) column as `numeric`, so typing it
+    // Int published a schema that disagreed with the value the query returned.
+    it("should map numeric and decimal to Float", () => {
+      expect(mapSQLTypeToGraphQLType("numeric")).toBe("Float");
+      expect(mapSQLTypeToGraphQLType("decimal")).toBe("Float");
+      expect(mapSQLTypeToConditionType("numeric")).toBe("FloatCondition");
+      expect(mapSQLTypeToConditionType("decimal")).toBe("FloatCondition");
+    });
+
     it("should map SQL types to condition types correctly", () => {
       expect(mapSQLTypeToConditionType("int")).toBe("IntCondition");
       expect(mapSQLTypeToConditionType("varchar")).toBe("StringCondition");
       expect(mapSQLTypeToConditionType("bit")).toBe("BooleanCondition");
       expect(mapSQLTypeToConditionType("float")).toBe("FloatCondition");
       expect(mapSQLTypeToConditionType("unknown")).toBe("StringCondition");
+    });
+  });
+
+  describe("Aggregation type generation", () => {
+    // An average is fractional whatever the column is, so typing the Avg block
+    // from the column's own type published `avg { quantity }` as Int while the
+    // query returned 3.57.
+    it("types every avg field Float and leaves min/max on the column type", () => {
+      const result = generateAggregationTypes(StoreMSSQL);
+
+      expect(result).toContain("type dbo_order_itemsAvg");
+      expect(result.split("type dbo_order_itemsAvg")[1]?.split("}")[0]).toContain(
+        "quantity: Float",
+      );
+      expect(result.split("type dbo_order_itemsMin")[1]?.split("}")[0]).toContain("quantity: Int");
+      expect(result.split("type dbo_order_itemsMax")[1]?.split("}")[0]).toContain("quantity: Int");
+      expect(result.split("type dbo_order_itemsSum")[1]?.split("}")[0]).toContain("quantity: Int");
     });
   });
 

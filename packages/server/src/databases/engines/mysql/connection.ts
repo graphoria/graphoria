@@ -6,6 +6,7 @@ import type { Database } from "../../../types/configuration";
 import type { ProcedureResolver } from "../../../types/db";
 
 import { databasesConnections } from "../../../singletons/databases";
+import { toMySQLPlaceholders } from "./placeholders";
 
 export const getPool = async (db: Database) => {
   const opts = db.connectionOptions as BunSQLConnectionOptions | undefined;
@@ -42,10 +43,10 @@ export const executeQueryFactory =
   ) => {
     const pool = singleQuery ? await getPool(db) : await getPoolSingleton(db);
 
-    const result = await pool.unsafe<T>(
-      query,
-      variablesDefinition.map((v) => values[v.name]),
-    );
+    // Bun's MySQL adapter binds `?` positionally; the builders emit `$n`.
+    const bound = toMySQLPlaceholders(query, variablesDefinition, values);
+
+    const result = await pool.unsafe<T>(bound.query, bound.params);
 
     if (singleQuery) {
       await pool.close();

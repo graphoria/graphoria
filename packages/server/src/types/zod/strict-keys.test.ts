@@ -125,6 +125,55 @@ describe("configuration strictness", () => {
     expect(issues.some((issue) => issue.keys.includes("subscriber"))).toBe(true);
   });
 
+  // A role filter naming an operator the query builder does not implement used
+  // to parse, and then evaluate to no condition at all — the role saw the whole
+  // table. Reject it at boot instead.
+  it("rejects an unimplemented operator in a role filter", () => {
+    const result = ConfigurationZod.safeParse({
+      ...minimalConfig,
+      databases: [database],
+      auth: {
+        enabled: true,
+        database: "default",
+        permissions: {
+          user: { tables: { orders: { columns: "ALL", filter: { user_id: { equals: "1" } } } } },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain("equals");
+  });
+
+  it("accepts every operator the query builder implements", () => {
+    const result = ConfigurationZod.safeParse({
+      ...minimalConfig,
+      databases: [database],
+      auth: {
+        enabled: true,
+        database: "default",
+        permissions: {
+          user: {
+            tables: {
+              orders: {
+                columns: "ALL",
+                filter: {
+                  user_id: { eq: "$session.sub" },
+                  total: { gt: 1, gte: 1, lt: 9, lte: 9, neq: 0, between: [1, 9] },
+                  name: { like: "%x%", in: ["a", "b"] },
+                  deleted_at: { is_null: true },
+                  archived_at: { not_null: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("rejects an unknown key in an operation config", () => {
     const issues = unrecognized(
       ConfigurationZod.safeParse({
