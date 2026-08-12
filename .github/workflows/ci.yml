@@ -60,6 +60,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # packages/server/playgrounds/ is a gitignored build artefact, but
+      # createHandlers reads its HTML unconditionally at boot. Without this the
+      # harness cannot start a server on a fresh checkout.
+      - name: Build playgrounds
+        run: bun run --filter @graphoria/server build:playgrounds
+
       # --wait blocks on the healthchecks in docker-compose.test.yml and fails
       # the step if a container never reports healthy. SQL Server is the long
       # pole at ~30-60s, hence the raised timeout.
