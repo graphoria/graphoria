@@ -1,3 +1,5 @@
+import { isAbsolute, resolve } from "path";
+
 import { isFunction, isPlainObject } from "es-toolkit";
 import { z } from "zod";
 
@@ -22,8 +24,13 @@ import { generateOpenAPI } from "./rest/generateOpenAPI";
 
 export const loadConfiguration = async (config: string): Promise<Configuration> => {
   try {
+    // A dynamic import() with a relative specifier resolves against this module,
+    // not the project root. Resolve relative paths against the process cwd (the
+    // project root) so CONFIGURATION="graphoria.ts" works like an absolute path.
+    const configPath = isAbsolute(config) ? config : resolve(process.cwd(), config);
+
     // Dynamic import of the TypeScript file
-    const configModule = await import(config);
+    const configModule = await import(configPath);
 
     if (isFunction(configModule?.default)) {
       return configModule.default({
