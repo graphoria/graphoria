@@ -566,27 +566,25 @@ describe("applyDirectives", () => {
     });
 
     test("should not cast a concat literal", () => {
-      const result = applyDirectives("name", [{ name: "concat", arguments: { with: " Jr." } }], "pg");
+      const result = applyDirectives(
+        "name",
+        [{ name: "concat", arguments: { with: " Jr." } }],
+        "pg",
+      );
       expect(result).toBe("CONCAT(name, ' Jr.')");
     });
 
     test("should not cast a parameterized concat argument on mysql or mssql", () => {
       expect(
-        applyDirectives(
-          "name",
-          [{ name: "concat", arguments: { with: "$static_0" } }],
-          "mssql",
-          [{ name: "static_0", type: "String", required: false, defaultValue: " Jr." }],
-        ),
+        applyDirectives("name", [{ name: "concat", arguments: { with: "$static_0" } }], "mssql", [
+          { name: "static_0", type: "String", required: false, defaultValue: " Jr." },
+        ]),
       ).toBe("CONCAT(name, @1)");
 
       expect(
-        applyDirectives(
-          "name",
-          [{ name: "concat", arguments: { with: "$static_0" } }],
-          "mysql",
-          [{ name: "static_0", type: "String", required: false, defaultValue: " Jr." }],
-        ),
+        applyDirectives("name", [{ name: "concat", arguments: { with: "$static_0" } }], "mysql", [
+          { name: "static_0", type: "String", required: false, defaultValue: " Jr." },
+        ]),
       ).toBe("CONCAT(name, $1)");
     });
 
@@ -1020,9 +1018,7 @@ describe("Edge Cases and Real-World Scenarios", () => {
         ],
         "mysql",
       );
-      expect(result).toBe(
-        "CONCAT('PROD-', LPAD(UPPER(TRIM(product_code)), 10, '0'))",
-      );
+      expect(result).toBe("CONCAT('PROD-', LPAD(UPPER(TRIM(product_code)), 10, '0'))");
     });
 
     test("should handle mixed directives in MSSQL", () => {

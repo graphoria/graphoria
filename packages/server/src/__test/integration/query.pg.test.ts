@@ -8,10 +8,11 @@ import { integrationEnabled, startServer } from "./harness";
 
 /**
  * Task 1.4 of the hardening plan, PostgreSQL half: assert on the rows the
- * engine actually returns, not on the SQL string Graphoria generates. The
- * string assertions in databases/engines/postgresql/query/index.test.ts pass
- * against queries that are wrong at runtime — see the `it.failing` cases below
- * and the findings section of HARDENING_PROGRESS.md.
+ * engine actually returns, not on the SQL string Graphoria generates. Several of
+ * these cases were red when first written — the generated-SQL assertions in
+ * databases/engines/postgresql/query/index.test.ts had been passing against
+ * queries that were wrong at runtime. See findings F3-F14 in
+ * HARDENING_PROGRESS.md.
  *
  * One server for the whole file: booting costs a full introspection round-trip.
  */
@@ -576,7 +577,10 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
         __schema: {
           types: {
             name: string;
-            fields?: { name: string; type: { name: string | null; ofType: { name: string } | null } }[];
+            fields?: {
+              name: string;
+              type: { name: string | null; ofType: { name: string } | null };
+            }[];
           }[];
         };
       }>(`query { __schema { queryType { name } } }`);
