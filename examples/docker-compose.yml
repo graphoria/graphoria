@@ -1,0 +1,83 @@
+# Backing services for local Graphoria testing.
+#
+#   docker compose -f example/docker-compose.yml up -d
+#
+# Then run your Graphoria server on the host with `bun run index.ts`.
+# Credentials below match the config in docs/QUICKSTART.md.
+services:
+  postgres:
+    image: postgres:18
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: my_app
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Alternative database engines — uncomment the one you want (and optionally
+  # comment out postgres above). Matching Taskly seed ports live in
+  # taskly/seed.mssql.sql and taskly/seed.mysql.sql.
+
+  # mysql:
+  #   image: mysql:8
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: mysqlpassword
+  #     MYSQL_DATABASE: my_app
+  #   ports:
+  #     - "3306:3306"
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-uroot", "-pmysqlpassword", "--silent"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5
+
+  # The MSSQL image cannot pre-create a database — create it once after boot:
+  #   docker compose exec mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Str0ng!Passw0rd' -C -Q "CREATE DATABASE my_app"
+  # mssql:
+  #   image: mcr.microsoft.com/mssql/server:2022-latest
+  #   environment:
+  #     ACCEPT_EULA: "Y"
+  #     MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+  #     MSSQL_PID: Developer
+  #   ports:
+  #     - "1433:1433"
+
+  # Required only when auth is enabled (token store) or CACHE_STORE=redis.
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  # Optional — only needed for the message-queue features.
+  rabbitmq:
+    image: rabbitmq:4-management
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # management UI (http://localhost:15672, guest/guest)
+
+  dbgate:
+    image: dbgate/dbgate
+    restart: always
+    ports:
+      - 9000:3000
+    volumes:
+      - dbgate-data:/root/.dbgate
+    environment:
+      CONNECTIONS: con1
+
+      LABEL_con1: postgres
+      SERVER_con1: postgres
+      USER_con1: postgres
+      PASSWORD_con1: postgrespassword
+      PORT_con1: 5432
+      ENGINE_con1: postgres@dbgate-plugin-postgres
+
+volumes:
+  postgres-data:
+  dbgate-data:
