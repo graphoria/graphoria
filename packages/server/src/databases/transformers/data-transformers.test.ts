@@ -12,6 +12,7 @@ import {
 const db = (overrides: Partial<Database> = {}): Database =>
   ({
     name: "pg",
+    type: "pg",
     fieldNaming: "{schema}_{name}",
     ...overrides,
   }) as unknown as Database;
@@ -158,6 +159,18 @@ describe("buildTableResolver", () => {
 
     expect(r.resolverName).toBe(r.internalName);
     expect(r.resolverName).toBe("dbo_users");
+  });
+
+  it("delimits dottedQuotedName for the table's own engine", () => {
+    const order = mkTable("dbo", "order");
+
+    expect(buildTableResolver([order], order, db()).dottedQuotedName).toBe(`"dbo"."order"`);
+    expect(buildTableResolver([order], order, db({ type: "mysql" })).dottedQuotedName).toBe(
+      "`dbo`.`order`",
+    );
+    expect(buildTableResolver([order], order, db({ type: "mssql" })).dottedQuotedName).toBe(
+      "[dbo].[order]",
+    );
   });
 });
 

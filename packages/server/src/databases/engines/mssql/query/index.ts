@@ -25,7 +25,7 @@ import {
 // Generate CTE for aggregations
 const buildAggregationCTE = (
   groupByInfo: GroupByInfo,
-  dottedName: string,
+  dottedQuotedName: string,
   tableAlias: string,
   whereClause: string,
 ): string => {
@@ -55,7 +55,7 @@ const buildAggregationCTE = (
   return `${cteAlias} AS (
     SELECT
       ${selectClauses.join(",\n      ")}
-    FROM ${dottedName} ${tableAlias}
+    FROM ${dottedQuotedName} ${tableAlias}
     ${whereClause}
     ${groupByClause}
   )`;
@@ -66,7 +66,7 @@ const buildGroupedQuery = (
   entities: MergedEntities,
   field: SelectionAnalysis,
   groupByInfo: GroupByInfo,
-  dottedName: string,
+  dottedQuotedName: string,
   tableAlias: string,
   whereClause: string,
 ): string => {
@@ -121,7 +121,7 @@ const buildGroupedQuery = (
 
         selectClauses.push(`JSON_QUERY(ISNULL((
           SELECT ${itemFields}
-          FROM ${dottedName} ${tableAlias}
+          FROM ${dottedQuotedName} ${tableAlias}
           ${whereClause ? [whereClause, ...joinConditions].join(" AND ") : `WHERE ${joinConditions.join(" AND ")}`}
           FOR JSON PATH, INCLUDE_NULL_VALUES
         ), '[]')) AS ${wrapIdentifierMSSQL(itemsSelection.alias || itemsSelection.name)}`);
@@ -181,7 +181,7 @@ export const generateSQL = (
 
     if (groupByInfo) {
       // This field requires a CTE
-      const { dottedName } = entities.queriesMap[field.name]!;
+      const { dottedQuotedName } = entities.queriesMap[field.name]!;
 
       const whereClause = buildWhereClauseMSSQL(
         entities,
@@ -195,7 +195,7 @@ export const generateSQL = (
         {},
       );
 
-      const cte = buildAggregationCTE(groupByInfo, dottedName, tableAlias, whereClause);
+      const cte = buildAggregationCTE(groupByInfo, dottedQuotedName, tableAlias, whereClause);
       ctes.push(cte);
     }
 
@@ -242,7 +242,7 @@ export const buildSQLForField = (
     throw new Error(`Table not found for field: ${field.name}`);
   }
 
-  const { dottedName, resolverName } = foundTable;
+  const { dottedQuotedName, resolverName } = foundTable;
 
   aliasMap[tableAlias] = resolverName;
 
@@ -267,7 +267,7 @@ export const buildSQLForField = (
       entities,
       field,
       groupByInfo,
-      dottedName,
+      dottedQuotedName,
       tableAlias,
       whereClause,
     );
@@ -298,7 +298,7 @@ export const buildSQLForField = (
     ([name, selector]) => `${selector} AS ${wrapIdentifierMSSQL(name)}`,
   );
 
-  const fromClause = `FROM ${dottedName} ${tableAlias}`;
+  const fromClause = `FROM ${dottedQuotedName} ${tableAlias}`;
 
   const orderByClause = buildOrderByClauseMSSQL(entities, field, tableAlias);
   const paginationClause = buildPaginationClauseMSSQL(field, variablesDefinition);

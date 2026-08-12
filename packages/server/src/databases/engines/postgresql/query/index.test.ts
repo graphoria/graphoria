@@ -239,7 +239,7 @@ describe("PostgreSQL: Store", () => {
                     SELECT
                       1
                     FROM
-                      dbo.reviews t2
+                      "dbo"."reviews" t2
                     WHERE
                       t1."product_id" = t2."product_id"
                       AND (t2."rating" >= $1)

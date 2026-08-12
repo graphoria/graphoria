@@ -64,7 +64,7 @@ describe("MSSQL: Store", () => {
                                   SELECT
                                     t3.[name] AS [name]
                                   FROM
-                                    dbo.categories t3
+                                    [dbo].[categories] t3
                                   WHERE
                                     t2.[category_id] = t3.[category_id] FOR JSON PATH,
                                     INCLUDE_NULL_VALUES,
@@ -74,7 +74,7 @@ describe("MSSQL: Store", () => {
                               )
                             ) AS [dbo_categories]
                           FROM
-                            dbo.product_categories t2
+                            [dbo].[product_categories] t2
                           WHERE
                             t1.[product_id] = t2.[product_id] FOR JSON PATH,
                             INCLUDE_NULL_VALUES
@@ -83,7 +83,7 @@ describe("MSSQL: Store", () => {
                       )
                     ) AS [dbo_product_categories]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -119,7 +119,7 @@ describe("MSSQL: Store", () => {
                                   SELECT
                                     t3.[name] AS [name]
                                   FROM
-                                    dbo.categories t3
+                                    [dbo].[categories] t3
                                   WHERE
                                     t2.[category_id] = t3.[category_id] FOR JSON PATH,
                                     INCLUDE_NULL_VALUES,
@@ -129,7 +129,7 @@ describe("MSSQL: Store", () => {
                               )
                             ) AS [dbo_categories]
                           FROM
-                            dbo.product_categories t2
+                            [dbo].[product_categories] t2
                           WHERE
                             t1.[product_id] = t2.[product_id] FOR JSON PATH,
                             INCLUDE_NULL_VALUES
@@ -138,7 +138,7 @@ describe("MSSQL: Store", () => {
                       )
                     ) AS [dbo_product_categories]
                   FROM
-                    dbo.products t1
+                    [dbo].[products] t1
                   WHERE
                     t1.[name] = @1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
@@ -172,7 +172,7 @@ describe("MSSQL: Store", () => {
                             t2.[quantity] AS [quantity],
                             t2.[unit_price] AS [unit_price]
                           FROM
-                            dbo.order_items t2
+                            [dbo].[order_items] t2
                           WHERE
                             t2.[quantity] > @1
                             AND t1.[product_id] = t2.[product_id] FOR JSON PATH,
@@ -182,7 +182,7 @@ describe("MSSQL: Store", () => {
                       )
                     ) AS [dbo_order_items]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -213,7 +213,7 @@ describe("MSSQL: Store", () => {
                           SELECT
                             t2.[quantity] AS [quantity]
                           FROM
-                            dbo.order_items t2
+                            [dbo].[order_items] t2
                           WHERE
                             t1.[product_id] = t2.[product_id] FOR JSON PATH,
                             INCLUDE_NULL_VALUES
@@ -222,13 +222,13 @@ describe("MSSQL: Store", () => {
                       )
                     ) AS [dbo_order_items]
                   FROM
-                    dbo.products t1
+                    [dbo].[products] t1
                   WHERE
                     EXISTS (
                       SELECT
                         1
                       FROM
-                        dbo.reviews t2
+                        [dbo].[reviews] t2
                       WHERE
                         t1.[product_id] = t2.[product_id]
                         AND (t2.[rating] >= @1)
@@ -266,7 +266,7 @@ describe("MSSQL: Orders", () => {
                             t2.[first_name] AS [first_name],
                             t2.[last_name] AS [last_name]
                           FROM
-                            dbo.customers t2
+                            [dbo].[customers] t2
                           WHERE
                             t1.[customer_id] = t2.[customer_id] FOR JSON PATH,
                             INCLUDE_NULL_VALUES,
@@ -276,7 +276,7 @@ describe("MSSQL: Orders", () => {
                       )
                     ) AS [dbo_customers]
                   FROM
-                    dbo.orders t1 FOR JSON PATH,
+                    [dbo].[orders] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -317,7 +317,7 @@ describe("MSSQL: Common", () => {
                                     SELECT
                                       t3.[name] AS [name]
                                     FROM
-                                      dbo.categories t3
+                                      [dbo].[categories] t3
                                     WHERE
                                       t2.[category_id] = t3.[category_id] FOR JSON PATH,
                                       INCLUDE_NULL_VALUES,
@@ -327,7 +327,7 @@ describe("MSSQL: Common", () => {
                                 )
                               ) AS [dbo_categories]
                             FROM
-                              dbo.product_categories t2
+                              [dbo].[product_categories] t2
                             WHERE
                               t1.[product_id] = t2.[product_id] FOR JSON PATH,
                               INCLUDE_NULL_VALUES
@@ -336,7 +336,7 @@ describe("MSSQL: Common", () => {
                         )
                       ) AS [dbo_product_categories]
                     FROM
-                      dbo.products t1 FOR JSON PATH,
+                      [dbo].[products] t1 FOR JSON PATH,
                       INCLUDE_NULL_VALUES
                   ),
                   '[]'
@@ -360,7 +360,7 @@ describe("MSSQL: Common", () => {
                     t1.[order_id] AS [order_id],
                     t1.[customer_id] AS [customer_id]
                   FROM
-                    dbo.orders t1 FOR JSON PATH,
+                    [dbo].[orders] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -390,7 +390,7 @@ describe("MSSQL: Common", () => {
                             SELECT
                           t2.[first_name] AS [first_name]
                         FROM
-                          dbo.customers t2
+                          [dbo].[customers] t2
                         WHERE
                           t1.[customer_id] = t2.[customer_id] FOR JSON PATH,
                           INCLUDE_NULL_VALUES,
@@ -400,7 +400,7 @@ describe("MSSQL: Common", () => {
                     )
                   ) AS [dbo_customers]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -430,7 +430,7 @@ describe("MSSQL: Common", () => {
                             SELECT
                           t2.[first_name] AS [first_name]
                         FROM
-                          dbo.customers t2
+                          [dbo].[customers] t2
                         WHERE
                           t1.[customer_id] = t2.[customer_id] FOR JSON PATH,
                           INCLUDE_NULL_VALUES,
@@ -440,7 +440,7 @@ describe("MSSQL: Common", () => {
                     )
                   ) AS [dbo_customers]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -465,7 +465,7 @@ describe("MSSQL: Common", () => {
                   t1.[order_id] AS [order_id],
                   t1.[customer_id] AS [customer_id]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -500,7 +500,7 @@ describe("MSSQL: Common", () => {
                             SELECT
                           t2.[first_name] AS [first_name]
                         FROM
-                          dbo.customers t2
+                          [dbo].[customers] t2
                         WHERE
                           t1.[customer_id] = t2.[customer_id] FOR JSON PATH,
                           INCLUDE_NULL_VALUES,
@@ -510,7 +510,7 @@ describe("MSSQL: Common", () => {
                     )
                   ) AS [dbo_customers]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -540,7 +540,7 @@ describe("MSSQL: Common", () => {
                   t1.[order_id] AS [order_id],
                   t1.[customer_id] AS [customer_id]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -575,7 +575,7 @@ describe("MSSQL: Common", () => {
                             SELECT
                           t2.[first_name] AS [first_name]
                         FROM
-                          dbo.customers t2
+                          [dbo].[customers] t2
                         WHERE
                           t1.[customer_id] = t2.[customer_id] FOR JSON PATH,
                           INCLUDE_NULL_VALUES,
@@ -585,7 +585,7 @@ describe("MSSQL: Common", () => {
                     )
                   ) AS [dbo_customers]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -615,7 +615,7 @@ describe("MSSQL: Common", () => {
                   t1.[order_id] AS [order_id],
                   t1.[customer_id] AS [customer_id]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -640,7 +640,7 @@ describe("MSSQL: Common", () => {
                 t1.[order_id] AS [order_id],
                 t1.[customer_id] AS [customer_id]
               FROM
-                dbo.orders t1 FOR JSON PATH,
+                [dbo].[orders] t1 FOR JSON PATH,
                 INCLUDE_NULL_VALUES
             ),
             '[]'
@@ -670,7 +670,7 @@ describe("MSSQL: Common", () => {
                         SELECT
                         t2.[first_name] AS [first_name]
                         FROM
-                        dbo.customers t2
+                        [dbo].[customers] t2
                         WHERE
                           t1.[customer_id] = t2.[customer_id] FOR JSON PATH,
                           INCLUDE_NULL_VALUES,
@@ -680,7 +680,7 @@ describe("MSSQL: Common", () => {
                     )
                   ) AS [dbo_customers]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -705,7 +705,7 @@ describe("MSSQL: Common", () => {
                   t1.[order_id] AS [order_id],
                   t1.[customer_id] AS [customer_id]
                 FROM
-                  dbo.orders t1 FOR JSON PATH,
+                  [dbo].[orders] t1 FOR JSON PATH,
                   INCLUDE_NULL_VALUES
               ),
               '[]'
@@ -730,7 +730,7 @@ describe("MSSQL: Common", () => {
                   t1.[product_id] AS [product_id],
                   t1.[name] AS [name]
                 FROM
-                  dbo.products t1
+                  [dbo].[products] t1
                 ORDER BY
                   t1.[product_id] ASC
                 OFFSET
@@ -760,7 +760,7 @@ describe("MSSQL: Common", () => {
               MIN(t1.[order_id]) AS min_order_id,
               SUM(t1.[total_amount]) AS sum_total_amount
             FROM
-              dbo.orders t1
+              [dbo].[orders] t1
             GROUP BY
               t1.[customer_id]
           )
@@ -792,7 +792,7 @@ describe("MSSQL: Common", () => {
                       t1.[customer_id] AS [customer_id],
                       t1.[total_amount] AS [total_amount]
                     FROM
-                      dbo.orders t1
+                      [dbo].[orders] t1
                     WHERE
                       t1.[customer_id] = t1_agg.[customer_id] FOR JSON PATH,
                       INCLUDE_NULL_VALUES
@@ -823,7 +823,7 @@ describe("MSSQL: Common", () => {
                     UPPER(t1.[name]) AS [name],
                     t1.[sku] AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -849,7 +849,7 @@ describe("MSSQL: Common", () => {
                     LOWER(t1.[name]) AS [name],
                     t1.[sku] AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -875,7 +875,7 @@ describe("MSSQL: Common", () => {
                     LEFT(t1.[name], @1) AS [name],
                     t1.[sku] AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -901,7 +901,7 @@ describe("MSSQL: Common", () => {
                     COALESCE(t1.[name], @1) AS [name],
                     t1.[sku] AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -927,7 +927,7 @@ describe("MSSQL: Common", () => {
                     TRIM(t1.[name]) AS [name],
                     t1.[sku] AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -952,7 +952,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     SUBSTRING(t1.[sku], @1, @2) AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -978,7 +978,7 @@ describe("MSSQL: Common", () => {
                     REPLACE(t1.[name], @1, @2) AS [name],
                     t1.[sku] AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1003,7 +1003,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     CONCAT(t1.[sku], @1) AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1029,7 +1029,7 @@ describe("MSSQL: Common", () => {
                @1) AS [product_id],
                     t1.[name] AS [name]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1054,7 +1054,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     ROUND(t1.[price], @1) AS [price]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1079,7 +1079,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     CEILING(t1.[price]) AS [price]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1104,7 +1104,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     FLOOR(t1.[price]) AS [price]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1129,7 +1129,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     ABS(t1.[price]) AS [price]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1154,7 +1154,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     (t1.[price] * @1) AS [price]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1179,7 +1179,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     (t1.[price] / @1) AS [price]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1205,7 +1205,7 @@ describe("MSSQL: Common", () => {
                     LEFT(UPPER(TRIM(t1.[name])), @1) AS [name],
                     t1.[sku] AS [sku]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1230,7 +1230,7 @@ describe("MSSQL: Common", () => {
                     t1.[order] AS [order],
                     t1.[name] AS [name]
                   FROM
-                    dbo.products t1
+                    [dbo].[products] t1
                   ORDER BY
                     t1.[order] ASC FOR JSON PATH,
                     INCLUDE_NULL_VALUES
@@ -1257,7 +1257,7 @@ describe("MSSQL: Common", () => {
                     t1.[name] AS [print],
                     t1.[sku] AS [group]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
@@ -1282,7 +1282,7 @@ describe("MSSQL: Common", () => {
                     t1.[product_id] AS [product_id],
                     ROUND((t1.[price] * @1), @2) AS [price]
                   FROM
-                    dbo.products t1 FOR JSON PATH,
+                    [dbo].[products] t1 FOR JSON PATH,
                     INCLUDE_NULL_VALUES
                 ),
                 '[]'
