@@ -4,6 +4,7 @@ import { StorePG } from "../../../../__test/dataset/store";
 import {
   ordDirectiveOptionalQuery,
   ordDirectiveRequiredQuery,
+  ordGroupByDateFormatQuery,
   ordGroupByQuery,
   ordQuery,
   ordWithIncludeFalseDirectiveQuery,
@@ -851,6 +852,65 @@ describe("PostgreSQL: Common", () => {
                             "dbo"."orders" t1
                           WHERE
                             t1."customer_id" = t1_agg."customer_id"
+                        ),
+                        '[]'::json
+                      )
+                    )
+                  )
+                FROM
+                  t1_agg
+              ),
+              '[]'::json
+            )
+          ) as json_result
+      `),
+    );
+  });
+
+  it("Should apply directives to GROUP BY key and items", () => {
+    expect(genSql(StorePG, ordGroupByDateFormatQuery)).toBe(
+      format(`
+        WITH
+          t1_agg AS (
+            SELECT
+              t1."created_at",
+              COUNT(*) AS count
+            FROM
+              "dbo"."orders" t1
+            GROUP BY
+              t1."created_at"
+          )
+        SELECT
+          json_build_object(
+            'orders',
+            COALESCE(
+              (
+                SELECT
+                  json_agg(
+                    json_build_object(
+                      'key',
+                      json_build_object(
+                        'created_at',
+                        TO_CHAR(t1_agg."created_at", $1)
+                      ),
+                      'count',
+                      t1_agg.count,
+                      'items',
+                      COALESCE(
+                        (
+                          SELECT
+                            json_agg(
+                              json_build_object(
+                                'order_id',
+                                t1."order_id",
+                                'total_amount',
+                                (t1."total_amount" * $2)
+                              )
+                            )
+                          FROM
+                            "dbo"."orders" t1
+                          WHERE
+                            t1."created_at" = t1_agg."created_at"
                         ),
                         '[]'::json
                       )

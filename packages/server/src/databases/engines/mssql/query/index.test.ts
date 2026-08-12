@@ -4,6 +4,7 @@ import { StoreMSSQL } from "../../../../__test/dataset/store";
 import {
   ordDirectiveOptionalQuery,
   ordDirectiveRequiredQuery,
+  ordGroupByDateFormatQuery,
   ordGroupByQuery,
   ordQuery,
   ordWithIncludeFalseDirectiveQuery,
@@ -862,6 +863,56 @@ describe("MSSQL: Common", () => {
                       [dbo].[orders] t1
                     WHERE
                       t1.[customer_id] = t1_agg.[customer_id] FOR JSON PATH,
+                      INCLUDE_NULL_VALUES
+                  ),
+                  '[]'
+                )
+              ) AS [items]
+            FROM
+              t1_agg FOR JSON PATH,
+              INCLUDE_NULL_VALUES
+          ) as [orders] FOR JSON PATH,
+          INCLUDE_NULL_VALUES,
+          WITHOUT_ARRAY_WRAPPER
+      `),
+    );
+  });
+
+  it("Should apply directives to GROUP BY key and items", () => {
+    expect(genSql(StoreMSSQL, ordGroupByDateFormatQuery)).toBe(
+      format(`
+        WITH
+          t1_agg AS (
+            SELECT
+              t1.[created_at],
+              COUNT(*) AS count
+            FROM
+              [dbo].[orders] t1
+            GROUP BY
+              t1.[created_at]
+          )
+        SELECT
+          (
+            SELECT
+              JSON_QUERY(
+                (
+                  SELECT
+                    FORMAT(t1_agg.[created_at], @1) AS [created_at] FOR JSON PATH,
+                    WITHOUT_ARRAY_WRAPPER,
+                    INCLUDE_NULL_VALUES
+                )
+              ) AS [key],
+              t1_agg.count AS [count],
+              JSON_QUERY(
+                ISNULL(
+                  (
+                    SELECT
+                      t1.[order_id] AS [order_id],
+                      (t1.[total_amount] * @2) AS [total_amount]
+                    FROM
+                      [dbo].[orders] t1
+                    WHERE
+                      t1.[created_at] = t1_agg.[created_at] FOR JSON PATH,
                       INCLUDE_NULL_VALUES
                   ),
                   '[]'

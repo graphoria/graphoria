@@ -183,6 +183,48 @@ export const ordGroupByQuery = analyzeQuery(
   StoreMSSQL.schema,
 );
 
+// Aggregate with a data-transform directive on a `key` field and an `items` field.
+// @dateFormat is unsupported on MySQL, so this fixture is only used for PG/MSSQL.
+export const ordGroupByDateFormatQuery = analyzeQuery(
+  `
+    query getOrderSummary {
+      orders: dbo_orders_aggregate(groupBy: [created_at]) {
+        key {
+          created_at @dateFormat(format: "dd/MM/yyyy")
+        }
+        count
+        items {
+          order_id
+          total_amount @multiply(by: 100)
+        }
+      }
+    }
+  `,
+  StoreMSSQL,
+  StoreMSSQL.schema,
+);
+
+// Aggregate with a directive that works on every engine (used to prove key/items
+// directive application on MySQL, where @dateFormat is unsupported).
+export const ordGroupByMultiplyQuery = analyzeQuery(
+  `
+    query getOrderSummary {
+      orders: dbo_orders_aggregate(groupBy: [customer_id]) {
+        key {
+          customer_id @multiply(by: 100)
+        }
+        count
+        items {
+          order_id
+          total_amount @multiply(by: 100)
+        }
+      }
+    }
+  `,
+  StoreMSSQL,
+  StoreMSSQL.schema,
+);
+
 // ============================================================================
 // Directive Queries
 // These test GraphQL @skip and @include directives behavior

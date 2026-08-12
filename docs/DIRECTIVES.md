@@ -116,7 +116,7 @@ PostgreSQL gets `LPAD(id::TEXT, 8, '0')` / `RPAD(...)`. SQL Server uses a `REPLI
 }
 ```
 
-PostgreSQL emits `TO_CHAR(created_at, 'YYYY-MM-DD')`. SQL Server emits `FORMAT(created_at, 'YYYY-MM-DD')`. The format string is database-specific — check your engine's documentation. MySQL is not supported by this directive; if you need it on MySQL, expose a virtual column instead (see [Virtual Columns](./VIRTUAL_COLUMNS.md)).
+PostgreSQL emits `TO_CHAR(created_at, 'YYYY-MM-DD')`. SQL Server emits `FORMAT(created_at, 'YYYY-MM-DD')`. The format string is database-specific — check your engine's documentation. MySQL is not supported by this directive — using it on a MySQL source raises an error; expose a virtual column instead (see [Virtual Columns](./VIRTUAL_COLUMNS.md)).
 
 ### `@round(decimals: Int = 0)`, `@ceil`, `@floor`, `@abs`
 

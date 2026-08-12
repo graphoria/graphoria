@@ -19,6 +19,8 @@ import {
   wrapIdentifierMSSQL,
 } from "../../../common";
 
+import { applyDirectives } from "../../../directives";
+
 // FOR JSON PATH uses the unbracketed alias as the JSON key, so bracket-quoting
 // (required for reserved words like PRINT) never leaks into results.
 
@@ -64,6 +66,7 @@ const buildAggregationCTE = (
 // Build the main query for grouped results
 const buildGroupedQuery = (
   entities: MergedEntities,
+  variablesDefinition: VariableDefinition[],
   field: SelectionAnalysis,
   groupByInfo: GroupByInfo,
   dottedQuotedName: string,
@@ -78,10 +81,15 @@ const buildGroupedQuery = (
   if (hasKey) {
     // Add key object with group by fields
     const keyFields = keys
-      .map(
-        (field) =>
-          `${cteAlias}.${wrapIdentifierMSSQL(field.name)} AS ${wrapIdentifierMSSQL(field.alias || field.name)}`,
-      )
+      .map((field) => {
+        const selector = applyDirectives(
+          `${cteAlias}.${wrapIdentifierMSSQL(field.name)}`,
+          field.directives,
+          "mssql",
+          variablesDefinition,
+        );
+        return `${selector} AS ${wrapIdentifierMSSQL(field.alias || field.name)}`;
+      })
       .join(", ");
 
     selectClauses.push(
@@ -107,10 +115,15 @@ const buildGroupedQuery = (
     if (itemsSelection?.selections) {
       const itemFields = itemsSelection.selections
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
-        .map(
-          (sel) =>
-            `${tableAlias}.${wrapIdentifierMSSQL(sel.name)} AS ${wrapIdentifierMSSQL(sel.alias || sel.name)}`,
-        )
+        .map((sel) => {
+          const selector = applyDirectives(
+            `${tableAlias}.${wrapIdentifierMSSQL(sel.name)}`,
+            sel.directives,
+            "mssql",
+            variablesDefinition,
+          );
+          return `${selector} AS ${wrapIdentifierMSSQL(sel.alias || sel.name)}`;
+        })
         .join(", ");
 
       if (itemFields) {
@@ -265,6 +278,7 @@ export const buildSQLForField = (
     // Handle GROUP BY aggregation query
     const mainQuery = buildGroupedQuery(
       entities,
+      variablesDefinition,
       field,
       groupByInfo,
       dottedQuotedName,

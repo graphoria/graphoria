@@ -707,13 +707,14 @@ describe("Edge Cases and Real-World Scenarios", () => {
   });
 
   describe("database-specific edge cases", () => {
-    test("should handle MySQL date formatting", () => {
-      const result = applyDirectives(
-        "created_at",
-        [{ name: "dateFormat", arguments: { format: "%Y-%m-%d" } }],
-        "mysql",
-      );
-      expect(result).toBe("FORMAT(created_at, '%Y-%m-%d')");
+    test("should throw for MySQL date formatting", () => {
+      expect(() =>
+        applyDirectives(
+          "created_at",
+          [{ name: "dateFormat", arguments: { format: "%Y-%m-%d" } }],
+          "mysql",
+        ),
+      ).toThrow("@dateFormat is not supported on MySQL");
     });
 
     test("should handle PostgreSQL text casting with multiple directives", () => {
@@ -886,13 +887,14 @@ describe("Edge Cases and Real-World Scenarios", () => {
         expect(result).toBe("TO_CHAR(created_at, 'YYYY-MM-DD')");
       });
 
-      test("should use FORMAT in MySQL", () => {
-        const result = applyDirectives(
-          "created_at",
-          [{ name: "dateFormat", arguments: { format: "%Y-%m-%d" } }],
-          "mysql",
-        );
-        expect(result).toBe("FORMAT(created_at, '%Y-%m-%d')");
+      test("should throw in MySQL", () => {
+        expect(() =>
+          applyDirectives(
+            "created_at",
+            [{ name: "dateFormat", arguments: { format: "%Y-%m-%d" } }],
+            "mysql",
+          ),
+        ).toThrow("@dateFormat is not supported on MySQL");
       });
 
       test("should use FORMAT in MSSQL", () => {

@@ -18,6 +18,8 @@ import {
   processFieldSelectionsPG,
 } from "../../../common";
 
+import { applyDirectives } from "../../../directives";
+
 // Generate CTE for aggregations
 const buildAggregationCTE = (
   groupByInfo: GroupByInfo,
@@ -58,6 +60,7 @@ const buildAggregationCTE = (
 // Build the main query for grouped results
 const buildGroupedQuery = (
   entities: MergedEntities,
+  variablesDefinition: VariableDefinition[],
   field: SelectionAnalysis,
   groupByInfo: GroupByInfo,
   dottedQuotedName: string,
@@ -72,7 +75,15 @@ const buildGroupedQuery = (
   if (hasKey) {
     // Add key object with group by fields
     const keyFields = keys
-      .map((key) => `'${key.alias || key.name}', ${cteAlias}."${key.name}"`)
+      .map((key) => {
+        const selector = applyDirectives(
+          `${cteAlias}."${key.name}"`,
+          key.directives,
+          "pg",
+          variablesDefinition,
+        );
+        return `'${key.alias || key.name}', ${selector}`;
+      })
       .join(", ");
 
     selectClauses.push(`'${keyResolved}', json_build_object(${keyFields})`);
@@ -96,7 +107,15 @@ const buildGroupedQuery = (
     if (itemsSelection?.selections) {
       const itemFields = itemsSelection.selections
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
-        .map((sel) => `'${sel.alias || sel.name}', ${tableAlias}."${sel.name}"`)
+        .map((sel) => {
+          const selector = applyDirectives(
+            `${tableAlias}."${sel.name}"`,
+            sel.directives,
+            "pg",
+            variablesDefinition,
+          );
+          return `'${sel.alias || sel.name}', ${selector}`;
+        })
         .join(", ");
 
       if (itemFields) {
@@ -240,6 +259,7 @@ export const buildSQLForField = (
     // Handle GROUP BY aggregation query
     const mainQuery = buildGroupedQuery(
       entities,
+      variablesDefinition,
       field,
       groupByInfo,
       dottedQuotedName,
