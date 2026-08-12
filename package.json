@@ -26,6 +26,9 @@
     "format:check": "oxfmt --check",
     "type-check": "bun run --filter '!@graphoria/playgrounds' type-check",
     "test": "bun test",
+    "test:integration": "INTEGRATION=1 bun --config=bunfig.integration.toml test packages/server/src/__test/integration",
+    "test:integration:up": "docker compose -f docker-compose.test.yml up -d --wait",
+    "test:integration:down": "docker compose -f docker-compose.test.yml down -v",
     "test:server": "bun test packages/server",
     "test:react": "bun test packages/react"
   },
