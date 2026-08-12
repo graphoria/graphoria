@@ -1,0 +1,11 @@
+# Bun config for the integration suite only.
+#
+# The root bunfig.toml preloads happy-dom for the React package's DOM tests.
+# happy-dom replaces the global `fetch` and `Response`, which breaks a real
+# `Bun.serve` server — the handlers return happy-dom `Response` objects that
+# Bun.serve rejects. The integration suite boots a real server, so it must run
+# without that preload.
+#
+#   INTEGRATION=1 bun --config=bunfig.integration.toml test packages/server/src/__test/integration
+[run]
+bun = true
