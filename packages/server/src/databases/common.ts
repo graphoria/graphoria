@@ -25,10 +25,27 @@ export interface GroupByInfo {
   cteAlias: string;
 }
 
+// Every operator buildCondition implements. isOperatorObject decides whether a
+// filter object is a column filter or a nested relation, so an operator missing
+// from this set is not merely unhandled — the whole filter is routed to the
+// relation branch and dropped.
+const FILTER_OPERATORS = new Set([
+  "eq",
+  "neq",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "like",
+  "in",
+  "between",
+  "is_null",
+  "is_not_null",
+  "not_null",
+]);
+
 const isOperatorObject = (obj: object): boolean =>
-  Object.keys(obj).some((key) =>
-    ["eq", "neq", "gt", "gte", "lt", "lte", "like", "in", "is_null", "is_not_null"].includes(key),
-  );
+  Object.keys(obj).some((key) => FILTER_OPERATORS.has(key));
 
 export const generateTableAlias = (level: number): string => `t${level}`;
 
@@ -81,7 +98,18 @@ export const buildConditions = (
       // column (e.g. `{ col: {} }`) has no operator keys, so it lands here despite not being a
       // relation; skip it as a no-op instead of dereferencing a missing queriesMap entry.
       const nestedEntity = entities.queriesMap[fieldName];
-      if (!nestedEntity) continue;
+      if (!nestedEntity) {
+        const [unknownOperator] = Object.keys(value as object);
+        // A non-empty filter object on something that is not a relation can only
+        // be a column filter whose operator we do not implement. Dropping it here
+        // would return every row.
+        if (unknownOperator) {
+          throw new Error(
+            `Unsupported filter operator "${unknownOperator}" on column "${fieldName}"`,
+          );
+        }
+        continue;
+      }
 
       const nestedTableAlias = `t${level}`;
 
@@ -194,11 +222,24 @@ const buildCondition = (
         ? `${tableAlias}.${wrappedField} IS NULL`
         : `${tableAlias}.${wrappedField} IS NOT NULL`;
     case "is_not_null":
+    case "not_null":
       return value
         ? `${tableAlias}.${wrappedField} IS NOT NULL`
         : `${tableAlias}.${wrappedField} IS NULL`;
+    case "between": {
+      const bounds = Array.isArray(value) ? value : [];
+      if (bounds.length !== 2) {
+        throw new Error(
+          `Filter operator "between" on column "${field}" expects exactly two values, received ${bounds.length}`,
+        );
+      }
+      return `${tableAlias}.${wrappedField} BETWEEN ${bounds[0]} AND ${bounds[1]}`;
+    }
+    // Returning null here would drop the condition, so a filter Graphoria cannot
+    // honour would widen the result set instead of failing — a role filter naming
+    // an unimplemented operator would return the whole table.
     default:
-      return null;
+      throw new Error(`Unsupported filter operator "${operator}" on column "${field}"`);
   }
 };
 

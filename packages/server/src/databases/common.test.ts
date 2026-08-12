@@ -168,6 +168,86 @@ describe("buildWhereClauseFp", () => {
       );
       expect(sql).toBe('WHERE t1."name" IS NOT NULL');
     });
+
+    it("renders not_null true → IS NOT NULL", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        [],
+        {},
+        field({ where: { name: { not_null: true } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."name" IS NOT NULL');
+    });
+
+    it("renders not_null false → IS NULL", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        [],
+        {},
+        field({ where: { name: { not_null: false } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."name" IS NULL');
+    });
+
+    it("renders between with two variable references", () => {
+      const sql = buildWhereClauseFp("pg")(
+        stubEntities(),
+        vars("a", "b"),
+        { a: 1, b: 5 },
+        field({ where: { id: { between: ["$a", "$b"] } } }),
+        "t1",
+        null,
+        null,
+        0,
+        {},
+      );
+      expect(sql).toBe('WHERE t1."id" BETWEEN $1 AND $2');
+    });
+
+    it("throws when between receives other than two bounds", () => {
+      expect(() =>
+        buildWhereClauseFp("pg")(
+          stubEntities(),
+          vars("a"),
+          { a: 1 },
+          field({ where: { id: { between: ["$a"] } } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        ),
+      ).toThrow('Filter operator "between" on column "id" expects exactly two values');
+    });
+
+    // An operator the builder does not implement used to fall through to
+    // `default: return null`, which dropped the condition and returned the whole
+    // table. A filter that cannot be honoured must fail, not widen.
+    it("throws on an operator it does not implement", () => {
+      expect(() =>
+        buildWhereClauseFp("pg")(
+          stubEntities(),
+          vars("v"),
+          { v: 1 },
+          field({ where: { id: { starts_with: "$v" } } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        ),
+      ).toThrow('Unsupported filter operator "starts_with" on column "id"');
+    });
   });
 
   describe("empty input", () => {
