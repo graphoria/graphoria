@@ -104,6 +104,7 @@ export type {
   DatabaseType,
   DatabaseConnection,
   TableRelationship,
+  RelationshipCondition,
   TableSchemaConfig,
   DatabaseSchemaConfig,
   CustomRepositoryFactory,
@@ -117,6 +118,8 @@ export type {
 
 export {
   TableRelationshipZod,
+  RelationshipConditionZod,
+  RELATIONSHIP_CONDITION_OPERATORS,
   TableSchemaConfigZod,
   DatabaseSchemaConfigZod,
   BunSQLConnectionOptionsZod,

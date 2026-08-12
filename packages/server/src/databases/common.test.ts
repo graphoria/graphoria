@@ -328,6 +328,116 @@ describe("findJoinCondition collation handling", () => {
   });
 });
 
+describe("findJoinCondition static conditions", () => {
+  const joinEntities = (
+    relationships: unknown[] = [],
+    relationshipsReversed: unknown[] = [],
+  ): MergedEntities =>
+    stubEntities({
+      getForeignKeysBetweenTables: (() => ({
+        relationships,
+        relationshipsReversed,
+      })) as unknown as MergedEntities["getForeignKeysBetweenTables"],
+    });
+
+  const relation = (conditions: unknown[]) => ({
+    columns: [{ source: "EDT_TYPE", target: "TypeCode" }],
+    conditions,
+  });
+
+  it("ANDs a target-column condition onto a forward join (child alias)", () => {
+    const entities = joinEntities([
+      relation([{ target: "Type", operator: "eq", value: "static_value" }]),
+    ]);
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."EDT_TYPE" = t2."TypeCode" AND t2."Type" = 'static_value'`,
+    );
+  });
+
+  it("ANDs a source-column condition onto a forward join (parent alias)", () => {
+    const entities = joinEntities([relation([{ source: "STATUS", operator: "eq", value: 1 }])]);
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."EDT_TYPE" = t2."TypeCode" AND t1."STATUS" = 1`,
+    );
+  });
+
+  it("flips condition aliases on a reversed join", () => {
+    const entities = joinEntities(
+      [],
+      [
+        relation([
+          { target: "Type", operator: "eq", value: "x" },
+          { source: "FLAG", operator: "eq", value: "y" },
+        ]),
+      ],
+    );
+    // reversed: columns map target->parent(t1), source->child(t2);
+    // target condition -> parent(t1), source condition -> child(t2)
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."TypeCode" = t2."EDT_TYPE" AND t1."Type" = 'x' AND t2."FLAG" = 'y'`,
+    );
+  });
+
+  it("defaults the operator to eq when omitted", () => {
+    const entities = joinEntities([relation([{ target: "Type", value: "v" }])]);
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."EDT_TYPE" = t2."TypeCode" AND t2."Type" = 'v'`,
+    );
+  });
+
+  it("renders each comparison operator", () => {
+    const cases: Array<{ op: string; sql: string }> = [
+      { op: "neq", sql: "<>" },
+      { op: "gt", sql: ">" },
+      { op: "gte", sql: ">=" },
+      { op: "lt", sql: "<" },
+      { op: "lte", sql: "<=" },
+      { op: "like", sql: "LIKE" },
+    ];
+    for (const { op, sql } of cases) {
+      const entities = joinEntities([relation([{ target: "n", operator: op, value: 5 }])]);
+      expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+        `t1."EDT_TYPE" = t2."TypeCode" AND t2."n" ${sql} 5`,
+      );
+    }
+  });
+
+  it("renders is_null and is_not_null without a value", () => {
+    const nullEntities = joinEntities([relation([{ target: "Type", operator: "is_null" }])]);
+    expect(findJoinCondition(nullEntities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."EDT_TYPE" = t2."TypeCode" AND t2."Type" IS NULL`,
+    );
+    const notNullEntities = joinEntities([relation([{ target: "Type", operator: "is_not_null" }])]);
+    expect(findJoinCondition(notNullEntities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."EDT_TYPE" = t2."TypeCode" AND t2."Type" IS NOT NULL`,
+    );
+  });
+
+  it("escapes single quotes in string literals", () => {
+    const entities = joinEntities([relation([{ target: "name", value: "O'Brien" }])]);
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."EDT_TYPE" = t2."TypeCode" AND t2."name" = 'O''Brien'`,
+    );
+  });
+
+  it("renders booleans per dialect (TRUE/FALSE vs 1/0)", () => {
+    const entities = joinEntities([relation([{ target: "active", value: true }])]);
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."EDT_TYPE" = t2."TypeCode" AND t2."active" = TRUE`,
+    );
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "mssql")).toBe(
+      "t1.[EDT_TYPE] = t2.[TypeCode] AND t2.[active] = 1",
+    );
+  });
+
+  it("is a no-op when a relationship carries no conditions", () => {
+    const entities = joinEntities([{ columns: [{ source: "EDT_TYPE", target: "TypeCode" }] }]);
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+      `t1."EDT_TYPE" = t2."TypeCode"`,
+    );
+  });
+});
+
 describe("wrapIdentifierFp", () => {
   it("uses the delimiters of each dialect", () => {
     expect(wrapIdentifierFp("pg")("order")).toBe(`"order"`);
