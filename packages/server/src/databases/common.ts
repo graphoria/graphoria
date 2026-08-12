@@ -191,18 +191,52 @@ const buildCondition = (
   }
 };
 
+const COLLATION_NAME_RE = /^[A-Za-z0-9_]+$/;
+
+// Equating two character columns with different collations raises a hard error (SQL Server:
+// "cannot resolve the collation conflict"; MySQL: "illegal mix of collations"). Coerce the right
+// operand to a shared collation, but only when both columns carry one and the two differ: a null
+// collation marks a non-character column, where COLLATE is itself illegal. Matching or unknown
+// collations leave the equality byte-for-byte unchanged (and keep the join column SARGable).
+const collateSuffix = (
+  dbType: DatabaseType,
+  parentCollation: string | null | undefined,
+  childCollation: string | null | undefined,
+): string => {
+  if (!parentCollation || !childCollation || parentCollation === childCollation) return "";
+
+  if (dbType === "mssql") return " COLLATE DATABASE_DEFAULT";
+  if (dbType === "pg") return ` COLLATE "default"`;
+  // MySQL has no database-default token; coerce to the left column's own collation name.
+  return COLLATION_NAME_RE.test(parentCollation) ? ` COLLATE ${parentCollation}` : "";
+};
+
+const columnCollation = (
+  entities: MergedEntities,
+  tableName: string,
+  columnName: string,
+): string | null | undefined => {
+  const column = entities.queriesMap[tableName]?.columns.find((c) => c.name === columnName);
+  return column && "collation" in column ? column.collation : undefined;
+};
+
 const pairsToAnd = (
   pairs: {
     parentAlias: string;
     childAlias: string;
     parentColumn: string;
     childColumn: string;
+    parentCollation?: string | null;
+    childCollation?: string | null;
   }[],
   dbType: DatabaseType,
 ) => {
   const wrap = wrapIdentifierFp(dbType);
   return pairs
-    .map((p) => `${p.parentAlias}.${wrap(p.parentColumn)} = ${p.childAlias}.${wrap(p.childColumn)}`)
+    .map(
+      (p) =>
+        `${p.parentAlias}.${wrap(p.parentColumn)} = ${p.childAlias}.${wrap(p.childColumn)}${collateSuffix(dbType, p.parentCollation, p.childCollation)}`,
+    )
     .join(" AND ");
 };
 
@@ -226,6 +260,8 @@ export const findJoinCondition = (
           childAlias,
           parentColumn: c.source,
           childColumn: c.target,
+          parentCollation: columnCollation(entities, parentTableName, c.source),
+          childCollation: columnCollation(entities, childTableName, c.target),
         })),
         dbType,
       ),
@@ -237,6 +273,8 @@ export const findJoinCondition = (
           childAlias,
           parentColumn: c.target,
           childColumn: c.source,
+          parentCollation: columnCollation(entities, parentTableName, c.target),
+          childCollation: columnCollation(entities, childTableName, c.source),
         })),
         dbType,
       ),

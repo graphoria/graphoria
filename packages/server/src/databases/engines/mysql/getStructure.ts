@@ -70,6 +70,7 @@ export const getDatabaseStructure = async (db: Database) => {
             'name', isc.column_name,
             'dataType', isc.data_type,
             'isNullable', CASE WHEN isc.is_nullable = 'YES' THEN true ELSE false END,
+            'collation', isc.collation_name,
             'description', NULL
           ) ORDER BY isc.ordinal_position SEPARATOR ','), ']') AS JSON),
         JSON_ARRAY()

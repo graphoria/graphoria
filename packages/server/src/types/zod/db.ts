@@ -38,6 +38,7 @@ export const TableColumnZod = z
     name: z.string(),
     dataType: z.string(),
     isNullable: z.union([z.boolean(), z.number()]),
+    collation: z.string().nullable().optional(),
     description: z.string().nullable().optional(),
   })
   .transform((val) => ({
@@ -45,6 +46,9 @@ export const TableColumnZod = z
     dataType: val.dataType,
     isNullable: typeof val.isNullable === "boolean" ? val.isNullable : val.isNullable === 1,
     description: val.description ?? null,
+    // Optional so config/virtual columns (which never carry a DB collation) stay assignable to
+    // TableColumn; a non-character column reports no collation and is simply omitted here.
+    ...(val.collation ? { collation: val.collation } : {}),
   }));
 
 /**

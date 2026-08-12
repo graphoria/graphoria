@@ -7,6 +7,7 @@ import {
   buildOrderByClauseFp,
   buildWhereClauseFp,
   filterBasedOnDirective,
+  findJoinCondition,
   qualifiedNameFp,
   wrapIdentifierFp,
 } from "./common";
@@ -244,6 +245,86 @@ describe("buildWhereClauseFp", () => {
       );
       expect(sql).toBe(`WHERE t1."name" = $1`);
     });
+  });
+});
+
+describe("findJoinCondition collation handling", () => {
+  const makeEntities = (
+    parentCols: Record<string, string | null>,
+    childCols: Record<string, string | null>,
+    columns: { source: string; target: string }[] = [{ source: "parent_id", target: "id" }],
+  ): MergedEntities =>
+    stubEntities({
+      queriesMap: {
+        parent: {
+          columns: Object.entries(parentCols).map(([name, collation]) => ({ name, collation })),
+        },
+        child: {
+          columns: Object.entries(childCols).map(([name, collation]) => ({ name, collation })),
+        },
+      } as unknown as MergedEntities["queriesMap"],
+      getForeignKeysBetweenTables: (() => ({
+        relationships: [{ columns }],
+        relationshipsReversed: [],
+      })) as unknown as MergedEntities["getForeignKeysBetweenTables"],
+    });
+
+  it("omits COLLATE when both columns share a collation", () => {
+    const entities = makeEntities(
+      { parent_id: "SQL_Latin1_General_CP1_CI_AS" },
+      { id: "SQL_Latin1_General_CP1_CI_AS" },
+    );
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "mssql")).toBe(
+      "t1.[parent_id] = t2.[id]",
+    );
+  });
+
+  it("omits COLLATE when a column has no collation (non-character column)", () => {
+    const entities = makeEntities({ parent_id: null }, { id: "SQL_Latin1_General_CP1_CI_AS" });
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "mssql")).toBe(
+      "t1.[parent_id] = t2.[id]",
+    );
+  });
+
+  it("appends COLLATE DATABASE_DEFAULT on a mssql mismatch", () => {
+    const entities = makeEntities(
+      { parent_id: "SQL_Latin1_General_CP1_CI_AS" },
+      { id: "Latin1_General_100_CI_AS" },
+    );
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "mssql")).toBe(
+      "t1.[parent_id] = t2.[id] COLLATE DATABASE_DEFAULT",
+    );
+  });
+
+  it('appends COLLATE "default" on a pg mismatch', () => {
+    const entities = makeEntities({ parent_id: "en_US" }, { id: "C" });
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "pg")).toBe(
+      't1."parent_id" = t2."id" COLLATE "default"',
+    );
+  });
+
+  it("coerces to the parent column collation on a mysql mismatch", () => {
+    const entities = makeEntities(
+      { parent_id: "utf8mb4_general_ci" },
+      { id: "utf8mb4_unicode_ci" },
+    );
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "mysql")).toBe(
+      "t1.`parent_id` = t2.`id` COLLATE utf8mb4_general_ci",
+    );
+  });
+
+  it("applies COLLATE only to the differing pair of a composite key", () => {
+    const entities = makeEntities(
+      { a: "utf8mb4_general_ci", b: "utf8mb4_general_ci" },
+      { x: "utf8mb4_general_ci", y: "utf8mb4_unicode_ci" },
+      [
+        { source: "a", target: "x" },
+        { source: "b", target: "y" },
+      ],
+    );
+    expect(findJoinCondition(entities, "parent", "child", "t1", "t2", "mysql")).toBe(
+      "t1.`a` = t2.`x` AND t1.`b` = t2.`y` COLLATE utf8mb4_general_ci",
+    );
   });
 });
 
