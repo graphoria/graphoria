@@ -46,9 +46,13 @@ const buildAggregationCTE = (
       selectClauses.push(`COUNT(*) AS ${agg.alias}`);
     } else {
       const func = agg.name.toUpperCase();
-      selectClauses.push(
-        `${func}(${tableAlias}.${wrapIdentifierMSSQL(agg.fieldName)}) AS ${agg.alias}`,
-      );
+      // SQL Server's AVG over an integer column is integer division — AVG of
+      // 1, 5, 5, 2 is 3, not 3.25 — so the average has to be taken on a float.
+      const operand =
+        agg.name === "avg"
+          ? `CAST(${tableAlias}.${wrapIdentifierMSSQL(agg.fieldName)} AS FLOAT)`
+          : `${tableAlias}.${wrapIdentifierMSSQL(agg.fieldName)}`;
+      selectClauses.push(`${func}(${operand}) AS ${agg.alias}`);
     }
   });
 

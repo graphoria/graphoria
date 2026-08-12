@@ -106,6 +106,7 @@ export const buildConditions = (
           fieldName,
           operator,
           resolvedValue,
+          dbType,
         );
 
         if (condition) {
@@ -239,6 +240,7 @@ const buildCondition = (
   field: string,
   operator: string,
   value: unknown,
+  dbType: DatabaseType,
 ): string | null => {
   switch (operator) {
     case "eq":
@@ -253,8 +255,11 @@ const buildCondition = (
       return `${target} < ${value}`;
     case "lte":
       return `${target} <= ${value}`;
+    // PostgreSQL and MySQL treat a backslash as the LIKE escape by default;
+    // T-SQL has no default escape character at all, so `100\%` matched a literal
+    // backslash and found nothing. Declare the escape to make the three agree.
     case "like":
-      return `${target} LIKE ${value}`;
+      return dbType === "mssql" ? `${target} LIKE ${value} ESCAPE '\\'` : `${target} LIKE ${value}`;
     case "in":
       return `${target} IN (${Array.isArray(value) ? value.join(", ") : value})`;
     case "is_null":
@@ -816,14 +821,6 @@ export const buildPaginationClauseFp =
   (field: SelectionAnalysis, variablesDefinition: VariableDefinition[] = []): string => {
     const args = field.arguments;
 
-    // MSSQL requires ORDER BY for pagination
-    if (
-      dbType === "mssql" &&
-      (!args || args["limit"] === undefined || args["orderBy"] === undefined)
-    ) {
-      return "";
-    }
-
     if (!args || args["limit"] === undefined) {
       return "";
     }
@@ -839,10 +836,16 @@ export const buildPaginationClauseFp =
       ? toPositionalPlaceholder(args["offset"], variablesDefinition, dbType)
       : "0";
 
-    // Return database-specific syntax
-    return dbType === "mssql"
-      ? `OFFSET ${offsetPlaceholder} ROWS FETCH NEXT ${limitPlaceholder} ROWS ONLY`
-      : `LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`;
+    if (dbType !== "mssql") {
+      return `LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`;
+    }
+
+    // T-SQL only accepts OFFSET/FETCH after an ORDER BY. Dropping the limit when
+    // the query has none returned the whole table instead, so supply the
+    // order-agnostic ORDER BY that T-SQL accepts for exactly this case.
+    const orderByFallback = args["orderBy"] === undefined ? "ORDER BY (SELECT NULL) " : "";
+
+    return `${orderByFallback}OFFSET ${offsetPlaceholder} ROWS FETCH NEXT ${limitPlaceholder} ROWS ONLY`;
   };
 
 export const buildPaginationClausePG = buildPaginationClauseFp("pg");

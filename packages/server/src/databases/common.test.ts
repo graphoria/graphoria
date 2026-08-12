@@ -5,6 +5,7 @@ import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
 
 import {
   buildOrderByClauseFp,
+  buildPaginationClauseFp,
   buildWhereClauseFp,
   filterBasedOnDirective,
   findJoinCondition,
@@ -123,6 +124,28 @@ describe("buildWhereClauseFp", () => {
         expect(sql).toBe(expected);
       });
     }
+
+    // T-SQL has no default LIKE escape character: without an explicit ESCAPE the
+    // backslash in `100\%` is matched literally and the pattern finds nothing,
+    // where PostgreSQL and MySQL both treat it as an escape.
+    it("renders like with an explicit ESCAPE on mssql only", () => {
+      const forDialect = (dbType: "pg" | "mysql" | "mssql") =>
+        buildWhereClauseFp(dbType)(
+          stubEntities(),
+          vars("v"),
+          { v: "100\\%" },
+          field({ where: { name: { like: "$v" } } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        );
+
+      expect(forDialect("mssql")).toBe("WHERE t1.[name] LIKE @1 ESCAPE '\\'");
+      expect(forDialect("pg")).toBe('WHERE t1."name" LIKE $1');
+      expect(forDialect("mysql")).toBe("WHERE t1.`name` LIKE $1");
+    });
 
     it("renders IN with array of variable references", () => {
       const sql = buildWhereClauseFp("pg")(
@@ -508,6 +531,42 @@ describe("buildWhereClauseFp", () => {
       );
       expect(sql).toBe(`WHERE t1."name" = $1`);
     });
+  });
+});
+
+describe("buildPaginationClauseFp", () => {
+  const paginated = (args: Record<string, unknown>) => field(args);
+
+  it("emits LIMIT/OFFSET for pg and mysql", () => {
+    for (const dbType of ["pg", "mysql"] as const) {
+      expect(
+        buildPaginationClauseFp(dbType)(paginated({ limit: "$l", offset: "$o" }), vars("l", "o")),
+      ).toBe("LIMIT $1 OFFSET $2");
+    }
+  });
+
+  it("emits OFFSET/FETCH for mssql", () => {
+    expect(
+      buildPaginationClauseFp("mssql")(
+        paginated({ limit: "$l", orderBy: { id: "ASC" } }),
+        vars("l"),
+      ),
+    ).toBe("OFFSET 0 ROWS FETCH NEXT @1 ROWS ONLY");
+  });
+
+  // OFFSET/FETCH is only legal after an ORDER BY in T-SQL. Returning "" when the
+  // query has no orderBy dropped the limit and returned the whole table, so
+  // supply the ordering-agnostic ORDER BY that T-SQL accepts instead.
+  it("supplies a placeholder ORDER BY for mssql when the query has none", () => {
+    expect(buildPaginationClauseFp("mssql")(paginated({ limit: "$l" }), vars("l"))).toBe(
+      "ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT @1 ROWS ONLY",
+    );
+  });
+
+  it("returns '' when there is no limit", () => {
+    for (const dbType of ["pg", "mysql", "mssql"] as const) {
+      expect(buildPaginationClauseFp(dbType)(paginated({ offset: "$o" }), vars("o"))).toBe("");
+    }
   });
 });
 
