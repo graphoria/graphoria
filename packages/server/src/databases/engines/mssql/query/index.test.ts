@@ -16,6 +16,7 @@ import {
   prodQuery,
   prodReservedWordAliasQuery,
   prodReservedWordColumnQuery,
+  prodWhereArgumentDeeplyNestedEntitiesQuery,
   prodWhereArgumentNestedEntitiesQuery,
   prodWhereArgumentNestedQuery,
   prodWhereArgumentQuery,
@@ -239,6 +240,72 @@ describe("MSSQL: Store", () => {
               )
             )
           ) as [dbo_products] FOR JSON PATH,
+          INCLUDE_NULL_VALUES,
+          WITHOUT_ARRAY_WRAPPER
+      `),
+    );
+  });
+
+  it("Should generate a query with a where argument nested three relations deep", () => {
+    expect(genSql(StoreMSSQL, prodWhereArgumentDeeplyNestedEntitiesQuery)).toBe(
+      format(`
+        SELECT
+          (
+            JSON_QUERY(
+              ISNULL(
+                (
+                  SELECT
+                    t1.[product_id] AS [product_id],
+                    t1.[name] AS [name],
+                    t1.[sku] AS [sku],
+                    JSON_QUERY(
+                      ISNULL(
+                        (
+                          SELECT
+                            t2.[quantity] AS [quantity]
+                          FROM
+                            [dbo].[order_items] t2
+                          WHERE
+                            t1.[product_id] = t2.[product_id]
+                          FOR JSON
+                            PATH,
+                            INCLUDE_NULL_VALUES
+                        ),
+                        '[]'
+                      )
+                    ) AS [dbo_order_items]
+                  FROM
+                    [dbo].[products] t1
+                  WHERE
+                    EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        [dbo].[reviews] t2
+                      WHERE
+                        t1.[product_id] = t2.[product_id]
+                        AND (
+                          EXISTS (
+                            SELECT
+                              1
+                            FROM
+                              [dbo].[customers] t3
+                            WHERE
+                              t2.[customer_id] = t3.[customer_id]
+                              AND (t3.[email] = @1)
+                          )
+                        )
+                    )
+                  FOR JSON
+                    PATH,
+                    INCLUDE_NULL_VALUES
+                ),
+                '[]'
+              )
+            )
+          ) as [dbo_products]
+        FOR JSON
+          PATH,
           INCLUDE_NULL_VALUES,
           WITHOUT_ARRAY_WRAPPER
       `),

@@ -227,6 +227,37 @@ const resolveSessionInArguments = (
 };
 
 /**
+ * Recursively replaces `$varName` references with their resolved (already-flattened) values from
+ * `resolvedMap`, walking nested objects/arrays so a reference nested inside an inline argument
+ * object (e.g. `where: { rel: { sub: $where } }`) is substituted like a top-level one. The resolved
+ * value is inserted as-is — it is not walked further, so its own `$static_N` leaves survive for SQL
+ * parameter binding. Refs absent from `resolvedMap` (scalar vars, `$session.*`) pass through.
+ */
+const substituteResolvedRefs = (value: unknown, resolvedMap: Map<string, unknown>): unknown => {
+  if (isString(value)) {
+    if (value.startsWith("$")) {
+      const varName = value.substring(1);
+      if (resolvedMap.has(varName)) return resolvedMap.get(varName);
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => substituteResolvedRefs(item, resolvedMap));
+  }
+
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      result[key] = substituteResolvedRefs(nested, resolvedMap);
+    }
+    return result;
+  }
+
+  return value;
+};
+
+/**
  * Returns a new field tree with:
  * 1. `$varName` argument references replaced with their resolved objects from `resolvedMap`
  * 2. `$session.*` placeholders replaced with actual JWT claim values in ALL arguments
@@ -245,13 +276,12 @@ export const resolveFieldArguments = (
       // Shallow-copy arguments so we don't mutate originals
       newArguments = { ...field.arguments };
 
-      // Replace object variable references in arguments
-      for (const [key, value] of Object.entries(newArguments)) {
-        if (isString(value) && value.startsWith("$")) {
-          const varName = value.substring(1);
-          if (resolvedMap.has(varName)) {
-            newArguments[key] = resolvedMap.get(varName);
-          }
+      // Replace object variable references anywhere in arguments — top-level (`where: $where`) or
+      // nested inside an inline object (`where: { rel: { sub: $where } }`). Only walk when there is
+      // something to substitute so the session-only path stays a no-op.
+      if (resolvedMap.size > 0) {
+        for (const [key, value] of Object.entries(newArguments)) {
+          newArguments[key] = substituteResolvedRefs(value, resolvedMap);
         }
       }
 

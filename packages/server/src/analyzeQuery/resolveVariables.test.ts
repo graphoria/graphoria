@@ -670,6 +670,28 @@ describe("resolveFieldArguments", () => {
     // Original untouched
     expect(fields[0].arguments).toEqual(originalArgs);
   });
+
+  it("should replace $varName references nested inside inline object arguments", () => {
+    const fields = [
+      {
+        name: "first_table",
+        arguments: { where: { second_table: { third_table: "$where" } } },
+      },
+    ];
+    const resolvedMap = new Map<string, unknown>([
+      ["where", { fieldToFilter: { eq: "$static_0" } }],
+    ]);
+
+    const result = resolveFieldArguments(fields, resolvedMap);
+
+    expect(result[0].arguments?.where).toEqual({
+      second_table: { third_table: { fieldToFilter: { eq: "$static_0" } } },
+    });
+    // Original unchanged
+    expect(fields[0].arguments?.where).toEqual({
+      second_table: { third_table: "$where" },
+    });
+  });
 });
 
 // ─── buildFinalVariables ────────────────────────────────────────────────────
@@ -785,6 +807,35 @@ describe("resolveVariables", () => {
     expect(resolved.allVariables.static_0).toBe(1);
     expect(resolved.fields[0].arguments?.where).toEqual({
       id: { eq: "$static_0" },
+    });
+  });
+
+  it("should flatten and substitute an object variable referenced deep inside inline where args", () => {
+    const operation: OperationAnalysis = {
+      name: "getList",
+      operation: "query",
+      variables: [{ name: "where", type: "third_tableWhereInput", required: false }],
+      fields: [
+        {
+          name: "first_table",
+          arguments: { where: { second_table: { third_table: "$where" } } },
+        },
+      ],
+    };
+
+    const resolved = resolveVariables(operation, {
+      where: { fieldToFilter: { eq: "Y" } },
+    });
+
+    // Object var consumed; its primitive leaf hoisted to a bound static var
+    expect(resolved.variables).toEqual([
+      { name: "static_0", type: "String", required: false, defaultValue: "Y" },
+    ]);
+    expect(resolved.allVariables.static_0).toBe("Y");
+
+    // The deeply-nested $where reference is replaced by the flattened object (leaf as $static_0)
+    expect(resolved.fields[0].arguments?.where).toEqual({
+      second_table: { third_table: { fieldToFilter: { eq: "$static_0" } } },
     });
   });
 

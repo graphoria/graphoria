@@ -16,6 +16,7 @@ import {
   prodQuery,
   prodReservedWordAliasQuery,
   prodReservedWordColumnQuery,
+  prodWhereArgumentDeeplyNestedEntitiesQuery,
   prodWhereArgumentNestedEntitiesQuery,
   prodWhereArgumentNestedQuery,
   prodWhereArgumentQuery,
@@ -243,6 +244,67 @@ describe("PostgreSQL: Store", () => {
                     WHERE
                       t1."product_id" = t2."product_id"
                       AND (t2."rating" >= $1)
+                  )
+              ),
+              '[]'::json
+            )
+          ) as json_result
+      `),
+    );
+  });
+
+  it("Should generate a query with a where argument nested three relations deep", () => {
+    expect(genSql(StorePG, prodWhereArgumentDeeplyNestedEntitiesQuery, {}, false)).toBe(
+      format(`
+        SELECT
+          json_build_object(
+            'dbo_products',
+            COALESCE(
+              (
+                SELECT
+                  json_agg(
+                    json_build_object(
+                      'product_id',
+                      t1."product_id",
+                      'name',
+                      t1."name",
+                      'sku',
+                      t1."sku",
+                      'dbo_order_items',
+                      COALESCE(
+                        (
+                          SELECT
+                            json_agg(json_build_object('quantity', t2."quantity"))
+                          FROM
+                            "dbo"."order_items" t2
+                          WHERE
+                            t1."product_id" = t2."product_id"
+                        ),
+                        '[]'::json
+                      )
+                    )
+                  )
+                FROM
+                  "dbo"."products" t1
+                WHERE
+                  EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      "dbo"."reviews" t2
+                    WHERE
+                      t1."product_id" = t2."product_id"
+                      AND (
+                        EXISTS (
+                          SELECT
+                            1
+                          FROM
+                            "dbo"."customers" t3
+                          WHERE
+                            t2."customer_id" = t3."customer_id"
+                            AND (t3."email" = $1)
+                        )
+                      )
                   )
               ),
               '[]'::json
