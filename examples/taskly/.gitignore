@@ -1,0 +1,12 @@
+# dependencies (bun install)
+node_modules
+
+# build output
+dist
+
+# dotenv environment variable files
+.env
+
+# Graphoria runtime artifacts
+.graphoria
+.types

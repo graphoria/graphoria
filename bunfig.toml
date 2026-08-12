@@ -1,0 +1,5 @@
+[run]
+bun = true
+
+[test]
+preload = ["./packages/react/happydom.ts"]
