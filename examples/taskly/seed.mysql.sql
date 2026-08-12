@@ -92,6 +92,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
   CONSTRAINT audit_log_org_id_fkey FOREIGN KEY (org_id) REFERENCES organizations (id)
 );
 
+-- Reserved-word coverage: GROUP, ORDER and DESC are reserved in MySQL,
+-- PostgreSQL and T-SQL alike, so this table only resolves if every identifier is
+-- delimited — table name in FROM, columns in SELECT/WHERE/ORDER BY, and the
+-- table name again inside the EXISTS subquery a nested where produces.
+CREATE TABLE IF NOT EXISTS `group` (
+  id         int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  org_id     int NOT NULL,
+  name       varchar(255) NOT NULL,
+  `order`    int NOT NULL DEFAULT 0,
+  `desc`     text,
+  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT group_org_id_fkey FOREIGN KEY (org_id) REFERENCES organizations (id)
+);
+
 -- Function backing the `age_days` virtual column. DROP + CREATE because MySQL
 -- has no CREATE OR REPLACE FUNCTION.
 DROP FUNCTION IF EXISTS task_age_days;
@@ -144,3 +158,8 @@ INSERT IGNORE INTO task_tags (task_id, tag_id) VALUES
 
 INSERT IGNORE INTO audit_log (id, org_id, actor, action, entity) VALUES
   (1, 1, 'alice', 'project.created', 'project:1');
+
+INSERT IGNORE INTO `group` (id, org_id, name, `order`, `desc`) VALUES
+  (1, 1, 'Sprint 1', 1, 'Current sprint'),
+  (2, 1, 'Backlog',  2, 'Unscheduled work'),
+  (3, 2, 'Ops',      1, 'Internal ops');
