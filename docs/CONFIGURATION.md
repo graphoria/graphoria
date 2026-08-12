@@ -211,16 +211,7 @@ type TableRelationship = {
 type RelationshipCondition = {
   source?: string;
   target?: string;
-  operator?:
-    | "eq"
-    | "neq"
-    | "gt"
-    | "gte"
-    | "lt"
-    | "lte"
-    | "like"
-    | "is_null"
-    | "is_not_null"; // default "eq"
+  operator?: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "like" | "is_null" | "is_not_null"; // default "eq"
   value?: string | number | boolean;
 };
 ```
@@ -276,12 +267,7 @@ virtualColumnExpression(name, dataType, isNullable, expression);
 ```
 
 ```typescript
-virtualColumnExpression(
-  "full_name",
-  "varchar",
-  true,
-  "first_name || ' ' || last_name",
-);
+virtualColumnExpression("full_name", "varchar", true, "first_name || ' ' || last_name");
 ```
 
 ### Function-Based
@@ -291,11 +277,7 @@ virtualColumnFunction(name, dataType, isNullable, functionName, params?)
 ```
 
 ```typescript
-virtualColumnFunction("age", "int", false, "DATEDIFF", [
-  "YEAR",
-  "birth_date",
-  "GETDATE()",
-]);
+virtualColumnFunction("age", "int", false, "DATEDIFF", ["YEAR", "birth_date", "GETDATE()"]);
 ```
 
 ### MSSQL Boolean Helpers
@@ -587,9 +569,7 @@ cron: [
     timezone: "America/New_York",
     query: `mutation { deleteExpiredSessions { affected_rows } }`,
     onTick: async (options, context, response) => {
-      console.log(
-        `Cleaned up ${response?.data?.deleteExpiredSessions?.affected_rows} sessions`,
-      );
+      console.log(`Cleaned up ${response?.data?.deleteExpiredSessions?.affected_rows} sessions`);
     },
   },
   {
