@@ -103,7 +103,7 @@ export const buildConditions = (
 
       const existsClause = `EXISTS (
       SELECT 1
-      FROM ${entities.queriesMap[fieldName]!.dottedName} ${nestedTableAlias}
+      FROM ${entities.queriesMap[fieldName]!.dottedQuotedName} ${nestedTableAlias}
       WHERE ${joinCondition}${nestedConditions ? ` AND (${nestedConditions})` : ""}
     )`;
 
@@ -126,12 +126,21 @@ export const wrapIdentifierFp =
   (dbType: DatabaseType) =>
   (value: string): string => {
     const [open, close] = identifierDelimiters[dbType];
-    return `${open}${value}${close}`;
+    // Doubling the closing delimiter is the escape in all three dialects; only
+    // introspected names can contain one (GraphQL names never do).
+    return `${open}${value.replaceAll(close, `${close}${close}`)}${close}`;
   };
 
 export const wrapIdentifierPG = wrapIdentifierFp("pg");
 export const wrapIdentifierMSSQL = wrapIdentifierFp("mssql");
 export const wrapIdentifierMySQL = wrapIdentifierFp("mysql");
+
+export const qualifiedNameFp =
+  (dbType: DatabaseType) =>
+  ({ schema, name }: { schema: string; name: string }): string => {
+    const wrap = wrapIdentifierFp(dbType);
+    return `${wrap(schema)}.${wrap(name)}`;
+  };
 
 // Helper to resolve variable values
 const resolveVariable = <T>(value: unknown, variables: Record<string, unknown>): T => {

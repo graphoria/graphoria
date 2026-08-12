@@ -78,7 +78,6 @@ export const enrichTable = (table: z.output<typeof TableBaseZod>) => ({
   dashedName: `${table.schema}_${table.name}`,
   dashedNameLS: `${table.schema}_${table.name}`.toLowerCase(),
   dottedName: `${table.schema}.${table.name}`,
-  dottedQuotedName: `"${table.schema}"."${table.name}"`,
   schemaName: genResolverName(table.schema, table.name, table.entityType),
 });
 
@@ -124,7 +123,6 @@ export const StoredProcedureZod = StoredProcedureBaseZod.transform((sp) => {
     dashedName: `${sp.schema}_${sp.name}${signatureSuffixClean}`,
     dashedNameLS: `${sp.schema}_${sp.name}${signatureSuffixClean}`.toLowerCase(),
     dottedName: `${sp.schema}.${sp.name}`,
-    dottedQuotedName: `"${sp.schema}"."${sp.name}"`,
     schemaName: genResolverName(sp.schema, sp.name + signatureSuffixClean, "sp"),
   };
 });
