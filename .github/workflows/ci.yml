@@ -41,3 +41,38 @@ jobs:
 
       - name: Test
         run: bun test
+
+  # Runs on every PR but is deliberately not a required status check: it boots
+  # three real database engines, and a container that fails to come up should
+  # not block a merge on its own. Watch it before promoting it to required.
+  integration:
+    name: Integration (pg, mysql, mssql)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # --wait blocks on the healthchecks in docker-compose.test.yml and fails
+      # the step if a container never reports healthy. SQL Server is the long
+      # pole at ~30-60s, hence the raised timeout.
+      - name: Start backing services
+        run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 180
+
+      - name: Integration tests
+        run: bun run test:integration
+
+      - name: Service logs
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs --no-color
+
+      - name: Stop backing services
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
