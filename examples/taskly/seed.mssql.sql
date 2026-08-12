@@ -92,6 +92,20 @@ CREATE TABLE dbo.audit_log (
   created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 
+-- Reserved-word coverage: GROUP, ORDER and DESC are reserved in T-SQL,
+-- PostgreSQL and MySQL alike, so this table only resolves if every identifier is
+-- delimited — table name in FROM, columns in SELECT/WHERE/ORDER BY, and the
+-- table name again inside the EXISTS subquery a nested where produces.
+IF OBJECT_ID(N'dbo.[group]', N'U') IS NULL
+CREATE TABLE dbo.[group] (
+  id         int IDENTITY(1,1) PRIMARY KEY,
+  org_id     int NOT NULL CONSTRAINT group_org_id_fkey REFERENCES dbo.organizations (id),
+  name       nvarchar(255) NOT NULL,
+  [order]    int NOT NULL DEFAULT 0,
+  [desc]     nvarchar(max),
+  created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET()
+);
+
 -- Function backing the `age_days` virtual column (call it as dbo.task_age_days
 -- from virtualColumnFunction — T-SQL scalar UDFs need the schema prefix).
 EXEC(N'
@@ -192,3 +206,14 @@ FROM (VALUES
 ) v (id, org_id, actor, action, entity)
 WHERE NOT EXISTS (SELECT 1 FROM dbo.audit_log a WHERE a.id = v.id);
 SET IDENTITY_INSERT dbo.audit_log OFF;
+
+SET IDENTITY_INSERT dbo.[group] ON;
+INSERT INTO dbo.[group] (id, org_id, name, [order], [desc])
+SELECT v.id, v.org_id, v.name, v.[order], v.[desc]
+FROM (VALUES
+  (1, 1, N'Sprint 1', 1, N'Current sprint'),
+  (2, 1, N'Backlog',  2, N'Unscheduled work'),
+  (3, 2, N'Ops',      1, N'Internal ops')
+) v (id, org_id, name, [order], [desc])
+WHERE NOT EXISTS (SELECT 1 FROM dbo.[group] g WHERE g.id = v.id);
+SET IDENTITY_INSERT dbo.[group] OFF;

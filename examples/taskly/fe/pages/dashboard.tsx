@@ -10,7 +10,7 @@ import { CalendarIcon, LoadingIcon } from "../components/icons";
 // RBAC scopes rows to the logged-in user's org.
 const DashboardQuery = graphql(`
   query Dashboard {
-    tasks: public_tasks(where: { status: { neq: "done" } }, orderBy: [{ priority: DESC }]) {
+    tasks: pg_tasks(where: { status: { neq: "done" } }, orderBy: [{ priority: DESC }]) {
       id
       title
       status

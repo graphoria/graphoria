@@ -5,7 +5,7 @@ const { execute } = await createGraphQLEngine();
 const data = await execute(
   `
     query Dashboard($assignee: String!) {
-      public_tasks(
+      pg_tasks(
         where: { assignee: { eq: $assignee }, status: { neq: "done" } }
         orderBy: [{ priority: DESC }]
       ) {
