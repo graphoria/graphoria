@@ -3,8 +3,23 @@ import type { Database } from "../../../types/configuration";
 import { DatabaseStructureZod } from "../../../types/zod/db";
 import { executeQueryJSONSingle } from "./connection";
 
+/**
+ * Ordering carried out of SQL and restored here: JSON_ARRAYAGG accepts no
+ * ORDER BY. GROUP_CONCAT does, but silently truncates at group_concat_max_len
+ * (1024 bytes by default), which any table past ~10 columns exceeds — the JSON
+ * is then cut mid-object and CAST(... AS JSON) fails.
+ */
+type Ordered = { ordinalPosition?: number };
+type RawForeignKey = { fkName?: string; columns: Ordered[] };
+type RawStructure = {
+  tables?: { columns?: Ordered[]; foreignKeys?: RawForeignKey[] }[];
+  storedProcedures?: { parameters?: Ordered[] }[];
+};
+
+const byOrdinal = (a: Ordered, b: Ordered) => (a.ordinalPosition ?? 0) - (b.ordinalPosition ?? 0);
+
 export const getDatabaseStructure = async (db: Database) => {
-  const res = await executeQueryJSONSingle(
+  const res = await executeQueryJSONSingle<RawStructure>(
     `
     SELECT JSON_OBJECT(
       'tables', JSON_ARRAYAGG(
@@ -31,7 +46,7 @@ export const getDatabaseStructure = async (db: Database) => {
             )
           )
           FROM information_schema.routines r
-          
+
           -- Parameters
           LEFT JOIN LATERAL (
             SELECT JSON_ARRAYAGG(
@@ -40,16 +55,16 @@ export const getDatabaseStructure = async (db: Database) => {
                 'dataType', p.data_type,
                 'maxLength', COALESCE(p.character_maximum_length, 0),
                 'precision', COALESCE(p.numeric_precision, 0),
-                'scale', COALESCE(p.numeric_scale, 0)
+                'scale', COALESCE(p.numeric_scale, 0),
+                'ordinalPosition', p.ordinal_position
               )
             ) AS param_array
             FROM information_schema.parameters p
             WHERE p.specific_name = r.specific_name
               AND p.specific_schema = r.routine_schema
               AND p.parameter_name IS NOT NULL
-            ORDER BY p.ordinal_position
           ) params ON true
-          
+
           WHERE r.routine_type IN ('FUNCTION', 'PROCEDURE')
           AND r.routine_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
         ),
@@ -58,22 +73,20 @@ export const getDatabaseStructure = async (db: Database) => {
     ) as json_result
     FROM (
       SELECT table_schema, table_name, table_type
-      FROM information_schema.tables 
+      FROM information_schema.tables
       WHERE table_type IN ('BASE TABLE', 'VIEW')
         AND table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
     ) t
     LEFT JOIN LATERAL (
-      -- build an ordered JSON array of columns using GROUP_CONCAT
-      SELECT IFNULL(
-        CAST(CONCAT('[', GROUP_CONCAT(
-          JSON_OBJECT(
-            'name', isc.column_name,
-            'dataType', isc.data_type,
-            'isNullable', CASE WHEN isc.is_nullable = 'YES' THEN true ELSE false END,
-            'collation', isc.collation_name,
-            'description', NULL
-          ) ORDER BY isc.ordinal_position SEPARATOR ','), ']') AS JSON),
-        JSON_ARRAY()
+      SELECT JSON_ARRAYAGG(
+        JSON_OBJECT(
+          'name', isc.column_name,
+          'dataType', isc.data_type,
+          'isNullable', CASE WHEN isc.is_nullable = 'YES' THEN true ELSE false END,
+          'collation', isc.collation_name,
+          'description', NULL,
+          'ordinalPosition', isc.ordinal_position
+        )
       ) AS columns
       FROM information_schema.columns isc
       WHERE isc.table_schema = t.table_schema
@@ -81,26 +94,28 @@ export const getDatabaseStructure = async (db: Database) => {
     ) col ON TRUE
     LEFT JOIN LATERAL (
       -- aggregate FKs: first aggregate columns per constraint, then aggregate constraints
-      SELECT IFNULL(
-        CAST(CONCAT('[', GROUP_CONCAT(
-          JSON_OBJECT(
-            'schema', fk_sub.referenced_table_schema,
-            'name', fk_sub.referenced_table_name,
-            'columns', fk_sub.columns_arr
-          ) ORDER BY fk_sub.fk_name SEPARATOR ','), ']') AS JSON),
-        JSON_ARRAY()
+      SELECT JSON_ARRAYAGG(
+        JSON_OBJECT(
+          'schema', fk_sub.referenced_table_schema,
+          'name', fk_sub.referenced_table_name,
+          'columns', fk_sub.columns_arr,
+          'fkName', fk_sub.fk_name
+        )
       ) AS fk_agg
       FROM (
-        SELECT 
+        SELECT
           kcu.constraint_name AS fk_name,
           kcu.table_schema,
           kcu.table_name,
           kcu.referenced_table_schema,
           kcu.referenced_table_name,
-          CAST(CONCAT('[', GROUP_CONCAT(
-            JSON_OBJECT('source', kcu.column_name, 'target', kcu.referenced_column_name)
-            ORDER BY kcu.ordinal_position SEPARATOR ','
-          ), ']') AS JSON) AS columns_arr
+          JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'source', kcu.column_name,
+              'target', kcu.referenced_column_name,
+              'ordinalPosition', kcu.ordinal_position
+            )
+          ) AS columns_arr
         FROM information_schema.key_column_usage kcu
         WHERE kcu.referenced_table_schema IS NOT NULL
           AND kcu.table_schema = t.table_schema
@@ -112,6 +127,22 @@ export const getDatabaseStructure = async (db: Database) => {
     `,
     db,
   );
+
+  for (const table of res.tables ?? []) {
+    table.columns?.sort(byOrdinal);
+    table.foreignKeys?.sort((a, b) => (a.fkName ?? "").localeCompare(b.fkName ?? ""));
+
+    // TableRelationshipZod is strict, so the ordering keys must go before parsing.
+    for (const foreignKey of table.foreignKeys ?? []) {
+      foreignKey.columns.sort(byOrdinal);
+      for (const column of foreignKey.columns) delete column.ordinalPosition;
+      delete foreignKey.fkName;
+    }
+  }
+
+  for (const storedProcedure of res.storedProcedures ?? []) {
+    storedProcedure.parameters?.sort(byOrdinal);
+  }
 
   return DatabaseStructureZod.parse(res);
 };
