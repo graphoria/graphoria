@@ -21,6 +21,7 @@ const stubEntities = (overrides: Partial<MergedEntities> = {}): MergedEntities =
       relationshipsReversed: [],
     }),
     isVirtualColumn: () => undefined,
+    columnSqlName: (_table: string, fieldName: string) => fieldName,
     ...overrides,
   }) as unknown as MergedEntities;
 

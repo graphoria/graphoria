@@ -11,7 +11,7 @@ import type {
   TableFilter,
   VirtualColumns,
 } from "../types/configuration";
-import type { Column, ProcedureResolver, TableResolver, Tables } from "../types/db";
+import type { ProcedureResolver, TableColumn, TableResolver, Tables } from "../types/db";
 
 import { getDatabaseStructure } from "./metadata/structure";
 import { buildProcedureResolver, buildTableResolver } from "./transformers/data-transformers";
@@ -63,7 +63,7 @@ export const getDatabasesStructure = async (
 
         if (tableOverride.columns.length) {
           // Mix database columns with virtual columns from configuration
-          t.columns = [...t.columns, ...tableOverride.columns] as Column[];
+          t.columns = [...t.columns, ...tableOverride.columns] as TableColumn[];
         }
 
         if (tableOverride.relationships.length) {

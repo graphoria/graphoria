@@ -5,12 +5,7 @@ import { generateKeys } from "paseto-ts/v4";
 import type { ConfigurationInput } from "../../config";
 import type { DatabaseType } from "../../types/configuration";
 
-import {
-  CONNECTIONS,
-  INTEGRATION_ENABLED,
-  REDIS_URL,
-  UNSUPPORTED_IDENTIFIER_TABLES,
-} from "./config";
+import { CONNECTIONS, INTEGRATION_ENABLED, REDIS_URL } from "./config";
 import { seedEngine } from "./seed";
 
 /**
@@ -97,7 +92,6 @@ const baseConfig = (engine: DatabaseType): ConfigurationInput => ({
       enabled: true,
       type: engine,
       connection: { ...CONNECTIONS[engine] },
-      schema: { excludedTables: UNSUPPORTED_IDENTIFIER_TABLES(engine) },
     },
   ],
   auth: {

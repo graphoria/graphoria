@@ -10,7 +10,9 @@ import {
   mapSQLTypeToConditionType,
   mapSQLTypeToGraphQLType,
 } from ".";
+import { createMockMSSQL } from "../../../__test/common";
 import { StoreMSSQL } from "../../../__test/dataset/store";
+import { DatabaseStructureZod } from "../../../types/zod/db";
 
 describe("Type definition generator", () => {
   describe("SQL to GraphQL type mapping", () => {
@@ -145,6 +147,55 @@ describe("Type definition generator", () => {
       expect(result).toContain("input StringCondition");
       expect(result).toContain("type dbo_products");
       expect(result).toContain("type Query");
+    });
+  });
+
+  // Table and column names legal in PostgreSQL, MySQL and SQL Server but not in
+  // GraphQL used to produce an SDL document that failed to parse, taking the
+  // whole server down at boot. createMockMSSQL runs buildSchema, so every
+  // assertion below also proves the document parses.
+  describe("Identifiers GraphQL cannot spell", () => {
+    const hostile = () =>
+      createMockMSSQL(
+        DatabaseStructureZod.parse({
+          tables: [
+            {
+              schema: "catalog",
+              name: "space name",
+              entityType: "table",
+              columns: [
+                { name: "id", dataType: "int", isNullable: false },
+                { name: "space col", dataType: "nvarchar", isNullable: true },
+                { name: "descripción", dataType: "nvarchar", isNullable: true },
+                { name: "cantidad total", dataType: "int", isNullable: true },
+              ],
+              foreignKeys: [],
+            },
+          ],
+        }),
+      );
+
+    it("exposes the table and its columns under sanitised names", () => {
+      const result = generateTableType(hostile());
+      expect(result).toContain("type catalog_space_name");
+      expect(result).toContain("space_col: String");
+      expect(result).toContain("descripcion: String");
+    });
+
+    it("sanitises column names in the where and orderBy inputs", () => {
+      const entities = hostile();
+      expect(generateWhereInputType(entities)).toContain("descripcion: StringCondition");
+      expect(generateOrderByInputType(entities)).toContain("space_col: OrderByEnum");
+    });
+
+    it("sanitises column names in the aggregate types and the groupBy enum", () => {
+      const result = generateAggregationTypes(hostile());
+      expect(result.split("type catalog_space_nameMin")[1]?.split("}")[0]).toContain(
+        "cantidad_total: Int",
+      );
+      expect(result.split("enum catalog_space_nameGroupByKeys")[1]?.split("}")[0]).toContain(
+        "descripcion",
+      );
     });
   });
 });

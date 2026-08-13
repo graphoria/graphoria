@@ -8,6 +8,7 @@ import {
   TableRelationshipZod as TableRelationshipBaseZod,
 } from "../../config";
 import { genResolverName } from "../../databases/transformers/genResolverName";
+import { sanitizeGraphQLName } from "../../databases/transformers/graphqlName";
 
 // Re-export base types and schemas from the config module
 export type {
@@ -43,6 +44,9 @@ export const TableColumnZod = z
   })
   .transform((val) => ({
     name: val.name,
+    // The SQL identifier stays in `name`; `fieldName` is what GraphQL exposes it as.
+    // Nothing emitting SQL may read `fieldName`, nothing emitting SDL may read `name`.
+    fieldName: sanitizeGraphQLName(val.name),
     dataType: val.dataType,
     isNullable: typeof val.isNullable === "boolean" ? val.isNullable : val.isNullable === 1,
     description: val.description ?? null,

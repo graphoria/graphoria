@@ -16,24 +16,28 @@ import {
   isAggregationField,
   isSingleQuery,
   processFieldSelectionsPG,
+  sqlColumnName,
 } from "../../../common";
 
 import { applyDirectives } from "../../../directives";
 
 // Generate CTE for aggregations
 const buildAggregationCTE = (
+  entities: MergedEntities,
+  tableName: string,
   groupByInfo: GroupByInfo,
   dottedQuotedName: string,
   tableAlias: string,
   whereClause: string,
 ): string => {
   const { groupByFields, aggregations, cteAlias } = groupByInfo;
+  const sqlName = (fieldName: string) => sqlColumnName(entities, tableName, fieldName);
 
   const selectClauses: string[] = [];
 
   // Add group by fields
   groupByFields.forEach((field) => {
-    selectClauses.push(`${tableAlias}."${field}"`);
+    selectClauses.push(`${tableAlias}."${sqlName(field)}"`);
   });
 
   // Add aggregations
@@ -42,11 +46,11 @@ const buildAggregationCTE = (
       selectClauses.push(`COUNT(*) AS ${agg.alias}`);
     } else {
       const func = agg.name.toUpperCase();
-      selectClauses.push(`${func}(${tableAlias}."${agg.fieldName}") AS ${agg.alias}`);
+      selectClauses.push(`${func}(${tableAlias}."${sqlName(agg.fieldName)}") AS ${agg.alias}`);
     }
   });
 
-  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}."${field}"`).join(", ")}`;
+  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}."${sqlName(field)}"`).join(", ")}`;
 
   return `${cteAlias} AS (
     SELECT
@@ -70,6 +74,8 @@ const buildGroupedQuery = (
   const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias } =
     groupByInfo;
 
+  const sqlName = (fieldName: string) => sqlColumnName(entities, field.name, fieldName);
+
   const selectClauses: string[] = [];
 
   if (hasKey) {
@@ -77,7 +83,7 @@ const buildGroupedQuery = (
     const keyFields = keys
       .map((key) => {
         const selector = applyDirectives(
-          `${cteAlias}."${key.name}"`,
+          `${cteAlias}."${sqlName(key.name)}"`,
           key.directives,
           "pg",
           variablesDefinition,
@@ -109,7 +115,7 @@ const buildGroupedQuery = (
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
         .map((sel) => {
           const selector = applyDirectives(
-            `${tableAlias}."${sel.name}"`,
+            `${tableAlias}."${sqlName(sel.name)}"`,
             sel.directives,
             "pg",
             variablesDefinition,
@@ -120,7 +126,8 @@ const buildGroupedQuery = (
 
       if (itemFields) {
         const joinConditions = groupByFields.map(
-          (field) => `${tableAlias}."${field}" = ${cteAlias}."${field}"`,
+          (groupByField) =>
+            `${tableAlias}."${sqlName(groupByField)}" = ${cteAlias}."${sqlName(groupByField)}"`,
         );
 
         const whereConditions = whereClause
@@ -190,7 +197,14 @@ export const generateSQL = (
         {},
       );
 
-      const cte = buildAggregationCTE(groupByInfo, dottedQuotedName, tableAlias, whereClause);
+      const cte = buildAggregationCTE(
+        entities,
+        field.name,
+        groupByInfo,
+        dottedQuotedName,
+        tableAlias,
+        whereClause,
+      );
       ctes.push(cte);
     }
 

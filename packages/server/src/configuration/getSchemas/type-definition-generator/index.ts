@@ -1,6 +1,7 @@
 import type { OpenAPIV3_1 } from "openapi-types";
 
 import { SqlTypeCategory, categorizeSqlType, isNumericType } from "../../../databases/sqlTypeUtils";
+import { columnFieldName } from "../../../databases/transformers/graphqlName";
 import { convertFromZod } from "../../rest/openApiErrors";
 import { type MergedEntities } from "../mergeEntities";
 
@@ -91,8 +92,8 @@ export const generateTableType = (mergedEntities: MergedEntities) =>
         ${lj([
           lj(
             columns,
-            ({ name, dataType, isNullable, description }) =>
-              `${sdlDesc(description)}${name}: ${mapSQLTypeToGraphQLType(dataType)}${isNullable ? "" : "!"}`,
+            (column) =>
+              `${sdlDesc(column.description)}${columnFieldName(column)}: ${mapSQLTypeToGraphQLType(column.dataType)}${column.isNullable ? "" : "!"}`,
           ),
           lj(
             relationships,
@@ -115,7 +116,11 @@ export const generateWhereInputType = (mergedEntities: MergedEntities) =>
       ({ resolverName, columns, relationships, relationshipsReversed }) => `
         input ${resolverName}WhereInput {
           ${lj([
-            lj(columns, ({ name, dataType }) => `${name}: ${mapSQLTypeToConditionType(dataType)}`),
+            lj(
+              columns,
+              (column) =>
+                `${columnFieldName(column)}: ${mapSQLTypeToConditionType(column.dataType)}`,
+            ),
             lj(
               relationships,
               ({ toResolverName, toInternalName }) =>
@@ -138,7 +143,7 @@ export const generateOrderByInputType = (mergedEntities: MergedEntities) =>
     mergedEntities.tables.map(
       ({ internalName, columns }) => `
       input ${internalName}OrderByInput {
-        ${lj(columns, ({ name }) => `${name}: OrderByEnum`)}
+        ${lj(columns, (column) => `${columnFieldName(column)}: OrderByEnum`)}
       }`,
     ),
   );
@@ -165,7 +170,7 @@ export const generateAggregationTypes = (mergedEntities: MergedEntities) => {
                 ({ name: agg, graphQLType }) =>
                   `
                   type ${resolverName}${agg} {
-                    ${lj(numericColumns, ({ name }) => `${name}: ${graphQLType ?? mapSQLTypeToGraphQLType(columns.find((c) => c.name === name)?.dataType || "")}`)}
+                    ${lj(numericColumns, (column) => `${columnFieldName(column)}: ${graphQLType ?? mapSQLTypeToGraphQLType(column.dataType)}`)}
                   }
                 `,
               )
@@ -187,7 +192,7 @@ export const generateAggregationTypes = (mergedEntities: MergedEntities) => {
       }
       
       enum ${resolverName}GroupByKeys {
-        ${columns.map((c) => c.name).join("\n")}
+        ${columns.map(columnFieldName).join("\n")}
       }
       `;
   });

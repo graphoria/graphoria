@@ -6,6 +6,7 @@ import type { ResolverRegistry } from "../../../types/resolver";
 import type { TypedOperation } from "../../../types/zod/operation";
 
 import { EntitySource, createResolverEntry } from "../../../types/resolver";
+import { columnFieldName } from "../../../databases/transformers/graphqlName";
 import { SqlTypeCategory, categorizeSqlType } from "../../../databases/sqlTypeUtils";
 
 const dataTypeToOpenApiType = (dataType: string): string => {
@@ -33,7 +34,23 @@ export const mergeEntities = (
   const resolverRegistry: ResolverRegistry = {};
 
   // Register tables (queries)
+  // Sanitisation is not injective — `categoría` and `categor_a` both produce
+  // `categoria` — so two tables can land on one resolver name. Serving one
+  // table's rows under the other's name is worse than not booting.
+  const sourceOfResolverName: Record<string, string> = {};
+
   const queriesMap = entityOfRole.tables.reduce<Record<string, TableResolver>>((acc, table) => {
+    const source = `${table.schema}.${table.name}`;
+    const previousSource = sourceOfResolverName[table.resolverName];
+
+    if (previousSource) {
+      throw new Error(
+        `Duplicate GraphQL name "${table.resolverName}": both ${previousSource} and ${source} map to it. Rename one of them, or exclude it with schema.excludedTables.`,
+      );
+    }
+
+    sourceOfResolverName[table.resolverName] = source;
+
     acc[table.resolverName] = table;
     acc[`${table.resolverName}_single`] = table;
     acc[`${table.resolverName}_aggregate`] = table;
@@ -207,10 +224,18 @@ export const mergeEntities = (
     },
     isVirtualColumn: (table: string, column: string): VirtualColumn | undefined => {
       const col = queriesMap[table]?.columns.find(
-        (c) => c.name === column && "virtual" in c && c.virtual,
+        (c) => columnFieldName(c) === column && "virtual" in c && c.virtual,
       );
       return col ? (col as VirtualColumn) : undefined;
     },
+    /**
+     * The SQL identifier behind a GraphQL field name. Columns whose name GraphQL
+     * cannot spell are exposed under a sanitised field name, so anything that
+     * emits SQL for a field the client named has to come back through here.
+     * Unknown names pass through: a legal name always sanitises to itself.
+     */
+    columnSqlName: (table: string, fieldName: string): string =>
+      queriesMap[table]?.columns.find((c) => columnFieldName(c) === fieldName)?.name ?? fieldName,
     getColumnTypeForOpenApi: (table: string, column: string) => {
       const tableObj = queriesMap[table];
 

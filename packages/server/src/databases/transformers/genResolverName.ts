@@ -1,3 +1,5 @@
+import { sanitizeGraphQLName } from "./graphqlName";
+
 export const genResolverName = (
   schema: string,
   name: string,
@@ -12,7 +14,5 @@ export const genResolverName = (
     .replace("{schema}", schema)
     .replace("{name}", name);
 
-  if (suffix) return `${baseName}_${suffix}`;
-
-  return baseName;
+  return sanitizeGraphQLName(suffix ? `${baseName}_${suffix}` : baseName);
 };

@@ -12,6 +12,21 @@ describe("TableColumnZod", () => {
     expect(col.description).toBeNull();
   });
 
+  it("exposes a column GraphQL cannot spell under a sanitised fieldName", () => {
+    const col = TableColumnZod.parse({
+      name: "descripción",
+      dataType: "text",
+      isNullable: true,
+    });
+    expect(col.name).toBe("descripción");
+    expect(col.fieldName).toBe("descripcion");
+  });
+
+  it("leaves fieldName equal to name for a legal column", () => {
+    const col = TableColumnZod.parse({ name: "id", dataType: "int", isNullable: false });
+    expect(col.fieldName).toBe("id");
+  });
+
   it("preserves a database-provided description", () => {
     const col = TableColumnZod.parse({
       name: "id",
