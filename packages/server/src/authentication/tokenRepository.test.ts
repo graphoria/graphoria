@@ -51,22 +51,32 @@ describe("tokenRepository", () => {
 
   it("revoke flags token as revoked while keeping isUsed", async () => {
     await repo.saveJti("jti-2", "5m");
-    await repo.revoke("jti-2");
+    await repo.revoke("jti-2", "7d");
     expect(await repo.isRevoked("jti-2")).toBe(true);
     expect(await repo.isTokenUsed("jti-2")).toBe(true);
   });
 
-  it("revoke is a no-op for unsaved JTIs (no orphan keys)", async () => {
-    await repo.revoke("jti-orphan");
-    expect(await repo.isRevoked("jti-orphan")).toBe(false);
-    expect(client.store.has("jti-orphan")).toBe(false);
+  it("revoke records a JTI that was never saved, and gives it a TTL", async () => {
+    // Access tokens and unused refresh tokens never pass through saveJti, so a
+    // revoke that only wrote to already-saved keys could not log anyone out.
+    await repo.revoke("jti-orphan", "7d");
+    expect(await repo.isRevoked("jti-orphan")).toBe(true);
+    expect(client.ttls.get("jti-orphan")).toBe(604800);
   });
 
   it("revoke does not extend TTL on existing token", async () => {
     await repo.saveJti("jti-3", "5m");
     const ttlBefore = client.ttls.get("jti-3");
-    await repo.revoke("jti-3");
+    await repo.revoke("jti-3", "7d");
     expect(client.ttls.get("jti-3")).toBe(ttlBefore);
+  });
+
+  it("revoke is idempotent", async () => {
+    await repo.revoke("jti-4", "7d");
+    client.ttls.delete("jti-4");
+    await repo.revoke("jti-4", "7d");
+    expect(await repo.isRevoked("jti-4")).toBe(true);
+    expect(client.ttls.has("jti-4")).toBe(false);
   });
 
   it("isRevoked fails closed when client throws", async () => {

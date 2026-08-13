@@ -250,7 +250,9 @@ export const createPASETOService = (
     verifyTokenAndGetSession,
     createTokenPair,
     refreshAccessToken,
-    revoke: tokenRepository.revoke,
+    // The refresh lifetime is the longest a revocation has to outlive, so it is
+    // the TTL for a JTI the repository has not seen before.
+    revoke: (jti: string) => tokenRepository.revoke(jti, env.jwt.rtExpiresIn),
     isRevoked: tokenRepository.isRevoked,
   };
 };

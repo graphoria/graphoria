@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 import { ConnectionPool } from "mssql";
+import { generateKeys } from "paseto-ts/v4";
 
 import type { ConfigurationInput } from "../../config";
 import type { DatabaseType } from "../../types/configuration";
@@ -31,6 +32,19 @@ process.env["JWT_SECRET"] ??= "integration-jwt-secret-integration-jwt-secret";
 process.env["REDIS_URL"] ??= REDIS_URL;
 process.env["LOG_LEVEL"] ??= "silent";
 
+// The PASETO strategies validate their keys when the token service is built, so
+// both key sets have to exist before the env singleton parses — even for the
+// suites that only ever run under the default `jwt` strategy.
+const pasetoPublicKeys = generateKeys("public") as { secretKey: string; publicKey: string };
+process.env["PASETO_LOCAL_KEY"] ??= generateKeys("local") as string;
+process.env["PASETO_SECRET_KEY"] ??= pasetoPublicKeys.secretKey;
+process.env["PASETO_PUBLIC_KEY"] ??= pasetoPublicKeys.publicKey;
+
+// Redis is part of the compose stack, so the integration suite exercises the
+// Redis cache store rather than the in-memory one. Only operations that declare
+// a `cache` block ever construct it.
+process.env["CACHE_STORE"] ??= "redis";
+
 export type GraphQLResponse<T = Record<string, unknown>> = {
   data?: T;
   errors?: { message: string; extensions?: Record<string, unknown> }[];
@@ -40,6 +54,8 @@ export type RequestOptions = {
   /** Sends the admin secret header, which bypasses RBAC (superadmin role). */
   admin?: boolean;
   token?: string;
+  /** Raw `Cookie` header value — `auth_refresh` reads the refresh token from one. */
+  cookie?: string;
   headers?: Record<string, string>;
 };
 
@@ -52,6 +68,12 @@ export type IntegrationContext = {
     variables?: Record<string, unknown>,
     options?: RequestOptions,
   ) => Promise<GraphQLResponse<T>>;
+  /** Same as `gql` but hands back the raw response, for `Set-Cookie` assertions. */
+  gqlRaw: (
+    query: string,
+    variables?: Record<string, unknown>,
+    options?: RequestOptions,
+  ) => Promise<Response>;
   /** Runs a REST request against the booted server. `path` is prefix-relative. */
   rest: (path: string, init?: RequestInit & RequestOptions) => Promise<Response>;
   /** Runs raw SQL against the engine, bypassing Graphoria entirely. */
@@ -155,21 +177,27 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
   const authHeaders = (requestOptions?: RequestOptions): Record<string, string> => ({
     ...(requestOptions?.admin ? { "x-admin-secret": process.env["ADMIN_SECRET"]! } : {}),
     ...(requestOptions?.token ? { authorization: `Bearer ${requestOptions.token}` } : {}),
+    ...(requestOptions?.cookie ? { cookie: requestOptions.cookie } : {}),
     ...requestOptions?.headers,
   });
+
+  const gqlRaw = (
+    query: string,
+    variables?: Record<string, unknown>,
+    requestOptions?: RequestOptions,
+  ) =>
+    Bun.fetch(url(prefixes.graphql), {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders(requestOptions) },
+      body: JSON.stringify({ query, variables }),
+    });
 
   const context: IntegrationContext = {
     engine,
     server,
-    gql: async (query, variables, requestOptions) => {
-      const response = await Bun.fetch(url(prefixes.graphql), {
-        method: "POST",
-        headers: { "content-type": "application/json", ...authHeaders(requestOptions) },
-        body: JSON.stringify({ query, variables }),
-      });
-
-      return response.json();
-    },
+    gqlRaw,
+    gql: async (query, variables, requestOptions) =>
+      (await gqlRaw(query, variables, requestOptions)).json(),
     rest: (path, init) =>
       Bun.fetch(url(`${prefixes.rest}${path}`), {
         ...init,
