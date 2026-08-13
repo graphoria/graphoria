@@ -59,3 +59,48 @@ describe("mergeEntities queue registration", () => {
     expect((entry?.resolver as { name: string } | undefined)?.name).toBe("orderUpdates");
   });
 });
+
+describe("mergeEntities resolver name collisions", () => {
+  const tablesOfRole = (tables: unknown[]): EntitiesOfRole =>
+    ({
+      tables,
+      storedProcedures: [],
+      queues: [],
+      operations: {},
+    }) as unknown as EntitiesOfRole;
+
+  const table = (schema: string, name: string, resolverName: string) => ({
+    schema,
+    name,
+    resolverName,
+    internalName: resolverName,
+    columns: [],
+    relationships: [],
+    relationshipsReversed: [],
+  });
+
+  // Sanitisation is not injective: `categoría` and `categor_a` both land on
+  // `catalog_categoria`. Registering both would silently serve one table's rows
+  // under the other's name.
+  it("fails naming both tables when two of them sanitise to one resolver name", () => {
+    expect(() =>
+      mergeEntities(
+        tablesOfRole([
+          table("catalog", "categoría", "catalog_categoria"),
+          table("catalog", "categor_a", "catalog_categoria"),
+        ]),
+      ),
+    ).toThrow(/catalog_categoria.*catalog\.categoría.*catalog\.categor_a/s);
+  });
+
+  it("accepts tables whose resolver names differ", () => {
+    expect(() =>
+      mergeEntities(
+        tablesOfRole([
+          table("catalog", "categoría", "catalog_categoria"),
+          table("catalog", "products", "catalog_products"),
+        ]),
+      ),
+    ).not.toThrow();
+  });
+});

@@ -34,7 +34,23 @@ export const mergeEntities = (
   const resolverRegistry: ResolverRegistry = {};
 
   // Register tables (queries)
+  // Sanitisation is not injective — `categoría` and `categor_a` both produce
+  // `categoria` — so two tables can land on one resolver name. Serving one
+  // table's rows under the other's name is worse than not booting.
+  const sourceOfResolverName: Record<string, string> = {};
+
   const queriesMap = entityOfRole.tables.reduce<Record<string, TableResolver>>((acc, table) => {
+    const source = `${table.schema}.${table.name}`;
+    const previousSource = sourceOfResolverName[table.resolverName];
+
+    if (previousSource) {
+      throw new Error(
+        `Duplicate GraphQL name "${table.resolverName}": both ${previousSource} and ${source} map to it. Rename one of them, or exclude it with schema.excludedTables.`,
+      );
+    }
+
+    sourceOfResolverName[table.resolverName] = source;
+
     acc[table.resolverName] = table;
     acc[`${table.resolverName}_single`] = table;
     acc[`${table.resolverName}_aggregate`] = table;
