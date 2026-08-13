@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { sanitizeGraphQLName } from "./graphqlName";
+import { columnFieldName, sanitizeGraphQLName } from "./graphqlName";
 
 const GRAPHQL_NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;
 
@@ -43,5 +43,16 @@ describe("sanitizeGraphQLName", () => {
     for (const name of ["categoría", "space name", "2024", "", "日本", "a.b$c", "--"]) {
       expect(sanitizeGraphQLName(name)).toMatch(GRAPHQL_NAME);
     }
+  });
+});
+
+describe("columnFieldName", () => {
+  it("uses the fieldName an introspected column carries", () => {
+    expect(columnFieldName({ name: "space col", fieldName: "space_col" })).toBe("space_col");
+  });
+
+  it("sanitises on the spot for a virtual column, which carries no fieldName", () => {
+    expect(columnFieldName({ name: "descripción" })).toBe("descripcion");
+    expect(columnFieldName({ name: "full_name" })).toBe("full_name");
   });
 });

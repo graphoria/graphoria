@@ -18,3 +18,11 @@ export const sanitizeGraphQLName = (name: string): string => {
 
   return /^[0-9]/.test(replaced) ? `_${replaced}` : replaced;
 };
+
+/**
+ * The GraphQL field a column is exposed as. Introspected columns carry a
+ * `fieldName` computed once at parse time; virtual columns come from
+ * configuration and carry only a name, so they are sanitised on the spot.
+ */
+export const columnFieldName = (column: { name: string; fieldName?: string }): string =>
+  column.fieldName ?? sanitizeGraphQLName(column.name);
