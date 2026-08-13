@@ -26,8 +26,10 @@ services:
     # postgres:18 wants the mount one level up from the data directory.
     tmpfs:
       - /var/lib/postgresql
+    # Over TCP on purpose, not the unix socket — see the MySQL healthcheck below
+    # for what a socket probe reports healthy too early.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d graphoria_test"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U postgres -d graphoria_test"]
       interval: 3s
       timeout: 5s
       retries: 20
@@ -43,8 +45,20 @@ services:
       - "53306:3306"
     tmpfs:
       - /var/lib/mysql
+    # `--protocol=TCP` is the whole point of this probe. On first boot the MySQL
+    # entrypoint runs a *temporary* server to create the database, and that one
+    # listens on the unix socket only (`port: 0`). A plain `mysqladmin ping`
+    # reaches it, so the container reports healthy, `up --wait` returns, and the
+    # entrypoint then shuts the temporary server down to start the real one —
+    # any client that connected in that window dies with
+    # `MySQLError: Connection closed`. Probing 3306 over TCP cannot pass until
+    # the real server is up.
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pgraphoria_test", "--silent"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -P 3306 --protocol=TCP -uroot -pgraphoria_test --silent",
+        ]
       interval: 3s
       timeout: 5s
       retries: 30
