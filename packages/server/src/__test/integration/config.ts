@@ -57,15 +57,3 @@ export const SCHEMAS = {
  */
 export const fieldName = (engine: DatabaseType, schema: "app" | "catalog", table: string) =>
   `${SCHEMAS[engine][schema]}_${table}`;
-
-/**
- * Tables whose identifiers are legal SQL but produce an illegal GraphQL name
- * under the default `{schema}_{name}` field naming, because `genResolverName`
- * does not sanitise its output. Including them makes the server fail to boot
- * with a GraphQL syntax error, so the default harness config excludes them —
- * see identifiers.test.ts, which pins the behaviour.
- */
-export const UNSUPPORTED_IDENTIFIER_TABLES = (engine: DatabaseType) => [
-  `${SCHEMAS[engine].catalog}_space name`,
-  `${SCHEMAS[engine].catalog}_categoría`,
-];

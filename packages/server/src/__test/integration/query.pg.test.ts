@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { IntegrationContext, StartedServer } from "./harness";
 
 import { virtualColumnExpression, virtualColumnFunction } from "../../config/types/virtual-columns";
-import { UNSUPPORTED_IDENTIFIER_TABLES } from "./config";
 import { integrationEnabled, startServer } from "./harness";
 
 /**
@@ -665,7 +664,6 @@ describe.skipIf(!integrationEnabled)("query · pg · virtual columns", () => {
               database: "graphoria_test",
             },
             schema: {
-              excludedTables: UNSUPPORTED_IDENTIFIER_TABLES(ENGINE),
               database: {
                 app_users: {
                   columns: [
