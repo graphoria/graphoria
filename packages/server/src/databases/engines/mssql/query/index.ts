@@ -16,6 +16,7 @@ import {
   isAggregationField,
   isSingleQuery,
   processFieldSelectionsMSSQL,
+  sqlColumnName,
   wrapIdentifierMSSQL,
 } from "../../../common";
 
@@ -26,18 +27,21 @@ import { applyDirectives } from "../../../directives";
 
 // Generate CTE for aggregations
 const buildAggregationCTE = (
+  entities: MergedEntities,
+  tableName: string,
   groupByInfo: GroupByInfo,
   dottedQuotedName: string,
   tableAlias: string,
   whereClause: string,
 ): string => {
   const { groupByFields, aggregations, cteAlias } = groupByInfo;
+  const sqlName = (fieldName: string) => sqlColumnName(entities, tableName, fieldName);
 
   const selectClauses: string[] = [];
 
   // Add group by fields
   groupByFields.forEach((field) => {
-    selectClauses.push(`${tableAlias}.${wrapIdentifierMSSQL(field)}`);
+    selectClauses.push(`${tableAlias}.${wrapIdentifierMSSQL(sqlName(field))}`);
   });
 
   // Add aggregations
@@ -50,13 +54,13 @@ const buildAggregationCTE = (
       // 1, 5, 5, 2 is 3, not 3.25 — so the average has to be taken on a float.
       const operand =
         agg.name === "avg"
-          ? `CAST(${tableAlias}.${wrapIdentifierMSSQL(agg.fieldName)} AS FLOAT)`
-          : `${tableAlias}.${wrapIdentifierMSSQL(agg.fieldName)}`;
+          ? `CAST(${tableAlias}.${wrapIdentifierMSSQL(sqlName(agg.fieldName))} AS FLOAT)`
+          : `${tableAlias}.${wrapIdentifierMSSQL(sqlName(agg.fieldName))}`;
       selectClauses.push(`${func}(${operand}) AS ${agg.alias}`);
     }
   });
 
-  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}.${wrapIdentifierMSSQL(field)}`).join(", ")}`;
+  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}.${wrapIdentifierMSSQL(sqlName(field))}`).join(", ")}`;
 
   return `${cteAlias} AS (
     SELECT
@@ -80,19 +84,21 @@ const buildGroupedQuery = (
   const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias } =
     groupByInfo;
 
+  const sqlName = (fieldName: string) => sqlColumnName(entities, field.name, fieldName);
+
   const selectClauses: string[] = [];
 
   if (hasKey) {
     // Add key object with group by fields
     const keyFields = keys
-      .map((field) => {
+      .map((key) => {
         const selector = applyDirectives(
-          `${cteAlias}.${wrapIdentifierMSSQL(field.name)}`,
-          field.directives,
+          `${cteAlias}.${wrapIdentifierMSSQL(sqlName(key.name))}`,
+          key.directives,
           "mssql",
           variablesDefinition,
         );
-        return `${selector} AS ${wrapIdentifierMSSQL(field.alias || field.name)}`;
+        return `${selector} AS ${wrapIdentifierMSSQL(key.alias || key.name)}`;
       })
       .join(", ");
 
@@ -121,7 +127,7 @@ const buildGroupedQuery = (
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
         .map((sel) => {
           const selector = applyDirectives(
-            `${tableAlias}.${wrapIdentifierMSSQL(sel.name)}`,
+            `${tableAlias}.${wrapIdentifierMSSQL(sqlName(sel.name))}`,
             sel.directives,
             "mssql",
             variablesDefinition,
@@ -132,8 +138,8 @@ const buildGroupedQuery = (
 
       if (itemFields) {
         const joinConditions = groupByFields.map(
-          (field) =>
-            `${tableAlias}.${wrapIdentifierMSSQL(field)} = ${cteAlias}.${wrapIdentifierMSSQL(field)}`,
+          (groupByField) =>
+            `${tableAlias}.${wrapIdentifierMSSQL(sqlName(groupByField))} = ${cteAlias}.${wrapIdentifierMSSQL(sqlName(groupByField))}`,
         );
 
         selectClauses.push(`JSON_QUERY(ISNULL((
@@ -212,7 +218,14 @@ export const generateSQL = (
         {},
       );
 
-      const cte = buildAggregationCTE(groupByInfo, dottedQuotedName, tableAlias, whereClause);
+      const cte = buildAggregationCTE(
+        entities,
+        field.name,
+        groupByInfo,
+        dottedQuotedName,
+        tableAlias,
+        whereClause,
+      );
       ctes.push(cte);
     }
 

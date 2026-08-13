@@ -16,6 +16,7 @@ import {
   isAggregationField,
   isSingleQuery,
   processFieldSelectionsMySQL,
+  sqlColumnName,
   wrapIdentifierMySQL,
 } from "../../../common";
 
@@ -23,18 +24,21 @@ import { applyDirectives } from "../../../directives";
 
 // Generate CTE for aggregations
 const buildAggregationCTE = (
+  entities: MergedEntities,
+  tableName: string,
   groupByInfo: GroupByInfo,
   dottedQuotedName: string,
   tableAlias: string,
   whereClause: string,
 ): string => {
   const { groupByFields, aggregations, cteAlias } = groupByInfo;
+  const sqlName = (fieldName: string) => sqlColumnName(entities, tableName, fieldName);
 
   const selectClauses: string[] = [];
 
   // Add group by fields
   groupByFields.forEach((field) => {
-    selectClauses.push(`${tableAlias}.${wrapIdentifierMySQL(field)}`);
+    selectClauses.push(`${tableAlias}.${wrapIdentifierMySQL(sqlName(field))}`);
   });
 
   // Add aggregations
@@ -44,12 +48,12 @@ const buildAggregationCTE = (
     } else {
       const func = agg.name.toUpperCase();
       selectClauses.push(
-        `${func}(${tableAlias}.${wrapIdentifierMySQL(agg.fieldName)}) AS ${agg.alias}`,
+        `${func}(${tableAlias}.${wrapIdentifierMySQL(sqlName(agg.fieldName))}) AS ${agg.alias}`,
       );
     }
   });
 
-  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}.${wrapIdentifierMySQL(field)}`).join(", ")}`;
+  const groupByClause = `GROUP BY ${groupByFields.map((field) => `${tableAlias}.${wrapIdentifierMySQL(sqlName(field))}`).join(", ")}`;
 
   return `${cteAlias} AS (
     SELECT
@@ -73,6 +77,8 @@ const buildGroupedQuery = (
   const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias } =
     groupByInfo;
 
+  const sqlName = (fieldName: string) => sqlColumnName(entities, field.name, fieldName);
+
   const selectClauses: string[] = [];
 
   if (hasKey) {
@@ -80,7 +86,7 @@ const buildGroupedQuery = (
     const keyFields = keys
       .map((key) => {
         const selector = applyDirectives(
-          `${cteAlias}.${wrapIdentifierMySQL(key.name)}`,
+          `${cteAlias}.${wrapIdentifierMySQL(sqlName(key.name))}`,
           key.directives,
           "mysql",
           variablesDefinition,
@@ -112,7 +118,7 @@ const buildGroupedQuery = (
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
         .map((sel) => {
           const selector = applyDirectives(
-            `${tableAlias}.${wrapIdentifierMySQL(sel.name)}`,
+            `${tableAlias}.${wrapIdentifierMySQL(sqlName(sel.name))}`,
             sel.directives,
             "mysql",
             variablesDefinition,
@@ -123,8 +129,8 @@ const buildGroupedQuery = (
 
       if (itemFields) {
         const joinConditions = groupByFields.map(
-          (field) =>
-            `${tableAlias}.${wrapIdentifierMySQL(field)} = ${cteAlias}.${wrapIdentifierMySQL(field)}`,
+          (groupByField) =>
+            `${tableAlias}.${wrapIdentifierMySQL(sqlName(groupByField))} = ${cteAlias}.${wrapIdentifierMySQL(sqlName(groupByField))}`,
         );
 
         const whereConditions = whereClause
@@ -194,7 +200,14 @@ export const generateSQL = (
         {},
       );
 
-      const cte = buildAggregationCTE(groupByInfo, dottedQuotedName, tableAlias, whereClause);
+      const cte = buildAggregationCTE(
+        entities,
+        field.name,
+        groupByInfo,
+        dottedQuotedName,
+        tableAlias,
+        whereClause,
+      );
       ctes.push(cte);
     }
 

@@ -224,8 +224,19 @@ const columnTargetFp =
 
     return virtualColumn
       ? renderVirtualColumn(virtualColumn as VirtualColumn)
-      : `${tableAlias}.${wrapIdentifierFp(dbType)(colName)}`;
+      : `${tableAlias}.${wrapIdentifierFp(dbType)(sqlColumnName(entities, tableName, colName))}`;
   };
+
+/**
+ * The SQL identifier a GraphQL field name compiles to. A column GraphQL cannot
+ * spell is exposed under a sanitised field name, so the name the client sent is
+ * not necessarily the name the database knows.
+ */
+export const sqlColumnName = (
+  entities: MergedEntities,
+  tableName: string | undefined,
+  fieldName: string,
+): string => (tableName ? entities.columnSqlName(tableName, fieldName) : fieldName);
 
 // Helper to resolve variable values
 const resolveVariable = <T>(value: unknown, variables: Record<string, unknown>): T => {
@@ -700,7 +711,7 @@ export const processFieldSelectionsFp =
               selectClauses.push([`${colName}`, `(${vc.expression})`]);
             }
           } else {
-            let querySelector = `${tableAlias}.${wrapIdentifierFp(dbType)(sel.name)}`;
+            let querySelector = `${tableAlias}.${wrapIdentifierFp(dbType)(sqlColumnName(entities, tableName, sel.name))}`;
 
             // Apply all directives using the handler registry
             querySelector = applyDirectives(
