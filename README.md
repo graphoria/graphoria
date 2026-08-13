@@ -58,10 +58,10 @@ treat that as a design property, not a measured comparison.
 Graphoria is under active development. Until v1.0:
 
 - **Breaking changes are expected** — the configuration shape, API surface, and package structure may change between minor versions.
-- **Every breaking change is documented** in [`CHANGELOG.md`](./CHANGELOG.md) with migration guidance.
+- **Every breaking change is documented** in the [GitHub release notes](https://github.com/graphoria/graphoria/releases) with migration guidance.
 - **Semantic versioning applies from v1.0 onward.** Before then, treat each `0.x` bump as potentially breaking.
 
-We ship fast and fix forward. If you're evaluating Graphoria for production, pin your version (`0.1.0` not `^0.1.0`) and read the changelog before upgrading.
+We ship fast and fix forward. If you're evaluating Graphoria for production, pin your version (`0.1.0` not `^0.1.0`) and read the release notes before upgrading.
 
 ## Features
 

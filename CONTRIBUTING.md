@@ -13,7 +13,6 @@ graphql-server/
 │   └── react/       # @graphoria/react — React hooks and Apollo integration
 ├── docs/            # User-facing documentation (Markdown)
 ├── README.md
-├── CHANGELOG.md
 └── package.json     # Workspace root
 ```
 
@@ -154,7 +153,7 @@ Before opening a PR:
 - [ ] `bun test` is green.
 - [ ] New behavior is covered by tests.
 - [ ] User-facing changes have a paired update in `docs/` (or the relevant per-package README).
-- [ ] `CHANGELOG.md` has an entry under `## [Unreleased]`.
+- [ ] Breaking changes are called out in the PR description, so they make it into the GitHub release notes.
 
 PRs should be focused. If you find unrelated improvements while working on something, file them as separate PRs — even small ones — so review stays tractable.
 

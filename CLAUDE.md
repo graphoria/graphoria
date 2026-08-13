@@ -254,7 +254,7 @@ Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HE
 | AI agent                      | [docs/AI.md](./docs/AI.md)                                                                                              |
 | React SDK                     | [docs/REACT.md](./docs/REACT.md)                                                                                        |
 | Contributing                  | [CONTRIBUTING.md](./CONTRIBUTING.md)                                                                                    |
-| Changelog                     | [CHANGELOG.md](./CHANGELOG.md)                                                                                          |
+| Release notes                 | [GitHub Releases](https://github.com/graphoria/graphoria/releases)                                                      |
 | Backlog (deferred follow-ups) | [BACKLOG.md](./BACKLOG.md) — read before adding "future improvement" suggestions; the user item may already be tracked. |
 
 ## graphify
