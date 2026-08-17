@@ -4,7 +4,7 @@
 
 Graphoria can run an LLM agent **server-side** that answers natural-language questions about your database. Ask it a question; it discovers the relevant tables, writes and runs read-only GraphQL queries against your schema, and returns a written answer. It is exposed two ways: a GraphQL `ask` query and a REST `POST` endpoint.
 
-The agent reuses the same tooling as the [MCP server](./MCP.md) (`list_entities`, `describe_entity`, `graphql_execute`) from `ai/tools/core.ts` but drives the tool-calling loop _inside_ the server instead of handing tools to an external client.
+The agent reuses the same tooling as the [MCP server](./MCP.md) — `list_entities`, `describe_entity`, `query_data`, `graphql_execute`, sharing the executors in `ai/tools/core.ts` — but drives the tool-calling loop _inside_ the server instead of handing tools to an external client. It is four of the six MCP tools: `graphql_validate` and `rest_execute` are not offered to the agent, and none of the four can be disabled the way the MCP ones can.
 
 The integration is **opt-in**, **admin-only**, and **read-only**: only callers presenting the admin secret reach it, mutations/subscriptions are rejected, and the agent runs against the full (`superadmin`) schema.
 
@@ -64,7 +64,7 @@ curl -X POST http://localhost:3000/ai \
   -d '{"prompt":"how many orders per status?"}'
 ```
 
-The path is configurable via `ai.endpoint`. The full URL is `${PREFIX}${endpoint}`.
+The path is configurable via `ai.endpoint`. The full URL is `${PREFIX}${endpoint}`. Setting `AI_REST_ENABLED=false` leaves the route unmounted, so the agent is reachable through the GraphQL `ask` field only.
 
 ### GraphQL
 
@@ -81,7 +81,7 @@ Send it to `/graphql` with the admin secret header. Returns the answer as a `Str
 ## How it works
 
 1. The agent is built once at boot, bound to the `superadmin` role's compiled schema.
-2. Each call runs a tool-calling loop (max 10 iterations): `list_entities` → `describe_entity` → `graphql_execute`.
+2. Each call runs a tool-calling loop (max 10 iterations): `list_entities` → `describe_entity` → `query_data`. The built-in prompt steers the agent to `query_data`, whose structured JSON input the server turns into GraphQL; `graphql_execute` remains available for queries that shape cannot express.
 3. Anti-hallucination guards reject answers that never queried the data and forbid fabrication.
 4. The final text answer is returned; intermediate tool calls are hidden from the caller.
 
@@ -89,7 +89,7 @@ Because the agent always runs as `superadmin`, it can read everything. Do not en
 
 ## Limitations
 
-- **Database questions only.** The agent loop guards against fabrication by requiring at least one `graphql_execute` call before it accepts a final answer. A prompt that needs no data (e.g. "hello") is nudged to query and, finding nothing to query, eventually errors after the iteration cap. Treat this as a data Q&A endpoint, not a general chatbot.
+- **Database questions only.** The agent loop guards against fabrication by requiring at least one `query_data` or `graphql_execute` call before it accepts a final answer. A prompt that needs no data (e.g. "hello") is nudged to query and, finding nothing to query, eventually errors after the iteration cap. Treat this as a data Q&A endpoint, not a general chatbot.
 - **Runs as `superadmin`.** The agent sees the entire schema regardless of who calls it. Anyone holding the admin secret can read everything through it.
 - **Read-only.** Mutations and subscriptions are rejected at the tool boundary.
 - **Iteration cap.** The tool-calling loop is bounded (10 iterations); a question that can't be answered within that budget errors rather than looping forever.
