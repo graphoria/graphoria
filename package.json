@@ -39,7 +39,7 @@
     "@types/react-dom": "^19.2.3",
     "oxfmt": "^0.51.0",
     "oxlint": "1.40.0",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   },
   "overrides": {
     "nanoid": "^5.1.16",
