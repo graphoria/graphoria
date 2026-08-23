@@ -9,12 +9,27 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    # Raised from 5: the group PR plus a normal week of majors already hit the
+    # old cap, and Dependabot silently withholds updates once it is reached.
+    open-pull-requests-limit: 10
     groups:
       minor-and-patch:
         update-types:
           - minor
           - patch
+        exclude-patterns:
+          # Pre-1.0 packages have no semver-major, so a rewrite-scale bump lands
+          # here as a "minor" and rides in with the routine patches. Keep 0.x
+          # SDKs separate so each one gets read on its own.
+          - "@anthropic-ai/sdk"
+    ignore:
+      # monaco-graphql@1.8.0 (latest) declares monaco-editor ">= 0.20.0 < 0.53",
+      # and @graphiql/react pins 0.52.2 as a hard dependency. Bumping past 0.53
+      # breaks the GraphQL language worker and duplicates monaco in the tree.
+      # Revisit when graphiql/monaco-graphql admit >= 0.53.
+      - dependency-name: "monaco-editor"
+        versions:
+          - ">=0.53.0"
     labels:
       - dependencies
 
