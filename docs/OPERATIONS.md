@@ -200,6 +200,7 @@ operation({
 - `graphql.enabled: false` keeps the operation REST-only — useful for endpoints that need REST semantics (file uploads, webhooks) but don't belong in the GraphQL schema.
 - `rest.method` defaults to `GET`. Operations that mutate state should use `POST`/`PUT`/`PATCH` so the OpenAPI spec is honest about their effects.
 - `rest.pathParams` / `queryParams` / `body` let you split a single `input` schema across multiple HTTP positions; if omitted, `input` is read from the body for non-GET requests and from the query string for GET.
+- Path and query values arrive as strings. A parameter declared `z.boolean()` is converted before validation, accepting `true`/`1`/`yes`/`on`/`y`/`enabled` and `false`/`0`/`no`/`off`/`n`/`disabled` (case-insensitive); any other value fails validation. Declaring it `z.boolean()` rather than `z.stringbool()` is also what makes the OpenAPI spec describe it as a boolean, so the docs render a true/false picker instead of a free-text box.
 
 ## Hooks lifecycle
 
