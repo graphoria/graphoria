@@ -1,12 +1,6 @@
 import { z } from "zod";
 
-import {
-  BunSQLConnectionOptionsZod,
-  DatabaseConnectionZod,
-  DatabaseSchemaConfigZod,
-  MSSQLConnectionOptionsZod,
-  TableRelationshipZod as TableRelationshipBaseZod,
-} from "../../config";
+import { TableRelationshipZod as TableRelationshipBaseZod } from "../../config";
 import { genResolverName } from "../../databases/transformers/genResolverName";
 import { sanitizeGraphQLName } from "../../databases/transformers/graphqlName";
 

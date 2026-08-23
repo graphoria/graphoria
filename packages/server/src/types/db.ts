@@ -15,7 +15,6 @@ import {
   TableColumnZod,
   TableZod,
   ViewZod,
-  VirtualColumnZod,
 } from "./zod/db";
 
 // Re-export VirtualColumnType from the config module
