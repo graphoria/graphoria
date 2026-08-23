@@ -37,6 +37,10 @@ const resolveDotPath = (obj: Record<string, unknown>, path: string): unknown => 
  *
  * @param filter - Filter object with potential session variables
  * @param session - JWT payload containing user session data
+ * @param onResolved - Called with each substituted claim value; its return value
+ *   is what lands in the filter. The caller uses this to parameterize the value
+ *   rather than letting it be inlined into SQL — a claim is attacker-influenced
+ *   whenever users can change their own profile data.
  * @returns Filter object with session variables replaced
  *
  * @example
@@ -54,6 +58,7 @@ const resolveDotPath = (obj: Record<string, unknown>, path: string): unknown => 
 export const replaceSessionVariables = (
   filter: Record<string, unknown>,
   session: SessionContext | null,
+  onResolved?: (value: unknown) => unknown,
 ): Record<string, unknown> => {
   if (!filter || !session) {
     return filter;
@@ -79,7 +84,7 @@ export const replaceSessionVariables = (
             );
           }
 
-          processedOperators[operator] = sessionValue;
+          processedOperators[operator] = onResolved ? onResolved(sessionValue) : sessionValue;
         }
         // Recursively handle nested objects
         else if (
@@ -90,6 +95,7 @@ export const replaceSessionVariables = (
           processedOperators[operator] = replaceSessionVariables(
             operatorValue as Record<string, unknown>,
             session,
+            onResolved,
           );
         }
         // Keep other values as-is
