@@ -119,15 +119,15 @@ const permissionsFor = (engine: DatabaseType) => {
       tables: {
         [app("tasks")]: {
           columns: "ALL",
-          filter: { user_id: { eq: "$session.userId" } },
+          filter: { user_id: { eq: "$session.claims.userId" } },
         },
         [app("projects")]: {
           columns: "ALL",
-          filter: { organization_id: { eq: "$session.organizationId" } },
+          filter: { organization_id: { eq: "$session.claims.organizationId" } },
         },
         [app("organizations")]: {
           columns: "ALL",
-          filter: { id: { eq: "$session.organizationId" } },
+          filter: { id: { eq: "$session.claims.organizationId" } },
         },
         // `is_active`, `manager_id` and `created_at` are withheld, so a filter
         // or an ordering naming one of them is a read of a column the role
@@ -148,7 +148,7 @@ const permissionsFor = (engine: DatabaseType) => {
       tables: {
         [app("tasks")]: {
           columns: "ALL",
-          filter: { project_id: { in: "$session.allowedProjects" } },
+          filter: { project_id: { in: "$session.claims.allowedProjects" } },
         },
       },
       storedProcedures: [],
@@ -170,7 +170,7 @@ const permissionsFor = (engine: DatabaseType) => {
       tables: {
         [app("tasks")]: {
           columns: "ALL",
-          filter: { user_id: { eq: "$session.missingClaim" } },
+          filter: { user_id: { eq: "$session.claims.missingClaim" } },
         },
       },
       storedProcedures: [],
@@ -189,6 +189,17 @@ export const rlsConfig = (engine: DatabaseType): Partial<ConfigurationInput> =>
       permissions: permissionsFor(engine),
     },
   }) as Partial<ConfigurationInput>;
+
+/**
+ * Custom claims are addressed as `$session.claims.<name>`, not `$session.<name>`.
+ *
+ * docs/PERMISSIONS.md documents the flat spelling and shows a flat JWT payload,
+ * but `verifyTokenAndGetSession` nests everything from the user row's `claims`
+ * column under a `claims` key, so only `sub`, `role`, `jti`, `iat` and `exp` are
+ * reachable without the prefix. The fixture uses both forms — `$session.sub`
+ * flat, the custom claims prefixed — so whichever way that mismatch is resolved,
+ * one of the two spellings here already covers it.
+ */
 
 /** `auth."user"` spelled for `engine`. The auth schema is a database on MySQL. */
 const authUserTable = (engine: DatabaseType) =>
