@@ -1,0 +1,33 @@
+version: 2
+
+updates:
+  # Bun's lockfile. Grouped so a week of patch bumps arrives as one PR to
+  # review rather than a dozen, with majors left separate because they are the
+  # ones that need a human to read the release notes.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - ci
