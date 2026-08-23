@@ -4,18 +4,18 @@
 
 **Context:** the five other open Dependabot PRs were merged on 2026-08-23 (see [Merged alongside](#merged-alongside)). #15 was the only one that could not go in.
 
-> **Revision note (2026-08-23).** An earlier draft of this file called Problem 2 a set of oxlint *false positives* and warned against deleting the imports. That was wrong — the imports were genuinely dead and deleting them is the correct fix. See [Problem 2](#problem-2--oxlint-140--179-flags-10-genuinely-dead-imports) for the corrected reasoning and the evidence. Problems 1 and 3 also gained corrections.
+> **Revision note (2026-08-23).** An earlier draft of this file called Problem 2 a set of oxlint _false positives_ and warned against deleting the imports. That was wrong — the imports were genuinely dead and deleting them is the correct fix. See [Problem 2](#problem-2--oxlint-140--179-flags-10-genuinely-dead-imports) for the corrected reasoning and the evidence. Problems 1 and 3 also gained corrections.
 
 ---
 
 ## TL;DR
 
-| # | Problem | Blocks CI? | Fix | Status |
-|---|---------|-----------|-----|--------|
-| 1 | `monaco-editor` 0.56.0 violates `monaco-graphql@1.8.0` peer range **and duplicates `@graphiql/react`'s hard pin** | Yes — Integration job | `ignore` monaco-editor `>=0.53.0` in dependabot.yml | ✅ applied |
-| 2 | `oxlint` 1.79 flags 10 **genuinely dead** imports | Yes — Lint job | Delete the 10 import specifiers | ✅ applied |
-| 3 | `@anthropic-ai/sdk` 0.32.1 → 0.120.0 hidden in a "minor" group | **No** — invisible to CI | `exclude-patterns` for the 0.x SDK in dependabot.yml | ✅ applied |
-| 4 | `open-pull-requests-limit: 5` was already saturated | **No** — silent | Raised to 10 | ✅ applied |
+| #   | Problem                                                                                                           | Blocks CI?               | Fix                                                  | Status     |
+| --- | ----------------------------------------------------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------- | ---------- |
+| 1   | `monaco-editor` 0.56.0 violates `monaco-graphql@1.8.0` peer range **and duplicates `@graphiql/react`'s hard pin** | Yes — Integration job    | `ignore` monaco-editor `>=0.53.0` in dependabot.yml  | ✅ applied |
+| 2   | `oxlint` 1.79 flags 10 **genuinely dead** imports                                                                 | Yes — Lint job           | Delete the 10 import specifiers                      | ✅ applied |
+| 3   | `@anthropic-ai/sdk` 0.32.1 → 0.120.0 hidden in a "minor" group                                                    | **No** — invisible to CI | `exclude-patterns` for the 0.x SDK in dependabot.yml | ✅ applied |
+| 4   | `open-pull-requests-limit: 5` was already saturated                                                               | **No** — silent          | Raised to 10                                         | ✅ applied |
 
 ---
 
@@ -23,7 +23,7 @@
 
 Dependabot bundles all **minor + patch** bumps into one weekly PR per the `minor-and-patch` group in [.github/dependabot.yml](.github/dependabot.yml). This week: 26 packages, one commit.
 
-Individual packages *can* be dropped from a group PR with a `@dependabot ignore monaco-editor` comment, which records a persistent ignore condition without editing `dependabot.yml`. An earlier draft claimed the PR was strictly all-or-nothing; it wasn't. The config change is still preferable because it is reviewable and versioned.
+Individual packages _can_ be dropped from a group PR with a `@dependabot ignore monaco-editor` comment, which records a persistent ignore condition without editing `dependabot.yml`. An earlier draft claimed the PR was strictly all-or-nothing; it wasn't. The config change is still preferable because it is reviewable and versioned.
 
 ---
 
@@ -105,11 +105,11 @@ Deleting the imports was then verified not to change the module surface: an AST 
 
 ### The 10 identifiers (now removed)
 
-| File | Identifiers |
-|------|-------------|
-| [types/zod/queue.ts](packages/server/src/types/zod/queue.ts) | `PublisherConfigZod`, `ReconnectConfigZod`, `SubscriberConfigZod`, `TopicConfigZod`, `CacheContext` (type) |
-| [types/zod/db.ts](packages/server/src/types/zod/db.ts) | `BunSQLConnectionOptionsZod`, `DatabaseConnectionZod`, `DatabaseSchemaConfigZod`, `MSSQLConnectionOptionsZod` |
-| [types/db.ts](packages/server/src/types/db.ts) | `VirtualColumnZod` |
+| File                                                         | Identifiers                                                                                                   |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| [types/zod/queue.ts](packages/server/src/types/zod/queue.ts) | `PublisherConfigZod`, `ReconnectConfigZod`, `SubscriberConfigZod`, `TopicConfigZod`, `CacheContext` (type)    |
+| [types/zod/db.ts](packages/server/src/types/zod/db.ts)       | `BunSQLConnectionOptionsZod`, `DatabaseConnectionZod`, `DatabaseSchemaConfigZod`, `MSSQLConnectionOptionsZod` |
+| [types/db.ts](packages/server/src/types/db.ts)               | `VirtualColumnZod`                                                                                            |
 
 **Applied fix:** deleted the 10 import specifiers. No export statement was touched. `@graphoria/server/config` exposes exactly what it did before.
 
@@ -133,7 +133,7 @@ The first draft said green CI "would prove little." That overstates it. The cons
 
 Residual risk is real but bounded: runtime-only behavior (default base URL, auth headers, retry/timeout semantics) that compiles fine and fails in production.
 
-On coverage: `ai/agent/providers/` has no tests of its own, which is accurate. But `ai/` is not untested — `ask-field.test.ts`, `tools/agent.test.ts`, `mcp/index.test.ts`, and `mcp/create-server.test.ts` all stub at the `Provider` interface. The *wiring* is covered; the *SDK adapter* is not.
+On coverage: `ai/agent/providers/` has no tests of its own, which is accurate. But `ai/` is not untested — `ask-field.test.ts`, `tools/agent.test.ts`, `mcp/index.test.ts`, and `mcp/create-server.test.ts` all stub at the `Provider` interface. The _wiring_ is covered; the _SDK adapter_ is not.
 
 **Applied fix** — in [.github/dependabot.yml](.github/dependabot.yml):
 
@@ -161,15 +161,15 @@ Splitting `@anthropic-ai/sdk` out of the group raises steady-state demand furthe
 
 ## Verification performed
 
-| Check | Result |
-|-------|--------|
-| `oxlint@1.79.0` on the 3 files, before | 10 errors reproduced, matching the CI log |
-| `oxlint@1.79.0` full repo, after | 0 errors (confirmed scanning via a deliberate unused-import canary) |
-| `oxlint@1.40.0` full repo (currently pinned), after | 0 errors / 0 warnings, 317 files |
-| `oxfmt --check` on the 3 files | correctly formatted |
-| `bun run type-check` | exit 0 (confirmed catching errors via a deliberate `TS2322` canary) |
-| Exported-name AST diff, all 3 files | IDENTICAL before vs after |
-| `.github/dependabot.yml` | parses; limit 10, exclude `@anthropic-ai/sdk`, ignore monaco `>=0.53.0` |
+| Check                                               | Result                                                                  |
+| --------------------------------------------------- | ----------------------------------------------------------------------- |
+| `oxlint@1.79.0` on the 3 files, before              | 10 errors reproduced, matching the CI log                               |
+| `oxlint@1.79.0` full repo, after                    | 0 errors (confirmed scanning via a deliberate unused-import canary)     |
+| `oxlint@1.40.0` full repo (currently pinned), after | 0 errors / 0 warnings, 317 files                                        |
+| `oxfmt --check` on the 3 files                      | correctly formatted                                                     |
+| `bun run type-check`                                | exit 0 (confirmed catching errors via a deliberate `TS2322` canary)     |
+| Exported-name AST diff, all 3 files                 | IDENTICAL before vs after                                               |
+| `.github/dependabot.yml`                            | parses; limit 10, exclude `@anthropic-ai/sdk`, ignore monaco `>=0.53.0` |
 
 ### Still unverified
 
@@ -193,10 +193,10 @@ Splitting `@anthropic-ai/sdk` out of the group raises steady-state demand furthe
 
 All five merged 2026-08-23, each rebased onto latest `main` and CI-verified on its exact merged SHA. Because they were rebased sequentially, #16's run validated the fully combined state.
 
-| PR | Bump | Squash commit |
-|----|------|---------------|
-| #14 | `actions/checkout` 4 → 7 | `428cef7` |
-| #17 | `@modelcontextprotocol/server` 2.0.0-beta.2 → 2.0.0 | `7440ce3` |
-| #19 | `typescript` 6.0.3 → 7.0.2 | `4ef8abb` |
-| #18 | `nanoid` 5.1.16 → 6.0.1 | `6f06f78` |
-| #16 | `openai` 4.104.0 → 7.5.0 | `83b7693` |
+| PR  | Bump                                                | Squash commit |
+| --- | --------------------------------------------------- | ------------- |
+| #14 | `actions/checkout` 4 → 7                            | `428cef7`     |
+| #17 | `@modelcontextprotocol/server` 2.0.0-beta.2 → 2.0.0 | `7440ce3`     |
+| #19 | `typescript` 6.0.3 → 7.0.2                          | `4ef8abb`     |
+| #18 | `nanoid` 5.1.16 → 6.0.1                             | `6f06f78`     |
+| #16 | `openai` 4.104.0 → 7.5.0                            | `83b7693`     |
