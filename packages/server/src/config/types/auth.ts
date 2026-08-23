@@ -64,11 +64,17 @@ export type FilterOperator = (typeof FILTER_OPERATORS)[number];
  * holding more of the same. Operators are constrained to the implemented set so
  * a typo fails at boot instead of evaluating to no condition, which would hand
  * the role the whole table.
+ *
+ * `partialRecord`, not `record`: an enum-keyed `z.record` is exhaustive, and
+ * `z.unknown()` accepts `undefined`, so the plain spelling parses
+ * `{ eq: … }` into an object carrying all twelve operator keys. The extra keys
+ * are invisible to JSON.stringify but reach buildCondition through
+ * Object.entries, which then evaluates operators the filter never declared.
  */
 export const FilterConditionZod: z.ZodType<Record<string, unknown>> = z.lazy(() =>
   z.record(
     z.string(),
-    z.union([z.record(z.enum(FILTER_OPERATORS), z.unknown()), FilterConditionZod]),
+    z.union([z.partialRecord(z.enum(FILTER_OPERATORS), z.unknown()), FilterConditionZod]),
   ),
 );
 

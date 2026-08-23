@@ -428,6 +428,19 @@ describe("extractRuntimePrimitivesToVariables", () => {
   });
 
   describe("tracking referenced variables", () => {
+    it("binds a runtime value that looks like a variable reference as data", () => {
+      // `$1` names no declared variable. Treated as a reference it resolved to
+      // index -1 and emitted the placeholder `$0`; a value naming a real
+      // generated variable would have read that parameter instead of matching on
+      // its own text.
+      const vars: VariableDefinition[] = [{ name: "where", type: "WhereInput", required: false }];
+      const result = flattenObjectVariables(vars, { where: { title: { eq: "$1" } } }, 0);
+
+      expect(result.nestedReferencedVars.has("1")).toBe(false);
+      expect(result.resolvedMap.get("where")).toEqual({ title: { eq: "$static_0" } });
+      expect(result.resolvedRuntimeValues["static_0"]).toBe("$1");
+    });
+
     it("should track nested variable references", () => {
       const generatedVariables: VariableDefinition[] = [];
       const runtimeVariables: Record<string, unknown> = {};
@@ -584,7 +597,12 @@ describe("flattenObjectVariables", () => {
   });
 
   it("should track nested variable references", () => {
-    const vars: VariableDefinition[] = [{ name: "where", type: "WhereInput", required: false }];
+    // `userId` has to be a variable the document declares. A `$name` in a
+    // runtime value that names nothing is client data, not a reference.
+    const vars: VariableDefinition[] = [
+      { name: "where", type: "WhereInput", required: false },
+      { name: "userId", type: "String", required: false },
+    ];
     const result = flattenObjectVariables(vars, { where: { user_id: { eq: "$userId" } } }, 0);
 
     expect(result.nestedReferencedVars.has("userId")).toBe(true);
@@ -1195,9 +1213,15 @@ describe("resolveVariables", () => {
       },
     );
 
+    // The claim is bound as a parameter rather than written into the filter.
+    // A claim value is attacker-influenced wherever users can edit their own
+    // profile, and buildCondition interpolates a non-reference operand straight
+    // into the SQL text.
     expect(resolved.fields[0].arguments?.where).toEqual({
-      user_id: { eq: "user-123" },
+      user_id: { eq: "$static_0" },
     });
+    expect(resolved.allVariables["static_0"]).toBe("user-123");
+    expect(resolved.variables.at(-1)).toMatchObject({ name: "static_0", type: "String" });
   });
 
   it("should replace session variables in non-where arguments", () => {
@@ -1227,11 +1251,13 @@ describe("resolveVariables", () => {
     );
 
     expect(resolved.fields[0].arguments?.where).toEqual({
-      user_id: { eq: "user-123" },
+      user_id: { eq: "$static_0" },
     });
     expect(resolved.fields[0].arguments?.filter).toEqual({
-      org_id: { eq: "org-456" },
+      org_id: { eq: "$static_1" },
     });
+    expect(resolved.allVariables["static_0"]).toBe("user-123");
+    expect(resolved.allVariables["static_1"]).toBe("org-456");
   });
 
   it("should never mutate the original operation (immutability check)", () => {

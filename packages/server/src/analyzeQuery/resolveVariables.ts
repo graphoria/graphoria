@@ -72,6 +72,7 @@ export const extractRuntimePrimitivesToVariables = (
   runtimeVariables: Record<string, unknown>,
   startIndex: number,
   referencedVariables: Set<string> = new Set(),
+  declaredVariableNames?: Set<string>,
 ): unknown => {
   // Handle null/undefined
   if (obj === null || obj === undefined) {
@@ -87,13 +88,23 @@ export const extractRuntimePrimitivesToVariables = (
         runtimeVariables,
         startIndex,
         referencedVariables,
+        declaredVariableNames,
       ),
     );
   }
 
   // Handle primitives - convert to static variable references
   if (typeof obj === "string") {
-    if (obj.startsWith("$")) {
+    // A `$name` string is a reference only when the document declares that
+    // variable. These values arrive from the request body, so anything else
+    // beginning with `$` is data the client sent: `$1` resolved to index -1 and
+    // emitted the placeholder `$0`, and a value naming a real generated
+    // variable would have read that parameter's value instead of matching on
+    // its own text.
+    if (
+      obj.startsWith("$") &&
+      (!declaredVariableNames || declaredVariableNames.has(obj.substring(1)))
+    ) {
       referencedVariables.add(obj.substring(1));
       return obj;
     }
@@ -143,6 +154,7 @@ export const extractRuntimePrimitivesToVariables = (
         runtimeVariables,
         startIndex,
         referencedVariables,
+        declaredVariableNames,
       );
     }
     return result;
@@ -166,6 +178,7 @@ export const flattenObjectVariables = (
   const resolvedObjectVarNames = new Set<string>();
   const nestedReferencedVars = new Set<string>();
   const resolvedMap = new Map<string, unknown>();
+  const declaredVariableNames = new Set(variables.map((variable) => variable.name));
 
   for (const varDef of variables) {
     if (varDef.name.startsWith("static_")) continue;
@@ -184,6 +197,7 @@ export const flattenObjectVariables = (
       resolvedRuntimeValues,
       existingStaticCount,
       nestedReferencedVars,
+      declaredVariableNames,
     );
 
     resolvedMap.set(varDef.name, transformed);
@@ -201,14 +215,66 @@ export const flattenObjectVariables = (
 // ─── Step 3: Immutable Field Resolution ─────────────────────────────────────
 
 /**
+ * Where late-resolved values are turned into bound parameters.
+ *
+ * Client-supplied argument values are hoisted into `static_N` variables while
+ * the document is analyzed, so by the time they reach the query builders they
+ * are `$name` references the builders emit as placeholders. Two classes of
+ * value never went through that hoisting, because they are not in the document:
+ * the constants written into a role's permission filter, and the claim values
+ * `$session.*` resolves to. Both were interpolated into the SQL text verbatim.
+ */
+export type VariableSink = {
+  generatedVariables: VariableDefinition[];
+  runtimeVariables: Record<string, unknown>;
+  startIndex: number;
+};
+
+const typeOfValue = (value: unknown): string => {
+  if (typeof value === "number") return Number.isInteger(value) ? "Int" : "Float";
+  if (typeof value === "boolean") return "Boolean";
+  return "String";
+};
+
+/** Binds one value as a fresh `static_N` variable and returns its reference. */
+const parameterize = (sink: VariableSink, value: unknown): unknown => {
+  if (value === null || value === undefined) return value;
+
+  // An array operand (`in`) is bound element-wise: the builders emit one
+  // placeholder per element.
+  if (Array.isArray(value)) return value.map((item) => parameterize(sink, item));
+
+  if (typeof value === "object") return value;
+
+  const name = `static_${sink.startIndex + sink.generatedVariables.length}`;
+
+  sink.generatedVariables.push({
+    name,
+    type: typeOfValue(value),
+    required: false,
+    defaultValue: value as never,
+  });
+  sink.runtimeVariables[name] = value;
+
+  return `$${name}`;
+};
+
+/**
  * Replaces `$session.*` placeholders in any argument value.
  * Walks all arguments, not just `where`.
+ *
+ * Substituted claim values are bound as parameters on the way out. Doing it
+ * here rather than in the `where` pass below matters: a claim whose value
+ * happens to begin with `$` would otherwise be indistinguishable from a
+ * variable reference, and would resolve to some other parameter's value.
  */
 const resolveSessionInArguments = (
   args: Record<string, unknown>,
   session: SessionContext,
+  sink?: VariableSink,
 ): Record<string, unknown> => {
   const result: Record<string, unknown> = {};
+  const onResolved = sink ? (value: unknown) => parameterize(sink, value) : undefined;
 
   for (const [key, value] of Object.entries(args)) {
     if (
@@ -217,13 +283,40 @@ const resolveSessionInArguments = (
       !Array.isArray(value) &&
       hasSessionVariables(value as Record<string, unknown>)
     ) {
-      result[key] = replaceSessionVariables(value as Record<string, unknown>, session);
+      result[key] = replaceSessionVariables(value as Record<string, unknown>, session, onResolved);
     } else {
       result[key] = value;
     }
   }
 
   return result;
+};
+
+/**
+ * Binds every literal still sitting in a `where` argument.
+ *
+ * Only `where` is walked. `orderBy` carries direction enums and `limit`/`offset`
+ * are consumed by the pagination builder, and neither is emitted as a bound
+ * value, so parameterizing them would change the SQL rather than protect it.
+ */
+const parameterizeWhereLiterals = (value: unknown, sink: VariableSink): unknown => {
+  if (value === null || value === undefined) return value;
+
+  if (Array.isArray(value)) return value.map((item) => parameterizeWhereLiterals(item, sink));
+
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+        key,
+        parameterizeWhereLiterals(nested, sink),
+      ]),
+    );
+  }
+
+  // Already a reference — the analyzer hoisted it out of the document.
+  if (isString(value) && value.startsWith("$")) return value;
+
+  return parameterize(sink, value);
 };
 
 /**
@@ -268,6 +361,7 @@ export const resolveFieldArguments = (
   fields: SelectionAnalysis[],
   resolvedMap: Map<string, unknown>,
   session?: SessionContext,
+  sink?: VariableSink,
 ): SelectionAnalysis[] => {
   return fields.map((field) => {
     let newArguments = field.arguments;
@@ -287,13 +381,19 @@ export const resolveFieldArguments = (
 
       // Replace session variables in ALL argument values (not just where)
       if (session) {
-        newArguments = resolveSessionInArguments(newArguments, session);
+        newArguments = resolveSessionInArguments(newArguments, session, sink);
+      }
+
+      // Bind whatever literals remain in `where`. After the two passes above the
+      // only ones left are the constants a role filter was configured with.
+      if (sink && newArguments["where"] !== undefined) {
+        newArguments["where"] = parameterizeWhereLiterals(newArguments["where"], sink);
       }
     }
 
     // Recurse into nested selections
     const newSelections = field.selections
-      ? resolveFieldArguments(field.selections, resolvedMap, session)
+      ? resolveFieldArguments(field.selections, resolvedMap, session, sink)
       : field.selections;
 
     // Only create a new field object if something changed
@@ -381,15 +481,20 @@ export const resolveVariables = (
   const hasVars = operation.variables && operation.variables.length > 0;
 
   if (!hasVars) {
-    // No variable definitions — still need to resolve session variables in fields
-    const fields = session
-      ? resolveFieldArguments(operation.fields, new Map(), session)
-      : operation.fields;
+    // A document with no variables of its own can still carry a role filter,
+    // whose constants and session values both need binding.
+    const sink: VariableSink = {
+      generatedVariables: [],
+      runtimeVariables: {},
+      startIndex: 0,
+    };
+
+    const fields = resolveFieldArguments(operation.fields, new Map(), session, sink);
 
     return {
       fields,
-      variables: operation.variables ?? [],
-      allVariables: { ...variables },
+      variables: [...(operation.variables ?? []), ...sink.generatedVariables],
+      allVariables: { ...variables, ...sink.runtimeVariables },
     };
   }
 
@@ -404,10 +509,15 @@ export const resolveVariables = (
   );
 
   // 3. Resolve field arguments (immutable)
-  const fields =
-    flattenResult.resolvedMap.size > 0 || session
-      ? resolveFieldArguments(operation.fields, flattenResult.resolvedMap, session)
-      : operation.fields;
+  // Numbering continues past the statics flattening just produced, so the two
+  // passes cannot mint the same name.
+  const sink: VariableSink = {
+    generatedVariables: [],
+    runtimeVariables: {},
+    startIndex: existingStaticCount + flattenResult.newStaticVariables.length,
+  };
+
+  const fields = resolveFieldArguments(operation.fields, flattenResult.resolvedMap, session, sink);
 
   // 4. Build final variable list and merged values
   const { variables: resolvedVarDefs, allVariables } = buildFinalVariables(
@@ -416,9 +526,13 @@ export const resolveVariables = (
     variables,
   );
 
+  const finalVarDefs = resolvedVarDefs.length > 0 ? resolvedVarDefs : operation.variables!;
+
   return {
     fields,
-    variables: resolvedVarDefs.length > 0 ? resolvedVarDefs : operation.variables!,
-    allVariables,
+    // Appended, never reordered: the builders emit `$n` from a definition's
+    // index in this list, and the driver binds it from the same list.
+    variables: [...finalVarDefs, ...sink.generatedVariables],
+    allVariables: { ...allVariables, ...sink.runtimeVariables },
   };
 };

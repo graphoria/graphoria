@@ -59,7 +59,13 @@ export const analyzeSelections = (
             (dir) => dir.name === "include" || dir.name === "skip" || dir.name === "when",
           ).length === 0;
 
-        if (isArray && entities.queriesMap[fieldName]?.rolePermission?.filter) {
+        // Gated on the field resolving to a table type, not on it being a list.
+        // A role filter has to reach every field backed by the table it
+        // restricts: the `_single` root field and any to-one relationship both
+        // return one object, and both accept a `where` the builders honour, so
+        // skipping them let a caller read a row the filter excludes by asking
+        // for it singly or by traversing into it from an unfiltered table.
+        if (fieldObjType && entities.queriesMap[fieldName]?.rolePermission?.filter) {
           if (!args) {
             args = {
               where: entities.queriesMap[fieldName].rolePermission?.filter,
