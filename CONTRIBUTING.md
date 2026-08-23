@@ -144,6 +144,27 @@ When you add or change a feature:
 
 If you change documentation, double-check that the examples actually run — the docs are written to be copy-pasteable.
 
+## Versioning and releases
+
+Graphoria versions **in lockstep**: every workspace package carries the same version number, and
+they are bumped together, even when a release only touches one of them. `@graphoria/monorepo`
+(root), `@graphoria/server`, `@graphoria/react` and `@graphoria/playgrounds` must always agree.
+
+A release is one git tag, `vX.Y.Z`, covering the whole repo. There is no `CHANGELOG.md` — the
+[GitHub releases page](https://github.com/graphoria/graphoria/releases) is the published history,
+so breaking changes have to be called out in the PR description to reach the release body.
+
+To bump:
+
+```bash
+# every package.json in the workspace, including the root
+bun run version:set 0.3.0
+```
+
+Lockstep stays in force until v1.0. Independent per-package versioning was considered and rejected
+for now: nothing in the workspace depends on another workspace package, so independent versions
+would buy nothing but a second release process to keep in sync.
+
 ## Pull-request checklist
 
 Before opening a PR:
@@ -154,6 +175,7 @@ Before opening a PR:
 - [ ] New behavior is covered by tests.
 - [ ] User-facing changes have a paired update in `docs/` (or the relevant per-package README).
 - [ ] Breaking changes are called out in the PR description, so they make it into the GitHub release notes.
+- [ ] If the version was bumped, every workspace `package.json` was bumped with it (`bun run version:set`).
 
 PRs should be focused. If you find unrelated improvements while working on something, file them as separate PRs — even small ones — so review stays tractable.
 
