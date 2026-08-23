@@ -18,6 +18,7 @@ import { databasesConnections, repositoryMap } from "../../singletons/databases"
 import { queueManager } from "../../singletons/queues";
 import { S200, S401, S404 } from "../../utils/responses";
 import { buildApiRoutes } from "../rest";
+import { parseStringParams } from "./parseStringParams";
 import { logger } from "../../logging";
 
 // Build remote REST route matchers
@@ -118,17 +119,14 @@ export const handleRESTRequestFactory = (
       // left `undefined` when its schema is not configured; that `undefined` is
       // forwarded to `beforeRequest` so the hook can tell the sources apart,
       // while `allVariables` stays identical because spreading `undefined` is a
-      // no-op.
-      const pathVariables = route.rest!.pathParams?.parse(pathParameters) as
-        | Record<string, unknown>
-        | undefined;
+      // no-op. Path and query values are strings on the wire, so
+      // `parseStringParams` converts the keys declared as `z.boolean()` first.
+      const pathVariables = parseStringParams(route.rest!.pathParams, pathParameters);
 
       const paramsQuery = new URLSearchParams(url.search);
       const paramsQueryDictionary = Object.fromEntries(paramsQuery.entries());
 
-      const queryVariables = route.rest!.queryParams?.parse(paramsQueryDictionary) as
-        | Record<string, unknown>
-        | undefined;
+      const queryVariables = parseStringParams(route.rest!.queryParams, paramsQueryDictionary);
 
       let bodyVariables: Record<string, unknown> | undefined;
 
