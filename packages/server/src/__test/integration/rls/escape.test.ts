@@ -75,6 +75,19 @@ describe.skipIf(!integrationEnabled)("rls · escape attempts", () => {
         expect(idsOf(all.data?.[tasks])).toHaveLength(10);
       });
 
+      it("resolves a string-valued role filter to the caller's own row", async () => {
+        // The positive control for `{ email: { eq: "$session.sub" } }`. Without
+        // it the cases below could pass vacuously: while a string role filter
+        // was interpolated into the SQL text rather than bound, every query
+        // against this table errored, and an errored query trivially returns no
+        // foreign rows.
+        const response = await asAna<Record<string, Rows>>(`{ ${users} { id email } }`);
+
+        expect(response.errors).toBeUndefined();
+        expect(idsOf(response.data?.[users])).toEqual([1]);
+        expect(response.data?.[users]?.[0]?.["email"]).toBe("ana@acme.test");
+      });
+
       // ── User-supplied `where` contradicting the role filter ───────────────
 
       it("does not let a contradicting where widen the role filter", async () => {

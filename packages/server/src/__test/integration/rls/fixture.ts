@@ -81,6 +81,21 @@ export const RLS_USERS = {
     role: "admin",
   },
   /**
+   * Username carries SQL metacharacters, so `{ email: { eq: "$session.sub" } }`
+   * interpolates an attacker-shaped value into the role filter itself — the
+   * one filter input a client controls without going through GraphQL.
+   *
+   * Quotes only, no backslash: MySQL treats a backslash as an escape inside a
+   * string literal, and the seeding statement below is assembled by hand.
+   */
+  injected: {
+    username: "x' OR '1'='1",
+    userId: 1,
+    organizationId: 1,
+    allowedProjects: [1],
+    role: "user",
+  },
+  /**
    * Carries no `missingClaim` claim while the `broken` role filter references
    * one, so this pair proves the missing-session-variable path fails closed.
    */
@@ -140,7 +155,7 @@ const permissionsFor = (engine: DatabaseType) => {
         [app("task_tags")]: { columns: "ALL" },
       },
       storedProcedures: [],
-      operations: [],
+      operations: ["taskByTitle"],
     },
 
     // The `{ in: "$session.<array claim>" }` pattern from docs/PERMISSIONS.md.
@@ -179,6 +194,26 @@ const permissionsFor = (engine: DatabaseType) => {
   };
 };
 
+/**
+ * One operation reachable over REST, so `injection.test.ts` can push payloads
+ * through a path parameter and a query parameter as well as through GraphQL.
+ * The operation body is a GraphQL query, so a parameter that escaped here would
+ * reach the same builders by a different route.
+ */
+const operationsFor = (engine: DatabaseType) => {
+  const tasks = fieldName(engine, "app", "tasks");
+
+  return {
+    taskByTitle: {
+      description: "Look up tasks by exact title, for injection testing",
+      query: `query TaskByTitle($title: String!) {
+        ${tasks}(where: { title: { eq: $title } }) { id title }
+      }`,
+      rest: { path: "/task-by-title/:title", method: "GET" as const },
+    },
+  };
+};
+
 export const rlsConfig = (engine: DatabaseType): Partial<ConfigurationInput> =>
   ({
     auth: {
@@ -188,6 +223,7 @@ export const rlsConfig = (engine: DatabaseType): Partial<ConfigurationInput> =>
       autoCreateTables: true,
       permissions: permissionsFor(engine),
     },
+    operations: operationsFor(engine),
   }) as Partial<ConfigurationInput>;
 
 /**
@@ -227,7 +263,8 @@ const seedAuthUsers = async (context: IntegrationContext) => {
   const table = authUserTable(context.engine);
   const users = Object.values(RLS_USERS);
 
-  const usernames = users.map((user) => `'${user.username}'`).join(", ");
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  const usernames = users.map((user) => quote(user.username)).join(", ");
   await context.sql(`DELETE FROM ${table} WHERE username IN (${usernames})`);
 
   const activeTrue = context.engine === "mssql" ? "1" : "TRUE";
@@ -235,7 +272,7 @@ const seedAuthUsers = async (context: IntegrationContext) => {
   for (const user of users) {
     await context.sql(
       `INSERT INTO ${table} (username, password, role, is_active, claims)
-       VALUES ('${user.username}', '${hash}', '${user.role}', ${activeTrue}, '${claimsJson(user)}')`,
+       VALUES (${quote(user.username)}, '${hash}', '${user.role}', ${activeTrue}, '${claimsJson(user)}')`,
     );
   }
 };
