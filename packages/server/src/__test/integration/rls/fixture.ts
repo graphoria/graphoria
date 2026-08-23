@@ -96,6 +96,18 @@ export const RLS_USERS = {
     role: "user",
   },
   /**
+   * Logs in with a role the permission config never defines, so
+   * `schema-isolation.test.ts` can prove there is no per-role schema to fall
+   * back to — an unknown role must read nothing, not inherit another role's.
+   */
+  ghost: {
+    username: "ghost@acme.test",
+    userId: 1,
+    organizationId: 1,
+    allowedProjects: [1],
+    role: "ghost",
+  },
+  /**
    * Carries no `missingClaim` claim while the `broken` role filter references
    * one, so this pair proves the missing-session-variable path fails closed.
    */
@@ -155,7 +167,7 @@ const permissionsFor = (engine: DatabaseType) => {
         [app("task_tags")]: { columns: "ALL" },
       },
       storedProcedures: [],
-      operations: ["taskByTitle"],
+      operations: ["taskByTitle", "cachedTasks"],
     },
 
     // The `{ in: "$session.<array claim>" }` pattern from docs/PERMISSIONS.md.
@@ -210,6 +222,20 @@ const operationsFor = (engine: DatabaseType) => {
         ${tasks}(where: { title: { eq: $title } }) { id title }
       }`,
       rest: { path: "/task-by-title/:title", method: "GET" as const },
+    },
+    /**
+     * The one cached route in the fixture, for `schema-isolation.test.ts`: a
+     * cached response computed under one role's filters must never be served to
+     * another role, nor to another user inside the same role. Cached with a ttl
+     * long enough that nothing in a run expires mid-suite.
+     */
+    cachedTasks: {
+      description: "Cached task list, for cross-role cache-isolation testing",
+      query: `query CachedTasks {
+        ${tasks}(orderBy: [{ id: ASC }]) { id user_id }
+      }`,
+      rest: { path: "/cached-tasks", method: "GET" as const },
+      cache: { ttl: 600_000, max: 100 },
     },
   };
 };
