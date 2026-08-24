@@ -8,7 +8,7 @@ const PLAYGROUNDS_DIR = resolve(REPO_ROOT, "packages/playgrounds");
 
 const PLAYGROUNDS = ["graphiql", "scalar", "console"];
 
-const SHARED_PATTERNS = ["public/**/*", "package.json", "vite.config.ts", "tsconfig.json"];
+const SHARED_PATTERNS = ["public/**/*", "package.json", "*.ts", "tsconfig*.json"];
 
 async function newestMtime(patterns: string[]): Promise<number> {
   let max = 0;

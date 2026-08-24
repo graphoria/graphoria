@@ -1,6 +1,6 @@
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker.js?worker";
-import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker.js?worker";
-import GraphQLWorker from "monaco-graphql/esm/graphql.worker.js?worker";
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker.js?worker&inline";
+import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker.js?worker&inline";
+import GraphQLWorker from "monaco-graphql/esm/graphql.worker.js?worker&inline";
 
 self.MonacoEnvironment = {
   getWorker(_id: string, label: string) {
