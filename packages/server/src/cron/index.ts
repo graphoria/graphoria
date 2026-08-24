@@ -106,7 +106,11 @@ const createScheduledJob = (config: CronJob, gqlQuery: GqlQueryFn<true>): Schedu
     name: config.name,
     job,
     config,
-    executionCount,
+    // Getter, not a copy: the counter lives in the tick closure and callers
+    // (console status, getSummary) read it after ticks have happened.
+    get executionCount() {
+      return executionCount;
+    },
     pause: () => {
       job.pause();
       log.info("paused");
