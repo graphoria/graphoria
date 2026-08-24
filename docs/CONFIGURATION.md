@@ -673,6 +673,8 @@ type CronJobConfig<TVariables = Record<string, unknown>> = {
   startAt?: string; // ISO 8601 datetime
   stopAt?: string; // ISO 8601 datetime
   protect?: boolean; // Over-run protection
+  catchErrors?: boolean; // Default true — log tick errors instead of rethrowing
+  context?: Record<string, unknown>; // Passed through to the job instance
   onTick?: CronTickCallback<TVariables>;
 };
 ```
