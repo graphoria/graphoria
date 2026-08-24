@@ -18,7 +18,7 @@
     "@graphiql/toolkit": "0.11.3",
     "@scalar/api-reference": "^1.55.3",
     "graphiql": "5.2.2",
-    "graphql": "16.14.0",
+    "graphql": "17.0.2",
     "graphql-ws": "^6.0.8",
     "monaco-editor": "0.52.2",
     "monaco-graphql": "1.8.0",
