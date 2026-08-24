@@ -22,6 +22,7 @@ export const getPool = async (db: Database) => {
     connectionTimeout: opts?.connectionTimeout,
     maxLifetime: opts?.maxLifetime,
     tls: opts?.tls,
+    allowPublicKeyRetrieval: opts?.allowPublicKeyRetrieval,
     prepare: opts?.prepare,
     bigint: opts?.bigint,
   });

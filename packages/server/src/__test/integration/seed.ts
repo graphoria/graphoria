@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { DatabaseType } from "../../types/configuration";
 
-import { CONNECTIONS } from "./config";
+import { CONNECTIONS, MYSQL_CONNECTION_OPTIONS } from "./config";
 
 /**
  * Applies the canonical schema and its seed rows to a real engine.
@@ -71,6 +71,7 @@ const seedMySQL = async () => {
     database: "graphoria_test",
     adapter: "mysql",
     max: 1,
+    ...MYSQL_CONNECTION_OPTIONS,
   });
 
   try {

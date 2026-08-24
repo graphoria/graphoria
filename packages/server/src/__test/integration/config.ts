@@ -29,6 +29,13 @@ export const CONNECTIONS = {
   },
 } as const satisfies Record<DatabaseType, Record<string, string | number>>;
 
+/**
+ * The container speaks caching_sha2_password over plain TCP, which needs an RSA
+ * public key exchange that Bun's MySQL client refuses unless asked to allow it.
+ * Applies to every MySQL connection the suite opens.
+ */
+export const MYSQL_CONNECTION_OPTIONS = { allowPublicKeyRetrieval: true } as const;
+
 export const REDIS_URL = "redis://127.0.0.1:56379";
 
 /** Engines the integration suite runs against. */
