@@ -80,26 +80,26 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "amqplib": "0.10.9",
     "croner": "9.1.0",
-    "es-toolkit": "1.44.0",
+    "es-toolkit": "1.51.0",
     "graphql": "^16.13.1",
-    "jose": "6.1.3",
+    "jose": "6.2.9",
     "kafkajs": "2.2.4",
-    "lru-cache": "11.2.4",
-    "mssql": "12.2.0",
+    "lru-cache": "11.5.2",
+    "mssql": "12.7.0",
     "nanoid": "6.0.1",
     "openapi-types": "12.1.3",
-    "oxfmt": "^0.51.0",
+    "oxfmt": "^0.64.0",
     "paseto-ts": "^2.0.5",
     "path-to-regexp": "8.4.2",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.2",
-    "sql-formatter": "15.7.0",
-    "zod": "4.3.5"
+    "sql-formatter": "15.8.2",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/amqplib": "0.10.8",
     "@types/kafkajs": "1.9.0",
-    "@types/mssql": "9.1.9"
+    "@types/mssql": "12.3.0"
   },
   "peerDependencies": {
     "typescript": "^6.0.0"
