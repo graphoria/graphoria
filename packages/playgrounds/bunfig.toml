@@ -1,3 +1,6 @@
 [run]
 # equivalent to `bun --bun` for all `bun run` commands
 bun = true
+
+[serve.static]
+plugins = ["bun-plugin-tailwind", "./worker-inline.ts"]

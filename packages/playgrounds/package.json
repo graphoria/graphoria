@@ -1,16 +1,17 @@
 {
   "name": "@graphoria/playgrounds",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:graphiql": "vite --mode graphiql",
-    "dev:scalar": "vite --mode scalar",
-    "build": "tsc && vite build --mode graphiql && vite build --mode scalar && vite build --mode console",
-    "build:graphiql": "tsc && vite build --mode graphiql",
-    "build:scalar": "tsc && vite build --mode scalar",
-    "build:console": "tsc && vite build --mode console",
-    "dev:console": "vite --mode console"
+    "dev:graphiql": "bun ./graphiql/index.html",
+    "dev:scalar": "bun ./scalar/index.html",
+    "dev:console": "bun ./console/index.html",
+    "type-check": "tsc -p tsconfig.json && tsc -p tsconfig.build.json",
+    "build": "bun run type-check && bun build.ts",
+    "build:graphiql": "bun run type-check && bun build.ts graphiql",
+    "build:scalar": "bun run type-check && bun build.ts scalar",
+    "build:console": "bun run type-check && bun build.ts console"
   },
   "dependencies": {
     "@graphiql/plugin-explorer": "5.1.1",
@@ -26,14 +27,10 @@
     "wouter": "3.10.0"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.2",
-    "@types/node": "25.6.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react-swc": "^4.3.0",
+    "bun-plugin-tailwind": "^0.1.2",
     "tailwindcss": "^4.3.2",
-    "typescript": "7.0.2",
-    "vite": "8.2.2",
-    "vite-plugin-singlefile": "^2.3.3"
+    "typescript": "7.0.2"
   }
 }

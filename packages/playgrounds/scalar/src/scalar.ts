@@ -1,7 +1,7 @@
 // The package's `exports` field doesn't expose dist/browser/, so we import via
-// a relative node_modules path. Vite resolves filesystem paths without going
-// through package exports.
-import scalarStandaloneUrl from "../../node_modules/@scalar/api-reference/dist/browser/standalone.js?url";
+// a relative node_modules path, which bypasses package exports. `type: "file"`
+// yields a base64 data: URI in the single-file build.
+import scalarStandaloneUrl from "../../node_modules/@scalar/api-reference/dist/browser/standalone.js" with { type: "file" };
 import { getToken } from "./auth";
 
 const openapiUrl = window.__OPENAPI_URL__;
