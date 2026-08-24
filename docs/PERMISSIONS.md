@@ -160,12 +160,7 @@ Session variables support strings, numbers, booleans, and arrays.
 
 ```typescript
 type DirectionUnion =
-  | "ASC"
-  | "DESC"
-  | "ASC_NULLS_FIRST"
-  | "ASC_NULLS_LAST"
-  | "DESC_NULLS_FIRST"
-  | "DESC_NULLS_LAST";
+  "ASC" | "DESC" | "ASC_NULLS_FIRST" | "ASC_NULLS_LAST" | "DESC_NULLS_FIRST" | "DESC_NULLS_LAST";
 
 type OrderByClause = { column: string; direction: DirectionUnion };
 ```

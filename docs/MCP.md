@@ -16,9 +16,7 @@ import type { ConfigurationFn } from "@graphoria/server/config";
 export default (() => ({
   name: "my-api",
   version: "1.0.0",
-  databases: [
-    /* … */
-  ],
+  databases: [/* … */],
   ai: {
     mcp: {
       enabled: true,

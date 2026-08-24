@@ -17,9 +17,7 @@ For per-query transformations (uppercase a single field, format a date in one qu
 The configuration helpers are passed to your `ConfigurationFn` so you can reference them directly:
 
 ```typescript
-export default ({ virtualColumnExpression, virtualColumnFunction }) => ({
-  /* … */
-});
+export default ({ virtualColumnExpression, virtualColumnFunction }) => ({/* … */});
 ```
 
 ### `virtualColumnExpression(name, dataType, isNullable, expression)`
