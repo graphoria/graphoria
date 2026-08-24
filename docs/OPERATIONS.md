@@ -25,9 +25,7 @@ import type { ConfigurationFn } from "@graphoria/server/config";
 export default (({ z, operation }) => ({
   name: "my-api",
   version: "1.0.0",
-  databases: [
-    /* … */
-  ],
+  databases: [/* … */],
   operations: {
     getOrdersByCustomer: operation({
       description: "List a customer's orders",
@@ -123,12 +121,8 @@ type OperationOptions<TRepository> = {
     query: string,
     params?: Record<string, unknown>,
   ) => Promise<{ data: TReturn; errors?: unknown[] }>;
-  databases: {
-    /* raw DB connections, keyed by config name */
-  };
-  queues: {
-    /* publisher functions, keyed by `${queueName}_${publisherKey}` */
-  };
+  databases: {/* raw DB connections, keyed by config name */};
+  queues: {/* publisher functions, keyed by `${queueName}_${publisherKey}` */};
   repository: TRepository;
 };
 ```
@@ -186,13 +180,9 @@ operation({
   rest: {
     path: "/users",
     method: "POST",
-    pathParams: z.object({
-      /* schema for path params */
-    }),
+    pathParams: z.object({/* schema for path params */}),
     queryParams: z.object({ source: z.string() }),
-    body: z.object({
-      /* override body schema */
-    }),
+    body: z.object({/* override body schema */}),
   },
 });
 ```

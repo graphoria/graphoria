@@ -14,23 +14,23 @@
     "build:console": "bun run type-check && bun build.ts console"
   },
   "dependencies": {
-    "@graphiql/plugin-explorer": "5.1.1",
-    "@graphiql/toolkit": "0.11.3",
-    "@scalar/api-reference": "^1.55.3",
-    "graphiql": "5.2.2",
+    "@graphiql/plugin-explorer": "5.1.3",
+    "@graphiql/toolkit": "0.12.1",
+    "@scalar/api-reference": "^1.66.1",
+    "graphiql": "5.2.4",
     "graphql": "17.0.2",
-    "graphql-ws": "^6.0.8",
+    "graphql-ws": "^6.2.1",
     "monaco-editor": "0.52.2",
     "monaco-graphql": "1.8.0",
-    "react": "19.2.6",
-    "react-dom": "19.2.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "wouter": "3.10.0"
   },
   "devDependencies": {
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
     "bun-plugin-tailwind": "^0.1.2",
-    "tailwindcss": "^4.3.2",
+    "tailwindcss": "^4.3.3",
     "typescript": "7.0.2"
   }
 }

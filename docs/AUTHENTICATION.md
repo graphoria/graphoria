@@ -21,9 +21,7 @@ export default (({ operation }) => ({
       name: "main",
       type: "pg",
       enabled: true,
-      connection: {
-        /* … */
-      },
+      connection: {/* … */},
     },
   ],
   auth: {

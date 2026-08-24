@@ -28,18 +28,18 @@ Open `http://localhost:3000/_console` and enter the server's admin secret (`ADMI
 
 The UI is backed by JSON endpoints under `{CONSOLE_ENDPOINT}/api`:
 
-| Endpoint                   | Auth         | Returns                                                                                                                                                                     |
+| Endpoint | Auth | Returns |
 | -------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ------------ |
-| `GET /api/meta`            | none         | Project name, version, admin-secret header name.                                                                                                                            |
-| `GET /api/tables`          | admin secret | Tables with columns (name, type, nullable, description) and relationships (schema, name, source→target columns).                                                            |
-| `GET /api/roles`           | admin secret | Role list + raw permission configuration.                                                                                                                                   |
-| `GET /api/roles/entities`  | admin secret | `?role=<name>` → that role's resolvable tables (with column names), operations (method+path), remote schemas, and remote REST APIs (`400` for unknown roles).               |
-| `GET /api/apis`            | admin secret | REST operations (name, method, path, tag), remote REST APIs (name, prefix, base URL, route count), remote GraphQL schemas (name, prefix, URL, query/mutation field counts). |
-| `GET /api/schema`          | admin secret | `?role=<name>` → that role's GraphQL SDL (`400` for unknown roles).                                                                                                         |
-| `GET /api/status`          | admin secret | Uptime, memory (RSS), Bun version, PID, token strategy, per-database ping latency, publishers, subscribers (name+topic), queue connections, cron job summary.               |
+| `GET /api/meta` | none | Project name, version, admin-secret header name. |
+| `GET /api/tables` | admin secret | Tables with columns (name, type, nullable, description) and relationships (schema, name, source→target columns). |
+| `GET /api/roles` | admin secret | Role list + raw permission configuration. |
+| `GET /api/roles/entities` | admin secret | `?role=<name>` → that role's resolvable tables (with column names), operations (method+path), remote schemas, and remote REST APIs (`400` for unknown roles). |
+| `GET /api/apis` | admin secret | REST operations (name, method, path, tag), remote REST APIs (name, prefix, base URL, route count), remote GraphQL schemas (name, prefix, URL, query/mutation field counts). |
+| `GET /api/schema` | admin secret | `?role=<name>` → that role's GraphQL SDL (`400` for unknown roles). |
+| `GET /api/status` | admin secret | Uptime, memory (RSS), Bun version, PID, token strategy, per-database ping latency, publishers, subscribers (name+topic), queue connections, cron job summary. |
 | `POST /api/queues/publish` | admin secret | Publish a message to a queue. Body: `{ "publisher": "<name>", "message": "<string                                                                                           | object>", "key": "<routing-key>?" }`. |
-| `POST /api/cron`           | admin secret | Control a cron job. Body: `{ "name": "<job-name>", "action": "trigger"                                                                                                      | "pause"                               | "resume" }`. |
-| `GET /api/config`          | admin secret | Project name/version, endpoint prefixes, feature flags (auth, AI, MCP, CORS).                                                                                               |
+| `POST /api/cron` | admin secret | Control a cron job. Body: `{ "name": "<job-name>", "action": "trigger"                                                                                                      | "pause"                               | "resume" }`. |
+| `GET /api/config` | admin secret | Project name/version, endpoint prefixes, feature flags (auth, AI, MCP, CORS). |
 
 Authenticated endpoints answer `404` for any non-superadmin session (same gating as the rest of the server: the admin secret maps to the superadmin role). `/api/meta` is unauthenticated so the UI can discover the configured header name; it exposes only the project name, version, and header name.
 
