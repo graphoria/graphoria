@@ -3,7 +3,9 @@ import pino from "pino";
 const DEFAULT_LEVEL =
   process.env.LOG_LEVEL || (process.env.NODE_ENV === "production" ? "info" : "debug");
 
-const isDev = process.env.NODE_ENV !== "production";
+// `bun test` sets NODE_ENV=test: pino-pretty runs on a worker thread, and
+// Bun's test runner cannot construct one (thread-stream crashes on import).
+const isDev = process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test";
 
 const DEFAULT_OPTIONS: pino.LoggerOptions = {
   level: DEFAULT_LEVEL,
