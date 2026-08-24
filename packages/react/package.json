@@ -51,13 +51,13 @@
     "prepublishOnly": "bun run build"
   },
   "devDependencies": {
-    "@happy-dom/global-registrator": "^20.9.0",
+    "@happy-dom/global-registrator": "^20.11.6",
     "@sinonjs/fake-timers": "^15.4.0",
     "@testing-library/react": "^16.3.2",
     "@types/sinonjs__fake-timers": "^15.0.1",
     "happy-dom": "^20.9.0",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
