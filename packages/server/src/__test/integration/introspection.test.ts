@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { Database, DatabaseType } from "../../types/configuration";
 
-import { CONNECTIONS, ENGINES, SCHEMAS } from "./config";
+import { CONNECTIONS, ENGINES, MYSQL_CONNECTION_OPTIONS, SCHEMAS } from "./config";
 import { integrationEnabled } from "./harness";
 import { seedEngine } from "./seed";
 
@@ -38,7 +38,12 @@ const TYPE_SHOWCASE_COLUMNS = [
 // touches nothing else on the database config, so the rest of the shape is
 // deliberately absent rather than faked.
 const introspectionDb = (engine: DatabaseType) =>
-  ({ name: "default", type: engine, connection: CONNECTIONS[engine] }) as unknown as Database;
+  ({
+    name: "default",
+    type: engine,
+    connection: CONNECTIONS[engine],
+    ...(engine === "mysql" ? { connectionOptions: MYSQL_CONNECTION_OPTIONS } : {}),
+  }) as unknown as Database;
 
 describe.skipIf(!integrationEnabled)("integration introspection", () => {
   for (const engine of ENGINES) {

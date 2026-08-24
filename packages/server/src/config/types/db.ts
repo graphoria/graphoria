@@ -138,6 +138,14 @@ export const BunSQLConnectionOptionsZod = z.strictObject({
   maxLifetime: z.number().nonnegative().default(3600),
   /** Whether to use TLS/SSL for the connection */
   tls: z.boolean().default(false),
+  /**
+   * MySQL only: allow the client to fetch the server's RSA public key over a
+   * plain connection when caching_sha2_password asks for full authentication.
+   * Off by default, as it is in Bun: without TLS a man-in-the-middle can answer
+   * with its own key and read the password. Needed for MySQL 8 servers that are
+   * reachable only over plain TCP.
+   */
+  allowPublicKeyRetrieval: z.boolean().default(false),
   /** Automatic creation of prepared statements (default: true) */
   prepare: z.boolean().default(true),
   /** Return values outside i32 range as BigInts instead of strings (default: false) */

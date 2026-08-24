@@ -79,6 +79,7 @@ type DatabaseConfig<T extends DatabaseType = DatabaseType> = {
   enabled: boolean; // Whether this database is active
   type: T; // "pg" | "mssql" | "mysql"
   connection: DatabaseConnection; // Connection details
+  connectionOptions?: ConnectionOptionsForType<T>; // Pool and transport tuning
   fieldNaming?: string; // Resolver name pattern (default: "{schema}_{name}")
   repository?: CustomRepositoryFactory<T>; // Custom repository factory
   onConnect?: OnConnectHandler<T>; // Handler run once at startup against the connection
@@ -96,6 +97,83 @@ type DatabaseConnection = {
   password: string;
   database: string;
 };
+```
+
+### ConnectionOptions
+
+Pool and transport tuning. Optional. The shape depends on `type`: `pg` and `mysql` go through Bun's built-in SQL client, `mssql` through the `mssql` package. All timeouts are in seconds.
+
+The defaults below are the ones validation fills in, so they apply **when you supply `connectionOptions`**. Leaving the key out takes a different path with different fallbacks; see [When connectionOptions is absent](#when-connectionoptions-is-absent).
+
+```typescript
+// type: "pg" | "mysql"
+type BunSQLConnectionOptions = {
+  max?: number; // Maximum connections in the pool (default: 10)
+  idleTimeout?: number; // Seconds a connection may sit idle before closing (default: 30)
+  connectionTimeout?: number; // Seconds to wait when establishing a connection (default: 30)
+  maxLifetime?: number; // Maximum lifetime of a connection (default: 3600)
+  tls?: boolean; // Use TLS/SSL (default: false)
+  allowPublicKeyRetrieval?: boolean; // MySQL only, see below (default: false)
+  prepare?: boolean; // Create prepared statements automatically (default: true)
+  bigint?: boolean; // Return values outside i32 range as BigInt, not string (default: false)
+};
+
+// type: "mssql"
+type MSSQLConnectionOptions = {
+  pool?: {
+    max?: number; // Maximum connections in the pool (default: 10)
+    min?: number; // Minimum connections in the pool (default: 0)
+    idleTimeout?: number; // Seconds a connection may sit idle before closing (default: 30)
+  };
+  connectionTimeout?: number; // Seconds to wait when establishing a connection (default: 30)
+  requestTimeout?: number; // Seconds to wait for a request to complete (default: 30)
+  encrypt?: boolean; // Encrypt the connection (default: false)
+  trustServerCertificate?: boolean; // Trust the server certificate unvalidated (default: false)
+  trustedConnection?: boolean; // Use Windows Authentication (default: false)
+  parseJSON?: boolean; // Parse JSON responses automatically (default: true)
+};
+```
+
+#### When connectionOptions is absent
+
+The key is optional, and when it is missing the pool is built from hardcoded fallbacks rather than the validated defaults above. The two do not always agree:
+
+| Option                                                                           | supplied            | absent             |
+| -------------------------------------------------------------------------------- | ------------------- | ------------------ |
+| `max` (pg)                                                                       | 10                  | 5                  |
+| `max` (mysql)                                                                    | 10                  | 50                 |
+| `pool.max` (mssql)                                                               | 10                  | 50                 |
+| `pool.min` (mssql)                                                               | 0                   | 1                  |
+| `trustServerCertificate` (mssql)                                                 | false               | **true**           |
+| `trustedConnection` (mssql)                                                      | false               | **true**           |
+| `connectionTimeout`, `requestTimeout`, `maxLifetime`, `tls`, `prepare`, `bigint` | as documented above | left to the driver |
+
+The MSSQL rows are the ones to watch. With no `connectionOptions`, the server certificate is trusted without being validated. Set any MSSQL option and validation fills `trustServerCertificate` with `false`, which will drop a connection to a server presenting a self-signed certificate. Set the fields you depend on explicitly rather than relying on either column.
+
+One sharp edge behind that: `connectionOptions` is validated against an undiscriminated union of the two shapes, so the engine does not pick the schema — the object's own fields do. An object carrying nothing engine-specific, `{}` included, matches the `pg`/`mysql` shape even on an `mssql` database, and the MSSQL pool then finds none of its options and falls back to the "absent" column. Any MSSQL-only field (`requestTimeout`, `pool`, `encrypt`, …) routes it to the right shape.
+
+#### MySQL over a plain connection
+
+MySQL 8 authenticates with `caching_sha2_password`. Whenever the server has no cached password for the user — a fresh server, a restarted container, a new account — it falls back to full authentication, which asks the client to fetch the server's RSA public key. Bun refuses to do that over an unencrypted connection, and the pool never opens:
+
+```
+MySQLError: The server requested RSA public key retrieval to complete authentication,
+which is not allowed over an insecure connection. Enable TLS or set allowPublicKeyRetrieval: true
+```
+
+Two ways out, in order of preference:
+
+- `tls: true` — with an encrypted transport there is no key to retrieve.
+- `allowPublicKeyRetrieval: true` — for a server reachable only over plain TCP. It is off by default because without TLS a man-in-the-middle can answer with a key of its own and read the password, so keep it to trusted networks.
+
+```typescript
+{
+  name: "default",
+  enabled: true,
+  type: "mysql",
+  connection: { host: "127.0.0.1", port: 3306, user: "root", password: "…", database: "app" },
+  connectionOptions: { allowPublicKeyRetrieval: true },
+}
 ```
 
 ### DatabaseSchemaConfig

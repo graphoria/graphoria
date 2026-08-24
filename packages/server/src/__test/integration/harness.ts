@@ -5,7 +5,7 @@ import { generateKeys } from "paseto-ts/v4";
 import type { ConfigurationInput } from "../../config";
 import type { DatabaseType } from "../../types/configuration";
 
-import { CONNECTIONS, INTEGRATION_ENABLED, REDIS_URL } from "./config";
+import { CONNECTIONS, INTEGRATION_ENABLED, MYSQL_CONNECTION_OPTIONS, REDIS_URL } from "./config";
 import { seedEngine } from "./seed";
 
 /**
@@ -87,12 +87,20 @@ const baseConfig = (engine: DatabaseType): ConfigurationInput => ({
   name: "graphoria-integration",
   version: "1.0.0",
   databases: [
-    {
-      name: "default",
-      enabled: true,
-      type: engine,
-      connection: { ...CONNECTIONS[engine] },
-    },
+    engine === "mysql"
+      ? {
+          name: "default",
+          enabled: true,
+          type: engine,
+          connection: { ...CONNECTIONS.mysql },
+          connectionOptions: MYSQL_CONNECTION_OPTIONS,
+        }
+      : {
+          name: "default",
+          enabled: true,
+          type: engine,
+          connection: { ...CONNECTIONS[engine] },
+        },
   ],
   auth: {
     enabled: false,
@@ -128,7 +136,7 @@ const rawClient = async (engine: DatabaseType) => {
     username: CONNECTIONS[engine].user,
     password: CONNECTIONS[engine].password,
     database: CONNECTIONS[engine].database,
-    ...(engine === "mysql" ? { adapter: "mysql" as const } : {}),
+    ...(engine === "mysql" ? { adapter: "mysql" as const, ...MYSQL_CONNECTION_OPTIONS } : {}),
     max: 2,
   });
 
