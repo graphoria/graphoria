@@ -13,7 +13,7 @@ import { logger } from "../logging";
  */
 export interface ScheduledCronJob {
   name: string;
-  job: Cron;
+  job: Cron<NonNullable<CronJob["context"]>>;
   config: CronJob;
   executionCount: number;
   pause: () => boolean;
