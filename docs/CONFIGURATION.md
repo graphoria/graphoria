@@ -138,14 +138,14 @@ type MSSQLConnectionOptions = {
 
 The key is optional, and when it is missing the pool is built from hardcoded fallbacks rather than the validated defaults above. The two do not always agree:
 
-| Option | supplied | absent |
-| --- | --- | --- |
-| `max` (pg) | 10 | 5 |
-| `max` (mysql) | 10 | 50 |
-| `pool.max` (mssql) | 10 | 50 |
-| `pool.min` (mssql) | 0 | 1 |
-| `trustServerCertificate` (mssql) | false | **true** |
-| `trustedConnection` (mssql) | false | **true** |
+| Option                                                                           | supplied            | absent             |
+| -------------------------------------------------------------------------------- | ------------------- | ------------------ |
+| `max` (pg)                                                                       | 10                  | 5                  |
+| `max` (mysql)                                                                    | 10                  | 50                 |
+| `pool.max` (mssql)                                                               | 10                  | 50                 |
+| `pool.min` (mssql)                                                               | 0                   | 1                  |
+| `trustServerCertificate` (mssql)                                                 | false               | **true**           |
+| `trustedConnection` (mssql)                                                      | false               | **true**           |
 | `connectionTimeout`, `requestTimeout`, `maxLifetime`, `tls`, `prepare`, `bigint` | as documented above | left to the driver |
 
 The MSSQL rows are the ones to watch. With no `connectionOptions`, the server certificate is trusted without being validated. Set any MSSQL option and validation fills `trustServerCertificate` with `false`, which will drop a connection to a server presenting a self-signed certificate. Set the fields you depend on explicitly rather than relying on either column.
