@@ -251,7 +251,7 @@ const createGraphQLServer = async (env: Env) => {
         prefixes,
         projectConfiguration,
         analyzedConfiguration,
-        getRoleHandlers,
+        tokenService: getTokenService(),
       }),
     );
   }

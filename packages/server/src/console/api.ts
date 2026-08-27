@@ -1,14 +1,16 @@
+import type { TokenService } from "../authentication/types";
 import type { AnalyzedConfiguration } from "../configuration";
 import type { Configuration } from "../types/configuration";
 import type { Env } from "../types/env";
-import type { SQL } from "bun";
+import type { BunRequest, SQL } from "bun";
 import type { ConnectionPool } from "mssql";
 
+import { createConsoleSessions } from "./session";
 import { getTags } from "../configuration/rest/generateOpenAPI";
 import { getCronJobs } from "../singletons/cron";
 import { databasesConnections } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
-import { S200, S400, S404 } from "../utils/responses";
+import { S200, S400, S401, S404 } from "../utils/responses";
 
 type ConsoleRoutesFactoryOptions = {
   env: Env;
@@ -16,10 +18,10 @@ type ConsoleRoutesFactoryOptions = {
   prefixes: Record<string, string>;
   projectConfiguration: Configuration;
   analyzedConfiguration: AnalyzedConfiguration;
-  getRoleHandlers: (req: Request) => Promise<{ role: string }>;
+  tokenService: TokenService;
 };
 
-type ConsoleRouteHandler = (req: Request) => Response | Promise<Response>;
+type ConsoleRouteHandler = (req: BunRequest) => Response | Promise<Response>;
 
 const PING_TIMEOUT_MS = 2000;
 
@@ -52,14 +54,15 @@ export const consoleRoutesFactory = ({
   prefixes,
   projectConfiguration,
   analyzedConfiguration,
-  getRoleHandlers,
+  tokenService,
 }: ConsoleRoutesFactoryOptions): Record<string, Record<string, ConsoleRouteHandler>> => {
+  const sessions = createConsoleSessions({ env, consolePath, tokenService });
+
   const guarded =
-    (handler: (req: Request) => object | Promise<object>): ConsoleRouteHandler =>
-    async (req: Request) => {
+    (handler: (req: BunRequest) => object | Promise<object>): ConsoleRouteHandler =>
+    async (req: BunRequest) => {
       try {
-        const { role } = await getRoleHandlers(req);
-        if (role !== env.superadmin.role) return new S404({ error: "Not Found" });
+        if (!(await sessions.authorize(req))) return new S404({ error: "Not Found" });
         return new S200(await handler(req));
       } catch (error) {
         return new S400({ errors: [{ message: (error as Error)?.message }] });
@@ -78,8 +81,28 @@ export const consoleRoutesFactory = ({
         new S200({
           name: projectConfiguration.name,
           version: projectConfiguration.version,
-          adminSecretHeader: env.admin.header,
         }),
+    },
+
+    [`${base}/login`]: {
+      ...cors,
+      POST: async (req) => {
+        try {
+          return new S200(await sessions.login(req));
+        } catch {
+          // One message for a bad secret and for a malformed body alike: the
+          // caller learns nothing about which it was.
+          return new S401({ errors: [{ message: "Invalid admin secret" }] });
+        }
+      },
+    },
+
+    [`${base}/logout`]: {
+      ...cors,
+      POST: async (req) => {
+        await sessions.logout(req);
+        return new S200({ ok: true });
+      },
     },
 
     [`${base}/tables`]: {
