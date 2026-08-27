@@ -147,13 +147,40 @@ describe("handleGraphQLRequestFactory.hasErrors", () => {
     expect(result.validationErrors[0].locations?.length ?? 0).toBeGreaterThan(0);
   });
 
-  // The depth-limit branch (MAX_QUERY_DEPTH > 0 vs 0) is not asserted here:
-  // singletons/env is parsed once per process and Bun's test runner reuses
-  // the module cache across test files, so MAX_QUERY_DEPTH gets pinned by
-  // whichever file imports env first. The factory's depth wiring is a
-  // single-line `env.maxQueryDepth > 0 ? [...specifiedRules, depthLimitRule(N)]
-  // : undefined`; the rule itself is exhaustively covered in
-  // analyzeQuery/depthLimit.test.ts.
+  // Comment.replies is self-referential, so this nests past the default of 8:
+  // users(1) posts(2) comments(3) replies(4..8) id(9).
+  const deepQuery = `
+    query Deep {
+      users { posts { comments { replies { replies { replies { replies { replies { id } } } } } } } }
+    }
+  `;
+
+  it("rejects a query past the default depth limit", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+    const result = factory.hasErrors(deepQuery);
+    expect(result.hasErrors).toBe(true);
+    expect(result.validationErrors[0].message).toContain("maximum allowed depth of 8");
+    expect(result.validationErrors[0].message).toContain("MAX_QUERY_DEPTH");
+  });
+
+  it("accepts the same query when the depth limit is not enforced", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+    const result = factory.hasErrors(deepQuery, { enforceDepthLimit: false });
+    expect(result.hasErrors).toBe(false);
+  });
+
+  it("still reports non-depth errors when the depth limit is not enforced", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+    const result = factory.hasErrors("query { not_a_field }", { enforceDepthLimit: false });
+    expect(result.hasErrors).toBe(true);
+    expect(result.validationErrors[0].message).toContain("not_a_field");
+  });
+
+  it("does not let an unenforced result serve a later enforced check", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+    expect(factory.hasErrors(deepQuery, { enforceDepthLimit: false }).hasErrors).toBe(false);
+    expect(factory.hasErrors(deepQuery).hasErrors).toBe(true);
+  });
 });
 
 describe("handleGraphQLRequestFactory.handler — short-circuits", () => {

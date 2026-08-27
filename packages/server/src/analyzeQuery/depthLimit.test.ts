@@ -225,6 +225,22 @@ describe("depthLimitRule", () => {
     expect(errors[0].message).toContain('operation: "GetUsers"');
   });
 
+  it("names the env var that raises the limit", () => {
+    const query = `
+      query GetUsers {
+        users {
+          posts {
+            comments {
+              body
+            }
+          }
+        }
+      }
+    `;
+    const errors = validateWithDepth(query, 2);
+    expect(errors[0].message).toContain("MAX_QUERY_DEPTH");
+  });
+
   it("should use 'anonymous' for unnamed operations", () => {
     const query = `
       {

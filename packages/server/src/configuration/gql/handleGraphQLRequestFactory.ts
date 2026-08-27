@@ -207,20 +207,23 @@ export const handleGraphQLRequestFactory = (
     // Return the introspection result for clients like GraphiQL or Apollo Client
     introspectionResult: { data: gqlEntities.introspection },
     noDataResult: { data: { _no_data: "No data available" } },
-    hasErrors: (query: string) => {
+    // `enforceDepthLimit: false` is for operator-authored queries (REST
+    // operations), which are config, not attacker input. Their result is never
+    // cached: the cache is keyed on query text alone, so storing a depth-free
+    // verdict would serve a caller sending the same text over the wire.
+    hasErrors: (query: string, options?: { enforceDepthLimit?: boolean }) => {
+      const enforceDepthLimit = options?.enforceDepthLimit ?? true;
       const entry = getCacheEntry(query);
       // Unparseable queries aren't cached; let parse surface the syntax error
       const document = entry?.document ?? parse(query);
 
-      let validationErrors = entry?.validationErrors;
+      let validationErrors = enforceDepthLimit ? entry?.validationErrors : undefined;
       if (!validationErrors) {
-        const rules =
-          env.maxQueryDepth > 0
-            ? [...specifiedRules, depthLimitRule(env.maxQueryDepth)]
-            : undefined; // undefined = use default specifiedRules
+        const maxDepth = enforceDepthLimit ? env.maxQueryDepth : 0;
+        const rules = maxDepth > 0 ? [...specifiedRules, depthLimitRule(maxDepth)] : undefined; // undefined = use default specifiedRules
 
         validationErrors = validate(gqlEntities.schema, document, rules);
-        if (entry) entry.validationErrors = validationErrors;
+        if (entry && enforceDepthLimit) entry.validationErrors = validationErrors;
       }
 
       return {
