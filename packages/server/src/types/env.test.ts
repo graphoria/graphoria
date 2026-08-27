@@ -89,3 +89,22 @@ describe("EnvZod boolean flags", () => {
     expect(() => EnvZod.parse({ ...baseEnv, CONSOLE_ENABLED: "flase" })).toThrow();
   });
 });
+
+describe("EnvZod MAX_QUERY_DEPTH", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("defaults to 8 so the depth limit is on without configuration", () => {
+    expect(EnvZod.parse(baseEnv).maxQueryDepth).toBe(8);
+  });
+
+  it("keeps 0 as the explicit opt-out for unlimited depth", () => {
+    expect(EnvZod.parse({ ...baseEnv, MAX_QUERY_DEPTH: "0" }).maxQueryDepth).toBe(0);
+  });
+
+  it("parses an explicit limit", () => {
+    expect(EnvZod.parse({ ...baseEnv, MAX_QUERY_DEPTH: "20" }).maxQueryDepth).toBe(20);
+  });
+});

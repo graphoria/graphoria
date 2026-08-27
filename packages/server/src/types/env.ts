@@ -36,7 +36,7 @@ export const EnvZod = z
     PRINT_SCHEMAS: z.stringbool().default(false),
     SCHEMAS_OUTPUT_DIR: z.string().default("./.graphoria/schemas"),
     QUERY_ON_RESPONSE: z.stringbool().default(false),
-    MAX_QUERY_DEPTH: z.coerce.number().int().min(0).default(0),
+    MAX_QUERY_DEPTH: z.coerce.number().int().min(0).default(8),
     AI_ENABLED: z.stringbool().optional(),
     AI_GRAPHQL_ENABLED: z.stringbool().default(true),
     AI_REST_ENABLED: z.stringbool().default(true),

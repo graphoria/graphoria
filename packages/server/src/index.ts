@@ -73,6 +73,12 @@ const bootAnalyzedConfiguration = async (env: Env) => {
     configureLogging(env.logger);
   }
 
+  if (env.maxQueryDepth === 0) {
+    logger("graphoria").warn(
+      "MAX_QUERY_DEPTH=0 disables the query depth limit; one deeply nested query can exhaust the server",
+    );
+  }
+
   if (!env.configuration) {
     throw new Error("Configuration is required to create the GraphQL server");
   }

@@ -42,11 +42,16 @@ export const buildApiRoutes = (
     let hasError = false;
 
     if (routeConfig.query) {
-      const validationErrors = gql.hasErrors(routeConfig.query);
+      // Operation queries come from the configuration, not from a caller, so the
+      // depth limit does not apply to them — it would turn an operator's own
+      // deep query into a dead route.
+      const validationErrors = gql.hasErrors(routeConfig.query, { enforceDepthLimit: false });
 
       if (validationErrors.hasErrors && gqlSuperadminHandler) {
         // Re-validate with superadmin handler if available
-        const superadminErrors = gqlSuperadminHandler.hasErrors(routeConfig.query);
+        const superadminErrors = gqlSuperadminHandler.hasErrors(routeConfig.query, {
+          enforceDepthLimit: false,
+        });
 
         if (superadminErrors.hasErrors) {
           throw new Error(`Endpoint ${routeKey} has invalid query.`);
