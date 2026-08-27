@@ -1,9 +1,7 @@
-const SECRET_KEY = "graphoria_console_secret";
-
 // Under hash routing the pathname is always the console mount path.
 export const apiBase = `${location.pathname.replace(/\/+$/, "")}/api`;
 
-export type Meta = { name: string; version: string; adminSecretHeader: string };
+export type Meta = { name: string; version: string };
 
 export type TablesResponse = {
   tables: {
@@ -88,21 +86,27 @@ export type RoleEntitiesResponse = {
   remoteREST: { name: string; prefix: string; routes: number }[];
 };
 
-export const getSecret = () => localStorage.getItem(SECRET_KEY);
-export const setSecret = (secret: string) => localStorage.setItem(SECRET_KEY, secret);
-export const clearSecret = () => localStorage.removeItem(SECRET_KEY);
-
 export class AuthError extends Error {}
 
-let adminHeaderName = "x-admin-secret";
 let authFailHandler: () => void = () => {};
-
-export const setAdminHeaderName = (name: string) => {
-  adminHeaderName = name;
-};
 
 export const onAuthFail = (handler: () => void) => {
   authFailHandler = handler;
+};
+
+// The session lives in an httpOnly cookie the browser attaches itself; nothing
+// here ever holds the admin secret, so there is nothing for an XSS to read.
+export const login = async (secret: string): Promise<void> => {
+  const res = await fetch(`${apiBase}/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ secret }),
+  });
+  if (!res.ok) throw new AuthError("Invalid admin secret");
+};
+
+export const logout = async (): Promise<void> => {
+  await fetch(`${apiBase}/logout`, { method: "POST" });
 };
 
 export const getMeta = async (): Promise<Meta> => {
@@ -112,14 +116,12 @@ export const getMeta = async (): Promise<Meta> => {
 };
 
 export const apiFetch = async <T>(path: string): Promise<T> => {
-  const res = await fetch(`${apiBase}${path}`, {
-    headers: { [adminHeaderName]: getSecret() ?? "" },
-  });
+  const res = await fetch(`${apiBase}${path}`);
 
-  // The server gate answers 404 for any non-superadmin session
+  // The server gate answers 404 for any request without a live console session
   if (res.status === 404) {
     authFailHandler();
-    throw new AuthError("Invalid admin secret");
+    throw new AuthError("Console session expired");
   }
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
 
@@ -129,13 +131,13 @@ export const apiFetch = async <T>(path: string): Promise<T> => {
 export const apiPost = async <T>(path: string, body: unknown): Promise<T> => {
   const res = await fetch(`${apiBase}${path}`, {
     method: "POST",
-    headers: { [adminHeaderName]: getSecret() ?? "", "content-type": "application/json" },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 
   if (res.status === 404) {
     authFailHandler();
-    throw new AuthError("Invalid admin secret");
+    throw new AuthError("Console session expired");
   }
   if (!res.ok) {
     const payload = (await res.json().catch(() => null)) as {

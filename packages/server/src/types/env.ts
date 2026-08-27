@@ -30,6 +30,7 @@ export const EnvZod = z
     // Boolean flags use stringbool, not coerce.boolean: Boolean("false") === true would flip them on
     CONSOLE_ENABLED: z.stringbool().default(false),
     CONSOLE_ENDPOINT: z.string().default("/_console"),
+    CONSOLE_SESSION_EXPIRES_IN: z.string().default("1h"),
     PREFIX: z.string().default(""),
     CORS_ENABLED: z.stringbool().default(true),
     PRINT_SCHEMAS: z.stringbool().default(false),
@@ -94,6 +95,7 @@ export const EnvZod = z
     console: {
       enabled: env.CONSOLE_ENABLED,
       endpoint: env.CONSOLE_ENDPOINT,
+      sessionExpiresIn: env.CONSOLE_SESSION_EXPIRES_IN,
     },
     ai: {
       enabled: env.AI_ENABLED,

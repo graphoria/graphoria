@@ -4,7 +4,7 @@ import { useHashLocation } from "wouter/use-hash-location";
 
 import type { Meta } from "./client";
 
-import { clearSecret, getMeta, getSecret, onAuthFail, setAdminHeaderName } from "./client";
+import { apiFetch, getMeta, logout, onAuthFail } from "./client";
 import { Login } from "./Login";
 import { ApisPage } from "./pages/ApisPage";
 import { ConfigPage } from "./pages/ConfigPage";
@@ -25,23 +25,22 @@ const NAV = [
 export const App = () => {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
-  const [authed, setAuthed] = useState(getSecret() !== null);
+  // The session cookie is httpOnly, so the only way to know whether one is
+  // live is to ask the server; `null` is "not asked yet".
+  const [authed, setAuthed] = useState<boolean | null>(null);
 
   useEffect(() => {
-    onAuthFail(() => {
-      clearSecret();
-      setAuthed(false);
-    });
+    onAuthFail(() => setAuthed(false));
     getMeta()
-      .then((m) => {
-        setAdminHeaderName(m.adminSecretHeader);
-        setMeta(m);
-      })
+      .then(setMeta)
       .catch((error) => setMetaError((error as Error).message));
+    apiFetch("/config")
+      .then(() => setAuthed(true))
+      .catch(() => setAuthed(false));
   }, []);
 
   if (metaError) return <p className="text-red-500 text-center">{metaError}</p>;
-  if (!meta) return <p className="text-gray-400 text-center">Loading…</p>;
+  if (!meta || authed === null) return <p className="text-gray-400 text-center">Loading…</p>;
   if (!authed) return <Login meta={meta} onSuccess={() => setAuthed(true)} />;
 
   return (
@@ -69,8 +68,8 @@ export const App = () => {
           </nav>
           <button
             className="mt-auto mx-4 py-2 px-4 rounded text-gray-400 hover:text-white cursor-pointer text-left"
-            onClick={() => {
-              clearSecret();
+            onClick={async () => {
+              await logout();
               setAuthed(false);
             }}
           >

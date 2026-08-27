@@ -1,4 +1,8 @@
+import { CookieMap } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
+
+import type { BunRequest } from "bun";
+import type { Env } from "../types/env";
 
 // `singletons/env` parses process.env at module load. Ensure required vars exist
 // before any transitive import touches it.
@@ -13,20 +17,58 @@ let databasesConnections: any;
 let setQueueManager: any;
 // oxlint-disable-next-line typescript/no-explicit-any
 let setCronJobs: any;
+// oxlint-disable-next-line typescript/no-explicit-any
+let tokenService: any;
+let sessionCookie: string;
+
+const ADMIN_SECRET = "test-admin-secret";
+const SESSION_COOKIE = "graphoria_console_session";
+
+const fakeEnv = {
+  enableCors: true,
+  authStrategy: undefined,
+  superadmin: { role: "superadmin" },
+  admin: { secret: ADMIN_SECRET, header: "x-admin-secret" },
+  console: { enabled: true, endpoint: "/_console", sessionExpiresIn: "1h" },
+  jwt: { secret: "test-jwt-secret", expiresIn: "5m", rtExpiresIn: "7d" },
+  cache: { store: "memory", redisUrl: "redis://127.0.0.1:1" },
+};
+
+/** A `Bun.serve` route handler is handed a BunRequest; only `cookies` is extra. */
+const bunReq = (
+  url = "http://localhost/_console/api/x",
+  init?: RequestInit,
+  cookie = sessionCookie,
+) => {
+  const request = new Request(url, init) as unknown as BunRequest;
+  Object.defineProperty(request, "cookies", { value: new CookieMap(cookie) });
+  return request;
+};
 
 beforeAll(async () => {
   ({ consoleRoutesFactory } = await import("./api"));
   ({ databasesConnections } = await import("../singletons/databases"));
   ({ setQueueManager } = await import("../singletons/queues"));
   ({ setCronJobs } = await import("../singletons/cron"));
-});
 
-const fakeEnv = {
-  enableCors: true,
-  authStrategy: undefined,
-  superadmin: { role: "superadmin" },
-  admin: { header: "x-admin-secret" },
-};
+  const { createJWTService } = await import("../authentication/jwt");
+  tokenService = createJWTService(fakeEnv as unknown as Env, {
+    saveJti: async () => {},
+    isTokenUsed: async () => false,
+    revoke: async () => {},
+    isRevoked: async () => false,
+  });
+
+  // Mint the session the authenticated cases run under through the login route
+  // itself, so the suite exercises the same exchange a browser performs.
+  const login = bunReq(
+    "http://localhost/_console/api/login",
+    { method: "POST", body: JSON.stringify({ secret: ADMIN_SECRET }) },
+    "",
+  );
+  await buildRoutes()["/_console/api/login"].POST(login);
+  sessionCookie = `${SESSION_COOKIE}=${login.cookies.get(SESSION_COOKIE)}`;
+});
 
 const fakeTable = {
   schema: "public",
@@ -100,32 +142,62 @@ const fakeProjectConfiguration = {
 
 const prefixes = { graphql: "/graphql", rest: "/rest", console: "/_console" };
 
-const buildRoutes = (role = "superadmin", getRoleHandlers?: (req: Request) => Promise<unknown>) =>
+const buildRoutes = () =>
   consoleRoutesFactory({
     env: fakeEnv,
     consolePath: "/_console",
     prefixes,
     projectConfiguration: fakeProjectConfiguration,
     analyzedConfiguration: fakeAnalyzedConfiguration,
-    getRoleHandlers: getRoleHandlers ?? (async () => ({ role })),
+    tokenService,
   });
 
-const req = () => new Request("http://localhost/_console/api/x");
+const req = () => bunReq();
 
 describe("consoleRoutesFactory", () => {
-  it("serves /meta without auth and exposes the admin secret header name", async () => {
-    const routes = buildRoutes("anonymous");
-    const res = await routes["/_console/api/meta"].GET(req());
+  it("serves /meta without a session and without naming any credential", async () => {
+    const res = await buildRoutes()["/_console/api/meta"].GET(bunReq(undefined, undefined, ""));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      name: "test-project",
-      version: "1.2.3",
-      adminSecretHeader: "x-admin-secret",
-    });
+    expect(await res.json()).toEqual({ name: "test-project", version: "1.2.3" });
   });
 
-  it("returns 404 on authed endpoints when role is not superadmin", async () => {
-    const routes = buildRoutes("user");
+  it("exchanges the admin secret for a session cookie on POST /login", async () => {
+    const request = bunReq(
+      "http://localhost/_console/api/login",
+      { method: "POST", body: JSON.stringify({ secret: ADMIN_SECRET }) },
+      "",
+    );
+    const res = await buildRoutes()["/_console/api/login"].POST(request);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ expiresIn: 3600 });
+    expect(request.cookies.toSetCookieHeaders()[0]).toContain("HttpOnly");
+  });
+
+  it("answers 401 and sets no cookie for a wrong admin secret", async () => {
+    const request = bunReq(
+      "http://localhost/_console/api/login",
+      { method: "POST", body: JSON.stringify({ secret: "wrong" }) },
+      "",
+    );
+    const res = await buildRoutes()["/_console/api/login"].POST(request);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ errors: [{ message: "Invalid admin secret" }] });
+    expect(request.cookies.toSetCookieHeaders()).toEqual([]);
+  });
+
+  it("answers 401 for a malformed login body without saying why", async () => {
+    const res = await buildRoutes()["/_console/api/login"].POST(
+      bunReq("http://localhost/_console/api/login", { method: "POST", body: "not-json" }, ""),
+    );
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ errors: [{ message: "Invalid admin secret" }] });
+  });
+
+  it("returns 404 on every guarded endpoint without a session cookie", async () => {
+    const routes = buildRoutes();
     for (const path of [
       "tables",
       "roles",
@@ -135,20 +207,54 @@ describe("consoleRoutesFactory", () => {
       "schema",
       "roles/entities",
     ]) {
-      const res = await routes[`/_console/api/${path}`].GET(req());
+      const res = await routes[`/_console/api/${path}`].GET(bunReq(undefined, undefined, ""));
       expect(res.status).toBe(404);
     }
-    const post = await routes["/_console/api/queues/publish"].POST(req());
+    const post = await routes["/_console/api/queues/publish"].POST(
+      bunReq(undefined, undefined, ""),
+    );
     expect(post.status).toBe(404);
   });
 
-  it("returns 400 when session verification throws", async () => {
-    const routes = buildRoutes("superadmin", async () => {
-      throw new Error("boom");
-    });
-    const res = await routes["/_console/api/tables"].GET(req());
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ errors: [{ message: "boom" }] });
+  it("returns 404 when the admin secret is sent as a header instead of a session", async () => {
+    const res = await buildRoutes()["/_console/api/tables"].GET(
+      bunReq(
+        "http://localhost/_console/api/tables",
+        { headers: { "x-admin-secret": ADMIN_SECRET } },
+        "",
+      ),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 for a forged session cookie", async () => {
+    const res = await buildRoutes()["/_console/api/tables"].GET(
+      bunReq(undefined, undefined, `${SESSION_COOKIE}=forged`),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("stops honouring a session after POST /logout", async () => {
+    const routes = buildRoutes();
+    const login = bunReq(
+      "http://localhost/_console/api/login",
+      { method: "POST", body: JSON.stringify({ secret: ADMIN_SECRET }) },
+      "",
+    );
+    await routes["/_console/api/login"].POST(login);
+    const cookie = `${SESSION_COOKIE}=${login.cookies.get(SESSION_COOKIE)}`;
+
+    expect(
+      (await routes["/_console/api/tables"].GET(bunReq(undefined, undefined, cookie))).status,
+    ).toBe(200);
+
+    const logout = bunReq("http://localhost/_console/api/logout", { method: "POST" }, cookie);
+    expect((await routes["/_console/api/logout"].POST(logout)).status).toBe(200);
+    expect(logout.cookies.toSetCookieHeaders()[0]).toContain("Path=/_console");
+
+    expect(
+      (await routes["/_console/api/tables"].GET(bunReq(undefined, undefined, cookie))).status,
+    ).toBe(404);
   });
 
   it("maps /tables payload to schema, columns and relationships only", async () => {
@@ -247,12 +353,12 @@ describe("consoleRoutesFactory", () => {
   it("returns the role SDL on /schema and 400 for unknown roles", async () => {
     const routes = buildRoutes();
     const ok = await routes["/_console/api/schema"].GET(
-      new Request("http://localhost/_console/api/schema?role=superadmin"),
+      bunReq("http://localhost/_console/api/schema?role=superadmin"),
     );
     expect(await ok.json()).toEqual({ role: "superadmin", sdl: "type Query { ping: String }" });
 
     const bad = await routes["/_console/api/schema"].GET(
-      new Request("http://localhost/_console/api/schema?role=bogus"),
+      bunReq("http://localhost/_console/api/schema?role=bogus"),
     );
     expect(bad.status).toBe(400);
   });
@@ -260,7 +366,7 @@ describe("consoleRoutesFactory", () => {
   it("lists resolved entities for a role on /roles/entities", async () => {
     const routes = buildRoutes();
     const ok = await routes["/_console/api/roles/entities"].GET(
-      new Request("http://localhost/_console/api/roles/entities?role=superadmin"),
+      bunReq("http://localhost/_console/api/roles/entities?role=superadmin"),
     );
     expect(await ok.json()).toEqual({
       role: "superadmin",
@@ -276,7 +382,7 @@ describe("consoleRoutesFactory", () => {
     });
 
     const userRole = await routes["/_console/api/roles/entities"].GET(
-      new Request("http://localhost/_console/api/roles/entities?role=user"),
+      bunReq("http://localhost/_console/api/roles/entities?role=user"),
     );
     expect(await userRole.json()).toEqual({
       role: "user",
@@ -287,7 +393,7 @@ describe("consoleRoutesFactory", () => {
     });
 
     const bad = await routes["/_console/api/roles/entities"].GET(
-      new Request("http://localhost/_console/api/roles/entities?role=bogus"),
+      bunReq("http://localhost/_console/api/roles/entities?role=bogus"),
     );
     expect(bad.status).toBe(400);
   });
@@ -314,7 +420,7 @@ describe("consoleRoutesFactory", () => {
     });
     try {
       const res = await buildRoutes()["/_console/api/queues/publish"].POST(
-        new Request("http://localhost/_console/api/queues/publish", {
+        bunReq("http://localhost/_console/api/queues/publish", {
           method: "POST",
           body: JSON.stringify({ publisher: "orders", message: { hello: 1 }, key: "k1" }),
         }),
@@ -336,25 +442,25 @@ describe("consoleRoutesFactory", () => {
     try {
       const routes = buildRoutes();
       const bad = await routes["/_console/api/queues/publish"].POST(
-        new Request("http://localhost/x", {
+        bunReq("http://localhost/x", {
           method: "POST",
           body: JSON.stringify({ publisher: "nope", message: "m" }),
         }),
       );
       expect(bad.status).toBe(400);
       const missing = await routes["/_console/api/queues/publish"].POST(
-        new Request("http://localhost/x", { method: "POST", body: JSON.stringify({}) }),
+        bunReq("http://localhost/x", { method: "POST", body: JSON.stringify({}) }),
       );
       expect(missing.status).toBe(400);
       const proto = await routes["/_console/api/queues/publish"].POST(
-        new Request("http://localhost/x", {
+        bunReq("http://localhost/x", {
           method: "POST",
           body: JSON.stringify({ publisher: "toString", message: "m" }),
         }),
       );
       expect(proto.status).toBe(400);
       const nullMessage = await routes["/_console/api/queues/publish"].POST(
-        new Request("http://localhost/x", {
+        bunReq("http://localhost/x", {
           method: "POST",
           body: JSON.stringify({ publisher: "orders", message: null }),
         }),
@@ -377,7 +483,7 @@ describe("consoleRoutesFactory", () => {
       const routes = buildRoutes();
       const post = (body: object) =>
         routes["/_console/api/cron"].POST(
-          new Request("http://localhost/x", { method: "POST", body: JSON.stringify(body) }),
+          bunReq("http://localhost/x", { method: "POST", body: JSON.stringify(body) }),
         );
 
       expect((await post({ name: "job1", action: "trigger" })).status).toBe(200);
@@ -401,10 +507,10 @@ describe("consoleRoutesFactory", () => {
     }
   });
 
-  it("returns 404 on /cron when not superadmin", async () => {
-    const cronPost = await buildRoutes("user", async () => ({ role: "user" }))[
-      "/_console/api/cron"
-    ].POST(req());
+  it("returns 404 on /cron without a session cookie", async () => {
+    const cronPost = await buildRoutes()["/_console/api/cron"].POST(
+      bunReq(undefined, undefined, ""),
+    );
     expect(cronPost.status).toBe(404);
   });
 });
