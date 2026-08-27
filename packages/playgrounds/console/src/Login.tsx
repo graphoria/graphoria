@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import type { Meta } from "./client";
 
-import { apiFetch, clearSecret, setSecret } from "./client";
+import { login } from "./client";
 
 export const Login = ({ meta, onSuccess }: { meta: Meta; onSuccess: () => void }) => {
   const [secret, setSecretInput] = useState("");
@@ -13,12 +13,10 @@ export const Login = ({ meta, onSuccess }: { meta: Meta; onSuccess: () => void }
     event.preventDefault();
     setBusy(true);
     setError(null);
-    setSecret(secret);
     try {
-      await apiFetch("/config");
+      await login(secret);
       onSuccess();
     } catch {
-      clearSecret();
       setError("Invalid admin secret");
     } finally {
       setBusy(false);
