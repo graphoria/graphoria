@@ -209,16 +209,16 @@ Database/Redis/RabbitMQ for local dev: see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## API endpoints (defaults; configurable via env)
 
-| Verb     | Path            | Notes                                                                                                                                                                                      |
-| -------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| GET/POST | `/graphql`      | GraphQL HTTP. WebSocket upgrade on GET (graphql-ws protocol).                                                                                                                              |
-| GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies).                                                                                                                                               |
-| GET      | `/graphiql`     | Bundled GraphiQL playground (single inlined HTML built from `packages/graphiql-playground/`).                                                                                              |
-| GET      | `/scalar`       | Bundled Scalar API docs (single inlined HTML built from `packages/scalar-playground/`).                                                                                                    |
-| GET      | `/openapi.json` | Unified OpenAPI spec (operations + remote-REST).                                                                                                                                           |
-| POST     | `/mcp`          | Model Context Protocol (anonymous-only, opt-in via `ai.mcp.enabled` or `AI_MCP_ENABLED`). Path configurable via `AI_MCP_ENDPOINT`.                                                         |
-| POST     | `/ai`           | AI agent — NL → database Q&A (admin-secret only, opt-in via `ai.enabled`). Path configurable via `ai.endpoint`. Also a `superadmin`-only GraphQL `ask(prompt): String` query.              |
-| GET      | `/_console`     | Admin console UI (Bun HTMLBundle from `src/console/`) + `/_console/api/*` status APIs (admin-secret gated; `/api/meta` unauth). Opt-in via `CONSOLE_ENABLED`; path via `CONSOLE_ENDPOINT`. |
+| Verb     | Path            | Notes                                                                                                                                                                                                                                 |
+| -------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET/POST | `/graphql`      | GraphQL HTTP. WebSocket upgrade on GET (graphql-ws protocol).                                                                                                                                                                         |
+| GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies).                                                                                                                                                                                          |
+| GET      | `/graphiql`     | Bundled GraphiQL playground (single inlined HTML built from `packages/graphiql-playground/`).                                                                                                                                         |
+| GET      | `/scalar`       | Bundled Scalar API docs (single inlined HTML built from `packages/scalar-playground/`).                                                                                                                                               |
+| GET      | `/openapi.json` | Unified OpenAPI spec (operations + remote-REST).                                                                                                                                                                                      |
+| POST     | `/mcp`          | Model Context Protocol (anonymous-only, opt-in via `ai.mcp.enabled` or `AI_MCP_ENABLED`). Path configurable via `AI_MCP_ENDPOINT`.                                                                                                    |
+| POST     | `/ai`           | AI agent — NL → database Q&A (admin-secret only, opt-in via `ai.enabled`). Path configurable via `ai.endpoint`. Also a `superadmin`-only GraphQL `ask(prompt): String` query.                                                         |
+| GET      | `/_console`     | Admin console UI (Bun HTMLBundle from `src/console/`) + `/_console/api/*` status APIs (session-cookie gated, issued by `/api/login`; `/api/meta` and `/api/login` unauth). Opt-in via `CONSOLE_ENABLED`; path via `CONSOLE_ENDPOINT`. |
 
 Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HEADER`). Admin secret: header `x-admin-secret` (configurable via `ADMIN_SECRET_HEADER`). The admin secret bypasses RBAC.
 
