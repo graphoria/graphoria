@@ -113,7 +113,7 @@ export const depthLimitRule =
 
             context.reportError(
               new GraphQLError(
-                `Query depth of ${depth} exceeds the maximum allowed depth of ${maxDepth} (operation: "${operationName}")`,
+                `Query depth of ${depth} exceeds the maximum allowed depth of ${maxDepth} (operation: "${operationName}"). Raise MAX_QUERY_DEPTH to allow deeper queries.`,
                 { nodes: [def] },
               ),
             );
