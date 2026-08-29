@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import type { AnalysisResult, SelectionAnalysis, VariableDefinition } from "../analyzeQuery/types";
 import type { GetSchemaReturn } from "../configuration/getSchemas";
 import type { createQueryEventEmitter } from "../utils/event-emitter";
+import type { SessionContext } from "../utils/sessionVariables";
 
 /**
  * Type for the query event emitter instance
@@ -24,7 +25,7 @@ export interface SubscriptionContext {
   ws: ServerWebSocket<unknown>;
   /** Unique subscription ID from the client */
   subscriptionId: string;
-  /** Analyzed GraphQL query */
+  /** Analyzed GraphQL query, with variables and `$session.*` already resolved */
   analysis: AnalysisResult;
   /** The first field being subscribed to */
   field: SelectionAnalysis;
@@ -34,6 +35,8 @@ export interface SubscriptionContext {
   variables: Record<string, unknown>;
   /** Schema and entity information for the current role */
   schemaEntity: GetSchemaReturn;
+  /** The caller this subscription belongs to. Load-bearing: it keys the group. */
+  session: SessionContext;
   /** Shared event emitter for broadcasting updates */
   eventEmitter: QueryEventEmitter;
 }

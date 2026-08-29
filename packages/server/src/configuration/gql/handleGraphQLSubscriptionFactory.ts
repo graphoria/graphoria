@@ -172,6 +172,7 @@ const handleGraphQLSubscriptionFactory = (
           variableDefinitions: resolved.variables,
           variables: resolved.allVariables,
           schemaEntity,
+          session,
           eventEmitter: queryEventEmitter,
         };
 
