@@ -21,6 +21,7 @@ import {
 } from "../../../common";
 
 import { applyDirectives } from "../../../directives";
+import { getQueryTimeoutMs } from "../../../../singletons/queryTimeout";
 
 // Generate CTE for aggregations
 const buildAggregationCTE = (
@@ -158,9 +159,20 @@ export const generateSQL = (
   variables: Record<string, unknown> = {},
   forHashMethod: boolean = false,
   pageLimits: PageLimits | null = null,
+  timeoutMs?: number,
 ): string => {
+  // Bun's MySQL adapter ignores the `connection` bag and exposes no
+  // per-connection init hook, so there is no pool-level route for
+  // max_execution_time: the bound has to ride in the SQL text. MySQL honours the
+  // hint only on the outermost SELECT — one placed inside a CTE is silently
+  // discarded — which is why it is emitted here, at each return, rather than
+  // spliced into the finished string by the executor.
+  const effectiveTimeoutMs = timeoutMs ?? getQueryTimeoutMs();
+  const timeoutHint =
+    effectiveTimeoutMs > 0 ? ` /*+ MAX_EXECUTION_TIME(${effectiveTimeoutMs}) */` : "";
+
   if (forHashMethod) {
-    return `SELECT MD5((${buildSQLForField(entities, operation.variables ?? [], variables, operation.fields[0], null, null, 1, {}, pageLimits)})) AS ResultHash`;
+    return `SELECT${timeoutHint} MD5((${buildSQLForField(entities, operation.variables ?? [], variables, operation.fields[0], null, null, 1, {}, pageLimits)})) AS ResultHash`;
   }
 
   const variablesWithDefault = {
@@ -230,7 +242,7 @@ export const generateSQL = (
   const cteClause = ctes.length > 0 ? `WITH\n${ctes.join(",\n")}\n` : "";
 
   return `
-    ${cteClause}SELECT JSON_OBJECT(
+    ${cteClause}SELECT${timeoutHint} JSON_OBJECT(
       ${fieldQueries.join(",\n")}
     ) as json_result`;
 };
