@@ -12,6 +12,8 @@ export const generateSQL = (
   forHashMethod: boolean = false,
   /** `null` exempts the query — operator-authored queries are configuration, not caller input. */
   pageLimits: PageLimits | null = null,
+  /** Per-operation override. `undefined` leaves the engine on its own default. */
+  timeoutMs?: number,
 ) => {
   const operation = analysisResult.operations[0];
 
@@ -44,6 +46,7 @@ export const generateSQL = (
         variables,
         forHashMethod,
         pageLimits,
+        timeoutMs,
       );
 
       return [db, query] as const;

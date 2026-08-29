@@ -19,6 +19,7 @@ import { getTokenService, setTokenService } from "./singletons/authentication";
 import { instantiateCronJobs } from "./singletons/cron";
 import { disconnectDatabases, instantiateDatabasesConnections } from "./singletons/databases";
 import { env } from "./singletons/env";
+import { setQueryTimeoutMs } from "./singletons/queryTimeout";
 import { instantiateQueues } from "./singletons/queues";
 import { ConfigurationZod } from "./types/zod/configuration";
 import { S200, S400, S401, S404 } from "./utils/responses";
@@ -76,6 +77,14 @@ const bootAnalyzedConfiguration = async (env: Env) => {
   if (env.maxQueryDepth === 0) {
     logger("graphoria").warn(
       "MAX_QUERY_DEPTH=0 disables the query depth limit; one deeply nested query can exhaust the server",
+    );
+  }
+
+  setQueryTimeoutMs(env.queryTimeoutMs);
+
+  if (env.queryTimeoutMs === 0) {
+    logger("graphoria").warn(
+      "QUERY_TIMEOUT_MS=0 disables the statement timeout; one slow query can hold a connection and its locks indefinitely",
     );
   }
 

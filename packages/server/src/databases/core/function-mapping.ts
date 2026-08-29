@@ -87,18 +87,21 @@ type DatabaseFunctions = {
     variables: Record<string, unknown>,
     forHashMethod: boolean,
     pageLimits: PageLimits | null,
+    timeoutMs: number | undefined,
   ) => string;
   execute: <T>(
     query: string,
     db: Database,
     variablesDefinition: VariableDefinition[],
     values: Record<string, unknown>,
+    timeoutMs: number | undefined,
   ) => Promise<T[]>;
   executeJson: <T>(
     query: string,
     db: Database,
     variablesDefinition: VariableDefinition[],
     values: Record<string, unknown>,
+    timeoutMs: number | undefined,
   ) => Promise<T>;
   callStoredProcedure: (
     sp: ProcedureResolver,

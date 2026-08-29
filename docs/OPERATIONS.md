@@ -275,6 +275,25 @@ Caches are LRU and operation-scoped. The cache key is derived from the resolved 
 
 To invalidate a cache from outside the request flow, attach a queue subscriber and call `cache.invalidate(operationName, pattern?)` from its handler. See [Queues](./QUEUES.md) for examples.
 
+## Statement timeout
+
+An operation whose query is legitimately slow can raise its own bound without moving everyone else's:
+
+```typescript
+getMonthlyReport: {
+  query: `query { ... }`,
+  timeout: 60_000, // milliseconds
+  rest: { path: "/reports/monthly" },
+}
+```
+
+`timeout` overrides `QUERY_TIMEOUT_MS` — and, on MSSQL, `connectionOptions.requestTimeout` — for this operation only. It is in **milliseconds**, matching `QUERY_TIMEOUT_MS`, not the seconds `connectionOptions` uses. Omit it and the operation runs on whatever the database's own bound is; see [Bounding how long a statement runs](./CONFIGURATION.md#bounding-how-long-a-statement-runs).
+
+Two limits worth knowing before you rely on it:
+
+- It applies to operations with a `query`. A handler operation talking to the database directly through `databases` or `repository` is running your own code, and nothing here bounds it.
+- On MSSQL it needs `mssql` 12.7.0 or newer — the per-request form does not exist in earlier releases, and the pool default is used instead, silently. `@graphoria/server` depends on 12.7.0; a hoisted older copy in `node_modules` is the case to watch for.
+
 ## Permissions
 
 Operations participate in RBAC via the `operations` permission key:

@@ -41,6 +41,7 @@ import {
   prodWithUppercaseDirectiveQuery,
 } from "../../../../__test/fixtures/queries";
 import { format, genSql as genSqlEnforced } from "../format";
+import { generateSQL as generateSQLMySQL } from "./index";
 
 // The suites below assert clause construction, so they run with page limits
 // exempt — otherwise every list expectation would carry the default page size.
@@ -1504,5 +1505,45 @@ describe("MySQL: page limits", () => {
 
   it("leaves the query unbounded when the caller is exempt", () => {
     expect(genSqlEnforced(StoreMySQL, prodQuery, {}, false, null)).not.toContain("LIMIT");
+  });
+});
+
+// MySQL is the one engine with no pool-level route: Bun's adapter ignores the
+// `connection` bag, and there is no per-connection init hook to run a
+// `SET SESSION max_execution_time` on. The bound therefore has to travel in the
+// SQL text itself, which is why it is emitted here rather than in the executor.
+describe("MySQL: statement timeout hint", () => {
+  const hint = (ms: number) => `/*+ MAX_EXECUTION_TIME(${ms}) */`;
+
+  const gen = (query: Parameters<typeof genSqlEnforced>[1], hash = false, timeoutMs?: number) =>
+    generateSQLMySQL(StoreMySQL, query.operations[0]!, {}, hash, null, timeoutMs);
+
+  it("hints the outermost SELECT", () => {
+    expect(gen(prodQuery, false, 1500)).toContain(`SELECT ${hint(1500)} JSON_OBJECT(`);
+  });
+
+  // `generateSQL` emits `WITH …\nSELECT JSON_OBJECT(…)` whenever a field needs
+  // an aggregation CTE, so the first SELECT in the text is not the outer one.
+  // MySQL silently ignores a hint placed on a SELECT inside a CTE.
+  it("hints the outer SELECT and not the CTE's, on the aggregation shape", () => {
+    const sql = gen(ordGroupByQuery, false, 1500);
+
+    expect(sql).toContain("WITH");
+    expect(sql).toContain(`SELECT ${hint(1500)} JSON_OBJECT(`);
+    expect(sql.split(hint(1500)).length - 1).toBe(1);
+    expect(sql.indexOf(hint(1500))).toBeGreaterThan(sql.indexOf("WITH"));
+  });
+
+  it("hints the hash query, whose outermost SELECT is a different one", () => {
+    expect(gen(prodQuery, true, 1500)).toContain(`SELECT ${hint(1500)} MD5(`);
+  });
+
+  it("emits no hint when the timeout is disabled", () => {
+    expect(gen(prodQuery, false, 0)).not.toContain("MAX_EXECUTION_TIME");
+    expect(gen(ordGroupByQuery, false, 0)).not.toContain("MAX_EXECUTION_TIME");
+  });
+
+  it("emits no hint when no timeout is resolved", () => {
+    expect(gen(prodQuery)).not.toContain("MAX_EXECUTION_TIME");
   });
 });

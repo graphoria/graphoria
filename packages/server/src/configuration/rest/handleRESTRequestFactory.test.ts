@@ -57,6 +57,7 @@ const stubEntities = (
     query?: string;
     cache?: Record<string, unknown>;
     hooks?: Hooks;
+    timeout?: number;
     rest?: { path: string; method?: string } & Record<string, unknown>;
   },
 ) =>
@@ -356,5 +357,75 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
     expect(calls).toBe(1);
     expect(first).toEqual({ data: { ping: true, n: 1 } });
     expect(second).toEqual({ data: { ping: true, n: 1 } });
+  });
+});
+
+describe("handleRESTRequestFactory statement timeout", () => {
+  // oxlint-disable-next-line typescript/no-explicit-any
+  const recordingGql = (seen: any[]) =>
+    ({
+      handler: async () => ({ data: { ping: true } }),
+      // oxlint-disable-next-line typescript/no-explicit-any
+      operatorQuery: async (...args: any[]) => {
+        seen.push(args[4]);
+        return { data: { ping: true } };
+      },
+      hasErrors: () => ({ hasErrors: false, errors: [] }),
+    }) as const;
+
+  it("passes the operation's timeout to the query", async () => {
+    const seen: unknown[] = [];
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_timeout", {
+        query: "query { ping }",
+        timeout: 60_000,
+        rest: { path: "/q", method: "GET" },
+      }),
+      stubGqlEntitiesWithSchema(),
+      recordingGql(seen),
+    );
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(seen).toEqual([60_000]);
+  });
+
+  // Undefined rather than the env value: each engine falls back to its own
+  // default, which on SQL Server is the configured connectionOptions one.
+  it("passes undefined when the operation sets no timeout", async () => {
+    const seen: unknown[] = [];
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_no_timeout", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+      }),
+      stubGqlEntitiesWithSchema(),
+      recordingGql(seen),
+    );
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(seen).toEqual([undefined]);
+  });
+
+  it("passes the timeout on the cached route too", async () => {
+    const seen: unknown[] = [];
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_timeout_cached", {
+        query: "query { ping }",
+        timeout: 1_500,
+        cache: { ttl: 10_000, max: 10 },
+        rest: { path: "/q", method: "GET" },
+      }),
+      stubGqlEntitiesWithSchema(),
+      recordingGql(seen),
+    );
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(seen).toEqual([1_500]);
   });
 });

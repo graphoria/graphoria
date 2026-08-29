@@ -244,7 +244,13 @@ export const handleGraphQLRequestFactory = (
       // are configuration, not caller input, so a page cap could only reject
       // the operator's own intent. Use `gql.operatorQuery` rather than passing
       // this by hand.
-      options?: { enforcePageLimits?: boolean },
+      //
+      // `timeoutMs` is the per-operation override only. Left undefined, each
+      // engine stays on its own default — the pool's on Postgres and SQL
+      // Server, QUERY_TIMEOUT_MS on MySQL, which has no pool-level route — so
+      // an ordinary caller query is bounded without the factory resolving
+      // anything.
+      options?: { enforcePageLimits?: boolean; timeoutMs?: number },
       // oxlint-disable-next-line typescript/no-explicit-any
     ): Promise<{ data: any }> => {
       const log = logger("graphql").child({ role: session?.role });
@@ -356,6 +362,7 @@ export const handleGraphQLRequestFactory = (
           resolved.allVariables,
           false,
           (options?.enforcePageLimits ?? true) ? pageLimits : null,
+          options?.timeoutMs,
         );
 
         const data = await Promise.all<object>(
@@ -365,6 +372,7 @@ export const handleGraphQLRequestFactory = (
               db,
               resolved.variables,
               resolved.allVariables as Record<string, string | number | boolean | null>,
+              options?.timeoutMs,
             ),
           ),
         );
@@ -431,8 +439,13 @@ export const handleGraphQLRequestFactory = (
    * the `gqlQuery` handed to operation hooks and handlers. Their text comes from
    * configuration, never from a caller, so page limits do not apply.
    */
-  const operatorQuery: typeof gql.handler = (query, variables, req, session) =>
-    gql.handler(query, variables, req, session, { enforcePageLimits: false });
+  const operatorQuery = (
+    query: Parameters<typeof gql.handler>[0],
+    variables?: Parameters<typeof gql.handler>[1],
+    req?: Parameters<typeof gql.handler>[2],
+    session?: Parameters<typeof gql.handler>[3],
+    timeoutMs?: number,
+  ) => gql.handler(query, variables, req, session, { enforcePageLimits: false, timeoutMs });
 
   return { ...gql, operatorQuery };
 };

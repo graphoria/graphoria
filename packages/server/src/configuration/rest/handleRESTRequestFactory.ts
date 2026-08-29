@@ -330,7 +330,7 @@ export const handleRESTRequestFactory = (
           // Execute the GraphQL request, then transform via afterRequest before
           // caching so hits and misses return the same shape.
           const result = await applyAfterRequest(
-            await gql.operatorQuery(queryAnalysis!, variables, req, session),
+            await gql.operatorQuery(queryAnalysis!, variables, req, session, route.timeout),
           );
 
           // Cache the (already transformed) result
@@ -344,7 +344,9 @@ export const handleRESTRequestFactory = (
       } else if (queryAnalysis) {
         // No caching for this route, execute normally
         return new S200(
-          await applyAfterRequest(await gql.operatorQuery(queryAnalysis, variables, req, session)),
+          await applyAfterRequest(
+            await gql.operatorQuery(queryAnalysis, variables, req, session, route.timeout),
+          ),
         );
       }
 
