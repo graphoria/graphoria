@@ -120,3 +120,85 @@ export const createRedisRateLimitStore = (
     },
   };
 };
+
+export type RateLimitSettings = {
+  max: number;
+  anonymousMax: number;
+  windowMs: number;
+  trustProxy: boolean;
+};
+
+type RoleRateLimit = { rateLimit?: { max: number; windowMs?: number } | undefined };
+
+export type RateLimiter = {
+  check(
+    session: { role?: string | undefined; sub?: string | undefined } | null,
+    address: string | undefined,
+  ): Promise<ConsumeResult>;
+};
+
+export type CreateRateLimiterOptions = {
+  settings: RateLimitSettings;
+  anonymousRole: string;
+  permissions?: Record<string, RoleRateLimit | undefined>;
+  store?: RateLimitStore;
+};
+
+// Attacker-controlled once RATE_LIMIT_TRUST_PROXY is on, and it ends up in a
+// store key, so it is capped before it gets there.
+const MAX_ADDRESS_LENGTH = 64;
+
+export const resolveClientAddress = (
+  req: Request,
+  server: { requestIP(req: Request): { address: string } | null } | undefined,
+  trustProxy: boolean,
+): string | undefined => {
+  if (trustProxy) {
+    const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    if (forwarded) return forwarded.slice(0, MAX_ADDRESS_LENGTH);
+  }
+
+  return server?.requestIP(req)?.address;
+};
+
+/**
+ * `undefined` when nothing is configured, so the caller can skip the wrapper
+ * entirely and the shipped default costs nothing per request.
+ */
+export const createRateLimiter = ({
+  settings,
+  anonymousRole,
+  permissions = {},
+  store = createMemoryRateLimitStore(),
+}: CreateRateLimiterOptions): RateLimiter | undefined => {
+  const configured =
+    settings.max > 0 ||
+    settings.anonymousMax > 0 ||
+    Object.values(permissions).some((permission) => (permission?.rateLimit?.max ?? 0) > 0);
+
+  if (!configured) return undefined;
+
+  const limitFor = (role: string) => {
+    const roleLimit = permissions[role]?.rateLimit;
+
+    return {
+      max: roleLimit?.max ?? (role === anonymousRole ? settings.anonymousMax : settings.max),
+      windowMs: roleLimit?.windowMs ?? settings.windowMs,
+    };
+  };
+
+  return {
+    check: async (session, address) => {
+      const role = session?.role ?? anonymousRole;
+      const { max, windowMs } = limitFor(role);
+
+      if (max === 0) return { allowed: true, retryAfterMs: 0 };
+
+      const sub = session?.sub;
+      const key =
+        sub && sub !== "anonymous" ? `rl:${role}:${sub}` : `rl:${role}:ip:${address ?? "unknown"}`;
+
+      return store.consume(key, max, max / windowMs, windowMs);
+    },
+  };
+};

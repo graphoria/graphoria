@@ -137,6 +137,13 @@ export const RolePermissionZod = z
       .union([z.array(z.string()), z.literal("ALL")])
       .optional()
       .default([]),
+    /** Request ceiling for this role, overriding RATE_LIMIT_MAX. 0 disables it */
+    rateLimit: z
+      .strictObject({
+        max: z.number().int().min(0),
+        windowMs: z.number().int().positive().optional(),
+      })
+      .optional(),
   })
   .default({
     tables: [],

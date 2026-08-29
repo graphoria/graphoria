@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
-import { createMemoryRateLimitStore, createRedisRateLimitStore } from "./rateLimit";
+import {
+  createMemoryRateLimitStore,
+  createRateLimiter,
+  createRedisRateLimitStore,
+  resolveClientAddress,
+} from "./rateLimit";
 
 const CAPACITY = 5;
 const WINDOW_MS = 1000;
@@ -207,5 +212,173 @@ describe("redis rate limit store", () => {
     await store.consume("k", CAPACITY, REFILL_PER_MS, WINDOW_MS);
 
     expect(warnings).toHaveLength(2);
+  });
+});
+
+const createSpyStore = () => {
+  const calls: { key: string; capacity: number; refillPerMs: number; ttlMs: number }[] = [];
+  return {
+    calls,
+    consume: async (key: string, capacity: number, refillPerMs: number, ttlMs: number) => {
+      calls.push({ key, capacity, refillPerMs, ttlMs });
+      return { allowed: true, retryAfterMs: 0 };
+    },
+  };
+};
+
+const settings = { max: 100, anonymousMax: 10, windowMs: 60_000, trustProxy: false };
+
+describe("createRateLimiter", () => {
+  it("is undefined when no limit is configured anywhere", () => {
+    expect(
+      createRateLimiter({
+        settings: { ...settings, max: 0, anonymousMax: 0 },
+        anonymousRole: "anonymous",
+        permissions: {},
+      }),
+    ).toBeUndefined();
+  });
+
+  it("exists when only a role declares a limit", () => {
+    expect(
+      createRateLimiter({
+        settings: { ...settings, max: 0, anonymousMax: 0 },
+        anonymousRole: "anonymous",
+        permissions: { anonymous: { rateLimit: { max: 5 } } },
+      }),
+    ).toBeDefined();
+  });
+
+  it("gives an authenticated role the global ceiling", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({ settings, anonymousRole: "anonymous", store })!;
+
+    await limiter.check({ role: "user", sub: "42" }, "1.2.3.4");
+
+    expect(store.calls[0]!.capacity).toBe(100);
+  });
+
+  it("gives the anonymous role its own ceiling", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({ settings, anonymousRole: "anonymous", store })!;
+
+    await limiter.check({ role: "anonymous", sub: "anonymous" }, "1.2.3.4");
+
+    expect(store.calls[0]!.capacity).toBe(10);
+  });
+
+  it("lets a role config override both env ceilings", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({
+      settings,
+      anonymousRole: "anonymous",
+      permissions: { user: { rateLimit: { max: 7 } }, anonymous: { rateLimit: { max: 3 } } },
+      store,
+    })!;
+
+    await limiter.check({ role: "user", sub: "42" }, "1.2.3.4");
+    await limiter.check({ role: "anonymous" }, "1.2.3.4");
+
+    expect(store.calls.map((c) => c.capacity)).toEqual([7, 3]);
+  });
+
+  it("lets a role config override the window", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({
+      settings,
+      anonymousRole: "anonymous",
+      permissions: { user: { rateLimit: { max: 10, windowMs: 1000 } } },
+      store,
+    })!;
+
+    await limiter.check({ role: "user", sub: "42" }, "1.2.3.4");
+
+    expect(store.calls[0]).toMatchObject({ refillPerMs: 10 / 1000, ttlMs: 1000 });
+  });
+
+  it("allows every request from a role whose ceiling is 0, without touching the store", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({
+      settings,
+      anonymousRole: "anonymous",
+      permissions: { service: { rateLimit: { max: 0 } } },
+      store,
+    })!;
+
+    const result = await limiter.check({ role: "service", sub: "42" }, "1.2.3.4");
+
+    expect(result.allowed).toBe(true);
+    expect(store.calls).toHaveLength(0);
+  });
+
+  it("keys an authenticated caller by role and subject", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({ settings, anonymousRole: "anonymous", store })!;
+
+    await limiter.check({ role: "user", sub: "42" }, "1.2.3.4");
+
+    expect(store.calls[0]!.key).toBe("rl:user:42");
+  });
+
+  it("keys an anonymous caller by address", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({ settings, anonymousRole: "anonymous", store })!;
+
+    await limiter.check({ role: "anonymous", sub: "anonymous" }, "1.2.3.4");
+
+    expect(store.calls[0]!.key).toBe("rl:anonymous:ip:1.2.3.4");
+  });
+
+  it("keys a caller with no session as anonymous", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({ settings, anonymousRole: "anonymous", store })!;
+
+    await limiter.check(null, "1.2.3.4");
+
+    expect(store.calls[0]).toMatchObject({ key: "rl:anonymous:ip:1.2.3.4", capacity: 10 });
+  });
+
+  it("still counts an anonymous caller whose address is unknown", async () => {
+    const store = createSpyStore();
+    const limiter = createRateLimiter({ settings, anonymousRole: "anonymous", store })!;
+
+    await limiter.check(null, undefined);
+
+    expect(store.calls[0]!.key).toBe("rl:anonymous:ip:unknown");
+  });
+});
+
+describe("resolveClientAddress", () => {
+  const request = (headers: Record<string, string> = {}) => new Request("http://x/", { headers });
+  const server = { requestIP: () => ({ address: "10.0.0.1" }) };
+
+  it("reads the socket address by default", () => {
+    expect(resolveClientAddress(request({ "x-forwarded-for": "9.9.9.9" }), server, false)).toBe(
+      "10.0.0.1",
+    );
+  });
+
+  it("reads the left-most forwarded address when the proxy is trusted", () => {
+    expect(
+      resolveClientAddress(request({ "x-forwarded-for": "9.9.9.9, 10.0.0.1" }), server, true),
+    ).toBe("9.9.9.9");
+  });
+
+  it("falls back to the socket address when the header is absent", () => {
+    expect(resolveClientAddress(request(), server, true)).toBe("10.0.0.1");
+  });
+
+  it("truncates an oversized forwarded value", () => {
+    const address = resolveClientAddress(
+      request({ "x-forwarded-for": "a".repeat(500) }),
+      server,
+      true,
+    );
+
+    expect(address!.length).toBeLessThanOrEqual(64);
+  });
+
+  it("is undefined when there is no server to ask", () => {
+    expect(resolveClientAddress(request(), undefined, false)).toBeUndefined();
   });
 });
