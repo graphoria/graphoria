@@ -4,6 +4,11 @@ Graphoria sits between untrusted clients and a database, and its role-based acce
 security boundary. Vulnerability reports are taken seriously and handled privately until a fix is
 available.
 
+What Graphoria defends, what it does not, and the tests behind each claim are set out in
+[docs/SECURITY_MODEL.md](./docs/SECURITY_MODEL.md). Read it before reporting: a behaviour listed
+there as a known gap is already public, and a behaviour it claims is defended and is not, is exactly
+what this policy is for.
+
 ## Supported versions
 
 Graphoria is pre-1.0. Only the most recent published release receives security fixes; there are no

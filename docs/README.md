@@ -16,6 +16,7 @@ Reference guides for configuring and running Graphoria. New here? Start with the
 | ------------------------------------------------ | --------------------------------------------------------------------- |
 | [Authentication](./AUTHENTICATION.md)            | JWT and PASETO strategies, argon2id passwords, refresh-token rotation |
 | [Permissions & Access Control](./PERMISSIONS.md) | RBAC, row-level filtering, session variables, ordering                |
+| [Security Model](./SECURITY_MODEL.md)            | Trust boundaries, what each credential grants, and the known gaps     |
 
 ## Data
 
