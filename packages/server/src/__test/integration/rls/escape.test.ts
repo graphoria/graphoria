@@ -387,6 +387,76 @@ describe.skipIf(!integrationEnabled)("rls · escape attempts", () => {
         expect(fields).not.toContain(tasks);
       });
 
+      it("delivers only the caller's own rows to a database subscription", async () => {
+        // A subscription is a query like any other: the role filter has to
+        // reach the rows it pushes, not only the rows a POST returns.
+        const client = await started.context.subscribe(`subscription { ${tasks} { id user_id } }`, {
+          token: await started.context.tokenFor("ana"),
+        });
+
+        try {
+          const data = await client.nextData<Record<string, Rows>>();
+          expect(idsOf(data[tasks])).toEqual(ANA_TASKS);
+        } finally {
+          client.close();
+        }
+      });
+
+      it("never serves one session's subscription rows to another session", async () => {
+        // Subscribers are grouped so several clients can share one poller. The
+        // group key therefore decides who is served whose rows: `admin` is
+        // unfiltered and subscribes first, and `ana` asks for the same document
+        // immediately after. She must get her own two rows, not the ten the
+        // poller `admin` created is already holding.
+        const adminClient = await started.context.subscribe(
+          `subscription { ${tasks} { id user_id } }`,
+          { token: await started.context.tokenFor("admin") },
+        );
+
+        try {
+          expect(await adminClient.nextData<Record<string, Rows>>()).toBeDefined();
+
+          const anaClient = await started.context.subscribe(
+            `subscription { ${tasks} { id user_id } }`,
+            { token: await started.context.tokenFor("ana") },
+          );
+
+          try {
+            const ids = idsOf((await anaClient.nextData<Record<string, Rows>>())[tasks]);
+
+            expect(ids).toEqual(ANA_TASKS);
+            expect(ids.filter((id) => UMBRELLA_TASKS.includes(id))).toEqual([]);
+          } finally {
+            anaClient.close();
+          }
+        } finally {
+          adminClient.close();
+        }
+      });
+
+      it("never serves a subscription's rows to a caller who asked for different ones", async () => {
+        // Same caller, same document, different variable. Nothing about the
+        // role separates these two, so only the arguments can.
+        const query = `subscription Mine($id: Int!) { ${tasks}(where: { id: { eq: $id } }) { id } }`;
+        const token = await started.context.tokenFor("ana");
+
+        const first = await started.context.subscribe(query, { token, variables: { id: 1 } });
+
+        try {
+          expect(idsOf((await first.nextData<Record<string, Rows>>())[tasks])).toEqual([1]);
+
+          const second = await started.context.subscribe(query, { token, variables: { id: 6 } });
+
+          try {
+            expect(idsOf((await second.nextData<Record<string, Rows>>())[tasks])).toEqual([6]);
+          } finally {
+            second.close();
+          }
+        } finally {
+          first.close();
+        }
+      });
+
       // ── Missing session variable ──────────────────────────────────────────
 
       it("fails closed when a filter names a claim the token does not carry", async () => {

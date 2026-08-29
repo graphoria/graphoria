@@ -15,10 +15,26 @@ export const createDatabaseSubscriptionStrategy = (): SubscriptionStrategy => ({
   source: EntitySource.TABLE,
 
   getSubscriptionKey(context) {
-    const { analysis } = context;
+    const { analysis, field, session, variables } = context;
     const operation = analysis.operations[0];
-    // Use operation name as the base key (existing behavior)
-    return operation.name ?? operation.fields[0]?.name ?? "unknown";
+    const base = operation.name ?? operation.fields[0]?.name ?? "unknown";
+
+    // Every part of this is load-bearing. A group shares one poller, and every
+    // client joined to it is served that poller's rows — so two callers may
+    // only share a key when the query they asked for is the same query,
+    // resolved against the same session. The role and the subject carry the row
+    // filter; the variables carry everything the caller chose; the selections
+    // carry the shape. Two keys that differ where they should not merely cost a
+    // second poller, but two that match where they should not is a cross-tenant
+    // read.
+    return [
+      base,
+      session.role ?? "",
+      session.sub ?? "",
+      field.alias ?? "",
+      JSON.stringify(field.selections),
+      JSON.stringify(variables),
+    ].join("\u0000");
   },
 
   async subscribe(context: SubscriptionContext): Promise<SubscriptionResult> {

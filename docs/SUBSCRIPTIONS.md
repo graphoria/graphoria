@@ -85,10 +85,14 @@ A subscription is governed by the role established at `connection_init`. If the 
 
 Note that authentication happens once per WebSocket — if the client's token expires mid-stream, the existing subscriptions continue. To force re-authentication, the client should disconnect and reconnect after refreshing.
 
+Row-level filters apply to a table subscription exactly as they apply to a query: the rows pushed to a subscriber are the rows that role and session may read, resolved from the same `permissions.<role>.tables.<table>.filter` and the same `$session.*` values. Subscribers asking for the identical document share one poller, and that sharing is scoped to the caller — role, subject, arguments, and selections all take part in the grouping, so two callers are only ever served the same rows when they asked the same question as the same person.
+
+Queue subscriptions are the exception, and it is a difference in kind: their payload is the broker message, not a row Graphoria read, so there is nothing to filter it against. Access is granted per role through `permissions.<role>.queues`, and every subscriber granted the queue receives the whole message. Do not publish a message to a queue that fans out to a role which may not read all of it.
+
 ## Patterns and pitfalls
 
 - **Backpressure** — Graphoria currently has no built-in backpressure for slow consumers. A subscriber that processes events slowly may drop messages. If your stream is high-volume, terminate slow clients aggressively or aggregate events before sending.
 - **Heartbeats** — let the client drive ping/pong. The server only responds to pings; it doesn't initiate them.
 - **Multiple subscriptions on one socket** — each `subscribe` message has a unique `id`. Multiple concurrent subscriptions multiplex over the same WebSocket; cleaning one up doesn't affect others.
 - **Reconnection** — the server doesn't rewind. After a reconnect, a client only sees events delivered after `connection_ack`. Persist offsets (Kafka) or use durable queues + manual ack (RabbitMQ) if you need at-least-once delivery across reconnects.
-- **Broker-driven, not query-driven** — every subscription is sourced from a queue. To drive subscriptions from internal events (e.g. database changes, cron ticks), publish to a queue from the relevant code path and subscribe to that.
+- **Table subscriptions poll** — a subscription on a table re-runs its query on an interval and pushes when the result changes, so latency is bounded by the poll interval rather than by the write. For event-driven delivery, publish to a queue from the relevant code path and subscribe to that instead.

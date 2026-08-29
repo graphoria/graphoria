@@ -73,6 +73,30 @@ export type IntegrationContext = {
   rest: (path: string, init?: RequestInit & RequestOptions) => Promise<Response>;
   /** Runs raw SQL against the engine, bypassing Graphoria entirely. */
   sql: <T = Record<string, unknown>>(statement: string) => Promise<T[]>;
+  /** Opens a graphql-ws connection, authenticates it, and starts one subscription. */
+  subscribe: (query: string, options?: SubscribeOptions) => Promise<SubscriptionClient>;
+};
+
+export type SubscribeOptions = RequestOptions & {
+  variables?: Record<string, unknown>;
+  /** graphql-ws operation id. Only matters when one socket runs several. */
+  id?: string;
+};
+
+export type SubscriptionMessage = {
+  id?: string;
+  type: string;
+  payload?: unknown;
+};
+
+export type SubscriptionClient = {
+  /** Every message the server has sent, in order. */
+  received: SubscriptionMessage[];
+  /** The next message the server sends, or a rejection once `timeoutMs` passes. */
+  next: (timeoutMs?: number) => Promise<SubscriptionMessage>;
+  /** The `data` object of the next `next` message. Rejects on an `error` message. */
+  nextData: <T = Record<string, unknown>>(timeoutMs?: number) => Promise<T>;
+  close: () => void;
 };
 
 export type WithServerOptions = {
@@ -197,10 +221,93 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
       body: JSON.stringify({ query, variables }),
     });
 
+  /**
+   * A graphql-ws client that is connected, acknowledged and subscribed by the
+   * time it is handed back, so a test never has to sleep to find out whether
+   * the socket came up. Messages are queued rather than dropped: a subscription
+   * that answers before `next()` is called still delivers.
+   */
+  const subscribe = async (
+    query: string,
+    options: SubscribeOptions = {},
+  ): Promise<SubscriptionClient> => {
+    const socket = new WebSocket(`ws://localhost:${server.port}${prefixes.graphql}`);
+    const received: SubscriptionMessage[] = [];
+    const queue: SubscriptionMessage[] = [];
+    const waiting: ((message: SubscriptionMessage) => void)[] = [];
+
+    socket.onmessage = (event) => {
+      const message = JSON.parse(String(event.data)) as SubscriptionMessage;
+      received.push(message);
+      const waiter = waiting.shift();
+      if (waiter) waiter(message);
+      else queue.push(message);
+    };
+
+    const next = (timeoutMs = 10_000): Promise<SubscriptionMessage> => {
+      const queued = queue.shift();
+      if (queued) return Promise.resolve(queued);
+
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          const index = waiting.indexOf(settle);
+          if (index >= 0) waiting.splice(index, 1);
+          reject(new Error(`no subscription message within ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        const settle = (message: SubscriptionMessage) => {
+          clearTimeout(timer);
+          resolve(message);
+        };
+
+        waiting.push(settle);
+      });
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      socket.onopen = () => resolve();
+      socket.onerror = () => reject(new Error("websocket failed to open"));
+    });
+
+    socket.send(
+      JSON.stringify({
+        type: "connection_init",
+        payload: {
+          ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+          ...(options.admin ? { headers: { "x-admin-secret": process.env["ADMIN_SECRET"]! } } : {}),
+        },
+      }),
+    );
+
+    const ack = await next();
+    if (ack.type !== "connection_ack") {
+      throw new Error(`expected connection_ack, got ${JSON.stringify(ack)}`);
+    }
+
+    socket.send(
+      JSON.stringify({
+        id: options.id ?? "1",
+        type: "subscribe",
+        payload: { query, variables: options.variables },
+      }),
+    );
+
+    const nextData = async <T = Record<string, unknown>>(timeoutMs?: number): Promise<T> => {
+      const message = await next(timeoutMs);
+      if (message.type !== "next") {
+        throw new Error(`expected a next message, got ${JSON.stringify(message)}`);
+      }
+      return (message.payload as { data: T }).data;
+    };
+
+    return { received, next, nextData, close: () => socket.close() };
+  };
+
   const context: IntegrationContext = {
     engine,
     server,
     gqlRaw,
+    subscribe,
     gql: async (query, variables, requestOptions) =>
       (await gqlRaw(query, variables, requestOptions)).json(),
     rest: (path, init) =>

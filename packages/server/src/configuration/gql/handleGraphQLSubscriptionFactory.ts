@@ -1,4 +1,5 @@
 import type { ServerWebSocket, WebSocketHandler } from "bun";
+import type { AnalysisResult } from "../../analyzeQuery/types";
 import type { AnalyzedConfiguration } from "../../configuration";
 import type { SubscriptionContext } from "../../subscriptions";
 import type { SessionContext } from "../../utils/sessionVariables";
@@ -146,15 +147,32 @@ const handleGraphQLSubscriptionFactory = (
           return;
         }
 
+        // The SQL builders read `$n` from a definition's index in the
+        // operation's own variable list, so the analysis handed to them has to
+        // be the resolved one — the raw analysis knows nothing of the statics
+        // that binding a role filter mints. Same construction as the HTTP path.
+        const resolvedAnalysis: AnalysisResult = {
+          ...analysis,
+          operations: [
+            {
+              ...operation,
+              fields: resolved.fields,
+              variables: resolved.variables,
+            },
+            ...analysis.operations.slice(1),
+          ],
+        };
+
         // Build context for the strategy
         const context: SubscriptionContext = {
           ws,
           subscriptionId: id,
-          analysis,
+          analysis: resolvedAnalysis,
           field: resolved.fields[0],
           variableDefinitions: resolved.variables,
           variables: resolved.allVariables,
           schemaEntity,
+          session,
           eventEmitter: queryEventEmitter,
         };
 
