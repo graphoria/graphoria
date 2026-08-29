@@ -1,5 +1,7 @@
 import { LRUCache } from "lru-cache";
 
+import { logger } from "../logging";
+
 export type ConsumeResult = { allowed: boolean; retryAfterMs: number };
 
 /**
@@ -48,6 +50,73 @@ export const createMemoryRateLimitStore = ({
 
       buckets.set(key, { tokens: tokens - 1, ts: nowMs }, { ttl: ttlMs });
       return { allowed: true, retryAfterMs: 0 };
+    },
+  };
+};
+
+export type RateLimitRedisClient = {
+  send(command: string, args: string[]): Promise<unknown>;
+};
+
+type RateLimitLogger = { warn(obj: object, msg: string): void };
+
+export type RedisRateLimitStoreOptions = {
+  now?: () => number;
+  log?: RateLimitLogger;
+};
+
+// KEYS[1] = bucket key, ARGV = capacity, refillPerMs, nowMs, ttlMs. Refill,
+// read and write have to happen inside Redis: doing them from here would race
+// between workers, which is the whole reason for reaching for Redis at all.
+const CONSUME_SCRIPT = `
+local b = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(b[1]) or tonumber(ARGV[1])
+local ts = tonumber(b[2]) or tonumber(ARGV[3])
+tokens = math.min(tonumber(ARGV[1]), tokens + (tonumber(ARGV[3]) - ts) * tonumber(ARGV[2]))
+local allowed = 0
+if tokens >= 1 then tokens = tokens - 1; allowed = 1 end
+redis.call('HMSET', KEYS[1], 'tokens', tokens, 'ts', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ARGV[4])
+return { allowed, tostring(tokens) }
+`;
+
+export const createRedisRateLimitStore = (
+  client: RateLimitRedisClient,
+  { now = Date.now, log = logger("rate-limit") }: RedisRateLimitStoreOptions = {},
+): RateLimitStore => {
+  let lastWarnMs: number | undefined;
+
+  return {
+    consume: async (key, capacity, refillPerMs, ttlMs) => {
+      const nowMs = now();
+
+      try {
+        const reply = (await client.send("EVAL", [
+          CONSUME_SCRIPT,
+          "1",
+          key,
+          String(capacity),
+          String(refillPerMs),
+          String(nowMs),
+          String(ttlMs),
+        ])) as [number | string, string];
+
+        const allowed = Number(reply[0]) === 1;
+        const tokens = Number(reply[1]);
+
+        return allowed
+          ? { allowed: true, retryAfterMs: 0 }
+          : { allowed: false, retryAfterMs: Math.ceil((1 - tokens) / refillPerMs) };
+      } catch (error) {
+        // A dead cache must not take the API down, and a dead cache must not
+        // produce a log line per request either — the flood would outlast the
+        // outage.
+        if (lastWarnMs === undefined || nowMs - lastWarnMs >= ttlMs) {
+          lastWarnMs = nowMs;
+          log.warn({ err: error }, "rate limit store unavailable, allowing the request");
+        }
+        return { allowed: true, retryAfterMs: 0 };
+      }
     },
   };
 };
