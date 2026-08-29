@@ -18,11 +18,18 @@ import { getAgent, instantiateAI } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
 import { instantiateCronJobs } from "./singletons/cron";
 import { disconnectDatabases, instantiateDatabasesConnections } from "./singletons/databases";
+import { getCacheRedisClient } from "./singletons/cache/redisClient";
 import { env } from "./singletons/env";
 import { setQueryTimeoutMs } from "./singletons/queryTimeout";
 import { instantiateQueues } from "./singletons/queues";
 import { ConfigurationZod } from "./types/zod/configuration";
-import { S200, S400, S401, S404 } from "./utils/responses";
+import {
+  createMemoryRateLimitStore,
+  createRateLimiter,
+  createRedisRateLimitStore,
+  resolveClientAddress,
+} from "./utils/rateLimit";
+import { S200, S400, S401, S404, S429 } from "./utils/responses";
 import { writeSchema } from "./utils/writeSchema";
 import { logger, configureLogging } from "./logging";
 
@@ -227,18 +234,56 @@ const createGraphQLServer = async (env: Env) => {
 
   const consoleHtml = await renderPlayground("../playgrounds/console/index.html", {});
 
+  const rateLimiter = createRateLimiter({
+    settings: env.rateLimit,
+    anonymousRole: env.anonymousRole,
+    permissions: projectConfiguration.auth?.permissions,
+    store: () =>
+      env.cache.store === "redis"
+        ? createRedisRateLimitStore(getCacheRedisClient())
+        : createMemoryRateLimitStore(),
+  });
+
   // Helper to get role-based handlers
-  const getRoleHandlers = async (req: Request) => {
+  const getRoleHandlers = async (req: Request, server?: Bun.Server<unknown>) => {
     const session = await getTokenService().verifyTokenAndGetSession(
       req.headers.get(env.authorizationHeader),
       req.headers.get(env.admin.header),
     );
+
+    // The limit needs the role, and the role costs a token verification plus a
+    // revocation lookup — so it is spent here, once, rather than again inside a
+    // wrapper.
+    const limit = await rateLimiter?.check(
+      session,
+      resolveClientAddress(req, server, env.rateLimit.trustProxy),
+    );
+
     return {
       role: session.role!,
       session,
+      limit,
       ...analyzedConfiguration.roles[session.role!].handlers,
     };
   };
+
+  /**
+   * For the entry points that have no session to key on: the websocket upgrade
+   * (the token arrives in `connection_init`, after the upgrade) and MCP. They
+   * are keyed by address against the anonymous ceiling.
+   */
+  const withRateLimit =
+    <T>(handler: (req: BunRequest, server: Bun.Server<unknown>) => T | Promise<T>) =>
+    async (req: BunRequest, server: Bun.Server<unknown>) => {
+      const limit = await rateLimiter?.check(
+        null,
+        resolveClientAddress(req, server, env.rateLimit.trustProxy),
+      );
+
+      if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+      return handler(req, server);
+    };
 
   // Create routes map with all handlers
   const routes: RoutesMap = {};
@@ -274,7 +319,7 @@ const createGraphQLServer = async (env: Env) => {
   // GraphQL endpoint
   routes[prefixes.graphql] = {
     ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-    GET: async (req: Request, server: Bun.Server<unknown>) => {
+    GET: withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
       try {
         if (req.headers.get("upgrade") === "websocket") {
           const success = server.upgrade(req, {
@@ -286,10 +331,12 @@ const createGraphQLServer = async (env: Env) => {
       } catch (error) {
         return new S400({ errors: [{ message: (error as Error)?.message }] });
       }
-    },
-    POST: async (req: BunRequest) => {
+    }),
+    POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
       try {
-        const { gql, session } = await getRoleHandlers(req);
+        const { gql, session, limit } = await getRoleHandlers(req, server);
+        if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
         const { query, variables } = await req.json();
 
         if (gql.isIntrospectionQuery(query)) return new S200(gql.introspectionResult);
@@ -327,7 +374,7 @@ const createGraphQLServer = async (env: Env) => {
 
     if (mcpEnabled) {
       const mcpPath = `${env.prefix}${env.ai?.mcp?.endpoint ?? projectConfiguration.ai?.endpoint ?? "/ai"}`;
-      routes[mcpPath] = createMCPRoutes(analyzedConfiguration, {
+      const mcpRoutes = createMCPRoutes(analyzedConfiguration, {
         ...(env.ai?.mcp ?? {}),
         name: projectConfiguration.name,
         version: projectConfiguration.version,
@@ -335,15 +382,20 @@ const createGraphQLServer = async (env: Env) => {
         adminSecret: env.admin.secret,
         adminSecretHeader: env.admin.header,
       });
+
+      routes[mcpPath] = Object.fromEntries(
+        Object.entries(mcpRoutes).map(([method, handler]) => [method, withRateLimit(handler)]),
+      );
     }
 
     if (env.ai?.restEnabled) {
       const aiPath = `${env.prefix}/rest${projectConfiguration.ai.endpoint ?? "/ai"}`;
       routes[aiPath] = {
         ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-        POST: async (req: BunRequest) => {
+        POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
           try {
-            const { role } = await getRoleHandlers(req);
+            const { role, limit } = await getRoleHandlers(req, server);
+            if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
             if (role !== env.superadmin.role) return new S404({ error: "Not Found" });
 
             const { prompt } = await req.json();
@@ -362,11 +414,12 @@ const createGraphQLServer = async (env: Env) => {
   }
 
   // REST API endpoint
-  routes[`${prefixes.rest}/*`] = async (req: BunRequest) => {
+  routes[`${prefixes.rest}/*`] = async (req: BunRequest, server: Bun.Server<unknown>) => {
     if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
 
     try {
-      const { rest, session } = await getRoleHandlers(req);
+      const { rest, session, limit } = await getRoleHandlers(req, server);
+      if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
 
       const urlParsed = new URL(req.url);
 

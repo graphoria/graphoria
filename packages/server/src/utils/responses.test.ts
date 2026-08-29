@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { ClientResponse, S200, S400, S401, S404, S500 } from "./responses";
+import { ClientResponse, S200, S400, S401, S404, S429, S500 } from "./responses";
 
 describe("ClientResponse", () => {
   it("serializes body as JSON", async () => {
@@ -42,5 +42,31 @@ describe("status helpers", () => {
   it("preserves the body on a status helper", async () => {
     const res = new S401({ errors: ["bad"] });
     expect(await res.json()).toEqual({ errors: ["bad"] });
+  });
+});
+
+describe("S429", () => {
+  it("sets status 429", () => {
+    expect(new S429(1000).status).toBe(429);
+  });
+
+  it("states the wait in whole seconds, rounded up", () => {
+    expect(new S429(1500).headers.get("Retry-After")).toBe("2");
+  });
+
+  it("never tells a caller to retry immediately", () => {
+    expect(new S429(0).headers.get("Retry-After")).toBe("1");
+  });
+
+  it("says only that the limit was exceeded", async () => {
+    expect(await new S429(1000).json()).toEqual({
+      errors: [{ message: "Rate limit exceeded" }],
+    });
+  });
+
+  it("leaks nothing about the configured ceiling", () => {
+    const res = new S429(1000);
+
+    expect([...res.headers.keys()].filter((h) => h.startsWith("x-ratelimit"))).toEqual([]);
   });
 });

@@ -141,7 +141,9 @@ export type CreateRateLimiterOptions = {
   settings: RateLimitSettings;
   anonymousRole: string;
   permissions?: Record<string, RoleRateLimit | undefined>;
-  store?: RateLimitStore;
+  /** A factory is only called once a limit is configured, so a disabled
+   * limiter never constructs a store — or a Redis client. */
+  store?: RateLimitStore | (() => RateLimitStore);
 };
 
 // Attacker-controlled once RATE_LIMIT_TRUST_PROXY is on, and it ends up in a
@@ -169,7 +171,7 @@ export const createRateLimiter = ({
   settings,
   anonymousRole,
   permissions = {},
-  store = createMemoryRateLimitStore(),
+  store,
 }: CreateRateLimiterOptions): RateLimiter | undefined => {
   const configured =
     settings.max > 0 ||
@@ -177,6 +179,9 @@ export const createRateLimiter = ({
     Object.values(permissions).some((permission) => (permission?.rateLimit?.max ?? 0) > 0);
 
   if (!configured) return undefined;
+
+  const resolvedStore =
+    typeof store === "function" ? store() : (store ?? createMemoryRateLimitStore());
 
   const limitFor = (role: string) => {
     const roleLimit = permissions[role]?.rateLimit;
@@ -198,7 +203,7 @@ export const createRateLimiter = ({
       const key =
         sub && sub !== "anonymous" ? `rl:${role}:${sub}` : `rl:${role}:ip:${address ?? "unknown"}`;
 
-      return store.consume(key, max, max / windowMs, windowMs);
+      return resolvedStore.consume(key, max, max / windowMs, windowMs);
     },
   };
 };
