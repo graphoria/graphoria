@@ -67,6 +67,42 @@ type ConfigurationInput = {
 
 ---
 
+## Boot-time validation
+
+The configuration is validated in two passes, both of which stop the server from
+starting rather than letting it come up misconfigured.
+
+**Shape**, before anything connects: an unknown key is rejected, so a typo in a
+key name fails immediately instead of being dropped.
+
+**References**, once the databases have been introspected: every name the
+configuration points at is resolved against what exists, and any that resolve to
+nothing are reported together with their config path and the closest name that
+does exist.
+
+| Reference                                               | Resolved against                             |
+| ------------------------------------------------------- | -------------------------------------------- |
+| `auth.permissions.<role>.tables` keys                   | introspected tables and views                |
+| `…tables.<table>.columns`, `filter` keys, `orderBy`     | that table's columns, relations for nesting  |
+| `auth.permissions.<role>.storedProcedures`              | introspected stored procedures               |
+| `auth.permissions.<role>.queues`                        | `queues[].name`                              |
+| `auth.permissions.<role>.operations`                    | `operations` keys                            |
+| `auth.permissions.<role>.remoteSchemas` / `remoteREST`  | `remoteSchemas[].name` / `remoteREST[].name` |
+| `queues[].publishers` / `subscribers` `.topic`          | that queue's `topics` keys                   |
+| `databases[].schema.excludedTables` and `database` keys | that database's tables and views             |
+
+```
+Configuration references 2 names that do not exist:
+  - auth.permissions.user.tables.orderz — no table or view named "orderz" (did you mean "orders"?)
+  - queues[0].publishers.placed.topic — no topic named "order" (did you mean "orders"?)
+```
+
+This exists because these names all fail closed on their own: a permission
+naming a table that is not there drops the entry, so the rule never applies and
+nothing says so.
+
+---
+
 ## Databases
 
 Each entry in the `databases` array configures a database connection. The `type` field determines the available connection types.
@@ -193,6 +229,10 @@ type TableSchemaConfig = {
   columnDescriptions?: Record<string, string>; // Overrides column descriptions, keyed by column name
 };
 ```
+
+`excludedTables` matches the table name in any case. `database` keys must match
+exactly, because two tables can differ only in case and an override has to pick
+one of them. Both are resolved at boot — see [Boot-time validation](#boot-time-validation).
 
 #### Description overrides
 

@@ -489,6 +489,28 @@ describe("getDatabasesStructure", () => {
     expect(result).toEqual(["auth_user"]);
   });
 
+  it("reports every introspected table name, including the ones it then drops", async () => {
+    const excluding = {
+      name: "main",
+      type: "pg",
+      fieldNaming: "{schema}_{name}",
+      schema: { excludedTables: ["public_secrets"], database: {} },
+    } as unknown as Database;
+
+    const result = await getDatabasesStructure(
+      [excluding],
+      { enabled: true } as unknown as Auth,
+      fetcher([table("auth", "user"), table("public", "posts"), table("public", "secrets")]),
+    );
+
+    // An excluded name is gone from `tables` by construction, so this is the
+    // only view a config check can resolve `excludedTables` against.
+    expect(result.tables.map((t) => t.resolverName)).toEqual(["public_posts"]);
+    expect(result.tableNamesByDatabase).toEqual({
+      main: ["auth_user", "public_posts", "public_secrets"],
+    });
+  });
+
   describe("schema overrides", () => {
     // Fills the four keys getDatabasesStructure reads off each table override so
     // tests only spell out the one they exercise.
@@ -516,6 +538,15 @@ describe("getDatabasesStructure", () => {
       const out = await getTables(
         [table("public", "posts"), table("public", "secrets")],
         dbWith({}, ["public_secrets"]),
+      );
+
+      expect(out.map((t) => t.resolverName)).toEqual(["public_posts"]);
+    });
+
+    it("excludes a table whatever case schema.excludedTables names it in", async () => {
+      const out = await getTables(
+        [table("public", "posts"), table("public", "secrets")],
+        dbWith({}, ["Public_Secrets"]),
       );
 
       expect(out.map((t) => t.resolverName)).toEqual(["public_posts"]);

@@ -28,6 +28,10 @@ export const getDatabasesStructure = async (
 ) => {
   const entities: TableResolver[] = [];
   const enhancedStoredProcedures: ProcedureResolver[] = [];
+  // Taken before the exclusion and auth-table filters below, because that is the
+  // only point where a name the config excludes is still visible. Resolving
+  // `schema.excludedTables` against `entities` could never succeed.
+  const tableNamesByDatabase: Record<string, string[]> = {};
 
   // The auth user table holds the password hash and must never be served via
   // the generated API. Its resolver key matches t.schemaName, which is always
@@ -39,10 +43,17 @@ export const getDatabasesStructure = async (
   for (const db of databases) {
     const { tables, storedProcedures } = await fetchStructure(db);
 
+    // Every other name comparison in this file folds case. This one used not to,
+    // and it is the one where a mismatch fails open: excludedTables is a
+    // do-not-serve list, so a name spelled in the wrong case served the table.
+    const excluded = new Set((db.schema?.excludedTables ?? []).map((name) => name.toLowerCase()));
+
+    tableNamesByDatabase[db.name] = tables.map((t) => t.schemaName);
+
     const tablesToAdd = tables
       .reduce<Tables>((acc, t) => {
         if (authUserKey && t.schemaName === authUserKey) return acc;
-        if (db.schema?.excludedTables.includes(t.schemaName)) return acc;
+        if (excluded.has(t.schemaName.toLowerCase())) return acc;
 
         const tableOverride = db.schema?.database[t.schemaName];
 
@@ -150,7 +161,7 @@ export const getDatabasesStructure = async (
     enhancedStoredProcedures.push(...storedProceduresToAdd);
   }
 
-  return { tables: entities, storedProcedures: enhancedStoredProcedures };
+  return { tables: entities, storedProcedures: enhancedStoredProcedures, tableNamesByDatabase };
 };
 
 export type EntitiesOfRole = {

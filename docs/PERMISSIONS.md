@@ -242,6 +242,29 @@ anonymous: {
 - Filters are applied server-side — clients cannot bypass them
 - Role-based filters are AND-ed with user-provided `where` clauses
 - Missing session variables throw clear errors at runtime
+- Every name a permission uses is resolved at boot — see below
+
+### Names are checked at boot
+
+A permission that names something which does not exist fails closed: the role
+simply loses the entity, and the rule you wrote does not apply. That is safe but
+silent, so the server resolves every name in `auth.permissions` while it starts
+and refuses to boot if any of them resolves to nothing:
+
+- `tables` keys, and the `columns`, `filter` and `orderBy` inside each
+- `storedProcedures`, `queues`, `operations`, `remoteSchemas`, `remoteREST`
+
+Nested relation filters are followed into the related table, so a column named
+one level down is checked too. Every unresolved name is reported at once, with
+the config path holding it and the closest name that does exist:
+
+```
+Configuration references 2 names that do not exist:
+  - auth.permissions.user.tables.orderz — no table or view named "orderz" (did you mean "orders"?)
+  - auth.permissions.user.tables.orders.filter.usr_id — no column on table "orders" named "usr_id" (did you mean "user_id"?)
+```
+
+Table and column names resolve case-insensitively, as they do at query time.
 
 ## Migration Guide
 
