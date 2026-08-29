@@ -40,6 +40,10 @@ export const EnvZod = z
     DEFAULT_PAGE_SIZE: z.coerce.number().int().min(0).default(100),
     MAX_PAGE_SIZE: z.coerce.number().int().min(0).default(1000),
     QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).default(10000),
+    RATE_LIMIT_MAX: z.coerce.number().int().min(0).default(0),
+    RATE_LIMIT_ANONYMOUS_MAX: z.coerce.number().int().min(0).default(0),
+    RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
+    RATE_LIMIT_TRUST_PROXY: z.stringbool().default(false),
     AI_ENABLED: z.stringbool().optional(),
     AI_GRAPHQL_ENABLED: z.stringbool().default(true),
     AI_REST_ENABLED: z.stringbool().default(true),
@@ -86,6 +90,12 @@ export const EnvZod = z
       localKey: env.PASETO_LOCAL_KEY,
       secretKey: env.PASETO_SECRET_KEY,
       publicKey: env.PASETO_PUBLIC_KEY,
+    },
+    rateLimit: {
+      max: env.RATE_LIMIT_MAX,
+      anonymousMax: env.RATE_LIMIT_ANONYMOUS_MAX,
+      windowMs: env.RATE_LIMIT_WINDOW_MS,
+      trustProxy: env.RATE_LIMIT_TRUST_PROXY,
     },
     cache: {
       store: env.CACHE_STORE,

@@ -131,3 +131,54 @@ describe("EnvZod QUERY_TIMEOUT_MS", () => {
     expect(() => EnvZod.parse({ ...baseEnv, QUERY_TIMEOUT_MS: "-1" })).toThrow();
   });
 });
+
+describe("EnvZod RATE_LIMIT_*", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("ships off, for both authenticated and anonymous callers", () => {
+    const env = EnvZod.parse(baseEnv);
+
+    expect(env.rateLimit.max).toBe(0);
+    expect(env.rateLimit.anonymousMax).toBe(0);
+  });
+
+  it("defaults the window to a minute", () => {
+    expect(EnvZod.parse(baseEnv).rateLimit.windowMs).toBe(60_000);
+  });
+
+  it("coerces the string forms", () => {
+    const env = EnvZod.parse({
+      ...baseEnv,
+      RATE_LIMIT_MAX: "600",
+      RATE_LIMIT_ANONYMOUS_MAX: "60",
+      RATE_LIMIT_WINDOW_MS: "30000",
+    });
+
+    expect(env.rateLimit).toMatchObject({ max: 600, anonymousMax: 60, windowMs: 30_000 });
+  });
+
+  it("trusts the socket address unless told otherwise", () => {
+    expect(EnvZod.parse(baseEnv).rateLimit.trustProxy).toBe(false);
+  });
+
+  it('parses the string "false" for RATE_LIMIT_TRUST_PROXY', () => {
+    expect(EnvZod.parse({ ...baseEnv, RATE_LIMIT_TRUST_PROXY: "false" }).rateLimit.trustProxy).toBe(
+      false,
+    );
+    expect(EnvZod.parse({ ...baseEnv, RATE_LIMIT_TRUST_PROXY: "true" }).rateLimit.trustProxy).toBe(
+      true,
+    );
+  });
+
+  it("rejects a negative limit", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, RATE_LIMIT_MAX: "-1" })).toThrow();
+    expect(() => EnvZod.parse({ ...baseEnv, RATE_LIMIT_ANONYMOUS_MAX: "-1" })).toThrow();
+  });
+
+  it("rejects a window of zero", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, RATE_LIMIT_WINDOW_MS: "0" })).toThrow();
+  });
+});
