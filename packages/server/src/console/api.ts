@@ -2,6 +2,7 @@ import type { TokenService } from "../authentication/types";
 import type { AnalyzedConfiguration } from "../configuration";
 import type { Configuration } from "../types/configuration";
 import type { Env } from "../types/env";
+import type { RateLimiter } from "../utils/rateLimit";
 import type { BunRequest, SQL } from "bun";
 import type { ConnectionPool } from "mssql";
 
@@ -10,7 +11,8 @@ import { getTags } from "../configuration/rest/generateOpenAPI";
 import { getCronJobs } from "../singletons/cron";
 import { databasesConnections } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
-import { S200, S400, S401, S404 } from "../utils/responses";
+import { resolveClientAddress } from "../utils/rateLimit";
+import { S200, S400, S401, S404, S429 } from "../utils/responses";
 
 type ConsoleRoutesFactoryOptions = {
   env: Env;
@@ -19,9 +21,15 @@ type ConsoleRoutesFactoryOptions = {
   projectConfiguration: Configuration;
   analyzedConfiguration: AnalyzedConfiguration;
   tokenService: TokenService;
+  rateLimiter?: RateLimiter | undefined;
 };
 
-type ConsoleRouteHandler = (req: BunRequest) => Response | Promise<Response>;
+// Bun hands a route handler the server as its second argument; the parameter is
+// optional only because the type is also used for handlers that ignore it.
+type ConsoleRouteHandler = (
+  req: BunRequest,
+  server?: Bun.Server<unknown>,
+) => Response | Promise<Response>;
 
 const PING_TIMEOUT_MS = 2000;
 
@@ -55,6 +63,7 @@ export const consoleRoutesFactory = ({
   projectConfiguration,
   analyzedConfiguration,
   tokenService,
+  rateLimiter,
 }: ConsoleRoutesFactoryOptions): Record<string, Record<string, ConsoleRouteHandler>> => {
   const sessions = createConsoleSessions({ env, consolePath, tokenService });
 
@@ -86,7 +95,16 @@ export const consoleRoutesFactory = ({
 
     [`${base}/login`]: {
       ...cors,
-      POST: async (req) => {
+      POST: async (req, server) => {
+        // Keyed by address against the anonymous ceiling: there is no session
+        // yet, and the attempt is charged before the secret is compared, so a
+        // guesser cannot spend attempts for free.
+        const limit = await rateLimiter?.check(
+          null,
+          resolveClientAddress(req, server, env.rateLimit.trustProxy),
+        );
+        if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
         try {
           return new S200(await sessions.login(req));
         } catch {

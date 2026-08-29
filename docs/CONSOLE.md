@@ -64,7 +64,7 @@ Authenticated endpoints answer `404` for any request without a live console sess
 
 - Never expose the console publicly without network-level protection: the admin secret grants full RBAC bypass.
 - The admin secret is sent once, over the login request, and never stored in `localStorage`, `sessionStorage`, or anywhere else JavaScript can read. A session cookie is what rides subsequent requests, and it expires and can be revoked.
-- Nothing rate-limits `POST /api/login`. Put the console behind network-level protection and give `ADMIN_SECRET` enough entropy to survive online guessing.
+- `POST /api/login` is rate-limited only once you configure a limit — it is off by default. Set `RATE_LIMIT_ANONYMOUS_MAX` (see [Rate limiting](./CONFIGURATION.md#rate-limiting)): login attempts are keyed by client address against the anonymous ceiling, and an attempt is charged before the secret is compared, so guessing costs the guesser. Until then, and in any case, put the console behind network-level protection and give `ADMIN_SECRET` enough entropy to survive online guessing.
 - Status responses contain database **names and engine types only** — never connection credentials.
 
 ## Replaces the superadmin REST endpoints

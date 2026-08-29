@@ -81,6 +81,8 @@ export type WithServerOptions = {
   config?: Partial<ConfigurationInput>;
   /** Skip the schema drop/create/seed cycle when a previous call already ran it. */
   skipSeed?: boolean;
+  /** Merged over the env singleton, for settings that are env-shaped only. */
+  env?: Partial<import("../../types/env").Env>;
 };
 
 const baseConfig = (engine: DatabaseType): ConfigurationInput => ({
@@ -160,7 +162,7 @@ export type StartedServer = {
  * `withServer` wraps it for the single-shot case.
  */
 export const startServer = async (options: WithServerOptions): Promise<StartedServer> => {
-  const { engine, config, skipSeed } = options;
+  const { engine, config, skipSeed, env } = options;
 
   if (!skipSeed) await seedEngine(engine);
 
@@ -169,6 +171,7 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
 
   const { server, prefixes } = await createBunServer({
     port: 0,
+    ...env,
     configuration: { ...baseConfig(engine), ...config } as never,
   });
 

@@ -35,6 +35,16 @@ export class S404 extends ClientResponse {
   }
 }
 
+export class S429 extends ClientResponse {
+  constructor(retryAfterMs: number) {
+    super({ errors: [{ message: "Rate limit exceeded" }] }, { status: 429 });
+
+    // Seconds, and never 0: a caller told to retry immediately retries
+    // immediately, which is the traffic the limit is there to stop.
+    this.headers.set("Retry-After", String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+  }
+}
+
 export class S500 extends ClientResponse {
   constructor(body?: object | null, init?: ResponseInit) {
     super(body, { ...init, status: 500 });
