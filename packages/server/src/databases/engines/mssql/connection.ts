@@ -13,17 +13,18 @@ import { logger } from "../../../logging";
 // Every pool bound comes from the schema, which is the only place they are
 // declared and documented. Repeating them here as `?? n` fallbacks let the
 // documented default and the applied one drift apart, differently per engine.
+//
+// Defaults are overlaid rather than re-parsed: `connectionOptions` is an
+// undiscriminated union of the two engine shapes, and an object carrying
+// nothing MSSQL-specific — `{}` included — validates against the Bun SQL shape
+// even on an MSSQL database. A strict re-parse of one of those would reject the
+// Bun SQL keys and take the server down at boot.
 export const poolOptions = (db: Database) => {
   const ci = db.connection;
-  const opts = MSSQLConnectionOptionsZod.parse(db.connectionOptions ?? {});
-
-  // The three transport flags below are deliberately NOT read from the parsed
-  // schema. Their code fallbacks are `true` where the schema declares `false`,
-  // so taking the schema value would turn certificate validation on and trusted
-  // connections off for every deployment that omits `connectionOptions` — a
-  // connection change, not a pool one. The drift is real and worth closing, but
-  // not as a side effect of pool sizing.
   const raw = db.connectionOptions as MSSQLConnectionOptions | undefined;
+
+  const defaults = MSSQLConnectionOptionsZod.parse({});
+  const opts = { ...defaults, ...raw, pool: { ...defaults.pool, ...raw?.pool } };
 
   return {
     server: ci.host,
@@ -33,6 +34,11 @@ export const poolOptions = (db: Database) => {
     database: ci.database,
     connectionTimeout: opts.connectionTimeout * 1000,
     requestTimeout: opts.requestTimeout * 1000,
+    // These three keep their code fallbacks rather than the schema's. Two of
+    // them default the opposite way there, so taking the schema value would
+    // turn certificate validation on and trusted connections off for every
+    // deployment that omits `connectionOptions` — a change to how a connection
+    // is secured, not to how the pool is sized.
     options: {
       encrypt: raw?.encrypt ?? false,
       trustServerCertificate: raw?.trustServerCertificate ?? true,

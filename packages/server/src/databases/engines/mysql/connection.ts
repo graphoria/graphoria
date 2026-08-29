@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 
+import type { BunSQLConnectionOptions } from "../../../config";
 import type { VariableDefinition } from "../../../analyzeQuery/types";
 import type { Database } from "../../../types/configuration";
 import type { ProcedureResolver } from "../../../types/db";
@@ -11,8 +12,16 @@ import { toMySQLPlaceholders } from "./placeholders";
 // Every pool bound comes from the schema, which is the only place they are
 // declared and documented. Repeating them here as `?? n` fallbacks let the
 // documented default and the applied one drift apart, differently per engine.
+//
+// Defaults are overlaid rather than re-parsed: `connectionOptions` is an
+// undiscriminated union of the two engine shapes, so an object can arrive
+// already validated against the other one, and a strict re-parse would reject
+// it at boot.
 export const poolOptions = (db: Database) => {
-  const opts = BunSQLConnectionOptionsZod.parse(db.connectionOptions ?? {});
+  const opts = {
+    ...BunSQLConnectionOptionsZod.parse({}),
+    ...(db.connectionOptions as BunSQLConnectionOptions | undefined),
+  };
 
   return {
     host: db.connection.host,

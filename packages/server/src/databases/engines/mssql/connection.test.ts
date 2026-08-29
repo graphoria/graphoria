@@ -48,4 +48,25 @@ describe("mssql poolOptions", () => {
       trustedConnection: true,
     });
   });
+
+  // `connectionOptions` is an undiscriminated union of the two engine shapes,
+  // so an object carrying nothing MSSQL-specific validates against the Bun SQL
+  // one even on an MSSQL database. Re-parsing that strictly would reject its
+  // keys and take the server down at boot.
+  it("survives options that were validated against the Bun SQL shape", () => {
+    const bunShaped = {
+      max: 10,
+      idleTimeout: 30,
+      connectionTimeout: 45,
+      maxLifetime: 3600,
+      tls: false,
+      prepare: true,
+      bigint: false,
+    };
+
+    expect(poolOptions(db(bunShaped))).toMatchObject({
+      connectionTimeout: 45_000,
+      pool: { max: 10, min: 0, acquireTimeoutMillis: 30_000 },
+    });
+  });
 });
