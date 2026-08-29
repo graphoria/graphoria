@@ -163,7 +163,7 @@ type MSSQLConnectionOptions = {
     acquireTimeout?: number; // Seconds to wait for a free connection when saturated (default: 30)
   };
   connectionTimeout?: number; // Seconds to wait when establishing a connection (default: 30)
-  requestTimeout?: number; // Seconds to wait for a request to complete (default: 30)
+  requestTimeout?: number; // Seconds to wait for a request to complete (default: QUERY_TIMEOUT_MS)
   encrypt?: boolean; // Encrypt the connection (default: false)
   trustServerCertificate?: boolean; // Trust the server certificate unvalidated (default: false)
   trustedConnection?: boolean; // Use Windows Authentication (default: false)
@@ -189,6 +189,24 @@ One sharp edge behind that: `connectionOptions` is validated against an undiscri
 #### Bounding the wait for a connection
 
 `pool.acquireTimeout` caps how long a request waits for a free connection when the pool is saturated, so a slow-query storm fails callers instead of queueing them behind it. It is **MSSQL only** — Bun's SQL client, which backs `pg` and `mysql`, exposes no equivalent. Its `connectionTimeout` bounds opening a connection, not waiting for one.
+
+#### Bounding how long a statement runs
+
+`QUERY_TIMEOUT_MS` aborts a statement that has run longer than it, in milliseconds, defaulting to `10000`. `0` disables it and logs a warning at boot. The bound is applied by the database, so the statement really stops — a client that merely gave up would still be holding the connection and every lock the statement had taken.
+
+Each engine enforces it the only way it can:
+
+| Engine  | Mechanism                                                       | Covers                                                        |
+| ------- | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| `pg`    | `statement_timeout`, set on every connection in the pool        | every statement, generated queries and auth and introspection |
+| `mssql` | `requestTimeout` on the pool, an attention packet when it fires | every request                                                 |
+| `mysql` | a `MAX_EXECUTION_TIME` hint on the generated statement          | generated queries only — see below                            |
+
+**MySQL is bounded only where the hint reaches.** Bun's MySQL adapter ignores per-connection runtime settings and offers no hook to run one when a pooled connection opens, so there is no pool-level route on that engine. Auth logins, schema introspection and stored-procedure `CALL`s do not go through query generation and are therefore **not** bounded on MySQL. They are on `pg` and `mssql`.
+
+On MSSQL, `connectionOptions.requestTimeout` wins when you set it explicitly — `QUERY_TIMEOUT_MS` only fills the value in when the key is absent — so a pool deliberately raised for a slow report keeps its bound. Note that the two use different units: `requestTimeout` is in seconds, `QUERY_TIMEOUT_MS` in milliseconds.
+
+A single operation can override all of the above with its own `timeout`; see [Operations](./OPERATIONS.md#statement-timeout).
 
 #### MySQL over a plain connection
 

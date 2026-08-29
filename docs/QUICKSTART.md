@@ -107,6 +107,8 @@ query {
 
 A list field that asks for no `limit` is served one page — 100 rows by default — and a field asking for more than 1000 is rejected. `DEFAULT_PAGE_SIZE` and `MAX_PAGE_SIZE` set both; either takes `0` to opt out. Nested to-many lists take `limit` and `offset` too, and carry the same default.
 
+Every statement is also bounded in time: one still running after 10 seconds is aborted by the database itself, not merely abandoned by the client. `QUERY_TIMEOUT_MS` moves the bound and `0` removes it. See [Bounding how long a statement runs](./CONFIGURATION.md#bounding-how-long-a-statement-runs).
+
 The corresponding REST endpoint is also live:
 
 ```bash
