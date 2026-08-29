@@ -4,6 +4,8 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import type { BunRequest } from "bun";
 import type { Env } from "../types/env";
 
+import { createRateLimiter } from "../utils/rateLimit";
+
 // `singletons/env` parses process.env at module load. Ensure required vars exist
 // before any transitive import touches it.
 process.env.ADMIN_SECRET ??= "test-admin-secret";
@@ -32,6 +34,7 @@ const fakeEnv = {
   console: { enabled: true, endpoint: "/_console", sessionExpiresIn: "1h" },
   jwt: { secret: "test-jwt-secret", expiresIn: "5m", rtExpiresIn: "7d" },
   cache: { store: "memory", redisUrl: "redis://127.0.0.1:1" },
+  rateLimit: { max: 0, anonymousMax: 0, windowMs: 60_000, trustProxy: false },
 };
 
 /** A `Bun.serve` route handler is handed a BunRequest; only `cookies` is extra. */
@@ -142,7 +145,10 @@ const fakeProjectConfiguration = {
 
 const prefixes = { graphql: "/graphql", rest: "/rest", console: "/_console" };
 
-const buildRoutes = () =>
+const buildRoutes = (
+  // oxlint-disable-next-line typescript/no-explicit-any
+  rateLimiter?: any,
+) =>
   consoleRoutesFactory({
     env: fakeEnv,
     consolePath: "/_console",
@@ -150,6 +156,7 @@ const buildRoutes = () =>
     projectConfiguration: fakeProjectConfiguration,
     analyzedConfiguration: fakeAnalyzedConfiguration,
     tokenService,
+    rateLimiter,
   });
 
 const req = () => bunReq();
@@ -512,5 +519,53 @@ describe("consoleRoutesFactory", () => {
       bunReq(undefined, undefined, ""),
     );
     expect(cronPost.status).toBe(404);
+  });
+});
+
+describe("console login rate limit", () => {
+  const loginRequest = () =>
+    bunReq(
+      "http://localhost/_console/api/login",
+      { method: "POST", body: JSON.stringify({ secret: "wrong" }) },
+      "",
+    );
+
+  const oneAttemptLimiter = () =>
+    createRateLimiter({
+      settings: { max: 0, anonymousMax: 1, windowMs: 60_000, trustProxy: false },
+      anonymousRole: "anonymous",
+    });
+
+  it("answers 429 once the login attempts are spent", async () => {
+    const routes = buildRoutes(oneAttemptLimiter());
+
+    const first = await routes["/_console/api/login"].POST(loginRequest());
+    const second = await routes["/_console/api/login"].POST(loginRequest());
+
+    expect(first.status).toBe(401);
+    expect(second.status).toBe(429);
+    expect(second.headers.get("Retry-After")).toBe("60");
+  });
+
+  it("charges a guessed secret against the limit before it is checked", async () => {
+    const routes = buildRoutes(oneAttemptLimiter());
+    await routes["/_console/api/login"].POST(loginRequest());
+
+    const withGoodSecret = await routes["/_console/api/login"].POST(
+      bunReq(
+        "http://localhost/_console/api/login",
+        { method: "POST", body: JSON.stringify({ secret: ADMIN_SECRET }) },
+        "",
+      ),
+    );
+
+    expect(withGoodSecret.status).toBe(429);
+  });
+
+  it("leaves login open when no limit is configured", async () => {
+    const routes = buildRoutes();
+
+    expect((await routes["/_console/api/login"].POST(loginRequest())).status).toBe(401);
+    expect((await routes["/_console/api/login"].POST(loginRequest())).status).toBe(401);
   });
 });

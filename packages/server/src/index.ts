@@ -312,6 +312,7 @@ const createGraphQLServer = async (env: Env) => {
         projectConfiguration,
         analyzedConfiguration,
         tokenService: getTokenService(),
+        rateLimiter,
       }),
     );
   }
