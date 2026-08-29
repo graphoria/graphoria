@@ -1,31 +1,39 @@
 import { SQL } from "bun";
 
-import type { BunSQLConnectionOptions } from "../../../config";
 import type { VariableDefinition } from "../../../analyzeQuery/types";
 import type { Database } from "../../../types/configuration";
 import type { ProcedureResolver } from "../../../types/db";
 
+import { BunSQLConnectionOptionsZod } from "../../../config/types/db";
 import { databasesConnections } from "../../../singletons/databases";
 import { toMySQLPlaceholders } from "./placeholders";
 
-export const getPool = async (db: Database) => {
-  const opts = db.connectionOptions as BunSQLConnectionOptions | undefined;
-  const pool = new SQL({
+// Every pool bound comes from the schema, which is the only place they are
+// declared and documented. Repeating them here as `?? n` fallbacks let the
+// documented default and the applied one drift apart, differently per engine.
+export const poolOptions = (db: Database) => {
+  const opts = BunSQLConnectionOptionsZod.parse(db.connectionOptions ?? {});
+
+  return {
     host: db.connection.host,
     port: db.connection.port,
     username: db.connection.user,
     password: db.connection.password,
     database: db.connection.database,
-    adapter: "mysql",
-    max: opts?.max ?? 50,
-    idleTimeout: opts?.idleTimeout ?? 30,
-    connectionTimeout: opts?.connectionTimeout,
-    maxLifetime: opts?.maxLifetime,
-    tls: opts?.tls,
-    allowPublicKeyRetrieval: opts?.allowPublicKeyRetrieval,
-    prepare: opts?.prepare,
-    bigint: opts?.bigint,
-  });
+    adapter: "mysql" as const,
+    max: opts.max,
+    idleTimeout: opts.idleTimeout,
+    connectionTimeout: opts.connectionTimeout,
+    maxLifetime: opts.maxLifetime,
+    tls: opts.tls,
+    allowPublicKeyRetrieval: opts.allowPublicKeyRetrieval,
+    prepare: opts.prepare,
+    bigint: opts.bigint,
+  };
+};
+
+export const getPool = async (db: Database) => {
+  const pool = new SQL(poolOptions(db));
 
   await pool.connect(); // Connect to the database
 
