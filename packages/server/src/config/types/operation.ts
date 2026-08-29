@@ -108,6 +108,8 @@ export const OperationZod = z
     rest: OperationRestConfigZod.optional(),
     graphql: OperationGraphQLConfigZod.optional().default({ enabled: true }),
     cache: OperationCacheConfigZod.optional(),
+    /** Statement timeout in milliseconds. Overrides QUERY_TIMEOUT_MS for this operation. */
+    timeout: z.number().int().positive().optional(),
   })
   .refine(
     (operation) => {
@@ -249,6 +251,8 @@ export type BaseOperation<TInput, TOutput, TInitData> = {
   graphql?: OperationGraphQLConfig;
   /** Cache configuration */
   cache?: OperationCacheConfig;
+  /** Statement timeout in milliseconds. Overrides `QUERY_TIMEOUT_MS` for this operation. */
+  timeout?: number;
 };
 
 /**
