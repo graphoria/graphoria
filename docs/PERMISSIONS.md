@@ -24,6 +24,7 @@ type RolePermission = {
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[]; // Remote GraphQL schemas (see REMOTE_SCHEMAS.md)
   remoteREST?: "ALL" | string[]; // Remote REST APIs (see REMOTE_REST.md)
+  rateLimit?: { max: number; windowMs?: number }; // Requests per window (see CONFIGURATION.md)
 };
 
 type TablePermission = {

@@ -391,6 +391,7 @@ Before going to production:
 - [ ] Rotate `JWT_SECRET` (or `PASETO_SECRET`) — never use the dev default.
 - [ ] Put Redis behind authentication — set a password and use `redis://user:pass@host:port` in `REDIS_URL`.
 - [ ] Enable CORS properly — set `CORS_ORIGIN` to your frontend's origin, not `*`.
+- [ ] Set `RATE_LIMIT_MAX` and `RATE_LIMIT_ANONYMOUS_MAX` — rate limiting ships **off**, and nothing warns you at boot.
 - [ ] Use a reverse proxy (nginx, Caddy) for TLS termination.
 - [ ] Pin your Graphoria version — `0.1.0`, not `^0.1.0` — until v1.0.
 

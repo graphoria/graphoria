@@ -450,6 +450,7 @@ type RolePermission = {
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[];
   remoteREST?: "ALL" | string[];
+  rateLimit?: { max: number; windowMs?: number };
 };
 
 type TablePermission = {
@@ -458,6 +459,41 @@ type TablePermission = {
   orderBy?: OrderByClause[];
 };
 ```
+
+### Rate limiting
+
+Off by default. Nothing is limited until you set a ceiling, and no warning fires at boot to say so — read this section as the warning.
+
+| Variable                   | Type      | Default | Notes                                                       |
+| -------------------------- | --------- | ------- | ----------------------------------------------------------- |
+| `RATE_LIMIT_MAX`           | `number`  | `0`     | Requests per window for an authenticated caller. `0` is off |
+| `RATE_LIMIT_ANONYMOUS_MAX` | `number`  | `0`     | Same, for the anonymous role. `0` is off                    |
+| `RATE_LIMIT_WINDOW_MS`     | `number`  | `60000` | Window length in milliseconds                               |
+| `RATE_LIMIT_TRUST_PROXY`   | `boolean` | `false` | Read the client address from `X-Forwarded-For`              |
+
+A caller gets one token bucket across every endpoint — `/graphql` (queries and the websocket upgrade alike), `/rest/*`, `/ai`, `/mcp` and the console login — because what exhausts a server is total request volume, not volume on one route. An idle bucket refills to `max`, so a caller may burst `max` and then sustain `max` per window. Over budget is `429` with `Retry-After` in seconds.
+
+Callers are identified by authenticated subject where there is one, and by client address otherwise. **Neither the admin secret nor the superadmin role is exempt** — set `RATE_LIMIT_MAX` above what your own tooling needs. The console polls status every five seconds.
+
+A role may carry its own ceiling, which beats both env values:
+
+```typescript
+auth: {
+  permissions: {
+    anonymous: { tables: "ALL", rateLimit: { max: 60 } },
+    admin: { tables: "ALL", rateLimit: { max: 600, windowMs: 10000 } },
+  },
+}
+```
+
+Resolution runs role config → `RATE_LIMIT_ANONYMOUS_MAX` for the anonymous role → `RATE_LIMIT_MAX`. A role entry works while both env values are `0`, which is how you throttle anonymous callers and nobody else. `max: 0` on a role opts that role out.
+
+Four things to know before you rely on it:
+
+- **The store follows `CACHE_STORE`.** With `redis` the bucket lives in Redis and every worker shares it; with `memory` each worker keeps its own, so **the effective limit in cluster mode is your ceiling times the worker count**. Redis is the correct configuration for cluster mode. It is never required.
+- **A Redis outage fails open.** Requests are served unlimited while the store is unreachable, and one warning per window says so. The alternative turns a cache blip into an outage.
+- **`RATE_LIMIT_TRUST_PROXY` is only as trustworthy as the proxy.** Turn it on and the client address comes from a header the caller can set; on a directly-exposed server that makes the limit decorative. Leave it off unless a proxy you control overwrites `X-Forwarded-For`.
+- **It does nothing about a distributed flood.** Per-caller buckets slow one host, not a botnet. That belongs at the edge.
 
 ### FilterCondition
 
