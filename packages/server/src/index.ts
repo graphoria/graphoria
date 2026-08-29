@@ -79,6 +79,12 @@ const bootAnalyzedConfiguration = async (env: Env) => {
     );
   }
 
+  if (env.queryTimeoutMs === 0) {
+    logger("graphoria").warn(
+      "QUERY_TIMEOUT_MS=0 disables the statement timeout; one slow query can hold a connection and its locks indefinitely",
+    );
+  }
+
   if (!env.configuration) {
     throw new Error("Configuration is required to create the GraphQL server");
   }

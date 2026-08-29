@@ -108,3 +108,26 @@ describe("EnvZod MAX_QUERY_DEPTH", () => {
     expect(EnvZod.parse({ ...baseEnv, MAX_QUERY_DEPTH: "20" }).maxQueryDepth).toBe(20);
   });
 });
+
+describe("EnvZod QUERY_TIMEOUT_MS", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("bounds every query by default", () => {
+    expect(EnvZod.parse(baseEnv).queryTimeoutMs).toBe(10_000);
+  });
+
+  it("coerces the string form", () => {
+    expect(EnvZod.parse({ ...baseEnv, QUERY_TIMEOUT_MS: "2500" }).queryTimeoutMs).toBe(2500);
+  });
+
+  it("keeps 0 as the explicit opt-out", () => {
+    expect(EnvZod.parse({ ...baseEnv, QUERY_TIMEOUT_MS: "0" }).queryTimeoutMs).toBe(0);
+  });
+
+  it("rejects a negative timeout", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, QUERY_TIMEOUT_MS: "-1" })).toThrow();
+  });
+});

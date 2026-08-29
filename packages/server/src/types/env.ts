@@ -39,6 +39,7 @@ export const EnvZod = z
     MAX_QUERY_DEPTH: z.coerce.number().int().min(0).default(8),
     DEFAULT_PAGE_SIZE: z.coerce.number().int().min(0).default(100),
     MAX_PAGE_SIZE: z.coerce.number().int().min(0).default(1000),
+    QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).default(10000),
     AI_ENABLED: z.stringbool().optional(),
     AI_GRAPHQL_ENABLED: z.stringbool().default(true),
     AI_REST_ENABLED: z.stringbool().default(true),
@@ -71,6 +72,7 @@ export const EnvZod = z
     maxQueryDepth: env.MAX_QUERY_DEPTH,
     defaultPageSize: env.DEFAULT_PAGE_SIZE,
     maxPageSize: env.MAX_PAGE_SIZE,
+    queryTimeoutMs: env.QUERY_TIMEOUT_MS,
     admin: {
       secret: env.ADMIN_SECRET,
       header: env.ADMIN_SECRET_HEADER,
