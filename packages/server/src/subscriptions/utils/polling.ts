@@ -5,6 +5,7 @@ import type { DatabasePoller, QueryEventEmitter } from "../types";
 
 import { executeQuery, executeQueryJSON, generateSQL } from "../../databases";
 import { logger } from "../../logging";
+import { env } from "../../singletons/env";
 
 export interface DatabasePollerConfig {
   analysis: AnalysisResult;
@@ -60,9 +61,11 @@ export const createDatabasePoller = async (
   const firstFieldName = getFirstFieldName(analysis);
   const db = schemaEntity.queriesMap[firstFieldName!]!.db!;
 
-  // Generate SQL queries (data query and hash query)
-  const [[, queryData]] = generateSQL(schemaEntity, analysis, variables);
-  const [[, queryHash]] = generateSQL(schemaEntity, analysis, variables, true);
+  // Generate SQL queries (data query and hash query). A subscription query is
+  // caller-authored, so it carries the same page bounds an HTTP query does.
+  const pageLimits = { defaultPageSize: env.defaultPageSize, maxPageSize: env.maxPageSize };
+  const [[, queryData]] = generateSQL(schemaEntity, analysis, variables, false, pageLimits);
+  const [[, queryHash]] = generateSQL(schemaEntity, analysis, variables, true, pageLimits);
 
   // Get initial hash and send initial data
   let previousHash = await getResultHash(queryHash, db, variableDefinitions, variables);

@@ -108,7 +108,7 @@ export const handleRESTRequestFactory = (
 
       if (routesInitDataPromises[route.routeKey] === undefined) {
         routesInitDataPromises[route.routeKey] = await route.hooks?.init?.({
-          gqlQuery: gqlSuperadminHandler?.handler ?? gql.handler,
+          gqlQuery: gqlSuperadminHandler?.operatorQuery ?? gql.operatorQuery,
           databases: databasesConnections,
           queues: queueManager,
           repository: repositoryMap,
@@ -269,7 +269,7 @@ export const handleRESTRequestFactory = (
         try {
           const result = await route.handler(
             {
-              gqlQuery: gqlSuperadminHandler?.handler ?? gql.handler,
+              gqlQuery: gqlSuperadminHandler?.operatorQuery ?? gql.operatorQuery,
               databases: databasesConnections,
               queues: queueManager,
               repository: repositoryMap,
@@ -330,7 +330,7 @@ export const handleRESTRequestFactory = (
           // Execute the GraphQL request, then transform via afterRequest before
           // caching so hits and misses return the same shape.
           const result = await applyAfterRequest(
-            await gql.handler(queryAnalysis!, variables, req, session),
+            await gql.operatorQuery(queryAnalysis!, variables, req, session),
           );
 
           // Cache the (already transformed) result
@@ -344,7 +344,7 @@ export const handleRESTRequestFactory = (
       } else if (queryAnalysis) {
         // No caching for this route, execute normally
         return new S200(
-          await applyAfterRequest(await gql.handler(queryAnalysis, variables, req, session)),
+          await applyAfterRequest(await gql.operatorQuery(queryAnalysis, variables, req, session)),
         );
       }
 

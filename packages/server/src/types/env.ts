@@ -37,6 +37,8 @@ export const EnvZod = z
     SCHEMAS_OUTPUT_DIR: z.string().default("./.graphoria/schemas"),
     QUERY_ON_RESPONSE: z.stringbool().default(false),
     MAX_QUERY_DEPTH: z.coerce.number().int().min(0).default(8),
+    DEFAULT_PAGE_SIZE: z.coerce.number().int().min(0).default(100),
+    MAX_PAGE_SIZE: z.coerce.number().int().min(0).default(1000),
     AI_ENABLED: z.stringbool().optional(),
     AI_GRAPHQL_ENABLED: z.stringbool().default(true),
     AI_REST_ENABLED: z.stringbool().default(true),
@@ -67,6 +69,8 @@ export const EnvZod = z
     authStrategy: env.AUTH_STRATEGY,
     queryOnResponse: env.QUERY_ON_RESPONSE,
     maxQueryDepth: env.MAX_QUERY_DEPTH,
+    defaultPageSize: env.DEFAULT_PAGE_SIZE,
+    maxPageSize: env.MAX_PAGE_SIZE,
     admin: {
       secret: env.ADMIN_SECRET,
       header: env.ADMIN_SECRET_HEADER,

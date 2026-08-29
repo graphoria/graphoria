@@ -22,6 +22,7 @@ beforeAll(async () => {
 const stubGql = () =>
   ({
     handler: async () => ({ data: null }),
+    operatorQuery: async () => ({ data: null }),
     hasErrors: () => ({ hasErrors: false, errors: [] }),
   }) as const;
 
@@ -29,6 +30,7 @@ const stubGql = () =>
 const stubGqlWithData = (data: any) =>
   ({
     handler: async () => ({ data }),
+    operatorQuery: async () => ({ data }),
     hasErrors: () => ({ hasErrors: false, errors: [] }),
   }) as const;
 

@@ -3,6 +3,7 @@ import type { MergedEntities } from "../../configuration/getSchemas/mergeEntitie
 import type { Auth, Database, DatabaseType } from "../../types/configuration";
 import type { DatabaseStructure, ProcedureResolver, TableResolver, View } from "../../types/db";
 import type { GenerateCreateTableSQLParameters } from "../schemaBuilder/generateCreateTable";
+import type { PageLimits } from "../common";
 
 import {
   checkUserCredentials as checkUserCredentialsMSSQL,
@@ -85,6 +86,7 @@ type DatabaseFunctions = {
     operation: OperationAnalysis,
     variables: Record<string, unknown>,
     forHashMethod: boolean,
+    pageLimits: PageLimits | null,
   ) => string;
   execute: <T>(
     query: string,
