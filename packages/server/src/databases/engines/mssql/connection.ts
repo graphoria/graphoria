@@ -8,6 +8,7 @@ import type { ProcedureResolver } from "../../../types/db";
 
 import { MSSQLConnectionOptionsZod } from "../../../config/types/db";
 import { databasesConnections } from "../../../singletons/databases";
+import { getQueryTimeoutMs } from "../../../singletons/queryTimeout";
 import { logger } from "../../../logging";
 
 // Every pool bound comes from the schema, which is the only place they are
@@ -19,7 +20,7 @@ import { logger } from "../../../logging";
 // nothing MSSQL-specific — `{}` included — validates against the Bun SQL shape
 // even on an MSSQL database. A strict re-parse of one of those would reject the
 // Bun SQL keys and take the server down at boot.
-export const poolOptions = (db: Database) => {
+export const poolOptions = (db: Database, timeoutMs: number = getQueryTimeoutMs()) => {
   const ci = db.connection;
   const raw = db.connectionOptions as MSSQLConnectionOptions | undefined;
 
@@ -33,7 +34,11 @@ export const poolOptions = (db: Database) => {
     password: ci.password,
     database: ci.database,
     connectionTimeout: opts.connectionTimeout * 1000,
-    requestTimeout: opts.requestTimeout * 1000,
+    // Only an omitted key falls through to the resolved timeout: reading it off
+    // `opts` cannot tell an operator who set 30 from Zod defaulting to 30, and
+    // silently overriding the first would break the slow report it was raised
+    // for. Seconds there, milliseconds here.
+    requestTimeout: raw?.requestTimeout !== undefined ? raw.requestTimeout * 1000 : timeoutMs,
     // These three keep their code fallbacks rather than the schema's. Two of
     // them default the opposite way there, so taking the schema value would
     // turn certificate validation on and trusted connections off for every
@@ -53,6 +58,23 @@ export const poolOptions = (db: Database) => {
     parseJSON: opts.parseJSON,
   };
 };
+
+/** The bound the pool already applies, so the executor can tell an override from the default. */
+export const poolRequestTimeoutMs = (db: Database) => poolOptions(db).requestTimeout;
+
+// `ConnectionPool.request` takes per-request overrides from mssql 12.7.0, which
+// is what the workspace pins, but `@types/mssql@12.3.0` still declares it with
+// no parameter. Narrowed to the one key used rather than cast wholesale, so the
+// day the types catch up this stops compiling and can be deleted.
+//
+// Not interchangeable with assigning `request.timeout`: that property does not
+// exist, and the pool default is used instead.
+type PoolWithRequestOverrides = {
+  request(overrides: { requestTimeout: number }): ReturnType<ConnectionPool["request"]>;
+};
+
+const requestWithTimeout = (pool: ConnectionPool, timeoutMs: number) =>
+  (pool as unknown as PoolWithRequestOverrides).request({ requestTimeout: timeoutMs });
 
 export const getPool = async (db: Database) => {
   const pool = new ConnectionPool(poolOptions(db));
@@ -76,6 +98,7 @@ export const executeQueryFactory =
     db: Database,
     variablesDefinition: VariableDefinition[] = [],
     params: Record<string, unknown> = {},
+    timeoutMs?: number,
   ) => {
     const pool = singleQuery ? await getPool(db) : await getPoolSingleton(db);
 
@@ -83,7 +106,10 @@ export const executeQueryFactory =
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
-    const request = pool!.request();
+    const request =
+      timeoutMs !== undefined && timeoutMs !== poolRequestTimeoutMs(db)
+        ? requestWithTimeout(pool!, timeoutMs)
+        : pool!.request();
 
     variablesDefinition.forEach((v, i) => {
       const varName = (i + 1).toString();
@@ -117,12 +143,14 @@ export const executeQueryJSONFactory =
     db: Database,
     variablesDefinition: VariableDefinition[] = [],
     params: Record<string, unknown> = {},
+    timeoutMs?: number,
   ): Promise<T> => {
     const result = await (singleQuery ? executeQuerySingle : executeQuery)(
       query,
       db,
       variablesDefinition,
       params,
+      timeoutMs,
     );
 
     return result[0] as T;

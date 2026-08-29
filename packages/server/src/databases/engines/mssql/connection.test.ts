@@ -1,8 +1,20 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 
 import type { Database } from "../../../types/configuration";
 
-import { poolOptions } from "./connection";
+// `singletons/env` parses process.env at module load. Ensure required vars exist
+// before any transitive import touches it.
+process.env.ADMIN_SECRET ??= "test-admin-secret";
+process.env.JWT_SECRET ??= "test-jwt-secret";
+
+let poolOptions: (
+  db: Database,
+  timeoutMs?: number,
+) => ReturnType<typeof import("./connection").poolOptions>;
+
+beforeAll(async () => {
+  ({ poolOptions } = await import("./connection"));
+});
 
 const db = (connectionOptions?: unknown): Database =>
   ({
@@ -20,9 +32,9 @@ const db = (connectionOptions?: unknown): Database =>
 
 describe("mssql poolOptions", () => {
   it("applies the schema defaults when connectionOptions is omitted", () => {
-    expect(poolOptions(db())).toMatchObject({
+    expect(poolOptions(db(), 10_000)).toMatchObject({
       connectionTimeout: 30_000,
-      requestTimeout: 30_000,
+      requestTimeout: 10_000,
       pool: {
         max: 10,
         min: 0,
@@ -68,5 +80,23 @@ describe("mssql poolOptions", () => {
       connectionTimeout: 45_000,
       pool: { max: 10, min: 0, acquireTimeoutMillis: 30_000 },
     });
+  });
+});
+
+describe("mssql poolOptions requestTimeout", () => {
+  // tedious sends an attention packet on timeout and the server aborts the
+  // request, so this is a real server-side bound, not a client-side give-up.
+  it("takes the resolved timeout when connectionOptions omits requestTimeout", () => {
+    expect(poolOptions(db(), 2_500).requestTimeout).toBe(2_500);
+  });
+
+  // Only an omitted key falls through to the env default. Anyone who
+  // deliberately raised requestTimeout for a slow report keeps that value.
+  it("lets an explicit requestTimeout win over the resolved timeout", () => {
+    expect(poolOptions(db({ requestTimeout: 120 }), 10_000).requestTimeout).toBe(120_000);
+  });
+
+  it("passes 0 through, which tedious reads as no timeout", () => {
+    expect(poolOptions(db(), 0).requestTimeout).toBe(0);
   });
 });
