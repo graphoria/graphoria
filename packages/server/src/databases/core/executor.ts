@@ -14,6 +14,8 @@ export const executeQuery = async <T>(
   db: Database,
   variablesDefinition: VariableDefinition[],
   variables: Record<string, unknown>,
+  /** Per-operation override. `undefined` leaves the engine on its own default. */
+  timeoutMs?: number,
 ) => {
   const adapter = databaseAdapters[db?.type];
   if (!adapter) {
@@ -24,7 +26,7 @@ export const executeQuery = async <T>(
   const startTime = Bun.nanoseconds();
 
   try {
-    const result = await adapter.execute<T>(query, db, variablesDefinition, variables);
+    const result = await adapter.execute<T>(query, db, variablesDefinition, variables, timeoutMs);
     log.debug(
       { durationMs: (Bun.nanoseconds() - startTime) / 1e6, queryLength: query.length },
       "query executed",
@@ -41,6 +43,8 @@ export const executeQueryJSON = async <T>(
   db: Database,
   variablesDefinition: VariableDefinition[],
   variables: Record<string, unknown>,
+  /** Per-operation override. `undefined` leaves the engine on its own default. */
+  timeoutMs?: number,
 ) => {
   const adapter = databaseAdapters[db.type];
   if (!adapter) {
@@ -51,7 +55,13 @@ export const executeQueryJSON = async <T>(
   const startTime = Bun.nanoseconds();
 
   try {
-    const result = await adapter.executeJson<T>(query, db, variablesDefinition, variables);
+    const result = await adapter.executeJson<T>(
+      query,
+      db,
+      variablesDefinition,
+      variables,
+      timeoutMs,
+    );
     log.debug(
       { durationMs: (Bun.nanoseconds() - startTime) / 1e6, queryLength: query.length },
       "query executed (json)",
