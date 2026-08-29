@@ -543,6 +543,15 @@ describe("getDatabasesStructure", () => {
       expect(out.map((t) => t.resolverName)).toEqual(["public_posts"]);
     });
 
+    it("excludes a table whatever case schema.excludedTables names it in", async () => {
+      const out = await getTables(
+        [table("public", "posts"), table("public", "secrets")],
+        dbWith({}, ["Public_Secrets"]),
+      );
+
+      expect(out.map((t) => t.resolverName)).toEqual(["public_posts"]);
+    });
+
     it("applies a table description override", async () => {
       const out = await getTables(
         [table("public", "posts")],

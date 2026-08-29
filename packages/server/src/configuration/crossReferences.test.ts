@@ -401,6 +401,37 @@ describe("collectCrossReferenceErrors", () => {
       expect(errors).toEqual([]);
     });
 
+    it("resolves an excluded table whatever case the config names it in", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          enabledDatabases: [
+            { name: "main", schema: { database: {}, excludedTables: ["Public_Secrets"] } },
+          ],
+        } as never),
+        known({ tableNamesByDatabase: { main: ["public_secrets"] } }),
+      );
+
+      expect(errors).toEqual([]);
+    });
+
+    it("reports a table override keyed in the wrong case, which never applies", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          enabledDatabases: [
+            {
+              name: "main",
+              schema: { database: { Public_Orders: { columns: [] } }, excludedTables: [] },
+            },
+          ],
+        } as never),
+        known({ tableNamesByDatabase: { main: ["public_orders"] } }),
+      );
+
+      expect(errors).toEqual([
+        'databases[0].schema.database.Public_Orders — no table or view named "Public_Orders" (did you mean "public_orders"?)',
+      ]);
+    });
+
     it("reports a table override keyed on a table that does not exist", () => {
       const errors = collectCrossReferenceErrors(
         config({

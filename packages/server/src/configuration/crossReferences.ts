@@ -318,8 +318,12 @@ export const collectCrossReferenceErrors = (
       ),
     );
 
+    // Exact, unlike every other name here, because the override lookup itself is
+    // exact — two tables can differ only in case, and picking one of them for a
+    // key that matches both would be a guess. A mis-cased key is reported rather
+    // than quietly resolved.
     for (const tableKey of Object.keys(database.schema.database)) {
-      if (!introspected.some((name) => name.toLowerCase() === tableKey.toLowerCase())) {
+      if (!introspected.includes(tableKey)) {
         errors.push(
           unresolved(
             `${base}.database${segment(tableKey)}`,
