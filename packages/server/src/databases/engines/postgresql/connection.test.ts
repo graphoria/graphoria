@@ -1,8 +1,20 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 
 import type { Database } from "../../../types/configuration";
 
-import { poolOptions } from "./connection";
+// `singletons/env` parses process.env at module load. Ensure required vars exist
+// before any transitive import touches it.
+process.env.ADMIN_SECRET ??= "test-admin-secret";
+process.env.JWT_SECRET ??= "test-jwt-secret";
+
+let poolOptions: (
+  db: Database,
+  timeoutMs?: number,
+) => ReturnType<typeof import("./connection").poolOptions>;
+
+beforeAll(async () => {
+  ({ poolOptions } = await import("./connection"));
+});
 
 const db = (connectionOptions?: unknown): Database =>
   ({
@@ -34,5 +46,18 @@ describe("postgresql poolOptions", () => {
       connectionTimeout: 5,
       idleTimeout: 30,
     });
+  });
+});
+
+describe("postgresql poolOptions statement_timeout", () => {
+  // Applied once per pooled connection rather than per query, so it bounds
+  // everything that runs on the connection — auth and introspection included —
+  // at no per-query cost.
+  it("bounds every connection in the pool", () => {
+    expect(poolOptions(db(), 10_000).connection).toEqual({ statement_timeout: "10000" });
+  });
+
+  it("omits the option entirely when the timeout is disabled", () => {
+    expect(poolOptions(db(), 0).connection).toBeUndefined();
   });
 });
