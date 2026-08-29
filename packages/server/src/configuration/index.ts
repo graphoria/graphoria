@@ -19,6 +19,7 @@ import {
   virtualColumnExpression,
   virtualColumnFunction,
 } from "../types/configuration";
+import { collectCrossReferenceErrors } from "./crossReferences";
 import { getSchema, getSchemas } from "./getSchemas";
 import { generateOpenAPI } from "./rest/generateOpenAPI";
 
@@ -60,12 +61,29 @@ export const analyzeConfiguration = async (configuration: Configuration, options
   // Use pre-calculated enabledDatabases from configuration parsing
   const enabledDatabases = configuration.enabledDatabases;
 
-  const [{ tables, storedProcedures }, resolvedRemoteSchemas, resolvedRemoteREST] =
-    await Promise.all([
-      getDatabasesStructure(enabledDatabases, configuration.auth),
-      resolveRemoteSchemas(configuration.remoteSchemas ?? []),
-      resolveRemoteRESTApis(configuration.remoteREST ?? []),
-    ]);
+  const [
+    { tables, storedProcedures, tableNamesByDatabase },
+    resolvedRemoteSchemas,
+    resolvedRemoteREST,
+  ] = await Promise.all([
+    getDatabasesStructure(enabledDatabases, configuration.auth),
+    resolveRemoteSchemas(configuration.remoteSchemas ?? []),
+    resolveRemoteRESTApis(configuration.remoteREST ?? []),
+  ]);
+
+  const crossReferenceErrors = collectCrossReferenceErrors(configuration, {
+    tables,
+    storedProcedures,
+    tableNamesByDatabase,
+  });
+
+  if (crossReferenceErrors.length) {
+    throw new Error(
+      `Configuration references ${crossReferenceErrors.length} name${
+        crossReferenceErrors.length === 1 ? "" : "s"
+      } that do not exist:\n${crossReferenceErrors.map((error) => `  - ${error}`).join("\n")}`,
+    );
+  }
 
   const operationsWithRestEndpoints = Object.fromEntries(
     Object.entries(configuration.operations).filter(([, operationConfig]) => operationConfig.rest),
