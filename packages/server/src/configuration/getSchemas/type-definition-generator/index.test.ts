@@ -66,8 +66,15 @@ describe("Type definition generator", () => {
       expect(result).toContain("product_id: Int");
       expect(result).toContain("name: String");
       expect(result).toContain(
-        "dbo_order_items(where: dbo_order_itemsWhereInput, orderBy: [dbo_order_itemsOrderByInput]): [dbo_order_items]",
+        "dbo_order_items(where: dbo_order_itemsWhereInput, orderBy: [dbo_order_itemsOrderByInput], limit: Int, offset: Int): [dbo_order_items]",
       );
+    });
+
+    // Without these a nested to-many list could not be paged at all: the
+    // builder has always emitted the clause, but the args were never declared.
+    it("declares limit and offset on to-many relationship fields", () => {
+      const result = generateTableType(StoreMSSQL);
+      expect(result).toMatch(/dbo_order_items\([^)]*limit: Int, offset: Int\)/);
     });
   });
 
