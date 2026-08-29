@@ -571,6 +571,88 @@ describe("buildPaginationClauseFp", () => {
   });
 });
 
+describe("buildPaginationClauseFp page limits", () => {
+  const list = (args: Record<string, unknown>): SelectionAnalysis => ({
+    name: "users",
+    arguments: args,
+    isArray: true,
+  });
+  const limits = { defaultPageSize: 100, maxPageSize: 1000 };
+
+  it("pages an unbounded list field with the default page size", () => {
+    for (const dbType of ["pg", "mysql"] as const) {
+      expect(buildPaginationClauseFp(dbType)(list({}), [], {}, limits)).toBe("LIMIT 100 OFFSET 0");
+    }
+    expect(buildPaginationClauseFp("mssql")(list({}), [], {}, limits)).toBe(
+      "ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY",
+    );
+  });
+
+  it("keeps a caller-supplied offset when supplying the default limit", () => {
+    expect(
+      buildPaginationClauseFp("pg")(list({ offset: "$o" }), vars("o"), { o: 20 }, limits),
+    ).toBe("LIMIT 100 OFFSET $1");
+  });
+
+  // A single-object selection already carries its own LIMIT 1; a second LIMIT is
+  // a syntax error, and there is no list to bound in the first place.
+  it("does not page a field that is not a list", () => {
+    for (const dbType of ["pg", "mysql", "mssql"] as const) {
+      expect(buildPaginationClauseFp(dbType)(field({}), [], {}, limits)).toBe("");
+    }
+  });
+
+  it("does not page when the caller is exempt", () => {
+    expect(buildPaginationClauseFp("pg")(list({}), [], {}, null)).toBe("");
+  });
+
+  it("does not page when the default page size is opted out", () => {
+    expect(
+      buildPaginationClauseFp("pg")(list({}), [], {}, { defaultPageSize: 0, maxPageSize: 1000 }),
+    ).toBe("");
+  });
+
+  it("leaves an explicit limit under the cap bound as a placeholder", () => {
+    expect(buildPaginationClauseFp("pg")(list({ limit: "$l" }), vars("l"), { l: 50 }, limits)).toBe(
+      "LIMIT $1 OFFSET 0",
+    );
+  });
+
+  it("rejects an explicit limit over the cap, naming MAX_PAGE_SIZE", () => {
+    for (const dbType of ["pg", "mysql", "mssql"] as const) {
+      expect(() =>
+        buildPaginationClauseFp(dbType)(list({ limit: "$l" }), vars("l"), { l: 5000 }, limits),
+      ).toThrow(/5000.*1000.*MAX_PAGE_SIZE/s);
+    }
+  });
+
+  it("rejects an over-cap limit on a nested list, not only at the root", () => {
+    expect(() =>
+      buildPaginationClauseFp("pg")(list({ limit: "$l" }), vars("l"), { l: 1001 }, limits),
+    ).toThrow(/MAX_PAGE_SIZE/);
+  });
+
+  it("does not enforce the cap when the caller is exempt", () => {
+    expect(buildPaginationClauseFp("pg")(list({ limit: "$l" }), vars("l"), { l: 5000 }, null)).toBe(
+      "LIMIT $1 OFFSET 0",
+    );
+  });
+
+  it("does not enforce the cap when it is opted out", () => {
+    expect(
+      buildPaginationClauseFp("pg")(
+        list({ limit: "$l" }),
+        vars("l"),
+        { l: 5000 },
+        {
+          defaultPageSize: 100,
+          maxPageSize: 0,
+        },
+      ),
+    ).toBe("LIMIT $1 OFFSET 0");
+  });
+});
+
 describe("findJoinCondition collation handling", () => {
   const makeEntities = (
     parentCols: Record<string, string | null>,

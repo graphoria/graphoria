@@ -4,7 +4,7 @@ import type {
   VariableDefinition,
 } from "../../../../analyzeQuery/types";
 import type { MergedEntities } from "../../../../configuration/getSchemas/mergeEntities";
-import type { GroupByInfo } from "../../../common";
+import type { GroupByInfo, PageLimits } from "../../../common";
 
 import {
   buildOrderByClauseMSSQL,
@@ -164,6 +164,7 @@ export const generateSQL = (
   operation: OperationAnalysis,
   variables: Record<string, unknown> = {},
   forHashMethod: boolean = false,
+  pageLimits: PageLimits | null = null,
 ): string => {
   if (forHashMethod) {
     return `SELECT HASHBYTES('MD5', (
@@ -176,6 +177,7 @@ export const generateSQL = (
           null,
           1,
           {},
+          pageLimits,
         )})
     ) AS ResultHash`;
   }
@@ -238,6 +240,7 @@ export const generateSQL = (
       null,
       index + 1,
       {},
+      pageLimits,
     );
 
     fieldQueries.push(`(${fieldSQL}) as ${wrapIdentifierMSSQL(field.alias || field.name)}`);
@@ -261,6 +264,7 @@ export const buildSQLForField = (
   parentTableAlias: string | null,
   level: number,
   aliasMap: { [alias: string]: string },
+  pageLimits: PageLimits | null,
 ): string => {
   const tableAlias = generateTableAlias(level);
 
@@ -325,6 +329,7 @@ export const buildSQLForField = (
         tableAlias,
         level,
         aliasMap,
+        pageLimits,
       ),
     ([name, selector]) => `${selector} AS ${wrapIdentifierMSSQL(name)}`,
   );
@@ -332,7 +337,12 @@ export const buildSQLForField = (
   const fromClause = `FROM ${dottedQuotedName} ${tableAlias}`;
 
   const orderByClause = buildOrderByClauseMSSQL(entities, field, tableAlias);
-  const paginationClause = buildPaginationClauseMSSQL(field, variablesDefinition);
+  const paginationClause = buildPaginationClauseMSSQL(
+    field,
+    variablesDefinition,
+    variables,
+    pageLimits,
+  );
 
   const isArray = field.isArray;
   const forJson =

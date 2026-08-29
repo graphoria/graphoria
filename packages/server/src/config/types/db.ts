@@ -168,11 +168,18 @@ export const MSSQLConnectionOptionsZod = z.strictObject({
       min: z.number().int().nonnegative().default(0),
       /** Maximum time in seconds a connection can be idle before being closed */
       idleTimeout: z.number().nonnegative().default(30),
+      /**
+       * Maximum time in seconds to wait for a free connection when the pool is
+       * saturated. Without a bound, a slow-query storm queues callers instead of
+       * failing them. Bun's SQL driver exposes no equivalent, so this is MSSQL only.
+       */
+      acquireTimeout: z.number().positive().default(30),
     })
     .default({
       max: 10,
       min: 0,
       idleTimeout: 30,
+      acquireTimeout: 30,
     }),
   /** Maximum time in seconds to wait when establishing a connection */
   connectionTimeout: z.number().nonnegative().default(30),

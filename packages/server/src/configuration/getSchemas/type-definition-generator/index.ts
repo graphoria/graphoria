@@ -103,7 +103,7 @@ export const generateTableType = (mergedEntities: MergedEntities) =>
           lj(
             relationshipsReversed,
             ({ fromResolverName, fromInternalName }) =>
-              `${fromResolverName}(where: ${fromInternalName}WhereInput, orderBy: [${fromInternalName}OrderByInput]): [${fromInternalName}]`,
+              `${fromResolverName}(where: ${fromInternalName}WhereInput, orderBy: [${fromInternalName}OrderByInput], limit: Int, offset: Int): [${fromInternalName}]`,
           ),
         ])}
       }

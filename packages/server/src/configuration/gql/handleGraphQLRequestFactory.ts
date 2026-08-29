@@ -82,7 +82,7 @@ export const handleGraphQLRequestFactory = (
       const result = await operation.handler(
         {
           databases: databasesConnections,
-          gqlQuery: gql.handler,
+          gqlQuery: operatorQuery,
           queues: queueManager,
           repository: repositoryMap,
         },
@@ -162,6 +162,8 @@ export const handleGraphQLRequestFactory = (
 
   const queryCache = new LRUCache<string, CachedQuery>({ max: 1000 });
 
+  const pageLimits = { defaultPageSize: env.defaultPageSize, maxPageSize: env.maxPageSize };
+
   // undefined = unparseable query (never cached)
   const getCacheEntry = (query: string): CachedQuery | undefined => {
     const hit = queryCache.get(query);
@@ -237,6 +239,12 @@ export const handleGraphQLRequestFactory = (
       variables: Record<string, unknown> = {},
       req?: BunRequest,
       session?: SessionContext,
+      // `enforcePageLimits: false` is for operator-authored queries (REST
+      // operations, cron jobs, the `gqlQuery` handed to operation hooks). They
+      // are configuration, not caller input, so a page cap could only reject
+      // the operator's own intent. Use `gql.operatorQuery` rather than passing
+      // this by hand.
+      options?: { enforcePageLimits?: boolean },
       // oxlint-disable-next-line typescript/no-explicit-any
     ): Promise<{ data: any }> => {
       const log = logger("graphql").child({ role: session?.role });
@@ -342,7 +350,13 @@ export const handleGraphQLRequestFactory = (
           ],
         };
 
-        const sqlQueries = generateSQL(entities, tableQueryAnalysis, resolved.allVariables);
+        const sqlQueries = generateSQL(
+          entities,
+          tableQueryAnalysis,
+          resolved.allVariables,
+          false,
+          (options?.enforcePageLimits ?? true) ? pageLimits : null,
+        );
 
         const data = await Promise.all<object>(
           sqlQueries.map(([db, query]) =>
@@ -412,7 +426,15 @@ export const handleGraphQLRequestFactory = (
     },
   };
 
-  return gql;
+  /**
+   * `handler` for operator-authored queries — REST operations, cron jobs, and
+   * the `gqlQuery` handed to operation hooks and handlers. Their text comes from
+   * configuration, never from a caller, so page limits do not apply.
+   */
+  const operatorQuery: typeof gql.handler = (query, variables, req, session) =>
+    gql.handler(query, variables, req, session, { enforcePageLimits: false });
+
+  return { ...gql, operatorQuery };
 };
 
 export type HandleGraphQLRequest = ReturnType<typeof handleGraphQLRequestFactory>;

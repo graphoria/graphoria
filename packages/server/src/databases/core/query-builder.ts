@@ -1,6 +1,7 @@
 import type { AnalysisResult, SelectionAnalysis } from "../../analyzeQuery/types";
 import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
 import type { Database } from "../../types/configuration";
+import type { PageLimits } from "../common";
 
 import { databaseAdapters } from "./function-mapping";
 
@@ -9,6 +10,8 @@ export const generateSQL = (
   analysisResult: AnalysisResult,
   variables: Record<string, unknown> = {},
   forHashMethod: boolean = false,
+  /** `null` exempts the query — operator-authored queries are configuration, not caller input. */
+  pageLimits: PageLimits | null = null,
 ) => {
   const operation = analysisResult.operations[0];
 
@@ -40,6 +43,7 @@ export const generateSQL = (
         },
         variables,
         forHashMethod,
+        pageLimits,
       );
 
       return [db, query] as const;

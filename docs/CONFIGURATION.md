@@ -103,7 +103,7 @@ type DatabaseConnection = {
 
 Pool and transport tuning. Optional. The shape depends on `type`: `pg` and `mysql` go through Bun's built-in SQL client, `mssql` through the `mssql` package. All timeouts are in seconds.
 
-The defaults below are the ones validation fills in, so they apply **when you supply `connectionOptions`**. Leaving the key out takes a different path with different fallbacks; see [When connectionOptions is absent](#when-connectionoptions-is-absent).
+The defaults below are the ones validation fills in, and they apply whether or not you supply `connectionOptions` — with two exceptions on MSSQL; see [When connectionOptions is absent](#when-connectionoptions-is-absent).
 
 ```typescript
 // type: "pg" | "mysql"
@@ -124,6 +124,7 @@ type MSSQLConnectionOptions = {
     max?: number; // Maximum connections in the pool (default: 10)
     min?: number; // Minimum connections in the pool (default: 0)
     idleTimeout?: number; // Seconds a connection may sit idle before closing (default: 30)
+    acquireTimeout?: number; // Seconds to wait for a free connection when saturated (default: 30)
   };
   connectionTimeout?: number; // Seconds to wait when establishing a connection (default: 30)
   requestTimeout?: number; // Seconds to wait for a request to complete (default: 30)
@@ -136,21 +137,22 @@ type MSSQLConnectionOptions = {
 
 #### When connectionOptions is absent
 
-The key is optional, and when it is missing the pool is built from hardcoded fallbacks rather than the validated defaults above. The two do not always agree:
+The key is optional, and every pool bound above applies either way — the pool is built from the same defaults whether you supply the key or leave it out.
 
-| Option                                                                           | supplied            | absent             |
-| -------------------------------------------------------------------------------- | ------------------- | ------------------ |
-| `max` (pg)                                                                       | 10                  | 5                  |
-| `max` (mysql)                                                                    | 10                  | 50                 |
-| `pool.max` (mssql)                                                               | 10                  | 50                 |
-| `pool.min` (mssql)                                                               | 0                   | 1                  |
-| `trustServerCertificate` (mssql)                                                 | false               | **true**           |
-| `trustedConnection` (mssql)                                                      | false               | **true**           |
-| `connectionTimeout`, `requestTimeout`, `maxLifetime`, `tls`, `prepare`, `bigint` | as documented above | left to the driver |
+Two MSSQL transport flags are the exception, and they are the ones to watch:
 
-The MSSQL rows are the ones to watch. With no `connectionOptions`, the server certificate is trusted without being validated. Set any MSSQL option and validation fills `trustServerCertificate` with `false`, which will drop a connection to a server presenting a self-signed certificate. Set the fields you depend on explicitly rather than relying on either column.
+| Option                           | supplied | absent   |
+| -------------------------------- | -------- | -------- |
+| `trustServerCertificate` (mssql) | false    | **true** |
+| `trustedConnection` (mssql)      | false    | **true** |
 
-One sharp edge behind that: `connectionOptions` is validated against an undiscriminated union of the two shapes, so the engine does not pick the schema — the object's own fields do. An object carrying nothing engine-specific, `{}` included, matches the `pg`/`mysql` shape even on an `mssql` database, and the MSSQL pool then finds none of its options and falls back to the "absent" column. Any MSSQL-only field (`requestTimeout`, `pool`, `encrypt`, …) routes it to the right shape.
+With no `connectionOptions`, the server certificate is trusted without being validated. Set any MSSQL option and validation fills `trustServerCertificate` with `false`, which will drop a connection to a server presenting a self-signed certificate. Set the fields you depend on explicitly rather than relying on either column.
+
+One sharp edge behind that: `connectionOptions` is validated against an undiscriminated union of the two shapes, so the engine does not pick the schema — the object's own fields do. An object carrying nothing engine-specific, `{}` included, matches the `pg`/`mysql` shape even on an `mssql` database, which is why those two flags still read from the object rather than from the validated result. Any MSSQL-only field (`requestTimeout`, `pool`, `encrypt`, …) routes it to the right shape.
+
+#### Bounding the wait for a connection
+
+`pool.acquireTimeout` caps how long a request waits for a free connection when the pool is saturated, so a slow-query storm fails callers instead of queueing them behind it. It is **MSSQL only** — Bun's SQL client, which backs `pg` and `mysql`, exposes no equivalent. Its `connectionTimeout` bounds opening a connection, not waiting for one.
 
 #### MySQL over a plain connection
 

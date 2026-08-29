@@ -39,7 +39,20 @@ import {
   prodWithTruncateDirectiveQuery,
   prodWithUppercaseDirectiveQuery,
 } from "../../../../__test/fixtures/queries";
-import { format, genSql } from "../format";
+import { format, genSql as genSqlEnforced } from "../format";
+
+// The suites below assert clause construction, so they run with page limits
+// exempt — otherwise every list expectation would carry the default page size.
+// The default itself is covered by the page-limits block at the end.
+type GenSqlArgs = Parameters<typeof genSqlEnforced>;
+const genSql = (
+  entities: GenSqlArgs[0],
+  query: GenSqlArgs[1],
+  variables?: GenSqlArgs[2],
+  hash?: GenSqlArgs[3],
+) => genSqlEnforced(entities, query, variables, hash, null);
+
+const pageLimits = { defaultPageSize: 100, maxPageSize: 1000 };
 
 describe("PostgreSQL: Store", () => {
   it("Should generate a query without arguments", () => {
@@ -1452,5 +1465,19 @@ describe("PostgreSQL: Common", () => {
           ) as json_result
       `),
     );
+  });
+});
+
+describe("PostgreSQL: page limits", () => {
+  it("bounds every list level of an unbounded query with the default page size", () => {
+    const sql = genSqlEnforced(StorePG, prodQuery, {}, false, pageLimits);
+
+    // Two list levels — dbo_products and dbo_product_categories. The to-one
+    // dbo_categories is not a list and must stay unbounded.
+    expect(sql.match(/LIMIT\s+100/g)).toHaveLength(2);
+  });
+
+  it("leaves the query unbounded when the caller is exempt", () => {
+    expect(genSqlEnforced(StorePG, prodQuery, {}, false, null)).not.toContain("LIMIT");
   });
 });

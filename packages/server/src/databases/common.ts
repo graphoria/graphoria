@@ -826,37 +826,82 @@ const toPositionalPlaceholder = (
   return null;
 };
 
+/**
+ * Page bounds applied to a list field. `null` at a call site means the query is
+ * operator-authored and exempt; `0` on either field opts that half out.
+ */
+export type PageLimits = {
+  defaultPageSize: number;
+  maxPageSize: number;
+};
+
+// Resolve the requested limit to a number, following a $ref into the runtime
+// values. Returns undefined when there is no limit or it cannot be resolved.
+const resolveLimitValue = (
+  value: unknown,
+  variables: Record<string, unknown>,
+): number | undefined => {
+  const resolved = isString(value) && value.startsWith("$") ? variables[value.substring(1)] : value;
+
+  return typeof resolved === "number" ? resolved : undefined;
+};
+
 // Factory function for pagination clause builders
 export const buildPaginationClauseFp =
   (dbType: DatabaseType = "pg") =>
-  (field: SelectionAnalysis, variablesDefinition: VariableDefinition[] = []): string => {
+  (
+    field: SelectionAnalysis,
+    variablesDefinition: VariableDefinition[] = [],
+    variables: Record<string, unknown> = {},
+    pageLimits: PageLimits | null = null,
+  ): string => {
     const args = field.arguments;
 
-    if (!args || args["limit"] === undefined) {
-      return "";
+    const requested = resolveLimitValue(args?.["limit"], variables);
+
+    if (pageLimits && pageLimits.maxPageSize > 0 && requested !== undefined) {
+      if (requested > pageLimits.maxPageSize) {
+        throw new Error(
+          `Requested page size of ${requested} exceeds the maximum allowed page size of ${pageLimits.maxPageSize} (field: "${field.alias || field.name}"). Raise MAX_PAGE_SIZE to allow larger pages.`,
+        );
+      }
     }
 
     // Convert limit variable reference to positional placeholder
-    const limitPlaceholder = toPositionalPlaceholder(args["limit"], variablesDefinition, dbType);
-    if (!limitPlaceholder) {
-      return ""; // Limit must be a variable reference
+    const limitPlaceholder =
+      args?.["limit"] === undefined
+        ? null
+        : toPositionalPlaceholder(args["limit"], variablesDefinition, dbType);
+
+    // An unbounded list field reads the whole table. Supply the default page
+    // size as a literal: minting a variable here would have to push onto the
+    // same definition list the driver binds positionally from, and that order
+    // is load-bearing. The value is an env-validated integer, never caller text.
+    const limitClause =
+      limitPlaceholder ??
+      (field.isArray && pageLimits && pageLimits.defaultPageSize > 0
+        ? String(pageLimits.defaultPageSize)
+        : null);
+
+    if (!limitClause) {
+      return "";
     }
 
     // Convert offset variable reference to positional placeholder (default to 0 if not provided)
-    const offsetPlaceholder = args["offset"]
+    const offsetPlaceholder = args?.["offset"]
       ? toPositionalPlaceholder(args["offset"], variablesDefinition, dbType)
       : "0";
 
     if (dbType !== "mssql") {
-      return `LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`;
+      return `LIMIT ${limitClause} OFFSET ${offsetPlaceholder}`;
     }
 
     // T-SQL only accepts OFFSET/FETCH after an ORDER BY. Dropping the limit when
     // the query has none returned the whole table instead, so supply the
     // order-agnostic ORDER BY that T-SQL accepts for exactly this case.
-    const orderByFallback = args["orderBy"] === undefined ? "ORDER BY (SELECT NULL) " : "";
+    const orderByFallback = args?.["orderBy"] === undefined ? "ORDER BY (SELECT NULL) " : "";
 
-    return `${orderByFallback}OFFSET ${offsetPlaceholder} ROWS FETCH NEXT ${limitPlaceholder} ROWS ONLY`;
+    return `${orderByFallback}OFFSET ${offsetPlaceholder} ROWS FETCH NEXT ${limitClause} ROWS ONLY`;
   };
 
 export const buildPaginationClausePG = buildPaginationClauseFp("pg");

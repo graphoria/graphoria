@@ -76,24 +76,26 @@ await close(); // release database connections
 
 The server reads a small set of environment variables. Every variable has a sensible default except `JWT_SECRET` (or PASETO equivalents) and `ADMIN_SECRET`, both of which are required.
 
-| Variable               | Default                        | Purpose                                                         |
-| ---------------------- | ------------------------------ | --------------------------------------------------------------- |
-| `PORT`                 | `3000`                         | HTTP port for `createBunServer`.                                |
-| `JWT_SECRET`           | _required_                     | Symmetric secret for JWT signing.                               |
-| `JWT_EXPIRES_IN`       | `5m`                           | Access-token lifetime.                                          |
-| `JWT_RT_EXPIRES_IN`    | `7d`                           | Refresh-token lifetime.                                         |
-| `PASETO_LOCAL_KEY`     | _required for_ `paseto_local`  | XChaCha20-Poly1305 key (`k4.local.…`).                          |
-| `PASETO_SECRET_KEY`    | _required for_ `paseto_public` | Ed25519 secret (`k4.secret.…`).                                 |
-| `PASETO_PUBLIC_KEY`    | _required for_ `paseto_public` | Ed25519 public (`k4.public.…`).                                 |
-| `ADMIN_SECRET`         | _required_                     | Bypasses RBAC when sent in the admin header.                    |
-| `REDIS_URL`            | `redis://localhost:6379`       | Refresh-token rotation + cache.                                 |
-| `GRAPHQL_API_ENDPOINT` | `/graphql`                     | GraphQL endpoint path.                                          |
-| `REST_API_PREFIX`      | `/rest`                        | REST API prefix.                                                |
-| `GRAPHIQL_ENDPOINT`    | `/graphiql`                    | Built-in GraphiQL playground path.                              |
-| `SCALAR_ENDPOINT`      | `/scalar`                      | Scalar API documentation path.                                  |
-| `OPENAPI_ENDPOINT`     | `/openapi.json`                | OpenAPI document path.                                          |
-| `CORS_ENABLED`         | `true`                         | Toggle CORS preflight handler.                                  |
-| `MAX_QUERY_DEPTH`      | `8`                            | Reject caller queries deeper than this. `0` disables the limit. |
+| Variable               | Default                        | Purpose                                                                            |
+| ---------------------- | ------------------------------ | ---------------------------------------------------------------------------------- |
+| `PORT`                 | `3000`                         | HTTP port for `createBunServer`.                                                   |
+| `JWT_SECRET`           | _required_                     | Symmetric secret for JWT signing.                                                  |
+| `JWT_EXPIRES_IN`       | `5m`                           | Access-token lifetime.                                                             |
+| `JWT_RT_EXPIRES_IN`    | `7d`                           | Refresh-token lifetime.                                                            |
+| `PASETO_LOCAL_KEY`     | _required for_ `paseto_local`  | XChaCha20-Poly1305 key (`k4.local.…`).                                             |
+| `PASETO_SECRET_KEY`    | _required for_ `paseto_public` | Ed25519 secret (`k4.secret.…`).                                                    |
+| `PASETO_PUBLIC_KEY`    | _required for_ `paseto_public` | Ed25519 public (`k4.public.…`).                                                    |
+| `ADMIN_SECRET`         | _required_                     | Bypasses RBAC when sent in the admin header.                                       |
+| `REDIS_URL`            | `redis://localhost:6379`       | Refresh-token rotation + cache.                                                    |
+| `GRAPHQL_API_ENDPOINT` | `/graphql`                     | GraphQL endpoint path.                                                             |
+| `REST_API_PREFIX`      | `/rest`                        | REST API prefix.                                                                   |
+| `GRAPHIQL_ENDPOINT`    | `/graphiql`                    | Built-in GraphiQL playground path.                                                 |
+| `SCALAR_ENDPOINT`      | `/scalar`                      | Scalar API documentation path.                                                     |
+| `OPENAPI_ENDPOINT`     | `/openapi.json`                | OpenAPI document path.                                                             |
+| `CORS_ENABLED`         | `true`                         | Toggle CORS preflight handler.                                                     |
+| `MAX_QUERY_DEPTH`      | `8`                            | Reject caller queries deeper than this. `0` disables the limit.                    |
+| `DEFAULT_PAGE_SIZE`    | `100`                          | Page size applied to a list field that asks for no limit. `0` leaves it unbounded. |
+| `MAX_PAGE_SIZE`        | `1000`                         | Reject a list field asking for more rows than this. `0` removes the ceiling.       |
 
 The complete list lives in [`packages/server/src/types/env.ts`](./src/types/env.ts).
 

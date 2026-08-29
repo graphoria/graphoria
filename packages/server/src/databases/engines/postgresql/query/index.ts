@@ -4,7 +4,7 @@ import type {
   VariableDefinition,
 } from "../../../../analyzeQuery/types";
 import type { MergedEntities } from "../../../../configuration/getSchemas/mergeEntities";
-import type { GroupByInfo } from "../../../common";
+import type { GroupByInfo, PageLimits } from "../../../common";
 
 import {
   buildOrderByClausePG,
@@ -154,9 +154,10 @@ export const generateSQL = (
   operation: OperationAnalysis,
   variables: Record<string, unknown> = {},
   forHashMethod: boolean = false,
+  pageLimits: PageLimits | null = null,
 ): string => {
   if (forHashMethod) {
-    return `SELECT MD5((${buildSQLForField(entities, operation.variables ?? [], variables, operation.fields[0], null, null, 1, {})})::text) AS "ResultHash"`;
+    return `SELECT MD5((${buildSQLForField(entities, operation.variables ?? [], variables, operation.fields[0], null, null, 1, {}, pageLimits)})::text) AS "ResultHash"`;
   }
 
   const variablesWithDefault = {
@@ -217,6 +218,7 @@ export const generateSQL = (
       null,
       index + 1,
       {},
+      pageLimits,
     );
 
     fieldQueries.push(`'${field.alias || field.name}', ${fieldSQL}`);
@@ -239,6 +241,7 @@ export const buildSQLForField = (
   parentTableAlias: string | null,
   level: number,
   aliasMap: { [alias: string]: string },
+  pageLimits: PageLimits | null,
 ): string => {
   const tableAlias = generateTableAlias(level);
 
@@ -303,6 +306,7 @@ export const buildSQLForField = (
         tableAlias,
         level,
         aliasMap,
+        pageLimits,
       ),
     ([name, selector]) => `'${name}', ${selector}`,
   );
@@ -310,7 +314,12 @@ export const buildSQLForField = (
   const fromClause = `FROM ${dottedQuotedName} ${tableAlias}`;
 
   const orderByClause = buildOrderByClausePG(entities, field, tableAlias);
-  const paginationClause = buildPaginationClausePG(field, variablesDefinition);
+  const paginationClause = buildPaginationClausePG(
+    field,
+    variablesDefinition,
+    variables,
+    pageLimits,
+  );
 
   const isArraySelection = !!field.isArray && !withoutArrayWrapper;
 

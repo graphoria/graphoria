@@ -6,32 +6,56 @@ import type { VariableDefinition } from "../../../analyzeQuery/types";
 import type { Database } from "../../../types/configuration";
 import type { ProcedureResolver } from "../../../types/db";
 
+import { MSSQLConnectionOptionsZod } from "../../../config/types/db";
 import { databasesConnections } from "../../../singletons/databases";
 import { logger } from "../../../logging";
 
-export const getPool = async (db: Database) => {
+// Every pool bound comes from the schema, which is the only place they are
+// declared and documented. Repeating them here as `?? n` fallbacks let the
+// documented default and the applied one drift apart, differently per engine.
+//
+// Defaults are overlaid rather than re-parsed: `connectionOptions` is an
+// undiscriminated union of the two engine shapes, and an object carrying
+// nothing MSSQL-specific — `{}` included — validates against the Bun SQL shape
+// even on an MSSQL database. A strict re-parse of one of those would reject the
+// Bun SQL keys and take the server down at boot.
+export const poolOptions = (db: Database) => {
   const ci = db.connection;
-  const opts = db.connectionOptions as MSSQLConnectionOptions | undefined;
-  const pool = new ConnectionPool({
+  const raw = db.connectionOptions as MSSQLConnectionOptions | undefined;
+
+  const defaults = MSSQLConnectionOptionsZod.parse({});
+  const opts = { ...defaults, ...raw, pool: { ...defaults.pool, ...raw?.pool } };
+
+  return {
     server: ci.host,
     port: ci.port,
     user: ci.user,
     password: ci.password,
     database: ci.database,
-    connectionTimeout: opts?.connectionTimeout ? opts.connectionTimeout * 1000 : undefined,
-    requestTimeout: opts?.requestTimeout ? opts.requestTimeout * 1000 : undefined,
+    connectionTimeout: opts.connectionTimeout * 1000,
+    requestTimeout: opts.requestTimeout * 1000,
+    // These three keep their code fallbacks rather than the schema's. Two of
+    // them default the opposite way there, so taking the schema value would
+    // turn certificate validation on and trusted connections off for every
+    // deployment that omits `connectionOptions` — a change to how a connection
+    // is secured, not to how the pool is sized.
     options: {
-      encrypt: opts?.encrypt ?? false,
-      trustServerCertificate: opts?.trustServerCertificate ?? true,
-      trustedConnection: opts?.trustedConnection ?? true,
+      encrypt: raw?.encrypt ?? false,
+      trustServerCertificate: raw?.trustServerCertificate ?? true,
+      trustedConnection: raw?.trustedConnection ?? true,
     },
     pool: {
-      max: opts?.pool?.max ?? 50,
-      min: opts?.pool?.min ?? 1,
-      idleTimeoutMillis: (opts?.pool?.idleTimeout ?? 30) * 1000,
+      max: opts.pool.max,
+      min: opts.pool.min,
+      idleTimeoutMillis: opts.pool.idleTimeout * 1000,
+      acquireTimeoutMillis: opts.pool.acquireTimeout * 1000,
     },
-    parseJSON: opts?.parseJSON ?? true,
-  });
+    parseJSON: opts.parseJSON,
+  };
+};
+
+export const getPool = async (db: Database) => {
+  const pool = new ConnectionPool(poolOptions(db));
 
   await pool.connect(); // Connect to the database
 
