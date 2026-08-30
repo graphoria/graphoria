@@ -418,6 +418,7 @@ Before going to production:
 | ----------------------------------------------------- | --------------------------------------------------------------------- |
 | [Authentication](./docs/AUTHENTICATION.md)            | JWT and PASETO strategies, argon2id passwords, refresh-token rotation |
 | [Permissions & Access Control](./docs/PERMISSIONS.md) | RBAC, row-level filtering, session variables, ordering                |
+| [Resource Limits](./docs/LIMITS.md)                   | Depth, page size, timeouts, rate limiting and the query cost budget   |
 | [Operations](./docs/OPERATIONS.md)                    | Custom query and handler operations, hooks, caching                   |
 | [Cron Jobs](./docs/CRON.md)                           | Scheduled background work with cron expressions and ISO datetimes     |
 | [Queues](./docs/QUEUES.md)                            | RabbitMQ and Kafka publishers, subscribers, cache invalidation        |
