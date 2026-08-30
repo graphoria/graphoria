@@ -36,7 +36,7 @@ export const buildExecute = (roles: RolesWithGqlHandler, defaultRole: string) =>
     if (gql.isIntrospectionQuery(query)) return gql.introspectionResult;
     if (gql.isNoDataQuery(query)) return gql.noDataResult;
 
-    const { hasErrors, validationErrors } = gql.hasErrors(query);
+    const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
 
     if (hasErrors) {
       return {

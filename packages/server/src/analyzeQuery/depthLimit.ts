@@ -1,12 +1,8 @@
 import { GraphQLError, Kind } from "graphql";
 
-import type {
-  ASTNode,
-  ASTVisitor,
-  DocumentNode,
-  FragmentDefinitionNode,
-  ValidationContext,
-} from "graphql";
+import type { ASTNode, ASTVisitor, FragmentDefinitionNode, ValidationContext } from "graphql";
+
+import { collectFragments } from "./fragments";
 
 /**
  * Compute the depth of a selection set, resolving fragment spreads.
@@ -66,21 +62,6 @@ function computeDepth(
   }
 
   return max;
-}
-
-/**
- * Collect all fragment definitions from a document.
- */
-function collectFragments(document: DocumentNode): Map<string, FragmentDefinitionNode> {
-  const fragments = new Map<string, FragmentDefinitionNode>();
-
-  for (const def of document.definitions) {
-    if (def.kind === Kind.FRAGMENT_DEFINITION) {
-      fragments.set(def.name.value, def);
-    }
-  }
-
-  return fragments;
 }
 
 /**

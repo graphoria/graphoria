@@ -97,7 +97,9 @@ const handleGraphQLSubscriptionFactory = (
         const schemaEntity = roles[session.role!];
 
         // Validate query
-        const { hasErrors, validationErrors } = schemaEntity.handlers.gql.hasErrors(query);
+        const { hasErrors, validationErrors } = schemaEntity.handlers.gql.hasErrors(query, {
+          variables,
+        });
 
         if (hasErrors) {
           queryEventEmitter.sendErrorToSingleClient(ws, id, validationErrors);

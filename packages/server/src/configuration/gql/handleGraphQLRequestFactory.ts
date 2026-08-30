@@ -11,6 +11,7 @@ import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
 
 import { analyzeQuery } from "../../analyzeQuery";
+import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule } from "../../analyzeQuery/depthLimit";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
@@ -209,12 +210,26 @@ export const handleGraphQLRequestFactory = (
     // Return the introspection result for clients like GraphiQL or Apollo Client
     introspectionResult: { data: gqlEntities.introspection },
     noDataResult: { data: { _no_data: "No data available" } },
-    // `enforceDepthLimit: false` is for operator-authored queries (REST
-    // operations), which are config, not attacker input. Their result is never
-    // cached: the cache is keyed on query text alone, so storing a depth-free
-    // verdict would serve a caller sending the same text over the wire.
-    hasErrors: (query: string, options?: { enforceDepthLimit?: boolean }) => {
+    // `enforceDepthLimit: false` and `enforceCostLimit: false` are for
+    // operator-authored queries (REST operations), which are config, not
+    // attacker input. The depth verdict is never cached under them: the cache is
+    // keyed on query text alone, so storing a depth-free verdict would serve a
+    // caller sending the same text over the wire.
+    //
+    // Two flags rather than one because they are exempted for the same reason
+    // but enforced in different places — the depth rule inside the memoised
+    // `validate`, the cost check after it. Overloading one flag would leave the
+    // REST call sites reading as if they only exempted depth.
+    hasErrors: (
+      query: string,
+      options?: {
+        enforceDepthLimit?: boolean;
+        enforceCostLimit?: boolean;
+        variables?: Record<string, unknown>;
+      },
+    ) => {
       const enforceDepthLimit = options?.enforceDepthLimit ?? true;
+      const enforceCostLimit = options?.enforceCostLimit ?? true;
       const entry = getCacheEntry(query);
       // Unparseable queries aren't cached; let parse surface the syntax error
       const document = entry?.document ?? parse(query);
@@ -226,6 +241,23 @@ export const handleGraphQLRequestFactory = (
 
         validationErrors = validate(gqlEntities.schema, document, rules);
         if (entry && enforceDepthLimit) entry.validationErrors = validationErrors;
+      }
+
+      // Outside the block above, and never cached: the estimate depends on the
+      // request's variable values, so the same query text has different verdicts
+      // for different callers. Only for a query that already typechecks — an
+      // estimate drawn from a document that does not resolve against the schema
+      // would bury the error that actually explains the rejection.
+      if (enforceCostLimit && env.maxQueryCost > 0 && validationErrors.length === 0) {
+        const costError = checkQueryCost(
+          document,
+          gqlEntities.schema,
+          options?.variables ?? {},
+          pageLimits,
+          env.maxQueryCost,
+        );
+
+        if (costError) validationErrors = [costError];
       }
 
       return {

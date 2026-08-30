@@ -132,6 +132,25 @@ describe("EnvZod QUERY_TIMEOUT_MS", () => {
   });
 });
 
+describe("EnvZod MAX_QUERY_COST", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("ships off, so an operator opts in to the cost budget", () => {
+    expect(EnvZod.parse(baseEnv).maxQueryCost).toBe(0);
+  });
+
+  it("coerces the string form", () => {
+    expect(EnvZod.parse({ ...baseEnv, MAX_QUERY_COST: "100000" }).maxQueryCost).toBe(100_000);
+  });
+
+  it("rejects a negative budget", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, MAX_QUERY_COST: "-1" })).toThrow();
+  });
+});
+
 describe("EnvZod RATE_LIMIT_*", () => {
   const baseEnv = {
     ADMIN_SECRET: "x",
