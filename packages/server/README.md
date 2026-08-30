@@ -97,7 +97,10 @@ The server reads a small set of environment variables. Every variable has a sens
 | `DEFAULT_PAGE_SIZE`    | `100`                          | Page size applied to a list field that asks for no limit. `0` leaves it unbounded. |
 | `MAX_PAGE_SIZE`        | `1000`                         | Reject a list field asking for more rows than this. `0` removes the ceiling.       |
 
-The complete list lives in [`packages/server/src/types/env.ts`](./src/types/env.ts).
+The complete list lives in [`packages/server/src/types/env.ts`](./src/types/env.ts). Two more limits
+are not in the table above because they ship **off** — `MAX_QUERY_COST` and `RATE_LIMIT_MAX` — and a
+third, `QUERY_TIMEOUT_MS`, bounds every statement at `10000` ms. All five are documented together in
+[Resource Limits](../../docs/LIMITS.md).
 
 ## Configuration helpers
 
