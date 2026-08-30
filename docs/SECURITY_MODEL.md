@@ -268,10 +268,17 @@ to; all of them keep one caller from consuming the server.
 | Page size         | `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE`        | `100` / `1000` | Rows per list field, at every nesting level    |
 | Statement timeout | `QUERY_TIMEOUT_MS`, per-operation `timeout`  | `10000`        | How long one statement may hold a connection   |
 | Request rate      | `RATE_LIMIT_MAX`, `RATE_LIMIT_ANONYMOUS_MAX` | `0` — **off**  | Requests per `RATE_LIMIT_WINDOW_MS` per caller |
+| Query cost        | `MAX_QUERY_COST`                             | `0` — **off**  | Estimated rows one query asks a database for   |
 
-Operator-authored queries are exempt from the depth and page limits: REST operations, cron jobs and
-the query function handed to operation hooks take their text from the configuration, never from a
-caller, so a limit there could only reject the operator's own intent.
+Operator-authored queries are exempt from the depth, page and cost limits: REST operations, cron
+jobs and the query function handed to operation hooks take their text from the configuration, never
+from a caller, so a limit there could only reject the operator's own intent.
+
+**The query cost budget ships off too.** Depth bounds how deep a query nests and the page size
+bounds one list field; neither bounds a query that is merely wide — a hundred sibling relationships,
+each paged, is a legal eight-deep query. `MAX_QUERY_COST` is the limit that catches that shape, and
+until it is set nothing does. See
+[Bounding how much one query asks for](./CONFIGURATION.md#bounding-how-much-one-query-asks-for).
 
 **The rate limit ships off.** Until it is configured there is nothing in the product that slows
 repeated requests — including repeated password guesses against `auth_login` and against the console

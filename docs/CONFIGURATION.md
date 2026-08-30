@@ -22,10 +22,11 @@ export default (({ z, operation, cron, virtualColumnExpression, virtualColumnFun
 
 All secrets and runtime knobs are set via environment variables. Bun auto-loads `.env`.
 
-| Variable    | Type     | Default                       | Notes                                                              |
-| ----------- | -------- | ----------------------------- | ------------------------------------------------------------------ |
-| `LOG_LEVEL` | `string` | `debug` (dev) / `info` (prod) | pino log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
-| `NODE_ENV`  | `string` | `DEVELOPMENT`                 | `PRODUCTION` disables pino-pretty formatting                       |
+| Variable         | Type     | Default                       | Notes                                                                                                                                       |
+| ---------------- | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOG_LEVEL`      | `string` | `debug` (dev) / `info` (prod) | pino log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`                                                                          |
+| `NODE_ENV`       | `string` | `DEVELOPMENT`                 | `PRODUCTION` disables pino-pretty formatting                                                                                                |
+| `MAX_QUERY_COST` | `number` | `0`                           | Estimated cost ceiling for a caller's query. `0` is off — see [Bounding how much one query asks for](#bounding-how-much-one-query-asks-for) |
 
 See [`.env.example`](../.env.example) for the full list.
 
@@ -207,6 +208,46 @@ Each engine enforces it the only way it can:
 On MSSQL, `connectionOptions.requestTimeout` wins when you set it explicitly — `QUERY_TIMEOUT_MS` only fills the value in when the key is absent — so a pool deliberately raised for a slow report keeps its bound. Note that the two use different units: `requestTimeout` is in seconds, `QUERY_TIMEOUT_MS` in milliseconds.
 
 A single operation can override all of the above with its own `timeout`; see [Operations](./OPERATIONS.md#statement-timeout).
+
+#### Bounding how much one query asks for
+
+`MAX_QUERY_COST` caps the estimated cost of a caller's query, rejecting it before it executes. It **ships off** — `0`, the default, means nothing is estimated and no warning fires at boot to say so. Read this section as the warning.
+
+It exists because depth and page size leave a shape uncovered. Depth bounds how deep a selection nests, `MAX_PAGE_SIZE` bounds one list field, and a query that is merely _wide_ passes both: a hundred sibling relationships under one root list, each paged at the default, is a legal eight-deep query that asks for a million rows.
+
+The estimate is a walk of the parsed document against the role's schema:
+
+```
+cost(field) = 1 + multiplier(field) × Σ cost(child)
+```
+
+`multiplier` is the page size the field asks for — its `limit` argument, resolved through the request's variables, falling back to `DEFAULT_PAGE_SIZE` when there is none — for a list field, and `1` for anything returning a single row: a scalar, a to-one relationship, a `_single` field. A relationship carries no extra weight of its own; the multiplier already encodes the fan-out a join causes. Fragment spreads are expanded, so moving a fan-out into a fragment does not hide it. Introspection meta-fields are skipped. A document carrying several operations is scored by its most expensive one.
+
+At the default `DEFAULT_PAGE_SIZE` of `100`:
+
+| Query                                                  | Cost         |
+| ------------------------------------------------------ | ------------ |
+| `tasks(limit: 20) { id title project { id name } }`    | `101`        |
+| A dashboard: one unbounded root list, seven scalars    | `701`        |
+| Three unbounded nested to-many lists, one scalar each  | `1 020 201`  |
+| One root list × 1000 to-many siblings, one scalar each | `10 100 001` |
+
+Four orders of magnitude separate a realistic query from a wide one, which is what makes a single scalar budget workable. **`100000` is the recommended starting value**: it clears both realistic queries with two orders of magnitude to spare and rejects both attack shapes.
+
+It also rejects three unbounded nested to-many lists, and that is the one rejection an operator will see and assume is a bug. It is not: three unbounded to-many levels really is a million rows. The fix is for the caller to pass a `limit`.
+
+Over budget answers a validation error naming both numbers:
+
+```
+Estimated query cost of 1020201 exceeds the maximum allowed cost of 100000 (operation: "Dashboard"). Raise MAX_QUERY_COST to allow more expensive queries.
+```
+
+Two limits of the estimate, both deliberate:
+
+- **It is a guess outside table-backed fields.** `DEFAULT_PAGE_SIZE` is applied by Graphoria's SQL builder to tables. The cost walk is driven by schema shape, so it also charges a default multiplier to a list field backed by a remote schema or an operation, where Graphoria pages nothing and the real row count is whatever the upstream returns. An estimate there, not a bound.
+- **Operator-authored queries are exempt**, alongside the existing depth exemption. REST operations take their text from the configuration, never from a caller, so a budget there could only turn an operator's own query into a dead route.
+
+There is no MCP-specific override. MCP gets its own `AI_MCP_MAX_QUERY_DEPTH` because an agent legitimately writes deeper queries than an application does; nothing makes the same argument for asking a database for more rows.
 
 #### MySQL over a plain connection
 
