@@ -40,6 +40,7 @@ export const EnvZod = z
     DEFAULT_PAGE_SIZE: z.coerce.number().int().min(0).default(100),
     MAX_PAGE_SIZE: z.coerce.number().int().min(0).default(1000),
     QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).default(10000),
+    MAX_QUERY_COST: z.coerce.number().int().min(0).default(0),
     RATE_LIMIT_MAX: z.coerce.number().int().min(0).default(0),
     RATE_LIMIT_ANONYMOUS_MAX: z.coerce.number().int().min(0).default(0),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
@@ -77,6 +78,7 @@ export const EnvZod = z
     defaultPageSize: env.DEFAULT_PAGE_SIZE,
     maxPageSize: env.MAX_PAGE_SIZE,
     queryTimeoutMs: env.QUERY_TIMEOUT_MS,
+    maxQueryCost: env.MAX_QUERY_COST,
     admin: {
       secret: env.ADMIN_SECRET,
       header: env.ADMIN_SECRET_HEADER,
