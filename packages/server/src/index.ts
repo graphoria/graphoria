@@ -344,7 +344,7 @@ const createGraphQLServer = async (env: Env) => {
 
         if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
 
-        const { hasErrors, validationErrors } = gql.hasErrors(query);
+        const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
 
         if (hasErrors)
           return new S400({

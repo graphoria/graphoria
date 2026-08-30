@@ -15,8 +15,10 @@ import type { BunRequest } from "bun";
 import type { GraphQLNamedType, GraphQLSchema } from "graphql";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
 
+import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule } from "../../analyzeQuery/depthLimit";
 import { categorizeSqlType, isNumericType, SqlTypeCategory } from "../../databases/sqlTypeUtils";
+import { env } from "../../singletons/env";
 
 /**
  * A per-role compiled schema bundle (tables, operations, handlers, …).
@@ -202,7 +204,10 @@ export type ValidationError = {
   locations?: ReadonlyArray<{ line: number; column: number }>;
 };
 
-export type ValidateQueryFn = (query: string) => {
+export type ValidateQueryFn = (
+  query: string,
+  variables?: Record<string, unknown>,
+) => {
   hasErrors: boolean;
   validationErrors: readonly ValidationError[];
 };
@@ -211,18 +216,37 @@ export type ValidateQueryFn = (query: string) => {
  * Build a query validator for a role. Without a positive depth limit it
  * delegates to the role's own `hasErrors`; with one it layers a depth-limit
  * rule on the standard rule set.
+ *
+ * The cost budget applies on both branches, and there is no MCP-specific
+ * override for it. MCP gets its own depth knob because an agent legitimately
+ * writes deeper queries than an application does; nothing makes the same
+ * argument for asking a database for more rows.
  */
 export const makeValidateQuery =
   (role: RoleEntities, maxQueryDepth?: number): ValidateQueryFn =>
-  (query) => {
+  (query, variables) => {
     if (maxQueryDepth === undefined || maxQueryDepth <= 0) {
-      return role.handlers.gql.hasErrors(query);
+      return role.handlers.gql.hasErrors(query, { variables });
     }
-    const errors = validate(role.schema, parse(query), [
+    const document = parse(query);
+    const errors = validate(role.schema, document, [
       ...specifiedRules,
       depthLimitRule(maxQueryDepth),
     ]);
-    return { hasErrors: errors.length > 0, validationErrors: errors };
+    if (errors.length > 0) return { hasErrors: true, validationErrors: errors };
+
+    if (env.maxQueryCost > 0) {
+      const costError = checkQueryCost(
+        document,
+        role.schema,
+        variables ?? {},
+        { defaultPageSize: env.defaultPageSize, maxPageSize: env.maxPageSize },
+        env.maxQueryCost,
+      );
+      if (costError) return { hasErrors: true, validationErrors: [costError] };
+    }
+
+    return { hasErrors: false, validationErrors: errors };
   };
 
 // ---- graphql_execute ----
@@ -246,7 +270,7 @@ export const executeGraphqlCore = async (
   try {
     if (containsNonQueryOperation(query)) return { kind: "non_query" };
 
-    const { hasErrors, validationErrors } = validateQuery(query);
+    const { hasErrors, validationErrors } = validateQuery(query, variables);
     if (hasErrors) {
       return {
         kind: "validation",

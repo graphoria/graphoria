@@ -43,14 +43,18 @@ export const buildApiRoutes = (
 
     if (routeConfig.query) {
       // Operation queries come from the configuration, not from a caller, so the
-      // depth limit does not apply to them — it would turn an operator's own
-      // deep query into a dead route.
-      const validationErrors = gql.hasErrors(routeConfig.query, { enforceDepthLimit: false });
+      // depth and cost limits do not apply to them — they would turn an
+      // operator's own deep or wide query into a dead route.
+      const validationErrors = gql.hasErrors(routeConfig.query, {
+        enforceDepthLimit: false,
+        enforceCostLimit: false,
+      });
 
       if (validationErrors.hasErrors && gqlSuperadminHandler) {
         // Re-validate with superadmin handler if available
         const superadminErrors = gqlSuperadminHandler.hasErrors(routeConfig.query, {
           enforceDepthLimit: false,
+          enforceCostLimit: false,
         });
 
         if (superadminErrors.hasErrors) {

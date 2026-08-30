@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { buildSchema, introspectionFromSchema } from "graphql";
 
 import type { BunRequest } from "bun";
@@ -19,7 +19,7 @@ let analyzeQueryModule: any;
 
 const sdl = `
   type Query {
-    users: [User!]!
+    users(limit: Int): [User!]!
     auth_me: AuthMe
     remote_query_field: String
   }
@@ -180,6 +180,60 @@ describe("handleGraphQLRequestFactory.hasErrors", () => {
     const factory = factoryFn(buildEntities(), gqlEntities);
     expect(factory.hasErrors(deepQuery, { enforceDepthLimit: false }).hasErrors).toBe(false);
     expect(factory.hasErrors(deepQuery).hasErrors).toBe(true);
+  });
+});
+
+describe("handleGraphQLRequestFactory.hasErrors — cost limit", () => {
+  // The same query text costs a different number of rows for different variable
+  // values, so the verdict cannot be memoised the way the depth verdict is.
+  const paginated = "query ($n: Int) { users(limit: $n) { id name posts { id } } }";
+
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let env: any;
+  let previous: number;
+
+  beforeAll(async () => {
+    ({ env } = await import("../../singletons/env"));
+    previous = env.maxQueryCost;
+    env.maxQueryCost = 10_000;
+  });
+
+  afterAll(() => {
+    env.maxQueryCost = previous;
+  });
+
+  it("passes a query whose variables keep it within budget", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+    expect(factory.hasErrors(paginated, { variables: { n: 1 } }).hasErrors).toBe(false);
+  });
+
+  it("does not serve a cheap verdict to the same text sent with expensive variables", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    expect(factory.hasErrors(paginated, { variables: { n: 1 } }).hasErrors).toBe(false);
+
+    const expensive = factory.hasErrors(paginated, { variables: { n: 1000 } });
+    expect(expensive.hasErrors).toBe(true);
+    expect(expensive.validationErrors[0].message).toContain("exceeds the maximum allowed cost");
+  });
+
+  it("leaves an operator-authored query unbudgeted", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    expect(
+      factory.hasErrors(paginated, {
+        variables: { n: 1000 },
+        enforceDepthLimit: false,
+        enforceCostLimit: false,
+      }).hasErrors,
+    ).toBe(false);
+  });
+
+  it("reports a schema error rather than an estimate for a query that does not typecheck", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    const result = factory.hasErrors("query { not_a_field }", { variables: {} });
+    expect(result.validationErrors[0].message).toContain("not_a_field");
   });
 });
 
