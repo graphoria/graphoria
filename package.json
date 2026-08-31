@@ -36,9 +36,9 @@
   "devDependencies": {
     "@types/bun": "1.4.0",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "oxfmt": "^0.64.0",
-    "oxlint": "1.79.0",
+    "@types/react-dom": "^19.2.5",
+    "oxfmt": "^0.65.0",
+    "oxlint": "1.80.0",
     "typescript": "7.0.2"
   },
   "overrides": {
