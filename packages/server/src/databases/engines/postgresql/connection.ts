@@ -7,6 +7,7 @@ import type { ProcedureResolver } from "../../../types/db";
 
 import { BunSQLConnectionOptionsZod } from "../../../config/types/db";
 import { databasesConnections } from "../../../singletons/databases";
+import { orderProcedureArguments } from "../../core/procedure-arguments";
 import { getQueryTimeoutMs } from "../../../singletons/queryTimeout";
 
 // Every pool bound comes from the schema, which is the only place they are
@@ -140,16 +141,16 @@ export const executeQueryJSONSingle = executeQueryJSONFactory(true);
 
 export const callStoredProcedure = async (
   sp: ProcedureResolver,
-  variablesDefinition: VariableDefinition[],
+  _variablesDefinition: VariableDefinition[],
   variables: Record<string, unknown>,
 ) => {
   try {
+    const args = orderProcedureArguments(sp, variables);
+
     const data = await executeQuery(
-      `SELECT * FROM ${sp.dottedQuotedName}(${Object.keys(variables)
-        .map((_, i) => `$${i + 1}`)
-        .join(", ")});`,
+      `SELECT * FROM ${sp.dottedQuotedName}(${args.map((_, i) => `$${i + 1}`).join(", ")});`,
       sp.db!,
-      variablesDefinition,
+      args,
       variables,
     );
 

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 
 import type { Database } from "../../../types/configuration";
 
@@ -12,8 +12,12 @@ let poolOptions: (
   timeoutMs?: number,
 ) => ReturnType<typeof import("./connection").poolOptions>;
 
+let callStoredProcedure: typeof import("./connection").callStoredProcedure;
+let databasesConnections: typeof import("../../../singletons/databases").databasesConnections;
+
 beforeAll(async () => {
-  ({ poolOptions } = await import("./connection"));
+  ({ poolOptions, callStoredProcedure } = await import("./connection"));
+  ({ databasesConnections } = await import("../../../singletons/databases"));
 });
 
 const db = (connectionOptions?: unknown): Database =>
@@ -59,5 +63,50 @@ describe("postgresql poolOptions statement_timeout", () => {
 
   it("omits the option entirely when the timeout is disabled", () => {
     expect(poolOptions(db(), 0).connection).toBeUndefined();
+  });
+});
+
+type RecordedQuery = { query: string; params: unknown[] };
+
+const fakePool = (recorded: RecordedQuery[]) => ({
+  unsafe: async (query: string, params: unknown[]) => {
+    recorded.push({ query, params });
+    return [];
+  },
+});
+
+const procedure = () =>
+  ({
+    db: db(),
+    dottedQuotedName: '"public"."create_order"',
+    parameters: [
+      { name: "customer", dataType: "text", maxLength: 0, precision: 0, scale: 0 },
+      { name: "total", dataType: "numeric", maxLength: 0, precision: 0, scale: 0 },
+    ],
+  }) as unknown as Parameters<typeof callStoredProcedure>[0];
+
+describe("postgresql callStoredProcedure", () => {
+  afterEach(() => {
+    delete databasesConnections.default;
+  });
+
+  // The placeholders are positional, so the list that numbers them has to be
+  // the list that orders the values. The operation's variable definitions are
+  // neither: they describe the GraphQL query's `$vars`, not the procedure's
+  // arguments.
+  it("binds arguments in procedure signature order, whatever order they were supplied in", async () => {
+    const recorded: RecordedQuery[] = [];
+    databasesConnections.default = fakePool(
+      recorded,
+    ) as unknown as (typeof databasesConnections)[string];
+
+    await callStoredProcedure(procedure(), [{ name: "limit", type: "Int", required: false }], {
+      total: 42,
+      customer: "acme",
+    });
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]!.query).toBe('SELECT * FROM "public"."create_order"($1, $2);');
+    expect(recorded[0]!.params).toEqual(["acme", 42]);
   });
 });
