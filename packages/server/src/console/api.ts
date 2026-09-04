@@ -1,3 +1,4 @@
+import type { ConsoleScope } from "./session";
 import type { TokenService } from "../authentication/types";
 import type { AnalyzedConfiguration } from "../configuration";
 import type { Configuration } from "../types/configuration";
@@ -13,7 +14,7 @@ import { getCronJobs } from "../singletons/cron";
 import { databasesConnections } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
 import { resolveClientAddress } from "../utils/rateLimit";
-import { S200, S400, S401, S404, S429 } from "../utils/responses";
+import { S200, S400, S401, S403, S404, S429 } from "../utils/responses";
 
 type ConsoleRoutesFactoryOptions = {
   env: Env;
@@ -73,12 +74,20 @@ export const consoleRoutesFactory = ({
 
   const guarded =
     (
-      handler: (req: BunRequest, server?: Bun.Server<unknown>) => object | Promise<object>,
+      handler: (
+        req: BunRequest,
+        server: Bun.Server<unknown> | undefined,
+        scope: ConsoleScope,
+      ) => object | Promise<object>,
+      required: ConsoleScope = "read",
     ): ConsoleRouteHandler =>
     async (req: BunRequest, server?: Bun.Server<unknown>) => {
       try {
-        if (!(await sessions.authorize(req))) return new S404({ error: "Not Found" });
-        return new S200(await handler(req, server));
+        const scope = await sessions.authorize(req);
+        if (!scope) return new S404({ error: "Not Found" });
+        if (required === "write" && scope !== "write")
+          return new S403({ errors: [{ message: "Console session is read-only" }] });
+        return new S200(await handler(req, server, scope));
       } catch (error) {
         return new S400({ errors: [{ message: (error as Error)?.message }] });
       }
@@ -111,14 +120,14 @@ export const consoleRoutesFactory = ({
 
         const actor = { type: "admin_secret", ip } as const;
         try {
-          const session = await sessions.login(req);
+          const { expiresIn, scope, superset } = await sessions.login(req);
           audit().emit({
             action: "console.login",
             outcome: "success",
-            actor,
+            actor: { ...actor, scope: superset ? "all" : `console:${scope}` },
             target: { kind: "console" },
           });
-          return new S200(session);
+          return new S200({ expiresIn, scope });
         } catch (error) {
           audit().emit({
             action: "console.login",
@@ -289,7 +298,7 @@ export const consoleRoutesFactory = ({
 
     [`${base}/config`]: {
       ...cors,
-      GET: guarded(() => ({
+      GET: guarded((_req, _server, scope) => ({
         name: projectConfiguration.name,
         version: projectConfiguration.version,
         prefixes,
@@ -299,6 +308,7 @@ export const consoleRoutesFactory = ({
           mcp: projectConfiguration.ai?.mcp?.enabled ?? false,
           cors: env.enableCors,
         },
+        session: { scope },
       })),
     },
 
@@ -319,7 +329,7 @@ export const consoleRoutesFactory = ({
           target: { kind: "publisher", name: publisher, key },
         });
         return { ok: await queueManager!.sendMessage(publisher, message, key) };
-      }),
+      }, "write"),
     },
 
     [`${base}/cron`]: {
@@ -340,7 +350,7 @@ export const consoleRoutesFactory = ({
         if (action === "trigger") await cron.trigger(name);
         else cron[action](name);
         return { ok: true };
-      }),
+      }, "write"),
     },
   };
 };

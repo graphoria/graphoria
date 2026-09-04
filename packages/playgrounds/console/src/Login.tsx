@@ -1,10 +1,16 @@
 import { useState } from "react";
 
-import type { Meta } from "./client";
+import type { ConsoleScope, Meta } from "./client";
 
 import { login } from "./client";
 
-export const Login = ({ meta, onSuccess }: { meta: Meta; onSuccess: () => void }) => {
+export const Login = ({
+  meta,
+  onSuccess,
+}: {
+  meta: Meta;
+  onSuccess: (scope: ConsoleScope) => void;
+}) => {
   const [secret, setSecretInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -14,10 +20,9 @@ export const Login = ({ meta, onSuccess }: { meta: Meta; onSuccess: () => void }
     setBusy(true);
     setError(null);
     try {
-      await login(secret);
-      onSuccess();
+      onSuccess(await login(secret));
     } catch {
-      setError("Invalid admin secret");
+      setError("Invalid secret");
     } finally {
       setBusy(false);
     }
@@ -27,12 +32,14 @@ export const Login = ({ meta, onSuccess }: { meta: Meta; onSuccess: () => void }
     <div className="flex items-center justify-center min-h-screen bg-gray-50">
       <form onSubmit={submit} className="w-full max-w-sm">
         <h1 className="text-2xl font-bold mb-2">{meta.name}</h1>
-        <p className="text-gray-400 mb-4">Enter the admin secret to open the console.</p>
+        <p className="text-gray-400 mb-4">
+          Enter the admin secret or a console credential to open the console.
+        </p>
         <input
           type="password"
           value={secret}
           onChange={(event) => setSecretInput(event.target.value)}
-          placeholder="Admin secret"
+          placeholder="Secret"
           autoFocus
           className="w-full px-3 py-2 border border-gray-300 rounded bg-white text-gray-900 mb-4 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
         />

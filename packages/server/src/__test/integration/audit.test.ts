@@ -56,7 +56,15 @@ describe.skipIf(!integrationEnabled)("audit log", () => {
     started = await startServer({
       engine: ENGINE,
       config: { auth: authConfig, ai: { enabled: true } } as never,
-      env: { console: { enabled: true, endpoint: CONSOLE_PATH, sessionExpiresIn: "1h" } },
+      env: {
+        console: {
+          enabled: true,
+          endpoint: CONSOLE_PATH,
+          sessionExpiresIn: "1h",
+          readSecrets: [],
+          writeSecrets: [],
+        },
+      },
     });
 
     ({ setAuditLog } = await import("../../logging/audit"));
@@ -236,7 +244,7 @@ describe.skipIf(!integrationEnabled)("audit log", () => {
         expect(records.map((record) => record.action)).toEqual(["admin_secret.used", "ai.ask"]);
         expect(records[1]).toEqual({
           action: "ai.ask",
-          actor: { type: "admin_secret", sub: "superadmin", role: "superadmin" },
+          actor: { type: "admin_secret", sub: "superadmin", role: "superadmin", scope: "all" },
           target: { kind: "ai", via: "rest" },
           prompt: "how many users?",
         });
@@ -266,7 +274,7 @@ describe.skipIf(!integrationEnabled)("audit log", () => {
         {
           action: "console.login",
           outcome: "success",
-          actor: { type: "admin_secret", ip: expect.any(String) },
+          actor: { type: "admin_secret", scope: "all", ip: expect.any(String) },
           target: { kind: "console" },
         },
         {

@@ -3,6 +3,9 @@ export const apiBase = `${location.pathname.replace(/\/+$/, "")}/api`;
 
 export type Meta = { name: string; version: string };
 
+/** `read` sees state; `write` may also publish to queues and control cron. */
+export type ConsoleScope = "read" | "write";
+
 export type TablesResponse = {
   tables: {
     schema: string;
@@ -76,6 +79,7 @@ export type ConfigResponse = {
   version: string;
   prefixes: Record<string, string>;
   features: Record<string, boolean>;
+  session: { scope: ConsoleScope };
 };
 
 export type RoleEntitiesResponse = {
@@ -96,13 +100,15 @@ export const onAuthFail = (handler: () => void) => {
 
 // The session lives in an httpOnly cookie the browser attaches itself; nothing
 // here ever holds the admin secret, so there is nothing for an XSS to read.
-export const login = async (secret: string): Promise<void> => {
+export const login = async (secret: string): Promise<ConsoleScope> => {
   const res = await fetch(`${apiBase}/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ secret }),
   });
-  if (!res.ok) throw new AuthError("Invalid admin secret");
+  if (!res.ok) throw new AuthError("Invalid secret");
+  const { scope } = (await res.json()) as { scope: ConsoleScope };
+  return scope;
 };
 
 export const logout = async (): Promise<void> => {

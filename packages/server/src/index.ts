@@ -4,8 +4,10 @@ import { serve } from "bun";
 import { isString } from "es-toolkit";
 
 import type { BunRequest } from "bun";
+import type { Capability } from "./authentication/capabilities";
 import type { Configuration } from "./types/configuration";
 import type { Env } from "./types/env";
+import type { SessionContext } from "./utils/sessionVariables";
 
 import { createTokenService } from "./authentication";
 import { analyzeConfiguration, loadConfiguration } from "./configuration";
@@ -14,6 +16,7 @@ import { websocketHandlerFactory } from "./configuration/gql/handleGraphQLSubscr
 import { consoleRoutesFactory } from "./console/api";
 import { createAuthTables, verifyAuthTablesExist } from "./databases";
 import { createMCPRoutes } from "./ai";
+import { createCapabilityAuthorizer } from "./authentication/capabilities";
 import { getAgent, instantiateAI } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
 import { instantiateCronJobs } from "./singletons/cron";
@@ -245,12 +248,26 @@ const createGraphQLServer = async (env: Env) => {
         : createMemoryRateLimitStore(),
   });
 
-  // Helper to get role-based handlers
-  const getRoleHandlers = async (req: Request, server?: Bun.Server<unknown>) => {
-    const session = await getTokenService().verifyTokenAndGetSession(
-      req.headers.get(env.authorizationHeader),
-      req.headers.get(env.admin.header),
-    );
+  const authorizeCapability = createCapabilityAuthorizer(env);
+
+  // Helper to get role-based handlers. A route that names a capability also
+  // accepts that capability's scoped credential in the admin-secret header;
+  // it stands in for the superadmin role on that route and nowhere else.
+  const getRoleHandlers = async (
+    req: Request,
+    server?: Bun.Server<unknown>,
+    capability?: Capability,
+  ) => {
+    const adminSecretHeader = req.headers.get(env.admin.header);
+    const grant = capability ? authorizeCapability(adminSecretHeader, capability) : null;
+
+    const session: SessionContext =
+      grant && !grant.superset
+        ? { sub: capability, role: env.superadmin.role, authMethod: "admin_secret" }
+        : await getTokenService().verifyTokenAndGetSession(
+            req.headers.get(env.authorizationHeader),
+            adminSecretHeader,
+          );
 
     const ip = resolveClientAddress(req, server, env.rateLimit.trustProxy);
 
@@ -259,10 +276,16 @@ const createGraphQLServer = async (env: Env) => {
     // wrapper.
     const limit = await rateLimiter?.check(session, ip);
 
+    const scope: Capability | "all" | undefined = grant
+      ? grant.superset
+        ? "all"
+        : capability
+      : undefined;
+
     if (session.authMethod === "admin_secret") {
       audit().emit({
         action: "admin_secret.used",
-        actor: { type: "admin_secret", ip },
+        actor: { type: "admin_secret", ...(scope ? { scope } : {}), ip },
         target: { kind: "endpoint", method: req.method, path: new URL(req.url).pathname },
       });
     }
@@ -270,6 +293,7 @@ const createGraphQLServer = async (env: Env) => {
     return {
       role: session.role!,
       session,
+      scope,
       limit,
       ...analyzedConfiguration.roles[session.role!].handlers,
     };
@@ -388,7 +412,7 @@ const createGraphQLServer = async (env: Env) => {
         name: projectConfiguration.name,
         version: projectConfiguration.version,
         maxQueryDepth: env.ai?.mcp?.maxQueryDepth ?? env.maxQueryDepth,
-        adminSecrets: env.admin.secrets,
+        authorize: authorizeCapability,
         adminSecretHeader: env.admin.header,
       });
 
@@ -403,7 +427,7 @@ const createGraphQLServer = async (env: Env) => {
         ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
         POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
           try {
-            const { role, session, limit } = await getRoleHandlers(req, server);
+            const { role, session, scope, limit } = await getRoleHandlers(req, server, "ai");
             if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
             if (role !== env.superadmin.role) return new S404({ error: "Not Found" });
 
@@ -415,7 +439,7 @@ const createGraphQLServer = async (env: Env) => {
 
             audit().emit({
               action: "ai.ask",
-              actor: actorFromSession(session),
+              actor: { ...actorFromSession(session), ...(scope ? { scope } : {}) },
               target: { kind: "ai", via: "rest" },
               prompt,
             });

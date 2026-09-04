@@ -238,3 +238,32 @@ describe("EnvZod secret lists", () => {
     expect(env.paseto.secretKey).toBe("k4.secret.x");
   });
 });
+
+describe("EnvZod scoped admin secrets", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("defaults every scoped secret to an empty list", () => {
+    const env = EnvZod.parse(baseEnv);
+    expect(env.console.readSecrets).toEqual([]);
+    expect(env.console.writeSecrets).toEqual([]);
+    expect(env.ai.secrets).toEqual([]);
+    expect(env.ai.mcp.secrets).toEqual([]);
+  });
+
+  it("splits each scoped secret on commas like ADMIN_SECRET", () => {
+    const env = EnvZod.parse({
+      ...baseEnv,
+      CONSOLE_READ_SECRET: "read-new, read-old",
+      CONSOLE_WRITE_SECRET: "write-new,write-old,",
+      AI_SECRET: "ai-new",
+      AI_MCP_SECRET: " mcp-new ,mcp-old",
+    });
+    expect(env.console.readSecrets).toEqual(["read-new", "read-old"]);
+    expect(env.console.writeSecrets).toEqual(["write-new", "write-old"]);
+    expect(env.ai.secrets).toEqual(["ai-new"]);
+    expect(env.ai.mcp.secrets).toEqual(["mcp-new", "mcp-old"]);
+  });
+});

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Redirect, Route, Router, Switch } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 
-import type { Meta } from "./client";
+import type { ConfigResponse, ConsoleScope, Meta } from "./client";
 
 import { apiFetch, getMeta, logout, onAuthFail } from "./client";
 import { Login } from "./Login";
@@ -26,22 +26,23 @@ export const App = () => {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   // The session cookie is httpOnly, so the only way to know whether one is
-  // live is to ask the server; `null` is "not asked yet".
-  const [authed, setAuthed] = useState<boolean | null>(null);
+  // live, and what it may do, is to ask the server; `undefined` is "not asked
+  // yet" and `null` is "no session".
+  const [scope, setScope] = useState<ConsoleScope | null | undefined>(undefined);
 
   useEffect(() => {
-    onAuthFail(() => setAuthed(false));
+    onAuthFail(() => setScope(null));
     getMeta()
       .then(setMeta)
       .catch((error) => setMetaError((error as Error).message));
-    apiFetch("/config")
-      .then(() => setAuthed(true))
-      .catch(() => setAuthed(false));
+    apiFetch<ConfigResponse>("/config")
+      .then((config) => setScope(config.session.scope))
+      .catch(() => setScope(null));
   }, []);
 
   if (metaError) return <p className="text-red-500 text-center">{metaError}</p>;
-  if (!meta || authed === null) return <p className="text-gray-400 text-center">Loading…</p>;
-  if (!authed) return <Login meta={meta} onSuccess={() => setAuthed(true)} />;
+  if (!meta || scope === undefined) return <p className="text-gray-400 text-center">Loading…</p>;
+  if (!scope) return <Login meta={meta} onSuccess={setScope} />;
 
   return (
     <Router hook={useHashLocation}>
@@ -50,6 +51,9 @@ export const App = () => {
           <div className="flex flex-col px-4 pb-4 border-b border-gray-700">
             <strong>{meta.name}</strong>
             <span className="text-gray-400 text-sm">v{meta.version}</span>
+            {scope === "read" && (
+              <span className="text-amber-400 text-xs mt-1">Read-only session</span>
+            )}
           </div>
           <nav className="flex flex-col py-2 flex-1">
             {NAV.map(({ path, label }) => (
@@ -70,7 +74,7 @@ export const App = () => {
             className="mt-auto mx-4 py-2 px-4 rounded text-gray-400 hover:text-white cursor-pointer text-left"
             onClick={async () => {
               await logout();
-              setAuthed(false);
+              setScope(null);
             }}
           >
             Log out
@@ -81,7 +85,7 @@ export const App = () => {
             <Route path="/tables" component={TablesPage} />
             <Route path="/roles" component={RolesPage} />
             <Route path="/apis" component={ApisPage} />
-            <Route path="/status" component={StatusPage} />
+            <Route path="/status">{() => <StatusPage readOnly={scope === "read"} />}</Route>
             <Route path="/config" component={ConfigPage} />
             <Route>
               <Redirect to="/tables" />
