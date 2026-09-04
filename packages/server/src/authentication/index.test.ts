@@ -74,6 +74,27 @@ describe("createTokenService", () => {
     expect(() => createTokenService(env, "jwt")).toThrow("JWT_SECRET");
   });
 
+  it("throws when JWT_SECRET holds no usable entry", () => {
+    const env = EnvZod.parse({
+      ADMIN_SECRET: adminSecret,
+      ANONYMOUS_ROLE: anonymousRole,
+      JWT_SECRET: " , ",
+    });
+
+    expect(() => createTokenService(env, "jwt")).toThrow("JWT_SECRET");
+  });
+
+  it("throws when PASETO_PUBLIC_KEY holds no usable entry", () => {
+    const env = EnvZod.parse({
+      ADMIN_SECRET: adminSecret,
+      ANONYMOUS_ROLE: anonymousRole,
+      PASETO_SECRET_KEY: secretKey,
+      PASETO_PUBLIC_KEY: ",",
+    });
+
+    expect(() => createTokenService(env, "paseto_public")).toThrow("PASETO_PUBLIC_KEY");
+  });
+
   it("throws when PASETO_LOCAL_KEY is missing for paseto_local strategy", () => {
     const env = EnvZod.parse({
       ADMIN_SECRET: adminSecret,

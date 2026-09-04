@@ -380,7 +380,7 @@ const createGraphQLServer = async (env: Env) => {
         name: projectConfiguration.name,
         version: projectConfiguration.version,
         maxQueryDepth: env.ai?.mcp?.maxQueryDepth ?? env.maxQueryDepth,
-        adminSecret: env.admin.secret,
+        adminSecrets: env.admin.secrets,
         adminSecretHeader: env.admin.header,
       });
 

@@ -55,7 +55,7 @@ describe("createMCPRoutes admin-secret gate", () => {
   it("returns 401 when requireAdminSecret=true and header missing", async () => {
     const routes = createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecret: "shh",
+      adminSecrets: ["shh"],
       adminSecretHeader: "x-admin-secret",
     });
     const res = await routes.POST(initRequest());
@@ -67,7 +67,7 @@ describe("createMCPRoutes admin-secret gate", () => {
   it("returns 401 on a mismatched secret", async () => {
     const routes = createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecret: "shh",
+      adminSecrets: ["shh"],
       adminSecretHeader: "x-admin-secret",
     });
     const res = await routes.POST(initRequest({ "x-admin-secret": "wrong" }));
@@ -77,11 +77,31 @@ describe("createMCPRoutes admin-secret gate", () => {
   it("passes through when the header matches", async () => {
     const routes = createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecret: "shh",
+      adminSecrets: ["shh"],
       adminSecretHeader: "x-admin-secret",
     });
     const res = await routes.POST(initRequest({ "x-admin-secret": "shh" }));
     expect(res.status).not.toBe(401);
+  });
+
+  it("passes through when the header matches a previous secret", async () => {
+    const routes = createMCPRoutes(buildAnalyzedConfig(), {
+      requireAdminSecret: true,
+      adminSecrets: ["shh", "old-shh"],
+      adminSecretHeader: "x-admin-secret",
+    });
+    const res = await routes.POST(initRequest({ "x-admin-secret": "old-shh" }));
+    expect(res.status).not.toBe(401);
+  });
+
+  it("returns 401 when the secret set is empty", async () => {
+    const routes = createMCPRoutes(buildAnalyzedConfig(), {
+      requireAdminSecret: true,
+      adminSecrets: [],
+      adminSecretHeader: "x-admin-secret",
+    });
+    const res = await routes.POST(initRequest({ "x-admin-secret": "" }));
+    expect(res.status).toBe(401);
   });
 
   it("does not gate when requireAdminSecret is false", async () => {

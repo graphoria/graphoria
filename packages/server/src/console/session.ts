@@ -1,10 +1,9 @@
-import { timingSafeEqual } from "crypto";
-
 import type { BunRequest } from "bun";
 import type { TokenService } from "../authentication/types";
 import type { Env } from "../types/env";
 
 import { parseDurationToMs, parseDurationToSeconds } from "../authentication/duration";
+import { matchesAnySecret } from "../authentication/secrets";
 import { logger } from "../logging";
 
 export const CONSOLE_SESSION_COOKIE = "graphoria_console_session";
@@ -13,17 +12,6 @@ export const CONSOLE_SESSION_COOKIE = "graphoria_console_session";
 // same key: neither can be presented where the other is expected.
 const CONSOLE_AUDIENCE = "console";
 const CONSOLE_SUBJECT = "console";
-
-const safeCompare = (a: string, b: string): boolean => {
-  try {
-    const bufA = Buffer.from(a);
-    const bufB = Buffer.from(b);
-    if (bufA.length !== bufB.length) return false;
-    return timingSafeEqual(bufA, bufB);
-  } catch {
-    return false;
-  }
-};
 
 export type ConsoleSessions = {
   /** Exchange the admin secret for a session cookie. Throws if it does not match. */
@@ -83,7 +71,7 @@ export const createConsoleSessions = ({
     login: async (req) => {
       const { secret: submitted } = (await req.json()) as { secret?: string };
 
-      if (!env.admin.secret || !submitted || !safeCompare(submitted, env.admin.secret)) {
+      if (!matchesAnySecret(submitted ?? null, env.admin.secrets)) {
         throw new Error("Invalid admin secret");
       }
 

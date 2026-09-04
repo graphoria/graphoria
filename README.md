@@ -368,14 +368,14 @@ All paths are configurable via environment variables. Auth: `Authorization: Bear
 
 The variables you'll most likely touch for a first run. See [`.env.example`](./.env.example) for the full list.
 
-| Variable        | Default                  | Description                                                                                              |
-| --------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `ADMIN_SECRET`  | _(required)_             | Master secret; sent in the admin header it bypasses RBAC. No default — the server won't boot without it. |
-| `JWT_SECRET`    | _(required for JWT)_     | HMAC secret for signing tokens under the default `jwt` strategy.                                         |
-| `PORT`          | `3000`                   | HTTP port the server listens on.                                                                         |
-| `CACHE_STORE`   | `memory`                 | `memory` or `redis`. Use `redis` (and `REDIS_URL`) when auth is enabled.                                 |
-| `REDIS_URL`     | `redis://localhost:6379` | Redis/Valkey URL — required when authentication is enabled.                                              |
-| `AUTH_STRATEGY` | `jwt`                    | `jwt`, `paseto_local`, or `paseto_public`.                                                               |
+| Variable        | Default                  | Description                                                                                                                              |
+| --------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_SECRET`  | _(required)_             | Master secret; sent in the admin header it bypasses RBAC. No default — the server won't boot without it. Comma-separated list to rotate. |
+| `JWT_SECRET`    | _(required for JWT)_     | HMAC secret for signing tokens under the default `jwt` strategy. Comma-separated list to rotate: first signs, all verify.                |
+| `PORT`          | `3000`                   | HTTP port the server listens on.                                                                                                         |
+| `CACHE_STORE`   | `memory`                 | `memory` or `redis`. Use `redis` (and `REDIS_URL`) when auth is enabled.                                                                 |
+| `REDIS_URL`     | `redis://localhost:6379` | Redis/Valkey URL — required when authentication is enabled.                                                                              |
+| `AUTH_STRATEGY` | `jwt`                    | `jwt`, `paseto_local`, or `paseto_public`.                                                                                               |
 
 ## Troubleshooting
 
@@ -388,7 +388,7 @@ The variables you'll most likely touch for a first run. See [`.env.example`](./.
 Before going to production:
 
 - [ ] Set a strong `ADMIN_SECRET` — it bypasses all RBAC.
-- [ ] Rotate `JWT_SECRET` (or `PASETO_SECRET`) — never use the dev default.
+- [ ] Rotate `JWT_SECRET` (or the PASETO keys) — never use the dev default. Each accepts a comma-separated list so a rotation needs no cut-over; see [Rotating secrets](./docs/AUTHENTICATION.md#rotating-secrets).
 - [ ] Put Redis behind authentication — set a password and use `redis://user:pass@host:port` in `REDIS_URL`.
 - [ ] Enable CORS properly — set `CORS_ORIGIN` to your frontend's origin, not `*`.
 - [ ] Set `RATE_LIMIT_MAX` and `RATE_LIMIT_ANONYMOUS_MAX` — rate limiting ships **off**, and nothing warns you at boot.

@@ -132,3 +132,70 @@ describe("JWT Service", () => {
     await expect(svc.refreshAccessToken(pair.refresh_token)).rejects.toThrow("Token revoked");
   });
 });
+
+describe("JWT Service - secret rotation", () => {
+  const buildEnv = (jwtSecret: string, admin = adminSecret) =>
+    EnvZod.parse({ ADMIN_SECRET: admin, ANONYMOUS_ROLE: anonymousRole, JWT_SECRET: jwtSecret });
+
+  const oldOnly = createJWTService(buildEnv("old-secret"), createFakeRepo());
+  const rotated = createJWTService(buildEnv("new-secret,old-secret"), createFakeRepo());
+  const newOnly = createJWTService(buildEnv("new-secret"), createFakeRepo());
+
+  it("verifies a token issued under the previous secret", async () => {
+    const pair = await oldOnly.createTokenPair({ sub: "u", role: "r" });
+
+    const session = await rotated.verifyTokenAndGetSession(`Bearer ${pair.access_token}`, null);
+
+    expect(session.role).toBe("r");
+    expect(session.sub).toBe("u");
+  });
+
+  it("refreshes a refresh token issued under the previous secret", async () => {
+    const pair = await oldOnly.createTokenPair({ sub: "u", role: "r" });
+
+    const refreshed = await rotated.refreshAccessToken(pair.refresh_token);
+
+    expect(refreshed.role).toBe("r");
+  });
+
+  it("signs with the first secret", async () => {
+    const pair = await rotated.createTokenPair({ sub: "u", role: "r" });
+
+    const verified = await newOnly.verifyToken(pair.access_token, { audience: "access" });
+    expect(verified.sub).toBe("u");
+
+    await expect(oldOnly.verifyToken(pair.access_token, { audience: "access" })).rejects.toThrow();
+  });
+
+  it("rejects a token that no secret in the set signed", async () => {
+    const other = createJWTService(buildEnv("unrelated-secret"), createFakeRepo());
+    const pair = await other.createTokenPair({ sub: "u", role: "r" });
+
+    await expect(rotated.verifyToken(pair.access_token, { audience: "access" })).rejects.toThrow();
+
+    const session = await rotated.verifyTokenAndGetSession(`Bearer ${pair.access_token}`, null);
+    expect(session.role).toBe(anonymousRole);
+  });
+
+  it("surfaces a claim failure from the matching secret instead of trying the rest", async () => {
+    const token = await oldOnly.createToken({ sub: "u", role: "r" }, { notBefore: "1h" });
+
+    await expect(rotated.verifyToken(token)).rejects.toThrow(/nbf/);
+  });
+
+  it("accepts the previous admin secret", async () => {
+    const service = createJWTService(buildEnv("s", "new-admin,old-admin"), createFakeRepo());
+
+    expect(await service.verifyTokenAndGetRole(null, "old-admin")).toBe("superadmin");
+    expect((await service.verifyTokenAndGetSession(null, "old-admin")).role).toBe("superadmin");
+    expect(await service.verifyTokenAndGetRole(null, "new-admin")).toBe("superadmin");
+    expect(await service.verifyTokenAndGetRole(null, "wrong")).toBe(anonymousRole);
+  });
+
+  it("never matches an admin header against an empty secret set", async () => {
+    const service = createJWTService(buildEnv("s", " , "), createFakeRepo());
+
+    expect(await service.verifyTokenAndGetRole(null, "")).toBe(anonymousRole);
+    expect(await service.verifyTokenAndGetRole(null, "anything")).toBe(anonymousRole);
+  });
+});

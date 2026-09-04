@@ -201,3 +201,40 @@ describe("EnvZod RATE_LIMIT_*", () => {
     expect(() => EnvZod.parse({ ...baseEnv, RATE_LIMIT_WINDOW_MS: "0" })).toThrow();
   });
 });
+
+describe("EnvZod secret lists", () => {
+  it("parses a single secret as a one-element list", () => {
+    const env = EnvZod.parse({ ADMIN_SECRET: "a", JWT_SECRET: "j" });
+    expect(env.admin.secrets).toEqual(["a"]);
+    expect(env.jwt.secrets).toEqual(["j"]);
+  });
+
+  it("splits comma-separated secrets in order, trimming whitespace and dropping blanks", () => {
+    const env = EnvZod.parse({
+      ADMIN_SECRET: " new , old ,,",
+      JWT_SECRET: "j2,j1",
+      PASETO_LOCAL_KEY: "k4.local.b, k4.local.a",
+      PASETO_PUBLIC_KEY: "k4.public.b,k4.public.a,",
+    });
+    expect(env.admin.secrets).toEqual(["new", "old"]);
+    expect(env.jwt.secrets).toEqual(["j2", "j1"]);
+    expect(env.paseto.localKeys).toEqual(["k4.local.b", "k4.local.a"]);
+    expect(env.paseto.publicKeys).toEqual(["k4.public.b", "k4.public.a"]);
+  });
+
+  it("yields an empty list for an unset or blank secret", () => {
+    const env = EnvZod.parse({ ADMIN_SECRET: "a", JWT_SECRET: " , " });
+    expect(env.jwt.secrets).toEqual([]);
+    expect(env.paseto.localKeys).toEqual([]);
+    expect(env.paseto.publicKeys).toEqual([]);
+  });
+
+  it("still refuses to parse without ADMIN_SECRET", () => {
+    expect(() => EnvZod.parse({ JWT_SECRET: "j" })).toThrow();
+  });
+
+  it("keeps PASETO_SECRET_KEY as a single value", () => {
+    const env = EnvZod.parse({ ADMIN_SECRET: "a", PASETO_SECRET_KEY: "k4.secret.x" });
+    expect(env.paseto.secretKey).toBe("k4.secret.x");
+  });
+});

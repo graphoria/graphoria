@@ -3,19 +3,29 @@ import { z } from "zod";
 import { version } from "../../package.json";
 import { ConfigurationZod } from "./zod/configuration";
 
+// A secret env var is a comma-separated list: the first entry is the one in
+// use, the rest are still accepted so a rotation can overlap instead of cutting
+// over. Blank entries are dropped, so an unset var is an empty list.
+const splitSecrets = (value: string) =>
+  value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+const secretList = z.string().default("").transform(splitSecrets);
+
 export const EnvZod = z
   .object({
     PORT: z.coerce.number().default(3000),
     NODE_ENV: z.string().default("DEVELOPMENT"),
-    ADMIN_SECRET: z.string(),
+    ADMIN_SECRET: z.string().transform(splitSecrets),
     CONFIGURATION: z.union([z.string(), ConfigurationZod]).optional(),
     ANONYMOUS_ROLE: z.string().default("anonymous"),
-    JWT_SECRET: z.string().optional().default(""),
+    JWT_SECRET: secretList,
     JWT_EXPIRES_IN: z.string().default("5m"),
     JWT_RT_EXPIRES_IN: z.string().default("7d"),
-    PASETO_LOCAL_KEY: z.string().optional().default(""),
+    PASETO_LOCAL_KEY: secretList,
     PASETO_SECRET_KEY: z.string().optional().default(""),
-    PASETO_PUBLIC_KEY: z.string().optional().default(""),
+    PASETO_PUBLIC_KEY: secretList,
     AUTH_STRATEGY: z.enum(["jwt", "paseto_local", "paseto_public"]).optional(),
     REDIS_URL: z.string().default("redis://localhost:6379"),
     CACHE_STORE: z.enum(["memory", "redis"]).default("memory"),
@@ -80,18 +90,18 @@ export const EnvZod = z
     queryTimeoutMs: env.QUERY_TIMEOUT_MS,
     maxQueryCost: env.MAX_QUERY_COST,
     admin: {
-      secret: env.ADMIN_SECRET,
+      secrets: env.ADMIN_SECRET,
       header: env.ADMIN_SECRET_HEADER,
     },
     jwt: {
-      secret: env.JWT_SECRET,
+      secrets: env.JWT_SECRET,
       expiresIn: env.JWT_EXPIRES_IN,
       rtExpiresIn: env.JWT_RT_EXPIRES_IN,
     },
     paseto: {
-      localKey: env.PASETO_LOCAL_KEY,
+      localKeys: env.PASETO_LOCAL_KEY,
       secretKey: env.PASETO_SECRET_KEY,
-      publicKey: env.PASETO_PUBLIC_KEY,
+      publicKeys: env.PASETO_PUBLIC_KEY,
     },
     rateLimit: {
       max: env.RATE_LIMIT_MAX,
