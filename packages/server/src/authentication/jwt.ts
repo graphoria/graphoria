@@ -1,6 +1,4 @@
-import { timingSafeEqual } from "crypto";
-
-import { SignJWT, jwtVerify } from "jose";
+import { SignJWT, errors, jwtVerify } from "jose";
 
 import type { JWTPayload } from "jose";
 import type { Env } from "../types/env";
@@ -9,24 +7,13 @@ import type { TokenRepository } from "./tokenRepository";
 import type { TokenGenerationParameters, TokenOptions, TokenResponse, TokenService } from "./types";
 
 import { parseDurationToSeconds } from "./duration";
+import { matchesAnySecret } from "./secrets";
 import { createTokenRepository } from "./tokenRepository";
 import { logger } from "../logging";
 
 // Audience constants to distinguish token types
 const ACCESS_TOKEN_AUDIENCE = "access";
 const REFRESH_TOKEN_AUDIENCE = "refresh";
-
-// Timing-safe string comparison to prevent timing attacks
-const safeCompare = (a: string, b: string): boolean => {
-  try {
-    const bufA = Buffer.from(a);
-    const bufB = Buffer.from(b);
-    if (bufA.length !== bufB.length) return false;
-    return timingSafeEqual(bufA, bufB);
-  } catch {
-    return false;
-  }
-};
 
 export type { TokenGenerationParameters, TokenOptions, TokenResponse };
 
@@ -43,7 +30,9 @@ export const createJWTService = (
   tokenRepositoryOverride?: TokenRepository,
 ): TokenService => {
   const tokenRepository = tokenRepositoryOverride ?? createTokenRepository(env.cache.redisUrl);
-  const jwtSecret = new TextEncoder().encode(env.jwt.secret);
+  // First entry signs; every entry verifies, so a rotation can overlap.
+  const jwtSecrets = env.jwt.secrets.map((secret) => new TextEncoder().encode(secret));
+  const signingSecret = jwtSecrets[0];
 
   const createToken = async (
     payload: TokenGenerationParameters,
@@ -67,7 +56,8 @@ export const createJWTService = (
         jwt.setNotBefore(options.notBefore);
       }
 
-      return await jwt.sign(jwtSecret);
+      if (!signingSecret) throw new Error("No JWT secret configured");
+      return await jwt.sign(signingSecret);
     } catch (error) {
       logger("auth").child({ strategy: "jwt" }).error({ err: error }, "token creation failed");
       throw new Error("Token creation failed");
@@ -78,23 +68,38 @@ export const createJWTService = (
     token: string,
     options: TokenOptions = {},
   ): Promise<T> => {
-    const { payload } = await jwtVerify(token, jwtSecret, {
+    const verifyOptions = {
       issuer: options.issuer,
       audience: options.audience,
       algorithms: [ALGORITHM],
       typ: TYP,
-    });
+    };
 
-    return payload as T;
+    let lastError: unknown = new Error("No JWT secret configured");
+    for (const [index, secret] of jwtSecrets.entries()) {
+      try {
+        const { payload } = await jwtVerify(token, secret, verifyOptions);
+        if (index > 0) {
+          logger("auth")
+            .child({ strategy: "jwt" })
+            .debug({ index }, "token verified with a previous secret");
+        }
+        return payload as T;
+      } catch (error) {
+        // Only a signature mismatch means "try the next secret"; a claim
+        // failure came from the secret that did sign this token.
+        if (!(error instanceof errors.JWSSignatureVerificationFailed)) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError;
   };
 
   const verifyTokenAndGetRole = async (
     authHeader: string | null,
     adminSecretHeader: string | null,
   ): Promise<string> => {
-    // Use timing-safe comparison to prevent timing attacks
-    if (env.admin.secret && adminSecretHeader && safeCompare(adminSecretHeader, env.admin.secret))
-      return env.superadmin.role;
+    if (matchesAnySecret(adminSecretHeader, env.admin.secrets)) return env.superadmin.role;
 
     if (!authHeader) return env.anonymousRole;
 
@@ -115,7 +120,7 @@ export const createJWTService = (
     authHeader: string | null,
     adminSecretHeader: string | null,
   ): Promise<SessionContext> => {
-    if (env.admin.secret && adminSecretHeader && safeCompare(adminSecretHeader, env.admin.secret))
+    if (matchesAnySecret(adminSecretHeader, env.admin.secrets))
       return { sub: "superadmin", role: env.superadmin.role };
 
     if (!authHeader || !authHeader.startsWith("Bearer "))

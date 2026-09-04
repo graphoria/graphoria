@@ -1,23 +1,15 @@
-import { timingSafeEqual } from "crypto";
-
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 
 import type { AnalyzedConfiguration } from "../../configuration";
 import type { CreateMcpServerOptions } from "./create-server";
 
 import { createMcpServer } from "./create-server";
+import { matchesAnySecret } from "../../authentication/secrets";
 import { logger } from "../../logging";
-
-const safeCompare = (a: string, b: string): boolean => {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-};
 
 export type CreateMCPRoutesOptions = CreateMcpServerOptions & {
   requireAdminSecret?: boolean;
-  adminSecret?: string;
+  adminSecrets?: string[];
   adminSecretHeader?: string;
 };
 
@@ -39,9 +31,7 @@ const handleMcpPost =
   async (req: Request) => {
     if (options.requireAdminSecret) {
       const headerName = options.adminSecretHeader ?? "x-admin-secret";
-      const provided = req.headers.get(headerName);
-      const expected = options.adminSecret ?? "";
-      if (!provided || !expected || !safeCompare(provided, expected)) {
+      if (!matchesAnySecret(req.headers.get(headerName), options.adminSecrets ?? [])) {
         return jsonRpcError(401, -32001, "Unauthorized: admin secret required");
       }
     }

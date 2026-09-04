@@ -30,9 +30,9 @@ const fakeEnv = {
   enableCors: true,
   authStrategy: undefined,
   superadmin: { role: "superadmin" },
-  admin: { secret: ADMIN_SECRET, header: "x-admin-secret" },
+  admin: { secrets: [ADMIN_SECRET], header: "x-admin-secret" },
   console: { enabled: true, endpoint: "/_console", sessionExpiresIn: "1h" },
-  jwt: { secret: "test-jwt-secret", expiresIn: "5m", rtExpiresIn: "7d" },
+  jwt: { secrets: ["test-jwt-secret"], expiresIn: "5m", rtExpiresIn: "7d" },
   cache: { store: "memory", redisUrl: "redis://127.0.0.1:1" },
   rateLimit: { max: 0, anonymousMax: 0, windowMs: 60_000, trustProxy: false },
 };

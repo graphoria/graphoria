@@ -18,13 +18,15 @@ const noopRepository: TokenRepository = {
   isRevoked: async () => false,
 };
 
+const PREVIOUS_ADMIN_SECRET = "console-admin-secret-previous";
+
 const buildEnv = (sessionExpiresIn = "1h") =>
   ({
-    admin: { secret: ADMIN_SECRET, header: "x-admin-secret" },
+    admin: { secrets: [ADMIN_SECRET, PREVIOUS_ADMIN_SECRET], header: "x-admin-secret" },
     anonymousRole: "anonymous",
     superadmin: { role: "superadmin" },
     console: { enabled: true, endpoint: CONSOLE_PATH, sessionExpiresIn },
-    jwt: { secret: "console-jwt-secret", expiresIn: "5m", rtExpiresIn: "7d" },
+    jwt: { secrets: ["console-jwt-secret"], expiresIn: "5m", rtExpiresIn: "7d" },
     cache: { store: "memory", redisUrl: "redis://127.0.0.1:1" },
   }) as unknown as Env;
 
@@ -57,6 +59,12 @@ describe("createConsoleSessions", () => {
     const req = request("", { secret: "wrong" });
     expect(sessions.login(req)).rejects.toThrow("Invalid admin secret");
     expect(setCookieOf(req)).toBe("");
+  });
+
+  it("accepts a previous admin secret", async () => {
+    const req = request("", { secret: PREVIOUS_ADMIN_SECRET });
+    await sessions.login(req);
+    expect(setCookieOf(req)).toStartWith(`${CONSOLE_SESSION_COOKIE}=`);
   });
 
   it("rejects a request with no secret at all", async () => {

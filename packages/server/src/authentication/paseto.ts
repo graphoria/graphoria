@@ -1,5 +1,4 @@
-import { timingSafeEqual } from "crypto";
-
+import { PasetoDecryptionFailed, PasetoSignatureInvalid } from "paseto-ts/lib/errors";
 import { decrypt, encrypt, sign, verify } from "paseto-ts/v4";
 
 import type { Env } from "../types/env";
@@ -8,24 +7,13 @@ import type { TokenRepository } from "./tokenRepository";
 import type { TokenGenerationParameters, TokenOptions, TokenResponse, TokenService } from "./types";
 
 import { parseDurationToSeconds, toPasetoDuration } from "./duration";
+import { matchesAnySecret } from "./secrets";
 import { createTokenRepository } from "./tokenRepository";
 import { logger } from "../logging";
 
 // Audience constants to distinguish token types
 const ACCESS_TOKEN_AUDIENCE = "access";
 const REFRESH_TOKEN_AUDIENCE = "refresh";
-
-// Timing-safe string comparison to prevent timing attacks
-const safeCompare = (a: string, b: string): boolean => {
-  try {
-    const bufA = Buffer.from(a);
-    const bufB = Buffer.from(b);
-    if (bufA.length !== bufB.length) return false;
-    return timingSafeEqual(bufA, bufB);
-  } catch {
-    return false;
-  }
-};
 
 type PasetoPayload = {
   sub: string;
@@ -56,7 +44,12 @@ export const createPASETOService = (
 ): TokenService => {
   const tokenRepository = tokenRepositoryOverride ?? createTokenRepository(env.cache.redisUrl);
 
-  // Token creation and verification functions based on mode
+  // In local mode the first key encrypts and every key decrypts. In public
+  // mode the secret key signs and every public key verifies. Either way a
+  // rotation can overlap.
+  const verifyingKeys = mode === "local" ? env.paseto.localKeys : env.paseto.publicKeys;
+  const signingKey = mode === "local" ? env.paseto.localKeys[0] : env.paseto.secretKey;
+
   const createPasetoToken = async (
     payload: Record<string, unknown>,
     expiry: string,
@@ -66,19 +59,37 @@ export const createPASETOService = (
       exp: toPasetoDuration(expiry),
     };
 
+    if (!signingKey) throw new Error("No PASETO key configured");
     if (mode === "local") {
-      return encrypt(env.paseto.localKey!, pasetoPayload);
+      return encrypt(signingKey, pasetoPayload);
     }
-    return sign(env.paseto.secretKey!, pasetoPayload);
+    return sign(signingKey, pasetoPayload);
   };
 
   const verifyPasetoToken = async (token: string): Promise<PasetoPayload> => {
-    if (mode === "local") {
-      const { payload } = await decrypt<PasetoPayload>(env.paseto.localKey!, token);
-      return payload;
+    let lastError: unknown = new Error("No PASETO key configured");
+    for (const [index, key] of verifyingKeys.entries()) {
+      try {
+        const { payload } =
+          mode === "local"
+            ? await decrypt<PasetoPayload>(key, token)
+            : await verify<PasetoPayload>(key, token);
+        if (index > 0) {
+          logger("auth")
+            .child({ strategy: "paseto" })
+            .debug({ index }, "token verified with a previous key");
+        }
+        return payload;
+      } catch (error) {
+        // Only a key mismatch means "try the next key"; a claim failure came
+        // from the key that did produce this token.
+        const keyMismatch =
+          error instanceof PasetoDecryptionFailed || error instanceof PasetoSignatureInvalid;
+        if (!keyMismatch) throw error;
+        lastError = error;
+      }
     }
-    const { payload } = await verify<PasetoPayload>(env.paseto.publicKey!, token);
-    return payload;
+    throw lastError;
   };
 
   const createToken = async (
@@ -132,8 +143,7 @@ export const createPASETOService = (
     authHeader: string | null,
     adminSecretHeader: string | null,
   ): Promise<string> => {
-    if (env.admin.secret && adminSecretHeader && safeCompare(adminSecretHeader, env.admin.secret))
-      return env.superadmin.role;
+    if (matchesAnySecret(adminSecretHeader, env.admin.secrets)) return env.superadmin.role;
 
     if (!authHeader) return env.anonymousRole;
 
@@ -153,7 +163,7 @@ export const createPASETOService = (
     authHeader: string | null,
     adminSecretHeader: string | null,
   ): Promise<SessionContext> => {
-    if (env.admin.secret && adminSecretHeader && safeCompare(adminSecretHeader, env.admin.secret))
+    if (matchesAnySecret(adminSecretHeader, env.admin.secrets))
       return { sub: "superadmin", role: env.superadmin.role };
 
     if (!authHeader || !authHeader.startsWith("Bearer "))

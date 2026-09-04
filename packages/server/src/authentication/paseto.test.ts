@@ -239,3 +239,109 @@ describe("PASETO Service - v4.public", () => {
     expect(typeof session.exp).toBe("number");
   });
 });
+
+describe("PASETO Service - key rotation", () => {
+  const otherLocalKey = generateKeys("local") as string;
+  const otherPublic = generateKeys("public") as { secretKey: string; publicKey: string };
+
+  describe("v4.local", () => {
+    const buildEnv = (keys: string, admin = adminSecret) =>
+      EnvZod.parse({ ...baseEnv, ADMIN_SECRET: admin, PASETO_LOCAL_KEY: keys });
+
+    const oldOnly = createPASETOService(buildEnv(localKey), "local", createFakeRepo());
+    const rotated = createPASETOService(
+      buildEnv(`${otherLocalKey},${localKey}`),
+      "local",
+      createFakeRepo(),
+    );
+    const newOnly = createPASETOService(buildEnv(otherLocalKey), "local", createFakeRepo());
+
+    it("decrypts a token issued under the previous key", async () => {
+      const pair = await oldOnly.createTokenPair({ sub: "u", role: "r" });
+
+      const session = await rotated.verifyTokenAndGetSession(`Bearer ${pair.access_token}`, null);
+
+      expect(session.role).toBe("r");
+    });
+
+    it("refreshes a refresh token issued under the previous key", async () => {
+      const pair = await oldOnly.createTokenPair({ sub: "u", role: "r" });
+
+      expect((await rotated.refreshAccessToken(pair.refresh_token)).role).toBe("r");
+    });
+
+    it("encrypts with the first key", async () => {
+      const pair = await rotated.createTokenPair({ sub: "u", role: "r" });
+
+      expect((await newOnly.verifyToken(pair.access_token)).sub).toBe("u");
+      await expect(oldOnly.verifyToken(pair.access_token)).rejects.toThrow();
+    });
+
+    it("rejects a token that no key in the set encrypted", async () => {
+      const stranger = createPASETOService(
+        buildEnv(generateKeys("local") as string),
+        "local",
+        createFakeRepo(),
+      );
+      const pair = await stranger.createTokenPair({ sub: "u", role: "r" });
+
+      await expect(rotated.verifyToken(pair.access_token)).rejects.toThrow();
+    });
+
+    it("accepts the previous admin secret", async () => {
+      const service = createPASETOService(
+        buildEnv(localKey, "new-admin,old-admin"),
+        "local",
+        createFakeRepo(),
+      );
+
+      expect(await service.verifyTokenAndGetRole(null, "old-admin")).toBe("superadmin");
+      expect((await service.verifyTokenAndGetSession(null, "old-admin")).role).toBe("superadmin");
+      expect(await service.verifyTokenAndGetRole(null, "wrong")).toBe(anonymousRole);
+    });
+  });
+
+  describe("v4.public", () => {
+    const buildEnv = (secret: string, publicKeys: string) =>
+      EnvZod.parse({ ...baseEnv, PASETO_SECRET_KEY: secret, PASETO_PUBLIC_KEY: publicKeys });
+
+    const oldOnly = createPASETOService(buildEnv(secretKey, publicKey), "public", createFakeRepo());
+    const rotated = createPASETOService(
+      buildEnv(otherPublic.secretKey, `${otherPublic.publicKey},${publicKey}`),
+      "public",
+      createFakeRepo(),
+    );
+    const newOnly = createPASETOService(
+      buildEnv(otherPublic.secretKey, otherPublic.publicKey),
+      "public",
+      createFakeRepo(),
+    );
+
+    it("verifies a token signed under the previous key", async () => {
+      const pair = await oldOnly.createTokenPair({ sub: "u", role: "r" });
+
+      const session = await rotated.verifyTokenAndGetSession(`Bearer ${pair.access_token}`, null);
+
+      expect(session.role).toBe("r");
+    });
+
+    it("signs with the configured secret key, verifiable by the first public key", async () => {
+      const pair = await rotated.createTokenPair({ sub: "u", role: "r" });
+
+      expect((await newOnly.verifyToken(pair.access_token)).sub).toBe("u");
+      await expect(oldOnly.verifyToken(pair.access_token)).rejects.toThrow();
+    });
+
+    it("rejects a token that no public key in the set verifies", async () => {
+      const stranger = generateKeys("public") as { secretKey: string; publicKey: string };
+      const service = createPASETOService(
+        buildEnv(stranger.secretKey, stranger.publicKey),
+        "public",
+        createFakeRepo(),
+      );
+      const pair = await service.createTokenPair({ sub: "u", role: "r" });
+
+      await expect(rotated.verifyToken(pair.access_token)).rejects.toThrow();
+    });
+  });
+});
