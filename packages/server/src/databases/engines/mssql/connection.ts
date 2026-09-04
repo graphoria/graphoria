@@ -170,8 +170,6 @@ export const callStoredProcedure = async (
     const request = pool!.request();
 
     for (const [key, value] of Object.entries(variables)) {
-      if (!value) continue;
-
       const paramFound = sp.parameters.find((p) => p.name === `@${key}`);
 
       if (paramFound?.dataType === "varchar") {
