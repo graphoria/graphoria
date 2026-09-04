@@ -1,38 +1,77 @@
+import { GraphQLObjectType } from "graphql";
+
+import type { GraphQLType } from "graphql";
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { SelectionAnalysis } from "../../analyzeQuery/types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
 import type { RemoteRESTResolved } from "../../remoteREST/types";
 import type { Env } from "../../types/env";
 
+import { getFieldType, unwrapType } from "../../analyzeQuery/typeUtils";
 import { convertFromZod, errors } from "./openApiErrors";
 
+// Deliberately coarse: Int and Float both map to "number", so a column keeps
+// the OpenAPI type it had when types were read off the SQL data type.
+const openApiTypeOf = (namedType: GraphQLType | undefined) => {
+  const name = namedType && "name" in namedType ? namedType.name : undefined;
+
+  switch (name) {
+    case "Int":
+    case "Float":
+      return "number";
+    case "Boolean":
+      return "boolean";
+    default:
+      return "string";
+  }
+};
+
+const resolveFieldType = (parentType: GraphQLObjectType | undefined, fieldName: string) => {
+  const fieldType = parentType && getFieldType(parentType, fieldName);
+  const namedType = fieldType ? unwrapType(fieldType).type : undefined;
+
+  return {
+    namedType,
+    objectType: namedType instanceof GraphQLObjectType ? namedType : undefined,
+  };
+};
+
+/**
+ * Resolves selections against the GraphQL schema rather than against a table
+ * name. `<table>_aggregate` returns a GroupBy wrapper whose fields — `key`,
+ * `count`, `items`, `min`/`max`/`sum`/`avg` — are not tables, so looking a
+ * selection's parent name up in the entity map typed everything under an
+ * aggregate as a string. Walking the schema also makes sanitised column names
+ * resolve, since the schema is what the client actually queries.
+ */
 const processSelections = (
-  schema: GetSchemaReturn,
-  name: string,
-  selections: SelectionAnalysis[] = [],
+  parentType: GraphQLObjectType | undefined,
+  fieldParent: SelectionAnalysis,
 ) =>
-  selections.reduce<Record<string, unknown>>((acc, field) => {
-    const type = schema.getColumnTypeForOpenApi(name, field.name);
+  fieldParent.selections?.reduce<Record<string, unknown>>((acc, field) => {
+    const { namedType, objectType } = resolveFieldType(parentType, field.name);
 
     if (field.isArray) {
       acc[field.alias || field.name] = {
         type: "array",
         items: {
           type: "object",
-          properties: processSelections(schema, field.name, field.selections),
+          properties: processSelections(objectType, field),
           required: (field.selections ?? [])
             .filter((f) => f.isRequired)
             .map((f) => f.alias || f.name),
+          nullable: !field.isRequired,
         },
       };
     } else {
       acc[field.alias || field.name] = field.selections
         ? {
             type: "object",
-            properties: processSelections(schema, field.name, field.selections),
+            properties: processSelections(objectType, field),
             required: field.selections.filter((f) => f.isRequired).map((f) => f.alias || f.name),
+            nullable: !field.isRequired,
           }
-        : { type };
+        : { type: openApiTypeOf(namedType), nullable: !field.isRequired };
     }
 
     return acc;
@@ -137,7 +176,12 @@ export const generateOpenAPI = ({
         const responseDataSchema = value.output
           ? convertFromZod(value.output)
           : (() => {
-              const fields = value.queryStructure!.operations[0].fields;
+              const operation = value.queryStructure!.operations[0];
+              const fields = operation.fields;
+              const rootType =
+                (operation.operation === "mutation"
+                  ? schema.schema.getMutationType()
+                  : schema.schema.getQueryType()) ?? undefined;
               return {
                 type: "object" as const,
                 properties: fields.reduce<Record<string, unknown>>((acc, field) => {
@@ -146,7 +190,10 @@ export const generateOpenAPI = ({
                       type: "array",
                       items: {
                         type: "object",
-                        properties: processSelections(schema, field.name, field.selections!),
+                        properties: processSelections(
+                          resolveFieldType(rootType, field.name).objectType,
+                          field,
+                        ),
                         required: (field.selections ?? [])
                           .filter((f) => f.isRequired)
                           .map((f) => f.alias || f.name),
@@ -155,7 +202,10 @@ export const generateOpenAPI = ({
                   } else {
                     acc[field.alias || field.name] = {
                       type: "object",
-                      properties: processSelections(schema, field.name, field.selections!),
+                      properties: processSelections(
+                        resolveFieldType(rootType, field.name).objectType,
+                        field,
+                      ),
                       required: (field.selections ?? [])
                         .filter((f) => f.isRequired)
                         .map((f) => f.alias || f.name),

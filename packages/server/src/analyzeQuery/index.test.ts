@@ -46,7 +46,6 @@ describe("Store", () => {
                   name: "price",
                 },
                 {
-                  isRequired: true,
                   name: "dbo_product_categories",
                   isArray: true,
                   selections: [
@@ -55,7 +54,6 @@ describe("Store", () => {
                       name: "category_id",
                     },
                     {
-                      isRequired: true,
                       name: "dbo_categories",
                       selections: [
                         {
@@ -116,7 +114,6 @@ describe("Store", () => {
                   name: "sku",
                 },
                 {
-                  isRequired: true,
                   name: "dbo_product_categories",
                   isArray: true,
                   selections: [
@@ -125,7 +122,6 @@ describe("Store", () => {
                       name: "category_id",
                     },
                     {
-                      isRequired: true,
                       name: "dbo_categories",
                       selections: [
                         {
@@ -187,7 +183,6 @@ describe("Store", () => {
                     },
                   },
                   isArray: true,
-                  isRequired: true,
                   name: "dbo_order_items",
                   selections: [
                     {
@@ -252,7 +247,6 @@ describe("Store", () => {
                   name: "sku",
                 },
                 {
-                  isRequired: true,
                   name: "dbo_order_items",
                   selections: [
                     {
@@ -300,15 +294,12 @@ describe("Orders", () => {
                   name: "total_amount",
                 },
                 {
-                  isRequired: true,
                   name: "dbo_customers",
                   selections: [
                     {
-                      isRequired: true,
                       name: "first_name",
                     },
                     {
-                      isRequired: true,
                       name: "last_name",
                     },
                   ],
@@ -350,7 +341,6 @@ describe("Common", () => {
                   name: "dbo_customers",
                   selections: [
                     {
-                      isRequired: true,
                       name: "first_name",
                     },
                   ],
@@ -397,7 +387,6 @@ describe("Common", () => {
                   name: "dbo_customers",
                   selections: [
                     {
-                      isRequired: true,
                       name: "first_name",
                     },
                   ],
@@ -452,7 +441,6 @@ describe("Common", () => {
                   name: "dbo_customers",
                   selections: [
                     {
-                      isRequired: true,
                       name: "first_name",
                     },
                   ],
@@ -513,7 +501,6 @@ describe("Common", () => {
                 },
                 {
                   isArray: true,
-                  isRequired: true,
                   name: "dbo_product_categories",
                   selections: [
                     {
@@ -521,7 +508,6 @@ describe("Common", () => {
                       name: "category_id",
                     },
                     {
-                      isRequired: true,
                       name: "dbo_categories",
                       selections: [
                         {
@@ -585,7 +571,6 @@ describe("Common", () => {
                 },
                 {
                   isArray: true,
-                  isRequired: true,
                   name: "dbo_product_categories",
                   selections: [
                     {
@@ -593,7 +578,6 @@ describe("Common", () => {
                       name: "category_id",
                     },
                     {
-                      isRequired: true,
                       name: "dbo_categories",
                       selections: [
                         {
