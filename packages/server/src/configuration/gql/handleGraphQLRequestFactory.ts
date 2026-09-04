@@ -100,7 +100,7 @@ export const handleGraphQLRequestFactory = (
       };
     },
 
-    [EntitySource.STORED_PROCEDURE]: async (field, variables, queryAnalysis) => {
+    [EntitySource.STORED_PROCEDURE]: async (field, variables) => {
       const sp = entities.mutationsMap[field.name];
 
       if (!sp) {
@@ -116,7 +116,6 @@ export const handleGraphQLRequestFactory = (
 
       const result = await callStoredProcedure(
         sp,
-        queryAnalysis.operations[0].variables ?? [],
         argumentsReplaced as Record<string, string | number | boolean | null>,
       );
 

@@ -7,6 +7,7 @@ import type { ProcedureResolver } from "../../../types/db";
 
 import { BunSQLConnectionOptionsZod } from "../../../config/types/db";
 import { databasesConnections } from "../../../singletons/databases";
+import { orderProcedureArguments } from "../../core/procedure-arguments";
 import { getQueryTimeoutMs } from "../../../singletons/queryTimeout";
 
 // Every pool bound comes from the schema, which is the only place they are
@@ -138,22 +139,24 @@ export const executeQueryJSONFactory =
 export const executeQueryJSON = executeQueryJSONFactory();
 export const executeQueryJSONSingle = executeQueryJSONFactory(true);
 
+// The generated schema types every stored procedure mutation as `Boolean!`, so
+// the call reports whether it ran, not what it selected. Returning the rows here
+// would put an array behind a field the schema promises is a boolean.
 export const callStoredProcedure = async (
   sp: ProcedureResolver,
-  variablesDefinition: VariableDefinition[],
   variables: Record<string, unknown>,
 ) => {
   try {
-    const data = await executeQuery(
-      `SELECT * FROM ${sp.dottedQuotedName}(${Object.keys(variables)
-        .map((_, i) => `$${i + 1}`)
-        .join(", ")});`,
+    const args = orderProcedureArguments(sp, variables);
+
+    await executeQuery(
+      `SELECT * FROM ${sp.dottedQuotedName}(${args.map((_, i) => `$${i + 1}`).join(", ")});`,
       sp.db!,
-      variablesDefinition,
+      args,
       variables,
     );
 
-    return data;
+    return true;
   } catch {
     return false;
   }

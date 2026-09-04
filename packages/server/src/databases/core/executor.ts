@@ -78,7 +78,6 @@ export const executeQueryJSON = async <T>(
 
 export const callStoredProcedure = async (
   sp: ProcedureResolver,
-  variablesDefinition: VariableDefinition[],
   variables: Record<string, unknown> = {},
 ) => {
   const adapter = databaseAdapters[sp.db!.type];
@@ -94,7 +93,7 @@ export const callStoredProcedure = async (
   const startTime = Bun.nanoseconds();
 
   try {
-    const result = await adapter.callStoredProcedure(sp, variablesDefinition, variables);
+    const result = await adapter.callStoredProcedure(sp, variables);
     log.debug({ durationMs: (Bun.nanoseconds() - startTime) / 1e6 }, "stored procedure executed");
     return result;
   } catch (error) {

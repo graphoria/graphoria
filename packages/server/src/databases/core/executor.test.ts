@@ -166,27 +166,24 @@ describe("callStoredProcedure", () => {
     it(`dispatches to the ${engine} engine callStoredProcedure`, async () => {
       const recorded: Array<{
         sp: ProcedureResolver;
-        defs: VariableDefinition[];
         params: Record<string, unknown>;
       }> = [];
 
       restorers.push(
         stub(engine, "callStoredProcedure", (async (
           sp: ProcedureResolver,
-          defs: VariableDefinition[],
           params: Record<string, unknown>,
         ) => {
-          recorded.push({ sp, defs, params });
+          recorded.push({ sp, params });
           return { engine };
         }) as (typeof databaseAdapters)[EngineKey]["callStoredProcedure"]),
       );
 
       const sp = buildSP(db);
-      const result = await callStoredProcedure(sp, variableDefs, { p: 1 });
+      const result = await callStoredProcedure(sp, { p: 1 });
 
       expect(result).toEqual({ engine });
       expect(recorded[0].sp).toBe(sp);
-      expect(recorded[0].defs).toBe(variableDefs);
       expect(recorded[0].params).toEqual({ p: 1 });
     });
   }
@@ -194,7 +191,7 @@ describe("callStoredProcedure", () => {
   it("throws on unsupported database type", async () => {
     const bogus = { ...dbPostgreSQL, type: "sqlite" } as unknown as Database;
 
-    await expect(callStoredProcedure(buildSP(bogus), variableDefs, {})).rejects.toThrow(
+    await expect(callStoredProcedure(buildSP(bogus), {})).rejects.toThrow(
       "Unsupported database type: sqlite",
     );
   });
@@ -204,7 +201,6 @@ describe("callStoredProcedure", () => {
     restorers.push(
       stub("pg", "callStoredProcedure", (async (
         _sp: ProcedureResolver,
-        _defs: VariableDefinition[],
         params: Record<string, unknown>,
       ) => {
         recorded.push(params);
@@ -212,7 +208,7 @@ describe("callStoredProcedure", () => {
       }) as (typeof databaseAdapters)[EngineKey]["callStoredProcedure"]),
     );
 
-    await callStoredProcedure(buildSP(dbPostgreSQL), variableDefs);
+    await callStoredProcedure(buildSP(dbPostgreSQL));
 
     expect(recorded[0]).toEqual({});
   });

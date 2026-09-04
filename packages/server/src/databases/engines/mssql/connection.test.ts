@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 
 import type { Database } from "../../../types/configuration";
 
@@ -12,8 +12,12 @@ let poolOptions: (
   timeoutMs?: number,
 ) => ReturnType<typeof import("./connection").poolOptions>;
 
+let callStoredProcedure: typeof import("./connection").callStoredProcedure;
+let databasesConnections: typeof import("../../../singletons/databases").databasesConnections;
+
 beforeAll(async () => {
-  ({ poolOptions } = await import("./connection"));
+  ({ poolOptions, callStoredProcedure } = await import("./connection"));
+  ({ databasesConnections } = await import("../../../singletons/databases"));
 });
 
 const db = (connectionOptions?: unknown): Database =>
@@ -98,5 +102,55 @@ describe("mssql poolOptions requestTimeout", () => {
 
   it("passes 0 through, which tedious reads as no timeout", () => {
     expect(poolOptions(db(), 0).requestTimeout).toBe(0);
+  });
+});
+
+type BoundParameter = { name: string; type?: unknown; value: unknown };
+
+const fakePool = (bound: BoundParameter[]) => ({
+  request: () => ({
+    input: (...args: unknown[]) =>
+      bound.push(
+        args.length === 3
+          ? { name: args[0] as string, type: args[1], value: args[2] }
+          : { name: args[0] as string, value: args[1] },
+      ),
+    execute: async () => ({ returnValue: 0 }),
+  }),
+});
+
+const procedure = () =>
+  ({
+    db: db(),
+    dottedName: "dbo.usp_test",
+    parameters: [
+      { name: "@label", dataType: "varchar", maxLength: 50, precision: 0, scale: 0 },
+      { name: "@count", dataType: "int", maxLength: -1, precision: 0, scale: 0 },
+      { name: "@flag", dataType: "int", maxLength: -1, precision: 0, scale: 0 },
+      { name: "@note", dataType: "nvarchar", maxLength: -1, precision: 0, scale: 0 },
+    ],
+  }) as unknown as Parameters<typeof callStoredProcedure>[0];
+
+describe("mssql callStoredProcedure", () => {
+  it("binds every supplied argument, including the falsy ones a procedure treats as data", async () => {
+    const bound: BoundParameter[] = [];
+    databasesConnections.default = fakePool(
+      bound,
+    ) as unknown as (typeof databasesConnections)[string];
+
+    const result = await callStoredProcedure(procedure(), {
+      label: "",
+      count: 0,
+      flag: false,
+      note: null,
+    });
+
+    expect(result).toBe(true);
+    expect(bound.map((b) => b.name)).toEqual(["label", "count", "flag", "note"]);
+    expect(bound.map((b) => b.value)).toEqual(["", 0, false, null]);
+  });
+
+  afterEach(() => {
+    delete databasesConnections.default;
   });
 });

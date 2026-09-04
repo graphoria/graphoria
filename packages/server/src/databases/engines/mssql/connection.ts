@@ -161,7 +161,6 @@ export const executeQueryJSONSingle = executeQueryJSONFactory(true);
 
 export const callStoredProcedure = async (
   sp: ProcedureResolver,
-  variablesDefinition: VariableDefinition[],
   variables: Record<string, unknown> = {},
 ) => {
   try {
@@ -170,8 +169,6 @@ export const callStoredProcedure = async (
     const request = pool!.request();
 
     for (const [key, value] of Object.entries(variables)) {
-      if (!value) continue;
-
       const paramFound = sp.parameters.find((p) => p.name === `@${key}`);
 
       if (paramFound?.dataType === "varchar") {

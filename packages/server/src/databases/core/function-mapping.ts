@@ -105,7 +105,6 @@ type DatabaseFunctions = {
   ) => Promise<T>;
   callStoredProcedure: (
     sp: ProcedureResolver,
-    variablesDefinition: VariableDefinition[],
     parameters: Record<string, unknown>,
     // oxlint-disable-next-line typescript/no-explicit-any
   ) => Promise<any>;
