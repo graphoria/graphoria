@@ -80,7 +80,7 @@ export type InsertAuthUserInput = {
   claims?: Record<string, unknown>;
 };
 
-type DatabaseFunctions = {
+export type DatabaseFunctions = {
   query: (
     entities: MergedEntities,
     operation: OperationAnalysis,
