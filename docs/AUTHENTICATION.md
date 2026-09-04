@@ -236,4 +236,5 @@ Standard claims (`sub`, `role`, `iat`, `exp`, `jti`, …) are always available. 
 - **Redis** is required for refresh-token rotation. If Redis is unreachable, refresh attempts fail closed — the design choice favors security over availability.
 - **Argon2id** parameters are inherited from Bun's defaults (`m=65536, t=2, p=1`). To tune them, hash passwords explicitly with `Bun.password.hash(plain, { algorithm: "argon2id", memoryCost, timeCost })` before inserting.
 - **Token clock skew** is not currently configurable — the verifier rejects tokens whose `exp` is in the past or whose `nbf` is in the future, with no grace period.
+- **Audit log.** Every `auth_login` (success and failure, by username) and every `auth_logout` that revoked a token writes one record; passwords and tokens never appear in it. See [Audit log](../README.md#audit-log).
 - **Multi-tenant deployments** can store the tenant ID in `claims.tenant_id` and reference it as `$session.tenant_id` in every filter; the JWT/PASETO payload carries it on every request, so there's no extra DB round-trip.
