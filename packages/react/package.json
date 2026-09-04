@@ -1,6 +1,6 @@
 {
   "name": "@graphoria/react",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "React hooks and utilities for Graphoria GraphQL APIs (client-agnostic)",
   "keywords": [
     "authentication",
