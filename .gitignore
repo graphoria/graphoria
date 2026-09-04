@@ -26,3 +26,7 @@ coverage
 # IDE / OS
 .idea
 .DS_Store
+
+# Benchmark results for engines other than the committed PostgreSQL baseline
+packages/server/bench/results/mysql.*
+packages/server/bench/results/mssql.*

@@ -17,6 +17,15 @@ services:
   postgres:
     image: postgres:18
     shm_size: 128mb
+    # pg_stat_statements is how the N+1 audit counts the statements the server
+    # actually sends. It only loads from shared_preload_libraries, so it has to
+    # be a server flag rather than a CREATE EXTENSION alone.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: graphoria_test
