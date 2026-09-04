@@ -7,23 +7,6 @@ import type { TypedOperation } from "../../../types/zod/operation";
 
 import { EntitySource, createResolverEntry } from "../../../types/resolver";
 import { columnFieldName } from "../../../databases/transformers/graphqlName";
-import { SqlTypeCategory, categorizeSqlType } from "../../../databases/sqlTypeUtils";
-
-const dataTypeToOpenApiType = (dataType: string): string => {
-  const category = categorizeSqlType(dataType);
-
-  switch (category) {
-    case SqlTypeCategory.INTEGER:
-    case SqlTypeCategory.FLOAT:
-      return "number";
-    case SqlTypeCategory.BOOLEAN:
-      return "boolean";
-    case SqlTypeCategory.DATE_TIME:
-    case SqlTypeCategory.STRING:
-    default:
-      return "string";
-  }
-};
 
 export const mergeEntities = (
   entityOfRole: EntitiesOfRole,
@@ -236,15 +219,6 @@ export const mergeEntities = (
      */
     columnSqlName: (table: string, fieldName: string): string =>
       queriesMap[table]?.columns.find((c) => columnFieldName(c) === fieldName)?.name ?? fieldName,
-    getColumnTypeForOpenApi: (table: string, column: string) => {
-      const tableObj = queriesMap[table];
-
-      const columnObj = tableObj?.columns.find((c) => c.name === column);
-
-      if (!columnObj) return "string";
-
-      return dataTypeToOpenApiType(columnObj.dataType);
-    },
   };
 };
 
