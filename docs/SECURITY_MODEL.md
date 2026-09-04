@@ -62,10 +62,12 @@ It also gates, at the same strength:
 - `POST /ai`, the natural-language agent, which is bound to the superadmin schema.
 - `POST /mcp`, but only when `AI_MCP_REQUIRE_ADMIN_SECRET=true`. It is `false` by default.
 
-Comparison is `crypto.timingSafeEqual` on every path, and a blank secret never matches. There is one
-secret, it does not expire, it cannot be scoped, and rotating it requires restarting every process
-that holds it. Treat it as a break-glass credential: it belongs in a secret manager and behind
-network-level protection, not in a client.
+Comparison is `crypto.timingSafeEqual` on every path, and a blank secret never matches. The secret
+does not expire and cannot be scoped. It can be rotated without a cut-over: `ADMIN_SECRET` takes a
+comma-separated list and every entry is accepted, so the new value goes in first, the fleet rolls,
+and the old value is dropped once nothing presents it any more (see
+[Rotating secrets](./AUTHENTICATION.md#rotating-secrets)). Treat it as a break-glass credential: it
+belongs in a secret manager and behind network-level protection, not in a client.
 
 ## What a valid low-privilege token reaches
 

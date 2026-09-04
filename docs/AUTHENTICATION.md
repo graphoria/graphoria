@@ -105,28 +105,28 @@ Each strategy issues short-lived access tokens (`JWT_EXPIRES_IN`, default `5m`) 
 
 Symmetric HMAC-SHA256 tokens issued via [`jose`](https://github.com/panva/jose). Cheap to issue, cheap to verify, but anyone with `JWT_SECRET` can forge tokens. Suitable when both issuance and verification happen inside the same trust boundary.
 
-| Variable            | Required | Notes                                             |
-| ------------------- | -------- | ------------------------------------------------- |
-| `JWT_SECRET`        | yes      | Any non-empty string. Use 32+ random bytes.       |
-| `JWT_EXPIRES_IN`    | no       | Access-token lifetime, e.g. `15m`. Default `5m`.  |
-| `JWT_RT_EXPIRES_IN` | no       | Refresh-token lifetime, e.g. `30d`. Default `7d`. |
+| Variable            | Required | Notes                                                                                            |
+| ------------------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `JWT_SECRET`        | yes      | Any non-empty string. Use 32+ random bytes. Comma-separated list to [rotate](#rotating-secrets). |
+| `JWT_EXPIRES_IN`    | no       | Access-token lifetime, e.g. `15m`. Default `5m`.                                                 |
+| `JWT_RT_EXPIRES_IN` | no       | Refresh-token lifetime, e.g. `30d`. Default `7d`.                                                |
 
 ### `paseto_local` (symmetric)
 
 [PASETO v4.local](https://github.com/paseto-standard/paseto-spec) tokens — XChaCha20-Poly1305 authenticated encryption. The token body is opaque to clients, which is useful when you need to put confidential claims in the payload.
 
-| Variable           | Required | Notes                                                                                  |
-| ------------------ | -------- | -------------------------------------------------------------------------------------- |
-| `PASETO_LOCAL_KEY` | yes      | A 32-byte key in PASETO `k4.local.…` format. Generate with `paseto-ts/v4`'s key tools. |
+| Variable           | Required | Notes                                                                                                                                       |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PASETO_LOCAL_KEY` | yes      | A 32-byte key in PASETO `k4.local.…` format. Generate with `paseto-ts/v4`'s key tools. Comma-separated list to [rotate](#rotating-secrets). |
 
 ### `paseto_public` (asymmetric)
 
 PASETO v4.public — Ed25519 signatures. Verifiers only need the public key, so this is the right choice when downstream services validate tokens but should not be able to issue them.
 
-| Variable            | Required | Notes                           |
-| ------------------- | -------- | ------------------------------- |
-| `PASETO_SECRET_KEY` | yes      | `k4.secret.…` (signs tokens)    |
-| `PASETO_PUBLIC_KEY` | yes      | `k4.public.…` (verifies tokens) |
+| Variable            | Required | Notes                                                                                 |
+| ------------------- | -------- | ------------------------------------------------------------------------------------- |
+| `PASETO_SECRET_KEY` | yes      | `k4.secret.…` (signs tokens). One key only.                                           |
+| `PASETO_PUBLIC_KEY` | yes      | `k4.public.…` (verifies tokens). Comma-separated list to [rotate](#rotating-secrets). |
 
 If you start the server without the variables required for the chosen strategy, Graphoria fails fast with a clear error message — it will not silently fall back to a weaker strategy.
 
@@ -191,7 +191,22 @@ curl -X POST http://localhost:3000/graphql \
   --data '{"query": "{ public_orders { id } }"}'
 ```
 
-The header name is configurable via `ADMIN_SECRET_HEADER`. The comparison uses `crypto.timingSafeEqual`, so you cannot probe for the value by measuring response times.
+The header name is configurable via `ADMIN_SECRET_HEADER`. The comparison uses `crypto.timingSafeEqual`, so you cannot probe for the value by measuring response times. `ADMIN_SECRET` accepts a comma-separated list so it can be [rotated](#rotating-secrets) like the signing keys.
+
+## Rotating secrets
+
+`ADMIN_SECRET`, `JWT_SECRET`, `PASETO_LOCAL_KEY` and `PASETO_PUBLIC_KEY` each accept a comma-separated list. The **first** entry is the one in use — it signs JWTs and encrypts PASETO local tokens, and it is the one to hand to new callers — and **every** entry is accepted on the way in. Whitespace around entries is trimmed and blank entries are ignored. A secret is therefore split on commas and cannot contain one.
+
+Rotation is two deploys, with no cut-over in between:
+
+1. Put the new secret first and keep the old one: `JWT_SECRET=new,old`. Restart (or roll) every process. From here on new tokens are signed with `new`, and tokens issued under `old` still verify.
+2. Once every token issued under `old` has expired — one refresh-token lifetime, `JWT_RT_EXPIRES_IN`, by default `7d` — drop it: `JWT_SECRET=new`. Restart again.
+
+The server logs at `debug` level every time a request is verified against anything but the first entry, so you can tell when step 2 is safe by watching for that line to stop.
+
+`paseto_public` rotates by generating a new key pair: `PASETO_SECRET_KEY` takes the **new** secret key only, and `PASETO_PUBLIC_KEY=new,old` keeps the old public key accepted. `ADMIN_SECRET=new,old` works the same way for the admin header and the console login; there is nothing to wait for before dropping the old one beyond re-issuing the secret to whoever holds it.
+
+The env is read once at startup, so each step needs a restart. On a fleet, roll the processes — a process that has picked up step 1 accepts the same tokens as one that has not, so the order does not matter.
 
 ## Session variables in filters
 
