@@ -121,7 +121,7 @@ const CronActions = ({ name, isRunning }: { name: string; isRunning: boolean }) 
   );
 };
 
-export const StatusPage = () => {
+export const StatusPage = ({ readOnly }: { readOnly: boolean }) => {
   const { data, error, loading } = useApi<StatusResponse>("/status", 5000);
 
   if (loading) return <p className="text-gray-400">Loading…</p>;
@@ -213,7 +213,7 @@ export const StatusPage = () => {
             </span>
           )}
         </p>
-        {data!.publishers.length > 0 && <PublishForm publishers={data!.publishers} />}
+        {data!.publishers.length > 0 && !readOnly && <PublishForm publishers={data!.publishers} />}
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-4 mb-3">
@@ -229,7 +229,9 @@ export const StatusPage = () => {
                 <th className="text-left py-2 pr-2 text-gray-500 font-medium">Runs</th>
                 <th className="text-left py-2 pr-2 text-gray-500 font-medium">State</th>
                 <th className="text-left py-2 pr-2 text-gray-500 font-medium">Next run</th>
-                <th className="text-left py-2 pr-2 text-gray-500 font-medium">Actions</th>
+                {!readOnly && (
+                  <th className="text-left py-2 pr-2 text-gray-500 font-medium">Actions</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -244,9 +246,11 @@ export const StatusPage = () => {
                   <td className="py-1.5 pr-2">
                     {job.nextRun ? new Date(job.nextRun).toLocaleString() : "—"}
                   </td>
-                  <td className="py-1.5 pr-2">
-                    <CronActions name={job.name} isRunning={job.isRunning} />
-                  </td>
+                  {!readOnly && (
+                    <td className="py-1.5 pr-2">
+                      <CronActions name={job.name} isRunning={job.isRunning} />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
