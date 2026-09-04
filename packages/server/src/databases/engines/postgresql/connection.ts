@@ -139,6 +139,9 @@ export const executeQueryJSONFactory =
 export const executeQueryJSON = executeQueryJSONFactory();
 export const executeQueryJSONSingle = executeQueryJSONFactory(true);
 
+// The generated schema types every stored procedure mutation as `Boolean!`, so
+// the call reports whether it ran, not what it selected. Returning the rows here
+// would put an array behind a field the schema promises is a boolean.
 export const callStoredProcedure = async (
   sp: ProcedureResolver,
   variables: Record<string, unknown>,
@@ -146,14 +149,14 @@ export const callStoredProcedure = async (
   try {
     const args = orderProcedureArguments(sp, variables);
 
-    const data = await executeQuery(
+    await executeQuery(
       `SELECT * FROM ${sp.dottedQuotedName}(${args.map((_, i) => `$${i + 1}`).join(", ")});`,
       sp.db!,
       args,
       variables,
     );
 
-    return data;
+    return true;
   } catch {
     return false;
   }

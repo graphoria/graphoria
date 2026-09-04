@@ -638,7 +638,9 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
       );
 
       expect(response.errors ?? []).toEqual([]);
-      expect(typeof response.data?.app_tasks_by_priority).toBe("boolean");
+      // `true` rather than any boolean: a failed call is swallowed into `false`,
+      // so the looser assertion held even when the procedure never ran.
+      expect(response.data?.app_tasks_by_priority).toBe(true);
     });
   });
 });

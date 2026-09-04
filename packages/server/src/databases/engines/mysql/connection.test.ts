@@ -77,4 +77,19 @@ describe("mysql callStoredProcedure", () => {
     expect(recorded[0]!.query).toBe("CALL `d`.`create_order`(?, ?);");
     expect(recorded[0]!.params).toEqual(["acme", 42]);
   });
+  it("reports success as the boolean the schema declares, not the procedure's rows", async () => {
+    databasesConnections.default = fakePool([]) as unknown as (typeof databasesConnections)[string];
+
+    expect(await callStoredProcedure(procedure(), { customer: "acme", total: 42 })).toBe(true);
+  });
+
+  it("reports a failed call as false", async () => {
+    databasesConnections.default = {
+      unsafe: async () => {
+        throw new Error("boom");
+      },
+    } as unknown as (typeof databasesConnections)[string];
+
+    expect(await callStoredProcedure(procedure(), { customer: "acme", total: 42 })).toBe(false);
+  });
 });
