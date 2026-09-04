@@ -5,6 +5,7 @@ import type { SessionContext } from "../../utils/sessionVariables";
 
 import { resolveVariableRef } from "../../analyzeQuery/resolveVariables";
 import { checkUserCredentials } from "../../databases";
+import { actorFromSession, audit } from "../../logging/audit";
 import { getTokenService } from "../../singletons/authentication";
 
 // Handle auth mutations: auth_login / auth_refresh / auth_logout
@@ -35,9 +36,23 @@ export const handleAuthMutation = async (
       passwordValue.toString(),
     );
 
+    const actor = { type: "credentials", sub: usernameValue.toString() } as const;
     if (!result.valid) {
+      audit().emit({
+        action: "auth.login",
+        outcome: "failure",
+        actor,
+        target: { kind: "auth", via: "graphql" },
+        reason: "Invalid username or password",
+      });
       throw new Error("Invalid username or password");
     }
+    audit().emit({
+      action: "auth.login",
+      outcome: "success",
+      actor,
+      target: { kind: "auth", via: "graphql", role: result.role },
+    });
 
     const data = await getTokenService().createTokenPair({
       sub: usernameValue.toString(),
@@ -104,9 +119,11 @@ export const handleAuthMutation = async (
 
   if (field.name === "auth_logout") {
     const tokenService = getTokenService();
+    const revoked: string[] = [];
 
     if (session?.jti) {
       await tokenService.revoke(session.jti);
+      revoked.push(session.jti);
     }
 
     const refreshCookie = req?.cookies?.get("refresh_token");
@@ -116,6 +133,7 @@ export const handleAuthMutation = async (
           audience: "refresh",
         });
         await tokenService.revoke(refreshPayload.jti);
+        revoked.push(refreshPayload.jti);
       } catch {
         // tampered or expired cookie — nothing to revoke
       }
@@ -123,6 +141,14 @@ export const handleAuthMutation = async (
 
     if (req?.cookies) {
       req.cookies.delete("refresh_token");
+    }
+
+    if (revoked.length > 0) {
+      audit().emit({
+        action: "auth.logout",
+        actor: actorFromSession(session),
+        target: { kind: "auth", via: "graphql", revoked },
+      });
     }
 
     return {

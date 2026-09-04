@@ -18,7 +18,8 @@ export type ConsoleSessions = {
   login(req: BunRequest): Promise<{ expiresIn: number }>;
   /** True when the request carries a live, unrevoked console session cookie. */
   authorize(req: BunRequest): Promise<boolean>;
-  logout(req: BunRequest): Promise<void>;
+  /** Resolves true when a live session was revoked; the cookie is cleared either way. */
+  logout(req: BunRequest): Promise<boolean>;
 };
 
 type ConsoleSessionsOptions = {
@@ -108,6 +109,8 @@ export const createConsoleSessions = ({
       }
 
       req.cookies.delete({ name: CONSOLE_SESSION_COOKIE, path: consolePath });
+
+      return payload !== null;
     },
   };
 };

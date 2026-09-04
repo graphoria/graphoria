@@ -84,6 +84,7 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 | Data-transform directives                                       | `databases/directives.ts` — `DIRECTIVE_HANDLERS`                                                                                                  |
 | `@when` control-flow directive                                  | `databases/common.ts` (search `whenDirective`) + `analyzeQuery/analyzers/selectionAnalyzer.ts`                                                    |
 | Singletons (mutable globals)                                    | `singletons/{databases,authentication,cron,queues,env,cache}.ts`                                                                                  |
+| Audit log (privileged actions)                                  | `logging/audit.ts` — `audit().emit`, `actorFromSession`; `setAuditLog` is the test seam                                                           |
 | RabbitMQ / Kafka runtime                                        | `queues/rabbitmq.ts`, `queues/kafka.ts`                                                                                                           |
 | Cron runtime                                                    | `cron/`, `singletons/cron.ts`                                                                                                                     |
 | Remote GraphQL schemas                                          | `remoteSchemas/{introspect,transform,proxy,index}.ts`                                                                                             |
@@ -169,6 +170,7 @@ Hooks (`init`, `beforeRequest`, `afterRequest`) are wired inline in `configurati
 - **PG / MySQL parameterized queries**: `pool.unsafe(query, paramsArray)` with `$1, $2, …` placeholders. The function name is misleading — the params _are_ bound; only string interpolation in the query text is unsafe.
 - **MSSQL parameterized queries**: `pool.request().input(name, type, value).query(text)` with `@name` placeholders. Types come from `import { NVarChar, Int, … } from "mssql"`.
 - **`tokenRepository`**: `saveJti` and `revoke` write to the same Redis hash. `saveJti` sets `isUsed=true` + TTL; `revoke` only sets `isRevoked=true` and _must not_ extend or replace the TTL. Don't `client.del(jti)` — that loses the audit trail.
+- **Audit records ignore `LOG_LEVEL`.** `createAuditLog` pins its pino child to `info`. In tests, inject with `setAuditLog({ emit })` and reset with `setAuditLog(null)` — never assert on pino output. Every new privileged action needs a call site _and_ a test that counts exactly one record.
 - **`@when` directive lives in `databases/common.ts`**, not `databases/directives.ts`. The latter is data-transform only; control-flow directives are processed in `shouldIncludeField`.
 - **Queue config has two shapes**. The user-facing config in `src/config/` uses `publishers` / `subscribers` / `topics` records. The Zod transform in `types/zod/queue.ts` pivots that into internal `exchanges` / `queues` arrays that the runtime in `queues/rabbitmq.ts` consumes. When debugging queues, remember which view you're looking at.
 - **Subscription auth is captured once**. `connection_init` carries the JWT/PASETO; the resulting session is stored in `subscriptionMapping` for the lifetime of the WebSocket. Token rotation requires the client to reconnect.
@@ -256,14 +258,3 @@ Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HE
 | Contributing                  | [CONTRIBUTING.md](./CONTRIBUTING.md)                                                                                    |
 | Release notes                 | [GitHub Releases](https://github.com/graphoria/graphoria/releases)                                                      |
 | Backlog (deferred follow-ups) | [BACKLOG.md](./BACKLOG.md) — read before adding "future improvement" suggestions; the user item may already be tracked. |
-
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-Rules:
-
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

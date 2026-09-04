@@ -129,6 +129,7 @@ The admin-secret header name comes from `ADMIN_SECRET_HEADER` (default `x-admin-
 - **Mutations are blocked.** `graphql_execute` parses the document and rejects any `mutation` or `subscription` operation before validation runs. `query_data` composes the document itself and can only ever emit a `query`. Use the GraphQL endpoint directly with a real bearer token if you need writes.
 - **REST execute uses the same handler stack as `/rest/*`.** Anything an unauthenticated client could hit at `/rest` is reachable via `rest_execute` — and only that.
 - **Constant-time secret check.** When `AI_MCP_REQUIRE_ADMIN_SECRET=true`, the header compare uses `crypto.timingSafeEqual`. A missing or empty `ADMIN_SECRET` always fails the gate.
+- **Audit.** Each request that passes the gate writes an `admin_secret.used` record with the caller's address — see [Audit log](../README.md#audit-log).
 - **No rate limiting.** The endpoint inherits whatever you have at the proxy or load-balancer layer. Treat `/mcp` like `/graphql` — public, but expensive enough to deserve a WAF rule if it's exposed to the internet.
 
 ## Client-side example

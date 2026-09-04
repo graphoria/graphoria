@@ -8,6 +8,7 @@ import type { ConnectionPool } from "mssql";
 
 import { createConsoleSessions } from "./session";
 import { getTags } from "../configuration/rest/generateOpenAPI";
+import { audit } from "../logging/audit";
 import { getCronJobs } from "../singletons/cron";
 import { databasesConnections } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
@@ -67,12 +68,17 @@ export const consoleRoutesFactory = ({
 }: ConsoleRoutesFactoryOptions): Record<string, Record<string, ConsoleRouteHandler>> => {
   const sessions = createConsoleSessions({ env, consolePath, tokenService });
 
+  const clientAddress = (req: BunRequest, server?: Bun.Server<unknown>) =>
+    resolveClientAddress(req, server, env.rateLimit.trustProxy);
+
   const guarded =
-    (handler: (req: BunRequest) => object | Promise<object>): ConsoleRouteHandler =>
-    async (req: BunRequest) => {
+    (
+      handler: (req: BunRequest, server?: Bun.Server<unknown>) => object | Promise<object>,
+    ): ConsoleRouteHandler =>
+    async (req: BunRequest, server?: Bun.Server<unknown>) => {
       try {
         if (!(await sessions.authorize(req))) return new S404({ error: "Not Found" });
-        return new S200(await handler(req));
+        return new S200(await handler(req, server));
       } catch (error) {
         return new S400({ errors: [{ message: (error as Error)?.message }] });
       }
@@ -99,15 +105,28 @@ export const consoleRoutesFactory = ({
         // Keyed by address against the anonymous ceiling: there is no session
         // yet, and the attempt is charged before the secret is compared, so a
         // guesser cannot spend attempts for free.
-        const limit = await rateLimiter?.check(
-          null,
-          resolveClientAddress(req, server, env.rateLimit.trustProxy),
-        );
+        const ip = clientAddress(req, server);
+        const limit = await rateLimiter?.check(null, ip);
         if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
 
+        const actor = { type: "admin_secret", ip } as const;
         try {
-          return new S200(await sessions.login(req));
-        } catch {
+          const session = await sessions.login(req);
+          audit().emit({
+            action: "console.login",
+            outcome: "success",
+            actor,
+            target: { kind: "console" },
+          });
+          return new S200(session);
+        } catch (error) {
+          audit().emit({
+            action: "console.login",
+            outcome: "failure",
+            actor,
+            target: { kind: "console" },
+            reason: (error as Error)?.message,
+          });
           // One message for a bad secret and for a malformed body alike: the
           // caller learns nothing about which it was.
           return new S401({ errors: [{ message: "Invalid admin secret" }] });
@@ -117,8 +136,14 @@ export const consoleRoutesFactory = ({
 
     [`${base}/logout`]: {
       ...cors,
-      POST: async (req) => {
-        await sessions.logout(req);
+      POST: async (req, server) => {
+        if (await sessions.logout(req)) {
+          audit().emit({
+            action: "console.logout",
+            actor: { type: "console", ip: clientAddress(req, server) },
+            target: { kind: "console" },
+          });
+        }
         return new S200({ ok: true });
       },
     },
@@ -279,7 +304,7 @@ export const consoleRoutesFactory = ({
 
     [`${base}/queues/publish`]: {
       ...cors,
-      POST: guarded(async (req) => {
+      POST: guarded(async (req, server) => {
         const { publisher, message, key } = (await req.json()) as {
           publisher?: string;
           message?: string | object;
@@ -288,13 +313,18 @@ export const consoleRoutesFactory = ({
         if (!publisher || message == null) throw new Error("publisher and message are required");
         if (!Object.hasOwn(queueManager?.publisherMap() ?? {}, publisher))
           throw new Error(`Unknown publisher "${publisher}"`);
+        audit().emit({
+          action: "console.queue.publish",
+          actor: { type: "console", ip: clientAddress(req, server) },
+          target: { kind: "publisher", name: publisher, key },
+        });
         return { ok: await queueManager!.sendMessage(publisher, message, key) };
       }),
     },
 
     [`${base}/cron`]: {
       ...cors,
-      POST: guarded(async (req) => {
+      POST: guarded(async (req, server) => {
         const { name, action } = (await req.json()) as { name?: string; action?: string };
         const cron = getCronJobs();
         if (!cron) throw new Error("Cron is not enabled");
@@ -302,6 +332,11 @@ export const consoleRoutesFactory = ({
         if (action !== "trigger" && action !== "pause" && action !== "resume")
           throw new Error(`Unknown action "${action}"`);
         if (!cron.getJob(name)) throw new Error(`Unknown job "${name}"`);
+        audit().emit({
+          action: `console.cron.${action}`,
+          actor: { type: "console", ip: clientAddress(req, server) },
+          target: { kind: "cron", name },
+        });
         if (action === "trigger") await cron.trigger(name);
         else cron[action](name);
         return { ok: true };

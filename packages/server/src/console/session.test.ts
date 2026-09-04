@@ -171,7 +171,7 @@ describe("createConsoleSessions", () => {
     expect(await sessions.authorize(request(sessionCookieOf(second)))).toBe(true);
   });
 
-  it("logout without a cookie is a no-op", async () => {
-    expect(sessions.logout(request())).resolves.toBeUndefined();
+  it("logout without a cookie revokes nothing", async () => {
+    expect(sessions.logout(request())).resolves.toBe(false);
   });
 });

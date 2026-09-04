@@ -246,6 +246,26 @@ const { server } = await createBunServer({
 configureLogging({ level: "trace" });
 ```
 
+### Audit log
+
+Every privileged action is written as one structured record through a pino child logger tagged `component: "audit"`. The records go wherever the rest of the log goes, but they are emitted at `info` regardless of `LOG_LEVEL`, so a deployment that runs at `warn` still gets them. To route them to their own sink, filter on `component` in a transport of your own (see [Logging](#logging) for injecting one).
+
+| Action                                | Actor                   | Target                                            | When                                                                               |
+| ------------------------------------- | ----------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `admin_secret.used`                   | `admin_secret`, address | the endpoint (method, path), `websocket` or `mcp` | Any request that presented the admin secret                                        |
+| `auth.login`                          | `credentials`, username | `auth`, with `via` and (on success) the role      | `auth_login` over GraphQL or REST; `outcome` is `success` or `failure`             |
+| `auth.logout`                         | the session             | `auth`, with the JTIs it revoked                  | `auth_logout`, when it revoked at least one token                                  |
+| `queue.publish`                       | the session             | the publisher                                     | A queue publisher mutation                                                         |
+| `ai.ask`                              | the session             | `ai`, with `via`                                  | The agent over REST or the GraphQL `ask` field. **The record carries the prompt.** |
+| `console.login`                       | `admin_secret`, address | `console`                                         | Console login, success or failure                                                  |
+| `console.logout`                      | `console`, address      | `console`                                         | Console logout that revoked a live session                                         |
+| `console.queue.publish`               | `console`, address      | the publisher and routing key                     | A publish from the console                                                         |
+| `console.cron.{trigger,pause,resume}` | `console`, address      | the job                                           | Cron control from the console                                                      |
+
+A record is `{ action, actor: { type, sub?, role?, ip? }, target: { kind, … }, outcome?, time, … }`. Before it is written, any key named `password`, `secret`, `secrets`, `token`, `access_token`, `refresh_token`, `authorization` or `cookie` is replaced with `[REDACTED]`, at any depth. A queue message body is never recorded, only the publisher and key. The AI prompt is recorded verbatim, so a prompt that quotes sensitive data lands in the log.
+
+Rate-limit rejections are not audit events: under an attack they would flood the sink.
+
 ### Integration with Existing Bun App
 
 ```typescript

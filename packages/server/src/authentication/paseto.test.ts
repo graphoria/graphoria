@@ -123,6 +123,14 @@ describe("PASETO Service - v4.local", () => {
     expect(session.role).toBe("superadmin");
   });
 
+  it("marks an admin-secret session so a caller can tell it from a token", async () => {
+    const admin = await service.verifyTokenAndGetSession(null, adminSecret);
+    expect(admin.authMethod).toBe("admin_secret");
+
+    const anonymous = await service.verifyTokenAndGetSession(null, null);
+    expect(anonymous.authMethod).toBeUndefined();
+  });
+
   it("verifyTokenAndGetSession with no header returns anonymous", async () => {
     const session = await service.verifyTokenAndGetSession(null, null);
     expect(session.sub).toBe("anonymous");

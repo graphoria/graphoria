@@ -66,6 +66,7 @@ Authenticated endpoints answer `404` for any request without a live console sess
 - The admin secret is sent once, over the login request, and never stored in `localStorage`, `sessionStorage`, or anywhere else JavaScript can read. A session cookie is what rides subsequent requests, and it expires and can be revoked.
 - `POST /api/login` is rate-limited only once you configure a limit — it is off by default. Set `RATE_LIMIT_ANONYMOUS_MAX` (see [Rate limiting](./CONFIGURATION.md#rate-limiting)): login attempts are keyed by client address against the anonymous ceiling, and an attempt is charged before the secret is compared, so guessing costs the guesser. Until then, and in any case, put the console behind network-level protection and give `ADMIN_SECRET` enough entropy to survive online guessing.
 - Status responses contain database **names and engine types only** — never connection credentials.
+- Every login attempt (success and failure, with the caller's address), every logout, queue publish and cron action writes one record to the [audit log](../README.md#audit-log).
 
 ## Replaces the superadmin REST endpoints
 

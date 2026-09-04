@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { buildSchema, introspectionFromSchema } from "graphql";
 
 import type { BunRequest } from "bun";
 import type { AnalysisResult } from "../../analyzeQuery/types";
+import type { AuditEvent } from "../../logging/audit";
 import type { Auth } from "../../types/configuration";
 
 import { EntitySource } from "../../types/resolver";
@@ -22,6 +23,7 @@ const sdl = `
     users(limit: Int): [User!]!
     auth_me: AuthMe
     remote_query_field: String
+    ask(prompt: String!): String!
   }
   type Mutation {
     queue_publish(data: String): String
@@ -61,6 +63,7 @@ const sourceMap: Record<string, EntitySource> = {
   users: EntitySource.TABLE,
   auth_me: EntitySource.AUTH,
   remote_query_field: EntitySource.REMOTE_SCHEMA,
+  ask: EntitySource.AI,
   queue_publish: EntitySource.QUEUE_PUBLISHER,
   auth_login: EntitySource.AUTH,
   remote_mutation_field: EntitySource.REMOTE_SCHEMA,
@@ -438,5 +441,98 @@ describe("handleGraphQLRequestFactory.handler — mutation dispatch errors", () 
     expect(factory.handler(analysis, {}, fakeReq, undefined)).rejects.toThrow(
       "Remote schema mutation not found",
     );
+  });
+});
+
+describe("handleGraphQLRequestFactory — audit", () => {
+  let records: AuditEvent[];
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let setQueueManager: any;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let aiModule: any;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let setAuditLog: any;
+
+  beforeAll(async () => {
+    ({ setQueueManager } = await import("../../singletons/queues"));
+    ({ setAuditLog } = await import("../../logging/audit"));
+    aiModule = await import("../../singletons/ai");
+  });
+
+  beforeEach(() => {
+    records = [];
+    setAuditLog({ emit: (event: AuditEvent) => records.push(event) });
+  });
+
+  afterEach(() => setAuditLog(null));
+
+  it("records a queue publish with the caller and publisher but not the payload", async () => {
+    setQueueManager({
+      publisherMap: () => ({ queue_publish_resolver: {} }),
+      sendMessage: async () => true,
+      connections: () => [],
+    });
+    try {
+      const factory = factoryFn(buildEntities(), gqlEntities);
+      const analysis: AnalysisResult = {
+        operations: [
+          {
+            name: null,
+            operation: "mutation",
+            variables: [],
+            fields: [
+              {
+                name: "queue_publish",
+                source: EntitySource.QUEUE_PUBLISHER,
+                arguments: { data: "$payload" },
+              },
+            ],
+          },
+        ],
+        fragments: [],
+      };
+
+      await factory.handler(analysis, { payload: "card 4111" }, fakeReq, {
+        sub: "alice",
+        role: "user",
+        jti: "j1",
+      });
+
+      expect(records).toEqual([
+        {
+          action: "queue.publish",
+          actor: { type: "token", sub: "alice", role: "user" },
+          target: { kind: "publisher", name: "queue_publish_resolver" },
+        },
+      ]);
+      expect(JSON.stringify(records)).not.toContain("4111");
+    } finally {
+      setQueueManager(undefined);
+    }
+  });
+
+  it("records an ask with the prompt and the superadmin caller", async () => {
+    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
+    try {
+      const factory = factoryFn(buildEntities(), gqlEntities);
+      const result = await factory.handler(
+        'query { ask(prompt: "how many users?") }',
+        {},
+        fakeReq,
+        { sub: "superadmin", role: "superadmin", authMethod: "admin_secret" },
+      );
+
+      expect(result).toEqual({ data: { ask: "forty-two" } });
+      expect(records).toEqual([
+        {
+          action: "ai.ask",
+          actor: { type: "admin_secret", sub: "superadmin", role: "superadmin" },
+          target: { kind: "ai", via: "graphql" },
+          prompt: "how many users?",
+        },
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

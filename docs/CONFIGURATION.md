@@ -22,11 +22,11 @@ export default (({ z, operation, cron, virtualColumnExpression, virtualColumnFun
 
 All secrets and runtime knobs are set via environment variables. Bun auto-loads `.env`.
 
-| Variable         | Type     | Default                       | Notes                                                                                                                                       |
-| ---------------- | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOG_LEVEL`      | `string` | `debug` (dev) / `info` (prod) | pino log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`                                                                          |
-| `NODE_ENV`       | `string` | `DEVELOPMENT`                 | `PRODUCTION` disables pino-pretty formatting                                                                                                |
-| `MAX_QUERY_COST` | `number` | `0`                           | Estimated cost ceiling for a caller's query. `0` is off — see [Bounding how much one query asks for](#bounding-how-much-one-query-asks-for) |
+| Variable         | Type     | Default                       | Notes                                                                                                                                        |
+| ---------------- | -------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOG_LEVEL`      | `string` | `debug` (dev) / `info` (prod) | pino log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. [Audit records](../README.md#audit-log) are written at `info` regardless |
+| `NODE_ENV`       | `string` | `DEVELOPMENT`                 | `PRODUCTION` disables pino-pretty formatting                                                                                                 |
+| `MAX_QUERY_COST` | `number` | `0`                           | Estimated cost ceiling for a caller's query. `0` is off — see [Bounding how much one query asks for](#bounding-how-much-one-query-asks-for)  |
 
 See [`.env.example`](../.env.example) for the full list.
 

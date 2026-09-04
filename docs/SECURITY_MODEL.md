@@ -287,6 +287,20 @@ repeated requests — including repeated password guesses against `auth_login` a
 login endpoint. Configuring it is the single highest-value change an operator can make to a default
 deployment. See [Rate limiting](./CONFIGURATION.md#rate-limiting).
 
+## Audit log
+
+Every privileged action writes one record through a pino child logger tagged `component: "audit"`,
+at `info` regardless of `LOG_LEVEL`: any request that presents the admin secret (over HTTP, in a
+websocket handshake, or at the MCP gate), every login and logout, every queue publish, every agent
+invocation with its prompt, and every console login, logout, publish and cron action. Each record
+names the actor, the action, the target and the time, and secret-bearing keys are redacted before it
+is written. The catalogue is in the [README](../README.md#audit-log).
+
+It is a log, not a store. It goes where the rest of the log goes, and it holds only what a handler
+saw: a request the rate limiter rejected leaves no audit record, and `auth_login` records the
+username but not the client address. An audit trail that outlives the process is the operator's log
+shipping.
+
 ## What is not defended
 
 Everything in this section is known, and none of it is fixed by an upgrade. Each entry is either a

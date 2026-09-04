@@ -13,6 +13,8 @@ export type SessionContext = {
   iat?: number;
   exp?: number;
   nbf?: number;
+  /** Set when the admin secret, not a token, produced this session. */
+  authMethod?: "admin_secret";
   [key: string]: unknown;
 };
 

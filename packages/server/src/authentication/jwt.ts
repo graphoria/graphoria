@@ -121,7 +121,7 @@ export const createJWTService = (
     adminSecretHeader: string | null,
   ): Promise<SessionContext> => {
     if (matchesAnySecret(adminSecretHeader, env.admin.secrets))
-      return { sub: "superadmin", role: env.superadmin.role };
+      return { sub: "superadmin", role: env.superadmin.role, authMethod: "admin_secret" };
 
     if (!authHeader || !authHeader.startsWith("Bearer "))
       return { sub: "anonymous", role: env.anonymousRole };

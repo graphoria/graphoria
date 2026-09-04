@@ -91,6 +91,7 @@ Because the agent always runs as `superadmin`, it can read everything. Do not en
 - **Runs as `superadmin`.** The agent sees the entire schema regardless of who calls it. Anyone holding the admin secret can read everything through it.
 - **Read-only.** Mutations and subscriptions are rejected at the tool boundary.
 - **Iteration cap.** The tool-calling loop is bounded (10 iterations); a question that can't be answered within that budget errors rather than looping forever.
+- **Prompts are audit-logged.** Every invocation writes an `ai.ask` record carrying the prompt verbatim — see [Audit log](../README.md#audit-log). Do not put secrets in a prompt.
 
 ## Customizing the prompt
 
