@@ -161,7 +161,6 @@ export const executeQueryJSONSingle = executeQueryJSONFactory(true);
 
 export const callStoredProcedure = async (
   sp: ProcedureResolver,
-  variablesDefinition: VariableDefinition[],
   variables: Record<string, unknown> = {},
 ) => {
   try {

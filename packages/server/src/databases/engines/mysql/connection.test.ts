@@ -63,19 +63,15 @@ describe("mysql callStoredProcedure", () => {
   });
 
   // The placeholders are positional, so the list that numbers them has to be
-  // the list that orders the values. The operation's variable definitions are
-  // neither: they describe the GraphQL query's `$vars`, not the procedure's
-  // arguments.
+  // the list that orders the values. The caller's argument object is neither:
+  // its key order follows the GraphQL query text.
   it("binds arguments in procedure signature order, whatever order they were supplied in", async () => {
     const recorded: RecordedQuery[] = [];
     databasesConnections.default = fakePool(
       recorded,
     ) as unknown as (typeof databasesConnections)[string];
 
-    await callStoredProcedure(procedure(), [{ name: "limit", type: "Int", required: false }], {
-      total: 42,
-      customer: "acme",
-    });
+    await callStoredProcedure(procedure(), { total: 42, customer: "acme" });
 
     expect(recorded).toHaveLength(1);
     expect(recorded[0]!.query).toBe("CALL `d`.`create_order`(?, ?);");

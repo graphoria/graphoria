@@ -138,7 +138,7 @@ describe("mssql callStoredProcedure", () => {
       bound,
     ) as unknown as (typeof databasesConnections)[string];
 
-    const result = await callStoredProcedure(procedure(), [], {
+    const result = await callStoredProcedure(procedure(), {
       label: "",
       count: 0,
       flag: false,
