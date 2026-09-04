@@ -42,7 +42,6 @@
     "typescript": "7.0.2"
   },
   "overrides": {
-    "nanoid": "^5.1.16",
     "postcss": "^8.5.26"
   },
   "engines": {
