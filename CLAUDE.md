@@ -81,6 +81,7 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 | Auth password hashing                                           | `databases/auth/password.ts` — `hashPassword`, `verifyPassword` (Bun argon2id)                                                                    |
 | Token services                                                  | `authentication/index.ts` (dispatcher), `jwt.ts`, `paseto.ts`                                                                                     |
 | Token revocation / replay store                                 | `authentication/tokenRepository.ts` (Redis hash per JTI)                                                                                          |
+| Scoped admin credentials (console read/write, AI, MCP)          | `authentication/capabilities.ts` — `createCapabilityAuthorizer`; the only place that knows which secret grants what                               |
 | Data-transform directives                                       | `databases/directives.ts` — `DIRECTIVE_HANDLERS`                                                                                                  |
 | `@when` control-flow directive                                  | `databases/common.ts` (search `whenDirective`) + `analyzeQuery/analyzers/selectionAnalyzer.ts`                                                    |
 | Singletons (mutable globals)                                    | `singletons/{databases,authentication,cron,queues,env,cache}.ts`                                                                                  |
@@ -218,11 +219,11 @@ Database/Redis/RabbitMQ for local dev: see [CONTRIBUTING.md](./CONTRIBUTING.md).
 | GET      | `/graphiql`     | Bundled GraphiQL playground (single inlined HTML built from `packages/graphiql-playground/`).                                                                                                                                         |
 | GET      | `/scalar`       | Bundled Scalar API docs (single inlined HTML built from `packages/scalar-playground/`).                                                                                                                                               |
 | GET      | `/openapi.json` | Unified OpenAPI spec (operations + remote-REST).                                                                                                                                                                                      |
-| POST     | `/mcp`          | Model Context Protocol (anonymous-only, opt-in via `ai.mcp.enabled` or `AI_MCP_ENABLED`). Path configurable via `AI_MCP_ENDPOINT`.                                                                                                    |
-| POST     | `/ai`           | AI agent — NL → database Q&A (admin-secret only, opt-in via `ai.enabled`). Path configurable via `ai.endpoint`. Also a `superadmin`-only GraphQL `ask(prompt): String` query.                                                         |
+| POST     | `/mcp`          | Model Context Protocol (anonymous-only, opt-in via `ai.mcp.enabled` or `AI_MCP_ENABLED`). Path configurable via `AI_MCP_ENDPOINT`. Gate (`AI_MCP_REQUIRE_ADMIN_SECRET`) takes `ADMIN_SECRET` or `AI_MCP_SECRET`.                      |
+| POST     | `/ai`           | AI agent — NL → database Q&A (`ADMIN_SECRET` or `AI_SECRET`, opt-in via `ai.enabled`). Path configurable via `ai.endpoint`. Also a `superadmin`-only GraphQL `ask(prompt): String` query.                                             |
 | GET      | `/_console`     | Admin console UI (Bun HTMLBundle from `src/console/`) + `/_console/api/*` status APIs (session-cookie gated, issued by `/api/login`; `/api/meta` and `/api/login` unauth). Opt-in via `CONSOLE_ENABLED`; path via `CONSOLE_ENDPOINT`. |
 
-Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HEADER`). Admin secret: header `x-admin-secret` (configurable via `ADMIN_SECRET_HEADER`). The admin secret bypasses RBAC.
+Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HEADER`). Admin secret: header `x-admin-secret` (configurable via `ADMIN_SECRET_HEADER`). The admin secret bypasses RBAC. Scoped credentials (`CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET`) ride the same header and each open one surface only; the admin secret is their superset and logs a `warn` when used where one would do.
 
 ---
 

@@ -6,7 +6,7 @@ Graphoria can run an LLM agent **server-side** that answers natural-language que
 
 The agent reuses the same tooling as the [MCP server](./MCP.md) — `list_entities`, `describe_entity`, `query_data`, `graphql_execute`, sharing the executors in `ai/tools/core.ts` — but drives the tool-calling loop _inside_ the server instead of handing tools to an external client. It is four of the six MCP tools: `graphql_validate` and `rest_execute` are not offered to the agent, and none of the four can be disabled the way the MCP ones can.
 
-The integration is **opt-in**, **admin-only**, and **read-only**: only callers presenting the admin secret reach it, mutations/subscriptions are rejected, and the agent runs against the full (`superadmin`) schema.
+The integration is **opt-in**, **admin-only**, and **read-only**: only callers presenting the admin secret — or, over REST, the agent credential `AI_SECRET` — reach it, mutations/subscriptions are rejected, and the agent runs against the full (`superadmin`) schema.
 
 ## Enabling the agent
 
@@ -47,7 +47,9 @@ The `openai` and `@anthropic-ai/sdk` packages are **optional dependencies** — 
 
 ## Endpoints
 
-Both require the admin secret (`x-admin-secret` header by default). Without it, the REST route returns `404` and the GraphQL field is absent from the schema.
+Both accept the admin secret (`x-admin-secret` header by default). The REST route also accepts `AI_SECRET` in the same header: a credential scoped to the agent alone, a comma-separated list rotated like `ADMIN_SECRET`, unset by default. It opens nothing else — sent to `/graphql`, `/rest/*` or `/mcp` it resolves to the anonymous role, so the GraphQL `ask` field stays out of its reach. The admin secret still works on both, and the server logs a warning each time it is used on the REST route, where the scoped credential would have done.
+
+Without a credential the REST route returns `404`; without the admin secret or a superadmin token the GraphQL field is absent from the schema.
 
 ### REST
 
@@ -83,12 +85,12 @@ Send it to `/graphql` with the admin secret header. Returns the answer as a `Str
 3. Anti-hallucination guards reject answers that never queried the data and forbid fabrication.
 4. The final text answer is returned; intermediate tool calls are hidden from the caller.
 
-Because the agent always runs as `superadmin`, it can read everything. Do not enable it on deployments where admin-secret holders should not see all data.
+Because the agent always runs as `superadmin`, it can read everything. Do not enable it on deployments where admin-secret holders should not see all data. `AI_SECRET` narrows who can reach the agent, not what it can read.
 
 ## Limitations
 
 - **Database questions only.** The agent loop guards against fabrication by requiring at least one `query_data` or `graphql_execute` call before it accepts a final answer. A prompt that needs no data (e.g. "hello") is nudged to query and, finding nothing to query, eventually errors after the iteration cap. Treat this as a data Q&A endpoint, not a general chatbot.
-- **Runs as `superadmin`.** The agent sees the entire schema regardless of who calls it. Anyone holding the admin secret can read everything through it.
+- **Runs as `superadmin`.** The agent sees the entire schema regardless of who calls it. Anyone holding the admin secret or `AI_SECRET` can read everything through it.
 - **Read-only.** Mutations and subscriptions are rejected at the tool boundary.
 - **Iteration cap.** The tool-calling loop is bounded (10 iterations); a question that can't be answered within that budget errors rather than looping forever.
 - **Prompts are audit-logged.** Every invocation writes an `ai.ask` record carrying the prompt verbatim — see [Audit log](../README.md#audit-log). Do not put secrets in a prompt.

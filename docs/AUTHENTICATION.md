@@ -191,11 +191,11 @@ curl -X POST http://localhost:3000/graphql \
   --data '{"query": "{ public_orders { id } }"}'
 ```
 
-The header name is configurable via `ADMIN_SECRET_HEADER`. The comparison uses `crypto.timingSafeEqual`, so you cannot probe for the value by measuring response times. `ADMIN_SECRET` accepts a comma-separated list so it can be [rotated](#rotating-secrets) like the signing keys.
+The header name is configurable via `ADMIN_SECRET_HEADER`. The comparison uses `crypto.timingSafeEqual`, so you cannot probe for the value by measuring response times. `ADMIN_SECRET` accepts a comma-separated list so it can be [rotated](#rotating-secrets) like the signing keys. It is the superset of four scoped credentials — `CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET` and `AI_MCP_SECRET` — each of which opens one surface and nothing else; see [Scoped credentials](./SECURITY_MODEL.md#scoped-credentials).
 
 ## Rotating secrets
 
-`ADMIN_SECRET`, `JWT_SECRET`, `PASETO_LOCAL_KEY` and `PASETO_PUBLIC_KEY` each accept a comma-separated list. The **first** entry is the one in use — it signs JWTs and encrypts PASETO local tokens, and it is the one to hand to new callers — and **every** entry is accepted on the way in. Whitespace around entries is trimmed and blank entries are ignored. A secret is therefore split on commas and cannot contain one.
+`ADMIN_SECRET`, the four scoped credentials (`CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET`), `JWT_SECRET`, `PASETO_LOCAL_KEY` and `PASETO_PUBLIC_KEY` each accept a comma-separated list. The **first** entry is the one in use — it signs JWTs and encrypts PASETO local tokens, and it is the one to hand to new callers — and **every** entry is accepted on the way in. Whitespace around entries is trimmed and blank entries are ignored. A secret is therefore split on commas and cannot contain one.
 
 Rotation is two deploys, with no cut-over in between:
 
@@ -204,7 +204,7 @@ Rotation is two deploys, with no cut-over in between:
 
 The server logs at `debug` level every time a request is verified against anything but the first entry, so you can tell when step 2 is safe by watching for that line to stop.
 
-`paseto_public` rotates by generating a new key pair: `PASETO_SECRET_KEY` takes the **new** secret key only, and `PASETO_PUBLIC_KEY=new,old` keeps the old public key accepted. `ADMIN_SECRET=new,old` works the same way for the admin header and the console login; there is nothing to wait for before dropping the old one beyond re-issuing the secret to whoever holds it.
+`paseto_public` rotates by generating a new key pair: `PASETO_SECRET_KEY` takes the **new** secret key only, and `PASETO_PUBLIC_KEY=new,old` keeps the old public key accepted. `ADMIN_SECRET=new,old` works the same way for the admin header and the console login, and so does each scoped credential; there is nothing to wait for before dropping the old one beyond re-issuing the secret to whoever holds it.
 
 The env is read once at startup, so each step needs a restart. On a fleet, roll the processes — a process that has picked up step 1 accepts the same tokens as one that has not, so the order does not matter.
 

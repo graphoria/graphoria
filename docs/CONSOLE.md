@@ -14,7 +14,7 @@ CONSOLE_ENDPOINT=/_console
 CONSOLE_SESSION_EXPIRES_IN=1h
 ```
 
-Open `http://localhost:3000/_console` and enter the server's admin secret (`ADMIN_SECRET`).
+Open `http://localhost:3000/_console` and enter the admin secret (`ADMIN_SECRET`) or a console credential (`CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET` — see [Scoped credentials](#scoped-credentials)).
 
 ## Sessions
 
@@ -23,6 +23,20 @@ The secret is posted once to `POST {CONSOLE_ENDPOINT}/api/login`, which exchange
 The session is a token signed by the configured token strategy (`jwt`, `paseto_local` or `paseto_public`) carrying `aud: "console"`, so it cannot be used as an API access token and an access token cannot be used as a console session. It expires after `CONSOLE_SESSION_EXPIRES_IN`; there is no refresh, so the console asks for the secret again.
 
 `POST {CONSOLE_ENDPOINT}/api/logout` revokes the session immediately and clears the cookie.
+
+## Scoped credentials
+
+Three secrets open the console, and the session carries the scope of whichever one was used:
+
+| Secret                 | Session scope | May                                                                                                                                    |
+| ---------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `CONSOLE_READ_SECRET`  | `read`        | Read every page.                                                                                                                       |
+| `CONSOLE_WRITE_SECRET` | `write`       | Read every page, publish to queues, and trigger, pause or resume cron jobs.                                                            |
+| `ADMIN_SECRET`         | `write`       | The same — it is the superset — and the server logs a warning each time it is used here, because a console credential would have done. |
+
+Each is a comma-separated list, rotated like `ADMIN_SECRET` (see [Rotating secrets](./AUTHENTICATION.md#rotating-secrets)), and both console credentials are unset by default. Neither opens anything outside `{CONSOLE_ENDPOINT}/api/*`: sent in the admin-secret header to `/graphql`, `/rest/*`, `/ai` or `/mcp` it resolves to the anonymous role.
+
+A `read` session that calls `POST /api/queues/publish` or `POST /api/cron` gets `403` with `Console session is read-only`, and nothing is published or audited. The UI hides the publish form and the cron actions for such a session and marks it read-only in the sidebar.
 
 Two consequences worth knowing:
 
@@ -43,30 +57,31 @@ Two consequences worth knowing:
 
 The UI is backed by JSON endpoints under `{CONSOLE_ENDPOINT}/api`:
 
-| Endpoint                   | Auth    | Returns                                                                                                                                                                     |
-| -------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /api/login`          | none    | Exchange the admin secret for a session cookie. Body: `{ "secret": "<ADMIN_SECRET>" }`. Returns `{ "expiresIn": <seconds> }`, or `401` for a wrong secret.                  |
-| `POST /api/logout`         | none    | Revoke the caller's session and clear the cookie. Always `200`.                                                                                                             |
-| `GET /api/meta`            | none    | Project name and version.                                                                                                                                                   |
-| `GET /api/tables`          | session | Tables with columns (name, type, nullable, description) and relationships (schema, name, source→target columns).                                                            |
-| `GET /api/roles`           | session | Role list + raw permission configuration.                                                                                                                                   |
-| `GET /api/roles/entities`  | session | `?role=<name>` → that role's resolvable tables (with column names), operations (method+path), remote schemas, and remote REST APIs (`400` for unknown roles).               |
-| `GET /api/apis`            | session | REST operations (name, method, path, tag), remote REST APIs (name, prefix, base URL, route count), remote GraphQL schemas (name, prefix, URL, query/mutation field counts). |
-| `GET /api/schema`          | session | `?role=<name>` → that role's GraphQL SDL (`400` for unknown roles).                                                                                                         |
-| `GET /api/status`          | session | Uptime, memory (RSS), Bun version, PID, token strategy, per-database ping latency, publishers, subscribers (name+topic), queue connections, cron job summary.               |
-| `POST /api/queues/publish` | session | Publish a message to a queue. Body: `{ "publisher": "<name>", "message": "<string \| object>", "key": "<routing-key>?" }`.                                                  |
-| `POST /api/cron`           | session | Control a cron job. Body: `{ "name": "<job-name>", "action": "trigger" \| "pause" \| "resume" }`.                                                                           |
-| `GET /api/config`          | session | Project name/version, endpoint prefixes, feature flags (auth, AI, MCP, CORS).                                                                                               |
+| Endpoint                   | Auth          | Returns                                                                                                                                                                     |
+| -------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/login`          | none          | Exchange a secret for a session cookie. Body: `{ "secret": "<secret>" }`. Returns `{ "expiresIn": <seconds>, "scope": "read" \| "write" }`, or `401` for a wrong secret.    |
+| `POST /api/logout`         | none          | Revoke the caller's session and clear the cookie. Always `200`.                                                                                                             |
+| `GET /api/meta`            | none          | Project name and version.                                                                                                                                                   |
+| `GET /api/tables`          | session       | Tables with columns (name, type, nullable, description) and relationships (schema, name, source→target columns).                                                            |
+| `GET /api/roles`           | session       | Role list + raw permission configuration.                                                                                                                                   |
+| `GET /api/roles/entities`  | session       | `?role=<name>` → that role's resolvable tables (with column names), operations (method+path), remote schemas, and remote REST APIs (`400` for unknown roles).               |
+| `GET /api/apis`            | session       | REST operations (name, method, path, tag), remote REST APIs (name, prefix, base URL, route count), remote GraphQL schemas (name, prefix, URL, query/mutation field counts). |
+| `GET /api/schema`          | session       | `?role=<name>` → that role's GraphQL SDL (`400` for unknown roles).                                                                                                         |
+| `GET /api/status`          | session       | Uptime, memory (RSS), Bun version, PID, token strategy, per-database ping latency, publishers, subscribers (name+topic), queue connections, cron job summary.               |
+| `POST /api/queues/publish` | write session | Publish a message to a queue. Body: `{ "publisher": "<name>", "message": "<string \| object>", "key": "<routing-key>?" }`.                                                  |
+| `POST /api/cron`           | write session | Control a cron job. Body: `{ "name": "<job-name>", "action": "trigger" \| "pause" \| "resume" }`.                                                                           |
+| `GET /api/config`          | session       | Project name/version, endpoint prefixes, feature flags (auth, AI, MCP, CORS), and the session's `scope`.                                                                    |
 
-Authenticated endpoints answer `404` for any request without a live console session — expired, revoked, forged, or absent alike. The session cookie is the **only** accepted credential: the admin-secret header (`ADMIN_SECRET_HEADER`) is not honoured here, so a script calling these endpoints must `POST /api/login` first and carry the cookie it returns. `/api/meta` is unauthenticated so the UI can render before login; it exposes only the project name and version.
+Authenticated endpoints answer `404` for any request without a live console session — expired, revoked, forged, or absent alike — and the two `write session` endpoints answer `403` to a `read` session. The session cookie is the **only** accepted credential: the admin-secret header (`ADMIN_SECRET_HEADER`) is not honoured here, so a script calling these endpoints must `POST /api/login` first and carry the cookie it returns. `/api/meta` is unauthenticated so the UI can render before login; it exposes only the project name and version.
 
 ## Security notes
 
 - Never expose the console publicly without network-level protection: the admin secret grants full RBAC bypass.
+- Hand operators a console credential rather than the admin secret: `CONSOLE_READ_SECRET` unless they need to publish or control cron, `CONSOLE_WRITE_SECRET` if they do. A console credential leaked from a browser opens the console and nothing else; the admin secret is the break-glass credential, and every console login with it is logged as a warning.
 - The admin secret is sent once, over the login request, and never stored in `localStorage`, `sessionStorage`, or anywhere else JavaScript can read. A session cookie is what rides subsequent requests, and it expires and can be revoked.
 - `POST /api/login` is rate-limited only once you configure a limit — it is off by default. Set `RATE_LIMIT_ANONYMOUS_MAX` (see [Rate limiting](./CONFIGURATION.md#rate-limiting)): login attempts are keyed by client address against the anonymous ceiling, and an attempt is charged before the secret is compared, so guessing costs the guesser. Until then, and in any case, put the console behind network-level protection and give `ADMIN_SECRET` enough entropy to survive online guessing.
 - Status responses contain database **names and engine types only** — never connection credentials.
-- Every login attempt (success and failure, with the caller's address), every logout, queue publish and cron action writes one record to the [audit log](../README.md#audit-log).
+- Every login attempt (success and failure, with the caller's address), every logout, queue publish and cron action writes one record to the [audit log](../README.md#audit-log). A successful login's record says which credential it was: `scope` is `console:read`, `console:write`, or `all` for the admin secret.
 
 ## Replaces the superadmin REST endpoints
 
