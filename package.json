@@ -21,6 +21,7 @@
     "build": "bun run --filter '!@graphoria/playgrounds' build",
     "build:server": "bun run --filter @graphoria/server build",
     "build:react": "bun run --filter @graphoria/react build",
+    "bench": "bun run packages/server/bench/run.ts",
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",

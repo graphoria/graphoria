@@ -11,6 +11,6 @@
     "emitDeclarationOnly": true,
     "noEmit": false
   },
-  "include": ["src/**/*", "standalone.ts", "cli.ts", "package.json"],
+  "include": ["src/**/*", "bench/**/*", "standalone.ts", "cli.ts", "package.json"],
   "exclude": ["node_modules", "dist"]
 }

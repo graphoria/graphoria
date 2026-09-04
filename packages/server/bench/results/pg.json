@@ -1,0 +1,95 @@
+{
+  "engine": "pg",
+  "engineVersion": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "iterations": 200,
+  "warmup": 20,
+  "rows": {
+    "users": 1000,
+    "projects": 10000,
+    "tasks": 100000
+  },
+  "hardware": {
+    "cpu": "11th Gen Intel(R) Core(TM) i7-11370H @ 3.30GHz",
+    "cores": 8,
+    "memoryGiB": 15,
+    "platform": "linux",
+    "release": "6.8.0-139-generic",
+    "arch": "x64",
+    "bun": "1.4.1"
+  },
+  "recordedAt": "2026-09-04T22:30:33.739Z",
+  "scenarios": [
+    {
+      "count": 200,
+      "min": 0.391578,
+      "max": 8.022007,
+      "mean": 0.54656,
+      "p50": 0.465212,
+      "p95": 0.716363,
+      "p99": 0.80894,
+      "throughputPerSecond": 1829.6252927400467,
+      "name": "list",
+      "description": "100 tasks by primary key, no filter"
+    },
+    {
+      "count": 200,
+      "min": 0.471631,
+      "max": 0.907681,
+      "mean": 0.5410308249999999,
+      "p50": 0.524848,
+      "p95": 0.65188,
+      "p99": 0.822914,
+      "throughputPerSecond": 1848.3235220470112,
+      "name": "filtered-list",
+      "description": "100 tasks filtered on an indexed (priority, completed) pair"
+    },
+    {
+      "count": 200,
+      "min": 2.538241,
+      "max": 5.22346,
+      "mean": 2.8595937750000013,
+      "p50": 2.784665,
+      "p95": 3.329235,
+      "p99": 4.022371,
+      "throughputPerSecond": 349.7000198918112,
+      "name": "nested",
+      "description": "100 projects, each with its first 10 tasks — two levels, one statement"
+    },
+    {
+      "count": 200,
+      "min": 18.49995,
+      "max": 41.689416,
+      "mean": 21.366006290000005,
+      "p50": 20.59678,
+      "p95": 26.739076,
+      "p99": 36.302927,
+      "throughputPerSecond": 46.80331861869913,
+      "name": "aggregate",
+      "description": "count/min/max/sum/avg over all 100k tasks, grouped by priority"
+    },
+    {
+      "count": 200,
+      "min": 0.19587,
+      "max": 0.626865,
+      "mean": 0.30428492,
+      "p50": 0.294355,
+      "p95": 0.433039,
+      "p99": 0.475409,
+      "throughputPerSecond": 3286.3935550930355,
+      "name": "procedure",
+      "description": "stored routine through a Mutation field — the only generated write path"
+    },
+    {
+      "count": 200,
+      "min": 0.162608,
+      "max": 0.360511,
+      "mean": 0.230431675,
+      "p50": 0.24139,
+      "p95": 0.287312,
+      "p99": 0.323964,
+      "throughputPerSecond": 4339.68116579459,
+      "name": "cached-repeat",
+      "description": "the `list` query as a REST operation with a 60s TTL, served from Redis"
+    }
+  ]
+}
