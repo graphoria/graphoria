@@ -1,4 +1,4 @@
-import { GraphQLObjectType, GraphQLSchema } from "graphql";
+import { GraphQLNonNull, GraphQLObjectType, GraphQLSchema } from "graphql";
 
 import type { FieldNode, SelectionNode } from "graphql";
 import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
@@ -55,6 +55,7 @@ export const analyzeSelections = (
         const directives = analyzeDirectives(field.directives || [], generatedVariables);
 
         const isRequired =
+          fieldType instanceof GraphQLNonNull &&
           directives.filter(
             (dir) => dir.name === "include" || dir.name === "skip" || dir.name === "when",
           ).length === 0;
