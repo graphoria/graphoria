@@ -32,6 +32,7 @@ import {
 import { S200, S400, S401, S404, S429 } from "./utils/responses";
 import { writeSchema } from "./utils/writeSchema";
 import { logger, configureLogging } from "./logging";
+import { actorFromSession, audit } from "./logging/audit";
 
 // Re-export for consumers
 export { configureLogging };
@@ -251,13 +252,20 @@ const createGraphQLServer = async (env: Env) => {
       req.headers.get(env.admin.header),
     );
 
+    const ip = resolveClientAddress(req, server, env.rateLimit.trustProxy);
+
     // The limit needs the role, and the role costs a token verification plus a
     // revocation lookup — so it is spent here, once, rather than again inside a
     // wrapper.
-    const limit = await rateLimiter?.check(
-      session,
-      resolveClientAddress(req, server, env.rateLimit.trustProxy),
-    );
+    const limit = await rateLimiter?.check(session, ip);
+
+    if (session.authMethod === "admin_secret") {
+      audit().emit({
+        action: "admin_secret.used",
+        actor: { type: "admin_secret", ip },
+        target: { kind: "endpoint", method: req.method, path: new URL(req.url).pathname },
+      });
+    }
 
     return {
       role: session.role!,
@@ -395,7 +403,7 @@ const createGraphQLServer = async (env: Env) => {
         ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
         POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
           try {
-            const { role, limit } = await getRoleHandlers(req, server);
+            const { role, session, limit } = await getRoleHandlers(req, server);
             if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
             if (role !== env.superadmin.role) return new S404({ error: "Not Found" });
 
@@ -404,6 +412,13 @@ const createGraphQLServer = async (env: Env) => {
               return new S400({
                 errors: [{ message: "`prompt` (string) is required" }],
               });
+
+            audit().emit({
+              action: "ai.ask",
+              actor: actorFromSession(session),
+              target: { kind: "ai", via: "rest" },
+              prompt,
+            });
 
             return new S200({ answer: await getAgent()(prompt) });
           } catch (error) {

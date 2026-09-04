@@ -17,6 +17,7 @@ import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolve
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
 import { proxyRemoteField } from "../../remoteSchemas/proxy";
 import { getAgent } from "../../singletons/ai";
+import { actorFromSession, audit } from "../../logging/audit";
 import { databasesConnections, repositoryMap } from "../../singletons/databases";
 import { env } from "../../singletons/env";
 import { queueManager } from "../../singletons/queues";
@@ -44,7 +45,7 @@ export const handleGraphQLRequestFactory = (
       ) => Promise<{ data: object }>
     >
   > = {
-    [EntitySource.QUEUE_PUBLISHER]: async (field, variables) => {
+    [EntitySource.QUEUE_PUBLISHER]: async (field, variables, _queryAnalysis, _req, session) => {
       const data = resolveVariableRef(variables, field.arguments?.data);
 
       const publisher = entities.queuesMap[field.name];
@@ -52,6 +53,12 @@ export const handleGraphQLRequestFactory = (
       if (!publisher) {
         throw new Error(`Queue publisher not found: ${field.name}`);
       }
+
+      audit().emit({
+        action: "queue.publish",
+        actor: actorFromSession(session),
+        target: { kind: "publisher", name: publisher.resolverName },
+      });
 
       return {
         data: {
@@ -363,8 +370,14 @@ export const handleGraphQLRequestFactory = (
         let aiData: Record<string, unknown> = {};
         for (const field of aiFields) {
           const alias = field.alias || field.name;
-          const prompt = field.arguments?.prompt;
-          aiData[alias] = await getAgent()(String(prompt ?? ""));
+          const prompt = String(field.arguments?.prompt ?? "");
+          audit().emit({
+            action: "ai.ask",
+            actor: actorFromSession(session),
+            target: { kind: "ai", via: "graphql" },
+            prompt,
+          });
+          aiData[alias] = await getAgent()(prompt);
         }
 
         // Skip SQL generation if there are no table fields

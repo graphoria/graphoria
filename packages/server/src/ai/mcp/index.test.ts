@@ -1,13 +1,15 @@
 process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import type { AnalyzedConfiguration } from "../../configuration";
+import type { AuditEvent } from "../../logging/audit";
 
 const { getSchema } = await import("../../configuration/getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
 const { createMCPRoutes } = await import("./index");
+const { setAuditLog } = await import("../../logging/audit");
 
 const buildAnalyzedConfig = (): AnalyzedConfiguration => {
   const role = getSchema({
@@ -118,5 +120,46 @@ describe("createMCPRoutes admin-secret gate", () => {
     const del = await routes.DELETE(new Request("http://localhost/mcp"));
     expect(get.status).toBe(405);
     expect(del.status).toBe(405);
+  });
+});
+
+describe("createMCPRoutes audit", () => {
+  let records: AuditEvent[];
+  const gated = () =>
+    createMCPRoutes(buildAnalyzedConfig(), {
+      requireAdminSecret: true,
+      adminSecrets: ["shh"],
+      adminSecretHeader: "x-admin-secret",
+    });
+
+  beforeEach(() => {
+    records = [];
+    setAuditLog({ emit: (event) => records.push(event) });
+  });
+
+  afterEach(() => setAuditLog(null));
+
+  it("records one admin-secret use with the caller address when the gate passes", async () => {
+    await gated().POST(initRequest({ "x-admin-secret": "shh" }), {
+      requestIP: () => ({ address: "10.0.0.9" }),
+    });
+
+    expect(records).toEqual([
+      {
+        action: "admin_secret.used",
+        actor: { type: "admin_secret", ip: "10.0.0.9" },
+        target: { kind: "mcp" },
+      },
+    ]);
+  });
+
+  it("records nothing when the gate rejects", async () => {
+    await gated().POST(initRequest({ "x-admin-secret": "wrong" }));
+    expect(records).toEqual([]);
+  });
+
+  it("records nothing when the gate is off", async () => {
+    await createMCPRoutes(buildAnalyzedConfig(), { requireAdminSecret: false }).POST(initRequest());
+    expect(records).toEqual([]);
   });
 });

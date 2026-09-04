@@ -1,9 +1,11 @@
 import { CookieMap } from "bun";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 
 import type { BunRequest } from "bun";
+import type { AuditEvent } from "../logging/audit";
 import type { Env } from "../types/env";
 
+import { setAuditLog } from "../logging/audit";
 import { createRateLimiter } from "../utils/rateLimit";
 
 // `singletons/env` parses process.env at module load. Ensure required vars exist
@@ -567,5 +569,130 @@ describe("console login rate limit", () => {
 
     expect((await routes["/_console/api/login"].POST(loginRequest())).status).toBe(401);
     expect((await routes["/_console/api/login"].POST(loginRequest())).status).toBe(401);
+  });
+});
+
+describe("consoleRoutesFactory — audit", () => {
+  let records: AuditEvent[];
+  const fakeServer = { requestIP: () => ({ address: "10.0.0.7" }) };
+  const post = (path: string, body: object | string, cookie?: string) =>
+    bunReq(
+      `http://localhost/_console/api/${path}`,
+      { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body) },
+      cookie,
+    );
+
+  beforeEach(() => {
+    records = [];
+    setAuditLog({ emit: (event) => records.push(event) });
+  });
+
+  afterEach(() => setAuditLog(null));
+
+  it("records a successful console login with the caller address", async () => {
+    await buildRoutes()["/_console/api/login"].POST(
+      post("login", { secret: ADMIN_SECRET }, ""),
+      fakeServer,
+    );
+
+    expect(records).toEqual([
+      {
+        action: "console.login",
+        outcome: "success",
+        actor: { type: "admin_secret", ip: "10.0.0.7" },
+        target: { kind: "console" },
+      },
+    ]);
+  });
+
+  it("records a failed console login without the submitted secret", async () => {
+    await buildRoutes()["/_console/api/login"].POST(
+      post("login", { secret: "wrong-guess" }, ""),
+      fakeServer,
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      action: "console.login",
+      outcome: "failure",
+      actor: { type: "admin_secret", ip: "10.0.0.7" },
+      target: { kind: "console" },
+    });
+    expect(JSON.stringify(records)).not.toContain("wrong-guess");
+  });
+
+  it("records a logout only when it revoked a live session", async () => {
+    const routes = buildRoutes();
+    const login = post("login", { secret: ADMIN_SECRET }, "");
+    await routes["/_console/api/login"].POST(login, fakeServer);
+    const cookie = `${SESSION_COOKIE}=${login.cookies.get(SESSION_COOKIE)}`;
+    records = [];
+
+    await routes["/_console/api/logout"].POST(post("logout", "", cookie), fakeServer);
+    await routes["/_console/api/logout"].POST(post("logout", "", ""), fakeServer);
+
+    expect(records).toEqual([
+      {
+        action: "console.logout",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "console" },
+      },
+    ]);
+  });
+
+  it("records a queue publish from the console without the message body", async () => {
+    setQueueManager({
+      publisherMap: () => ({ orders: {} }),
+      sendMessage: async () => true,
+      connections: () => [],
+    });
+    try {
+      await buildRoutes()["/_console/api/queues/publish"].POST(
+        post("queues/publish", { publisher: "orders", message: { card: "4111" }, key: "k1" }),
+        fakeServer,
+      );
+
+      expect(records).toEqual([
+        {
+          action: "console.queue.publish",
+          actor: { type: "console", ip: "10.0.0.7" },
+          target: { kind: "publisher", name: "orders", key: "k1" },
+        },
+      ]);
+      expect(JSON.stringify(records)).not.toContain("4111");
+    } finally {
+      setQueueManager(undefined);
+    }
+  });
+
+  it("records each cron action from the console and none for a rejected one", async () => {
+    setCronJobs({
+      getJob: (name: string) => (name === "job1" ? {} : undefined),
+      trigger: async () => {},
+      pause: () => {},
+      resume: () => {},
+    });
+    try {
+      const routes = buildRoutes();
+      for (const action of ["trigger", "pause", "resume"]) {
+        await routes["/_console/api/cron"].POST(post("cron", { name: "job1", action }), fakeServer);
+      }
+      await routes["/_console/api/cron"].POST(
+        post("cron", { name: "ghost", action: "trigger" }),
+        fakeServer,
+      );
+
+      expect(records.map((record) => record.action)).toEqual([
+        "console.cron.trigger",
+        "console.cron.pause",
+        "console.cron.resume",
+      ]);
+      expect(records[0]).toMatchObject({
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "cron", name: "job1" },
+      });
+    } finally {
+      setCronJobs(null);
+    }
   });
 });

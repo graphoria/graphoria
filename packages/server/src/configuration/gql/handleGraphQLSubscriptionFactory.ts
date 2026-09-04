@@ -10,6 +10,7 @@ import { getTokenService } from "../../singletons/authentication";
 import { createSubscriptionStrategyRegistry, getStrategyForSource } from "../../subscriptions";
 import { createQueryEventEmitter } from "../../utils/event-emitter";
 import { logger } from "../../logging";
+import { audit } from "../../logging/audit";
 
 export const queryEventEmitter = createQueryEventEmitter();
 
@@ -59,6 +60,14 @@ const handleGraphQLSubscriptionFactory = (
         );
 
         subscriptionMapping.set(ws, session);
+
+        if (session.authMethod === "admin_secret") {
+          audit().emit({
+            action: "admin_secret.used",
+            actor: { type: "admin_secret", ip: ws.remoteAddress },
+            target: { kind: "websocket" },
+          });
+        }
 
         logger("subscriptions").debug({ role: session.role }, "client connected");
 

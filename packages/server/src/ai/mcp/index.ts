@@ -6,6 +6,7 @@ import type { CreateMcpServerOptions } from "./create-server";
 import { createMcpServer } from "./create-server";
 import { matchesAnySecret } from "../../authentication/secrets";
 import { logger } from "../../logging";
+import { audit } from "../../logging/audit";
 
 export type CreateMCPRoutesOptions = CreateMcpServerOptions & {
   requireAdminSecret?: boolean;
@@ -26,14 +27,22 @@ const jsonRpcError = (status: number, code: number, message: string) =>
     },
   );
 
+type RequestServer = { requestIP(req: Request): { address: string } | null };
+
 const handleMcpPost =
   (analyzedConfiguration: AnalyzedConfiguration, options: CreateMCPRoutesOptions) =>
-  async (req: Request) => {
+  async (req: Request, bunServer?: RequestServer) => {
     if (options.requireAdminSecret) {
       const headerName = options.adminSecretHeader ?? "x-admin-secret";
       if (!matchesAnySecret(req.headers.get(headerName), options.adminSecrets ?? [])) {
         return jsonRpcError(401, -32001, "Unauthorized: admin secret required");
       }
+      const ip = bunServer?.requestIP(req)?.address;
+      audit().emit({
+        action: "admin_secret.used",
+        actor: { type: "admin_secret", ...(ip ? { ip } : {}) },
+        target: { kind: "mcp" },
+      });
     }
 
     const server = createMcpServer(analyzedConfiguration, options);

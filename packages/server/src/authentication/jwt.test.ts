@@ -104,6 +104,14 @@ describe("JWT Service", () => {
     expect(role).toBe("superadmin");
   });
 
+  it("marks an admin-secret session so a caller can tell it from a token", async () => {
+    const admin = await service.verifyTokenAndGetSession(null, adminSecret);
+    expect(admin.authMethod).toBe("admin_secret");
+
+    const anonymous = await service.verifyTokenAndGetSession(null, null);
+    expect(anonymous.authMethod).toBeUndefined();
+  });
+
   it("revoked access token returns anonymous from verifyTokenAndGetSession", async () => {
     const repo = createFakeRepo();
     const svc = createJWTService(envMock, repo);

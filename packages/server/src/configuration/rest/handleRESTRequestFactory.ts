@@ -12,6 +12,7 @@ import type { HandleGraphQLRequest } from "../gql/handleGraphQLRequestFactory";
 import { analyzeQuery } from "../../analyzeQuery";
 import { checkUserCredentials } from "../../databases";
 import { proxyRemoteRESTRequest } from "../../remoteREST/proxy";
+import { actorFromSession, audit } from "../../logging/audit";
 import { getTokenService } from "../../singletons/authentication";
 import { getCache } from "../../singletons/cache";
 import { databasesConnections, repositoryMap } from "../../singletons/databases";
@@ -174,9 +175,23 @@ export const handleRESTRequestFactory = (
 
             const result = await checkUserCredentials(auth, username, password);
 
+            const actor = { type: "credentials", sub: username } as const;
             if (!result.valid) {
+              audit().emit({
+                action: "auth.login",
+                outcome: "failure",
+                actor,
+                target: { kind: "auth", via: "rest" },
+                reason: "Invalid username or password",
+              });
               return new S401({ errors: ["Invalid username or password"] });
             }
+            audit().emit({
+              action: "auth.login",
+              outcome: "success",
+              actor,
+              target: { kind: "auth", via: "rest", role: result.role },
+            });
 
             const data = await getTokenService().createTokenPair({
               sub: username,
@@ -229,9 +244,11 @@ export const handleRESTRequestFactory = (
 
           if (route.authOperation === "logout") {
             const tokenService = getTokenService();
+            const revoked: string[] = [];
 
             if (session?.jti) {
               await tokenService.revoke(session.jti);
+              revoked.push(session.jti);
             }
 
             const refreshCookie = req?.cookies?.get("refresh_token");
@@ -241,6 +258,7 @@ export const handleRESTRequestFactory = (
                   audience: "refresh",
                 });
                 await tokenService.revoke(refreshPayload.jti);
+                revoked.push(refreshPayload.jti);
               } catch {
                 // tampered or expired cookie — nothing to revoke
               }
@@ -248,6 +266,14 @@ export const handleRESTRequestFactory = (
 
             if (req?.cookies) {
               req.cookies.delete("refresh_token");
+            }
+
+            if (revoked.length > 0) {
+              audit().emit({
+                action: "auth.logout",
+                actor: actorFromSession(session),
+                target: { kind: "auth", via: "rest", revoked },
+              });
             }
 
             return new S200({ data: true });
