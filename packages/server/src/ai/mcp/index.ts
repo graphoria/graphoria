@@ -1,16 +1,17 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 
+import type { CapabilityAuthorizer } from "../../authentication/capabilities";
 import type { AnalyzedConfiguration } from "../../configuration";
 import type { CreateMcpServerOptions } from "./create-server";
 
 import { createMcpServer } from "./create-server";
-import { matchesAnySecret } from "../../authentication/secrets";
 import { logger } from "../../logging";
 import { audit } from "../../logging/audit";
 
 export type CreateMCPRoutesOptions = CreateMcpServerOptions & {
   requireAdminSecret?: boolean;
-  adminSecrets?: string[];
+  /** Decides whether the presented header grants `mcp`; without one the gate never opens. */
+  authorize?: CapabilityAuthorizer;
   adminSecretHeader?: string;
 };
 
@@ -34,13 +35,18 @@ const handleMcpPost =
   async (req: Request, bunServer?: RequestServer) => {
     if (options.requireAdminSecret) {
       const headerName = options.adminSecretHeader ?? "x-admin-secret";
-      if (!matchesAnySecret(req.headers.get(headerName), options.adminSecrets ?? [])) {
+      const grant = options.authorize?.(req.headers.get(headerName), "mcp");
+      if (!grant) {
         return jsonRpcError(401, -32001, "Unauthorized: admin secret required");
       }
       const ip = bunServer?.requestIP(req)?.address;
       audit().emit({
         action: "admin_secret.used",
-        actor: { type: "admin_secret", ...(ip ? { ip } : {}) },
+        actor: {
+          type: "admin_secret",
+          scope: grant.superset ? "all" : "mcp",
+          ...(ip ? { ip } : {}),
+        },
         target: { kind: "mcp" },
       });
     }

@@ -29,6 +29,12 @@ export class S401 extends ClientResponse {
   }
 }
 
+export class S403 extends ClientResponse {
+  constructor(body?: object | null, init?: ResponseInit) {
+    super(body, { ...init, status: 403 });
+  }
+}
+
 export class S404 extends ClientResponse {
   constructor(body?: object | null, init?: ResponseInit) {
     super(body, { ...init, status: 404 });

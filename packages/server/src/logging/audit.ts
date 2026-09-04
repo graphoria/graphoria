@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { Capability } from "../authentication/capabilities";
 import type { SessionContext } from "../utils/sessionVariables";
 
 import { logger } from "./index";
@@ -7,6 +8,8 @@ export type AuditActor = {
   type: "admin_secret" | "console" | "token" | "credentials" | "anonymous";
   sub?: string;
   role?: string;
+  /** Which credential was presented at a scoped surface: `all` is the admin secret. */
+  scope?: Capability | "all";
   ip?: string | undefined;
 };
 

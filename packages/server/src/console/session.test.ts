@@ -19,13 +19,23 @@ const noopRepository: TokenRepository = {
 };
 
 const PREVIOUS_ADMIN_SECRET = "console-admin-secret-previous";
+const READ_SECRET = "console-read-secret";
+const WRITE_SECRET = "console-write-secret";
+const AI_SECRET = "ai-secret";
 
 const buildEnv = (sessionExpiresIn = "1h") =>
   ({
     admin: { secrets: [ADMIN_SECRET, PREVIOUS_ADMIN_SECRET], header: "x-admin-secret" },
     anonymousRole: "anonymous",
     superadmin: { role: "superadmin" },
-    console: { enabled: true, endpoint: CONSOLE_PATH, sessionExpiresIn },
+    console: {
+      enabled: true,
+      endpoint: CONSOLE_PATH,
+      sessionExpiresIn,
+      readSecrets: [READ_SECRET],
+      writeSecrets: [WRITE_SECRET],
+    },
+    ai: { secrets: [AI_SECRET], mcp: { secrets: [] } },
     jwt: { secrets: ["console-jwt-secret"], expiresIn: "5m", rtExpiresIn: "7d" },
     cache: { store: "memory", redisUrl: "redis://127.0.0.1:1" },
   }) as unknown as Env;
@@ -96,15 +106,15 @@ describe("createConsoleSessions", () => {
     const login = request("", { secret: ADMIN_SECRET });
     await sessions.login(login);
 
-    expect(await sessions.authorize(request(sessionCookieOf(login)))).toBe(true);
+    expect(await sessions.authorize(request(sessionCookieOf(login)))).toBe("write");
   });
 
   it("refuses a request with no cookie", async () => {
-    expect(await sessions.authorize(request())).toBe(false);
+    expect(await sessions.authorize(request())).toBeNull();
   });
 
   it("refuses a forged cookie", async () => {
-    expect(await sessions.authorize(request(`${CONSOLE_SESSION_COOKIE}=not-a-token`))).toBe(false);
+    expect(await sessions.authorize(request(`${CONSOLE_SESSION_COOKIE}=not-a-token`))).toBeNull();
   });
 
   it("refuses an access token presented as a console session", async () => {
@@ -113,9 +123,9 @@ describe("createConsoleSessions", () => {
       role: "superadmin",
     });
 
-    expect(await sessions.authorize(request(`${CONSOLE_SESSION_COOKIE}=${access_token}`))).toBe(
-      false,
-    );
+    expect(
+      await sessions.authorize(request(`${CONSOLE_SESSION_COOKIE}=${access_token}`)),
+    ).toBeNull();
   });
 
   it("refuses a console token minted for a non-superadmin role", async () => {
@@ -124,7 +134,44 @@ describe("createConsoleSessions", () => {
       { audience: "console" },
     );
 
-    expect(await sessions.authorize(request(`${CONSOLE_SESSION_COOKIE}=${token}`))).toBe(false);
+    expect(await sessions.authorize(request(`${CONSOLE_SESSION_COOKIE}=${token}`))).toBeNull();
+  });
+
+  it("refuses a console token carrying no scope claim", async () => {
+    const token = await tokenService.createToken(
+      { sub: "console", role: "superadmin" },
+      { audience: "console" },
+    );
+
+    expect(await sessions.authorize(request(`${CONSOLE_SESSION_COOKIE}=${token}`))).toBeNull();
+  });
+
+  it("grants write scope to the admin secret and reports it as the superset", async () => {
+    const { scope, superset } = await sessions.login(request("", { secret: ADMIN_SECRET }));
+    expect(scope).toBe("write");
+    expect(superset).toBe(true);
+  });
+
+  it("grants write scope to the console write secret", async () => {
+    const login = request("", { secret: WRITE_SECRET });
+    const { scope, superset } = await sessions.login(login);
+    expect(scope).toBe("write");
+    expect(superset).toBe(false);
+    expect(await sessions.authorize(request(sessionCookieOf(login)))).toBe("write");
+  });
+
+  it("grants read scope to the console read secret", async () => {
+    const login = request("", { secret: READ_SECRET });
+    const { scope, superset } = await sessions.login(login);
+    expect(scope).toBe("read");
+    expect(superset).toBe(false);
+    expect(await sessions.authorize(request(sessionCookieOf(login)))).toBe("read");
+  });
+
+  it("rejects a credential scoped to another surface", async () => {
+    expect(sessions.login(request("", { secret: AI_SECRET }))).rejects.toThrow(
+      "Invalid admin secret",
+    );
   });
 
   it("refuses an expired session", async () => {
@@ -135,7 +182,7 @@ describe("createConsoleSessions", () => {
     const login = request("", { secret: ADMIN_SECRET });
     await sessions.login(login);
 
-    expect(await sessions.authorize(request(sessionCookieOf(login)))).toBe(false);
+    expect(await sessions.authorize(request(sessionCookieOf(login)))).toBeNull();
   });
 
   it("revokes the session on logout, so the same cookie stops working", async () => {
@@ -143,11 +190,11 @@ describe("createConsoleSessions", () => {
     await sessions.login(login);
     const cookie = sessionCookieOf(login);
 
-    expect(await sessions.authorize(request(cookie))).toBe(true);
+    expect(await sessions.authorize(request(cookie))).toBe("write");
 
     await sessions.logout(request(cookie));
 
-    expect(await sessions.authorize(request(cookie))).toBe(false);
+    expect(await sessions.authorize(request(cookie))).toBeNull();
   });
 
   it("clears the cookie on the console path on logout", async () => {
@@ -167,8 +214,8 @@ describe("createConsoleSessions", () => {
 
     await sessions.logout(request(sessionCookieOf(first)));
 
-    expect(await sessions.authorize(request(sessionCookieOf(first)))).toBe(false);
-    expect(await sessions.authorize(request(sessionCookieOf(second)))).toBe(true);
+    expect(await sessions.authorize(request(sessionCookieOf(first)))).toBeNull();
+    expect(await sessions.authorize(request(sessionCookieOf(second)))).toBe("write");
   });
 
   it("logout without a cookie revokes nothing", async () => {

@@ -26,6 +26,8 @@ let tokenService: any;
 let sessionCookie: string;
 
 const ADMIN_SECRET = "test-admin-secret";
+const READ_SECRET = "test-console-read-secret";
+const WRITE_SECRET = "test-console-write-secret";
 const SESSION_COOKIE = "graphoria_console_session";
 
 const fakeEnv = {
@@ -33,7 +35,14 @@ const fakeEnv = {
   authStrategy: undefined,
   superadmin: { role: "superadmin" },
   admin: { secrets: [ADMIN_SECRET], header: "x-admin-secret" },
-  console: { enabled: true, endpoint: "/_console", sessionExpiresIn: "1h" },
+  console: {
+    enabled: true,
+    endpoint: "/_console",
+    sessionExpiresIn: "1h",
+    readSecrets: [READ_SECRET],
+    writeSecrets: [WRITE_SECRET],
+  },
+  ai: { secrets: [], mcp: { secrets: [] } },
   jwt: { secrets: ["test-jwt-secret"], expiresIn: "5m", rtExpiresIn: "7d" },
   cache: { store: "memory", redisUrl: "redis://127.0.0.1:1" },
   rateLimit: { max: 0, anonymousMax: 0, windowMs: 60_000, trustProxy: false },
@@ -179,7 +188,7 @@ describe("consoleRoutesFactory", () => {
     const res = await buildRoutes()["/_console/api/login"].POST(request);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ expiresIn: 3600 });
+    expect(await res.json()).toEqual({ expiresIn: 3600, scope: "write" });
     expect(request.cookies.toSetCookieHeaders()[0]).toContain("HttpOnly");
   });
 
@@ -414,6 +423,7 @@ describe("consoleRoutesFactory", () => {
       version: "1.2.3",
       prefixes,
       features: { auth: true, ai: false, mcp: false, cors: true },
+      session: { scope: "write" },
     });
   });
 
@@ -524,6 +534,101 @@ describe("consoleRoutesFactory", () => {
   });
 });
 
+describe("console scope", () => {
+  const sessionFor = async (secret: string) => {
+    const login = bunReq(
+      "http://localhost/_console/api/login",
+      { method: "POST", body: JSON.stringify({ secret }) },
+      "",
+    );
+    const res = await buildRoutes()["/_console/api/login"].POST(login);
+    return {
+      body: await res.json(),
+      cookie: `${SESSION_COOKIE}=${login.cookies.get(SESSION_COOKIE)}`,
+    };
+  };
+
+  const publish = (cookie: string) =>
+    buildRoutes()["/_console/api/queues/publish"].POST(
+      bunReq(
+        "http://localhost/_console/api/queues/publish",
+        { method: "POST", body: JSON.stringify({ publisher: "orders", message: "m" }) },
+        cookie,
+      ),
+    );
+
+  const cron = (cookie: string) =>
+    buildRoutes()["/_console/api/cron"].POST(
+      bunReq(
+        "http://localhost/_console/api/cron",
+        { method: "POST", body: JSON.stringify({ name: "job1", action: "trigger" }) },
+        cookie,
+      ),
+    );
+
+  beforeEach(() => {
+    setQueueManager({
+      publisherMap: () => ({ orders: {} }),
+      sendMessage: async () => true,
+      connections: () => [],
+    });
+    setCronJobs({
+      getJob: (name: string) => (name === "job1" ? {} : undefined),
+      getSummary: () => [],
+      trigger: async () => {},
+      pause: () => {},
+      resume: () => {},
+    });
+  });
+
+  afterEach(() => {
+    setQueueManager(undefined);
+    setCronJobs(null);
+  });
+
+  it("tells the read credential its session is read-only", async () => {
+    const { body } = await sessionFor(READ_SECRET);
+    expect(body).toEqual({ expiresIn: 3600, scope: "read" });
+  });
+
+  it("reports the session scope on /config so the UI can hide what it cannot do", async () => {
+    const { cookie } = await sessionFor(READ_SECRET);
+    const res = await buildRoutes()["/_console/api/config"].GET(
+      bunReq(undefined, undefined, cookie),
+    );
+    expect((await res.json()).session).toEqual({ scope: "read" });
+  });
+
+  it("lets a read-only session read every state endpoint", async () => {
+    const { cookie } = await sessionFor(READ_SECRET);
+    const routes = buildRoutes();
+    for (const path of ["tables", "roles", "status", "config", "apis"]) {
+      const res = await routes[`/_console/api/${path}`].GET(bunReq(undefined, undefined, cookie));
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("answers 403 when a read-only session publishes to a queue", async () => {
+    const { cookie } = await sessionFor(READ_SECRET);
+    const res = await publish(cookie);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ errors: [{ message: "Console session is read-only" }] });
+  });
+
+  it("answers 403 when a read-only session controls cron", async () => {
+    const { cookie } = await sessionFor(READ_SECRET);
+    const res = await cron(cookie);
+    expect(res.status).toBe(403);
+  });
+
+  it("lets the write credential publish and control cron", async () => {
+    const { body, cookie } = await sessionFor(WRITE_SECRET);
+    expect(body.scope).toBe("write");
+    expect((await publish(cookie)).status).toBe(200);
+    expect((await cron(cookie)).status).toBe(200);
+  });
+});
+
 describe("console login rate limit", () => {
   const loginRequest = () =>
     bunReq(
@@ -599,10 +704,47 @@ describe("consoleRoutesFactory — audit", () => {
       {
         action: "console.login",
         outcome: "success",
-        actor: { type: "admin_secret", ip: "10.0.0.7" },
+        actor: { type: "admin_secret", scope: "all", ip: "10.0.0.7" },
         target: { kind: "console" },
       },
     ]);
+  });
+
+  it("records which scoped console credential logged in", async () => {
+    await buildRoutes()["/_console/api/login"].POST(
+      post("login", { secret: READ_SECRET }, ""),
+      fakeServer,
+    );
+
+    expect(records[0]).toMatchObject({
+      action: "console.login",
+      outcome: "success",
+      actor: { type: "admin_secret", scope: "console:read", ip: "10.0.0.7" },
+    });
+  });
+
+  it("records nothing for a publish refused to a read-only session", async () => {
+    const routes = buildRoutes();
+    const login = post("login", { secret: READ_SECRET }, "");
+    await routes["/_console/api/login"].POST(login, fakeServer);
+    const cookie = `${SESSION_COOKIE}=${login.cookies.get(SESSION_COOKIE)}`;
+    records = [];
+
+    setQueueManager({
+      publisherMap: () => ({ orders: {} }),
+      sendMessage: async () => true,
+      connections: () => [],
+    });
+    try {
+      await routes["/_console/api/queues/publish"].POST(
+        post("queues/publish", { publisher: "orders", message: "m" }, cookie),
+        fakeServer,
+      );
+    } finally {
+      setQueueManager(undefined);
+    }
+
+    expect(records).toEqual([]);
   });
 
   it("records a failed console login without the submitted secret", async () => {

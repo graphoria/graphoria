@@ -5,11 +5,23 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import type { AnalyzedConfiguration } from "../../configuration";
 import type { AuditEvent } from "../../logging/audit";
+import type { Env } from "../../types/env";
 
 const { getSchema } = await import("../../configuration/getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
 const { createMCPRoutes } = await import("./index");
 const { setAuditLog } = await import("../../logging/audit");
+const { createCapabilityAuthorizer } = await import("../../authentication/capabilities");
+
+const authorizer = (admin: string[], mcp: string[] = []) =>
+  createCapabilityAuthorizer(
+    {
+      admin: { secrets: admin, header: "x-admin-secret" },
+      console: { readSecrets: [], writeSecrets: [] },
+      ai: { secrets: ["ai-shh"], mcp: { secrets: mcp } },
+    } as unknown as Env,
+    { warn: () => {} },
+  );
 
 const buildAnalyzedConfig = (): AnalyzedConfiguration => {
   const role = getSchema({
@@ -57,7 +69,7 @@ describe("createMCPRoutes admin-secret gate", () => {
   it("returns 401 when requireAdminSecret=true and header missing", async () => {
     const routes = createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecrets: ["shh"],
+      authorize: authorizer(["shh"]),
       adminSecretHeader: "x-admin-secret",
     });
     const res = await routes.POST(initRequest());
@@ -69,7 +81,7 @@ describe("createMCPRoutes admin-secret gate", () => {
   it("returns 401 on a mismatched secret", async () => {
     const routes = createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecrets: ["shh"],
+      authorize: authorizer(["shh"]),
       adminSecretHeader: "x-admin-secret",
     });
     const res = await routes.POST(initRequest({ "x-admin-secret": "wrong" }));
@@ -79,7 +91,7 @@ describe("createMCPRoutes admin-secret gate", () => {
   it("passes through when the header matches", async () => {
     const routes = createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecrets: ["shh"],
+      authorize: authorizer(["shh"]),
       adminSecretHeader: "x-admin-secret",
     });
     const res = await routes.POST(initRequest({ "x-admin-secret": "shh" }));
@@ -89,7 +101,7 @@ describe("createMCPRoutes admin-secret gate", () => {
   it("passes through when the header matches a previous secret", async () => {
     const routes = createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecrets: ["shh", "old-shh"],
+      authorize: authorizer(["shh", "old-shh"]),
       adminSecretHeader: "x-admin-secret",
     });
     const res = await routes.POST(initRequest({ "x-admin-secret": "old-shh" }));
@@ -99,10 +111,36 @@ describe("createMCPRoutes admin-secret gate", () => {
   it("returns 401 when the secret set is empty", async () => {
     const routes = createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecrets: [],
+      authorize: authorizer([]),
       adminSecretHeader: "x-admin-secret",
     });
     const res = await routes.POST(initRequest({ "x-admin-secret": "" }));
+    expect(res.status).toBe(401);
+  });
+
+  it("passes through with the MCP credential", async () => {
+    const routes = createMCPRoutes(buildAnalyzedConfig(), {
+      requireAdminSecret: true,
+      authorize: authorizer(["shh"], ["mcp-shh"]),
+      adminSecretHeader: "x-admin-secret",
+    });
+    const res = await routes.POST(initRequest({ "x-admin-secret": "mcp-shh" }));
+    expect(res.status).not.toBe(401);
+  });
+
+  it("returns 401 for a credential scoped to another surface", async () => {
+    const routes = createMCPRoutes(buildAnalyzedConfig(), {
+      requireAdminSecret: true,
+      authorize: authorizer(["shh"], ["mcp-shh"]),
+      adminSecretHeader: "x-admin-secret",
+    });
+    const res = await routes.POST(initRequest({ "x-admin-secret": "ai-shh" }));
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 when the gate is on but no authorizer was given", async () => {
+    const routes = createMCPRoutes(buildAnalyzedConfig(), { requireAdminSecret: true });
+    const res = await routes.POST(initRequest({ "x-admin-secret": "anything" }));
     expect(res.status).toBe(401);
   });
 
@@ -128,7 +166,7 @@ describe("createMCPRoutes audit", () => {
   const gated = () =>
     createMCPRoutes(buildAnalyzedConfig(), {
       requireAdminSecret: true,
-      adminSecrets: ["shh"],
+      authorize: authorizer(["shh"]),
       adminSecretHeader: "x-admin-secret",
     });
 
@@ -147,7 +185,25 @@ describe("createMCPRoutes audit", () => {
     expect(records).toEqual([
       {
         action: "admin_secret.used",
-        actor: { type: "admin_secret", ip: "10.0.0.9" },
+        actor: { type: "admin_secret", scope: "all", ip: "10.0.0.9" },
+        target: { kind: "mcp" },
+      },
+    ]);
+  });
+
+  it("records the MCP credential as scoped when it passes the gate", async () => {
+    await createMCPRoutes(buildAnalyzedConfig(), {
+      requireAdminSecret: true,
+      authorize: authorizer(["shh"], ["mcp-shh"]),
+      adminSecretHeader: "x-admin-secret",
+    }).POST(initRequest({ "x-admin-secret": "mcp-shh" }), {
+      requestIP: () => ({ address: "10.0.0.9" }),
+    });
+
+    expect(records).toEqual([
+      {
+        action: "admin_secret.used",
+        actor: { type: "admin_secret", scope: "mcp", ip: "10.0.0.9" },
         target: { kind: "mcp" },
       },
     ]);

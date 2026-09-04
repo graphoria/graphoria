@@ -2,8 +2,8 @@ import type { BunRequest } from "bun";
 import type { TokenService } from "../authentication/types";
 import type { Env } from "../types/env";
 
+import { createCapabilityAuthorizer } from "../authentication/capabilities";
 import { parseDurationToMs, parseDurationToSeconds } from "../authentication/duration";
-import { matchesAnySecret } from "../authentication/secrets";
 import { logger } from "../logging";
 
 export const CONSOLE_SESSION_COOKIE = "graphoria_console_session";
@@ -13,11 +13,19 @@ export const CONSOLE_SESSION_COOKIE = "graphoria_console_session";
 const CONSOLE_AUDIENCE = "console";
 const CONSOLE_SUBJECT = "console";
 
+/** `read` sees state; `write` may also publish to queues and control cron. */
+export type ConsoleScope = "read" | "write";
+
+const isScope = (value: unknown): value is ConsoleScope => value === "read" || value === "write";
+
 export type ConsoleSessions = {
-  /** Exchange the admin secret for a session cookie. Throws if it does not match. */
-  login(req: BunRequest): Promise<{ expiresIn: number }>;
-  /** True when the request carries a live, unrevoked console session cookie. */
-  authorize(req: BunRequest): Promise<boolean>;
+  /**
+   * Exchange a secret for a session cookie. Throws if none matches. `superset`
+   * is true when it was the admin secret rather than a console credential.
+   */
+  login(req: BunRequest): Promise<{ expiresIn: number; scope: ConsoleScope; superset: boolean }>;
+  /** The scope of a live, unrevoked console session cookie; null when there is none. */
+  authorize(req: BunRequest): Promise<ConsoleScope | null>;
   /** Resolves true when a live session was revoked; the cookie is cleared either way. */
   logout(req: BunRequest): Promise<boolean>;
 };
@@ -34,6 +42,7 @@ export const createConsoleSessions = ({
   tokenService,
 }: ConsoleSessionsOptions): ConsoleSessions => {
   const log = logger("console");
+  const authorizeCapability = createCapabilityAuthorizer(env);
   const expiresIn = env.console.sessionExpiresIn;
   const sessionMs = parseDurationToMs(expiresIn);
 
@@ -62,7 +71,9 @@ export const createConsoleSessions = ({
     try {
       const payload = await tokenService.verifyToken(cookie, { audience: CONSOLE_AUDIENCE });
       if (payload.role !== env.superadmin.role) return null;
-      return payload;
+      const scope = payload.claims?.scope;
+      if (!isScope(scope)) return null;
+      return { ...payload, scope };
     } catch {
       return null;
     }
@@ -72,12 +83,14 @@ export const createConsoleSessions = ({
     login: async (req) => {
       const { secret: submitted } = (await req.json()) as { secret?: string };
 
-      if (!matchesAnySecret(submitted ?? null, env.admin.secrets)) {
-        throw new Error("Invalid admin secret");
-      }
+      const candidate = submitted ?? null;
+      const write = authorizeCapability(candidate, "console:write");
+      const grant = write ?? authorizeCapability(candidate, "console:read");
+      if (!grant) throw new Error("Invalid admin secret");
+      const scope: ConsoleScope = write ? "write" : "read";
 
       const token = await tokenService.createToken(
-        { sub: CONSOLE_SUBJECT, role: env.superadmin.role },
+        { sub: CONSOLE_SUBJECT, role: env.superadmin.role, claims: { scope } },
         { audience: CONSOLE_AUDIENCE, expiresIn },
       );
 
@@ -86,17 +99,17 @@ export const createConsoleSessions = ({
         maxAge: parseDurationToSeconds(expiresIn),
       });
 
-      log.info("console session issued");
+      log.info({ scope }, "console session issued");
 
-      return { expiresIn: parseDurationToSeconds(expiresIn) };
+      return { expiresIn: parseDurationToSeconds(expiresIn), scope, superset: grant.superset };
     },
 
     authorize: async (req) => {
       const payload = await readSession(req);
-      if (!payload) return false;
+      if (!payload) return null;
 
       prune();
-      return !revoked.has(payload.jti);
+      return revoked.has(payload.jti) ? null : payload.scope;
     },
 
     logout: async (req) => {
