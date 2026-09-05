@@ -71,6 +71,7 @@
     "standalone": "bun run cli.ts",
     "auth:seed": "bun run cli.ts seed-auth",
     "bench": "bun run bench/run.ts",
+    "bench:compare": "bun run bench/gate.ts",
     "build:playgrounds": "bun run scripts/build-playgrounds.ts",
     "prebuild": "bun run build:playgrounds",
     "predev": "bun run prebuild",

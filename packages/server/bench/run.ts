@@ -19,6 +19,7 @@ import { summarize } from "./stats";
  *   bun run bench                       PostgreSQL, seeded, 200 iterations
  *   bun run bench -- --engine=mysql     another engine
  *   bun run bench -- --no-seed          reuse the dataset already in place
+ *   bun run bench -- --out=base         write the report somewhere other than results/
  *   bun run bench -- --iterations=500 --warmup=50
  *
  * Requests are issued one at a time over HTTP, so the latency figures are
@@ -26,8 +27,6 @@ import { summarize } from "./stats";
  * drive — not a saturation number. Measuring saturation needs a load generator
  * that is not co-located with the server; see README.md.
  */
-
-const RESULTS_DIR = join(import.meta.dir, "results");
 
 const flag = (name: string) =>
   Bun.argv.find((argument) => argument.startsWith(`--${name}=`))?.split("=")[1];
@@ -37,6 +36,7 @@ const options = {
   iterations: Number(flag("iterations") ?? 200),
   warmup: Number(flag("warmup") ?? 20),
   seed: !Bun.argv.includes("--no-seed"),
+  out: flag("out") ?? join(import.meta.dir, "results"),
 };
 
 if (!ENGINES.includes(options.engine)) {
@@ -206,11 +206,11 @@ const main = async () => {
       scenarios: results,
     };
 
-    await mkdir(RESULTS_DIR, { recursive: true });
-    await writeFile(join(RESULTS_DIR, `${engine}.json`), `${JSON.stringify(report, null, 2)}\n`);
-    await writeFile(join(RESULTS_DIR, `${engine}.md`), renderMarkdown(report));
+    await mkdir(options.out, { recursive: true });
+    await writeFile(join(options.out, `${engine}.json`), `${JSON.stringify(report, null, 2)}\n`);
+    await writeFile(join(options.out, `${engine}.md`), renderMarkdown(report));
 
-    console.log(`\nwrote results/${engine}.json and results/${engine}.md`);
+    console.log(`\nwrote ${options.out}/${engine}.json and ${options.out}/${engine}.md`);
   } finally {
     await stop();
   }
