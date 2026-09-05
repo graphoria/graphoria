@@ -1,0 +1,121 @@
+name: Benchmark
+
+# Deliberately its own workflow rather than a job in ci.yml: it is scheduled,
+# it is not a required status check, and it should read as something that is
+# not part of the merge gate.
+#
+# It compares two runs on the same runner — the previous day's main against
+# today's head — rather than a run against a committed baseline. A committed
+# baseline would be developer-machine data checked on a shared cloud runner,
+# where the 1.5x threshold on a sub-millisecond scenario is inside the noise.
+
+on:
+  schedule:
+    # 03:00 UTC, after the day's merges have landed.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      base-ref:
+        description: "Commit or ref to compare against. Defaults to main as of 24 hours ago."
+        required: false
+        default: ""
+      engine:
+        description: "Database engine to benchmark."
+        required: false
+        default: "pg"
+        type: choice
+        options: [pg, mysql, mssql]
+
+concurrency:
+  group: bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Same pin as ci.yml, for the same reason.
+  BUN_VERSION: 1.4.0
+  ENGINE: ${{ inputs.engine || 'pg' }}
+
+jobs:
+  compare:
+    name: p95 against the previous day
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the base commit
+        id: base
+        run: |
+          base='${{ inputs.base-ref }}'
+          if [ -z "$base" ]; then
+            base=$(git rev-list -1 --before='24 hours ago' origin/main)
+          fi
+          if [ -z "$base" ]; then
+            echo "no commit on main older than 24 hours to compare against" >&2
+            exit 1
+          fi
+          echo "sha=$(git rev-parse "$base")" >> "$GITHUB_OUTPUT"
+
+      # A worktree rather than a second checkout: the history is already here,
+      # and both trees then share one object store.
+      - name: Check out the base commit
+        run: git worktree add base ${{ steps.base.outputs.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          cd base && bun install --frozen-lockfile
+
+      # createHandlers reads this HTML unconditionally at boot, so the bench
+      # server cannot start without it. Same reason ci.yml's integration job
+      # builds it.
+      - name: Build playgrounds
+        run: |
+          bun run --filter @graphoria/server build:playgrounds
+          cd base && bun run --filter @graphoria/server build:playgrounds
+
+      - name: Start backing services
+        run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 180
+
+      # Base runs first because it seeds the 100k-row dataset, which leaves the
+      # page cache warm for head. The 20 warmup iterations absorb that.
+      # No --out here: the base commit predates the flag and would silently
+      # ignore it, so the base report is read from where every version of the
+      # runner writes by default.
+      - name: Benchmark the base commit
+        working-directory: base
+        run: bun run bench -- --engine=$ENGINE
+
+      - name: Benchmark the head commit
+        run: bun run bench -- --engine=$ENGINE --no-seed --out=${{ github.workspace }}/bench-head
+
+      - name: Compare
+        run: |
+          bun run bench:compare -- \
+            --baseline=base/packages/server/bench/results/$ENGINE.json \
+            --candidate=bench-head/$ENGINE.json
+
+      - name: Upload both reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ env.ENGINE }}-${{ steps.base.outputs.sha }}
+          path: |
+            base/packages/server/bench/results/
+            bench-head/
+          if-no-files-found: warn
+
+      - name: Service logs
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs --no-color
+
+      - name: Stop backing services
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
