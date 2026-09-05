@@ -101,7 +101,7 @@ const buildGroupedQuery = (
       selectClauses.push(`'${agg.nameResolved}', ${cteAlias}.${agg.alias}`);
     } else {
       selectClauses.push(
-        `'${agg.nameResolved}', json_build_object('${agg.fieldAlias}', COALESCE(${cteAlias}.${agg.alias}, null))`,
+        `'${agg.nameResolved}', json_build_object('${agg.fieldAlias}', ${cteAlias}.${agg.alias})`,
       );
     }
   });

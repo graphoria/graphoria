@@ -853,9 +853,9 @@ describe("PostgreSQL: Common", () => {
                       'count',
                       t1_agg.count,
                       'min',
-                      json_build_object('order_id', COALESCE(t1_agg.min_order_id, null)),
+                      json_build_object('order_id', t1_agg.min_order_id),
                       'sum',
-                      json_build_object('total_amount', COALESCE(t1_agg.sum_total_amount, null)),
+                      json_build_object('total_amount', t1_agg.sum_total_amount),
                       'items',
                       COALESCE(
                         (

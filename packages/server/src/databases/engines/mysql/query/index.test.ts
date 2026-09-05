@@ -870,12 +870,12 @@ describe("MySQL: Common", () => {
                       'min', 
                       JSON_OBJECT(
                         'order_id', 
-                        COALESCE(t1_agg.min_order_id, NULL)
+                        t1_agg.min_order_id
                       ), 
                       'sum', 
                       JSON_OBJECT(
                         'total_amount', 
-                        COALESCE(t1_agg.sum_total_amount, NULL)
+                        t1_agg.sum_total_amount
                       ), 
                       'items', 
                       COALESCE(
