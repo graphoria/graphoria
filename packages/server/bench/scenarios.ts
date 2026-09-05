@@ -4,7 +4,7 @@ import type { DatabaseType } from "../src/types/configuration";
 import { benchField } from "./config";
 
 /**
- * The six workloads the benchmark covers, expressed against the bench dataset.
+ * The seven workloads the benchmark covers, expressed against the bench dataset.
  * Two of them are shaped by what Graphoria actually generates:
  *
  * - there are no generated insert/update/delete resolvers, so the write-path
@@ -40,6 +40,21 @@ const routineArg = (engine: DatabaseType) => (engine === "pg" ? '"4"' : "4");
 
 export const listQuery = (engine: DatabaseType) =>
   `query { ${benchField(engine, "tasks")}(limit: 100, orderBy: [{ id: ASC }]) { id title priority completed } }`;
+
+const AGGREGATES =
+  "count min { estimate_hours } max { estimate_hours } sum { estimate_hours } avg { estimate_hours }";
+
+/** Every task in the table, grouped by priority — the heaviest shape available. */
+export const aggregateQuery = (engine: DatabaseType) =>
+  `query { ${benchField(engine, "tasks")}_aggregate(groupBy: [priority]) { key { priority } ${AGGREGATES} } }`;
+
+/**
+ * The same five functions over a slice reachable through the `project_id`
+ * index. The unfiltered aggregate is the worst case and reads as the headline
+ * number; this is the shape a filtered dashboard query actually has.
+ */
+export const filteredAggregateQuery = (engine: DatabaseType) =>
+  `query { ${benchField(engine, "tasks")}_aggregate(where: { project_id: { lt: 500 } }, groupBy: [priority]) { key { priority } ${AGGREGATES} } }`;
 
 /**
  * A scenario that quietly returns nothing measures parse and dispatch overhead
@@ -105,12 +120,12 @@ export const scenarios = (engine: DatabaseType): Scenario[] => {
     {
       name: "aggregate",
       description: "count/min/max/sum/avg over all 100k tasks, grouped by priority",
-      run: (context) =>
-        gql(
-          context,
-          "aggregate",
-          `query { ${tasks}_aggregate(groupBy: [priority]) { key { priority } count min { estimate_hours } max { estimate_hours } sum { estimate_hours } avg { estimate_hours } } }`,
-        ),
+      run: (context) => gql(context, "aggregate", aggregateQuery(engine)),
+    },
+    {
+      name: "filtered-aggregate",
+      description: "the same five functions over the ~5k tasks of the first 499 projects",
+      run: (context) => gql(context, "filtered-aggregate", filteredAggregateQuery(engine)),
     },
     {
       name: "procedure",
