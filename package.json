@@ -22,6 +22,7 @@
     "build:server": "bun run --filter @graphoria/server build",
     "build:react": "bun run --filter @graphoria/react build",
     "bench": "bun run packages/server/bench/run.ts",
+    "bench:compare": "bun run packages/server/bench/gate.ts",
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",

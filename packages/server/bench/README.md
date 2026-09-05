@@ -1,6 +1,6 @@
 # Benchmarks
 
-Measures six representative workloads against a real Graphoria server on a real
+Measures seven representative workloads against a real Graphoria server on a real
 database engine, and writes a report to [`results/`](./results).
 
 ## Running
@@ -18,7 +18,26 @@ Options:
 bun run bench -- --engine=mysql          # or mssql; default pg
 bun run bench -- --iterations=500 --warmup=50
 bun run bench -- --no-seed               # reuse the dataset already in place
+bun run bench -- --out=/tmp/head          # write the report somewhere else
 ```
+
+Comparing two runs — this is what the nightly `Benchmark` workflow does, and
+what to run locally before claiming a change is not a regression:
+
+```bash
+bun run bench -- --out=/tmp/base                    # before the change
+bun run bench -- --no-seed --out=/tmp/head          # after it
+bun run bench:compare -- --baseline=/tmp/base/pg.json --candidate=/tmp/head/pg.json
+```
+
+`bench:compare` exits non-zero when a scenario's p95 is **both** more than 1.5x
+the baseline **and** more than 1ms slower. Both bounds, because a bare ratio
+flaps on the sub-millisecond scenarios. Its blind spot is a small uniform
+increase across every scenario, which clears neither bound. Thresholds are
+`--ratio=` and `--floor-ms=`.
+
+Only compare two runs from the same machine. Comparing this repo's committed
+report against a run on other hardware measures the hardware.
 
 Seeding alone, without measuring:
 
@@ -68,14 +87,21 @@ plan shape depends on those indexes existing.
 
 ## Scenarios
 
-| Scenario        | What it measures                                                       |
-| --------------- | ---------------------------------------------------------------------- |
-| `list`          | 100 tasks by primary key, no filter                                    |
-| `filtered-list` | 100 tasks filtered on the indexed `(priority, completed)` pair         |
-| `nested`        | 100 projects each with their first 10 tasks — two levels               |
-| `aggregate`     | count/min/max/sum/avg over all 100k tasks, grouped by priority         |
-| `procedure`     | a stored routine through a `Mutation` field                            |
-| `cached-repeat` | the `list` query as a REST operation with a 60s TTL, served from Redis |
+| Scenario             | What it measures                                                       |
+| -------------------- | ---------------------------------------------------------------------- |
+| `list`               | 100 tasks by primary key, no filter                                    |
+| `filtered-list`      | 100 tasks filtered on the indexed `(priority, completed)` pair         |
+| `nested`             | 100 projects each with their first 10 tasks — two levels               |
+| `aggregate`          | count/min/max/sum/avg over all 100k tasks, grouped by priority         |
+| `filtered-aggregate` | the same five functions over the ~5k tasks of the first 499 projects   |
+| `procedure`          | a stored routine through a `Mutation` field                            |
+| `cached-repeat`      | the `list` query as a REST operation with a 60s TTL, served from Redis |
+
+`aggregate` is the heaviest shape available — the whole table, no filter, five
+aggregate functions at once, on the one `decimal` column. `filtered-aggregate`
+is the same functions over a slice reached through the `project_id` index, which
+is the shape a real dashboard query has. The pair is there so the headline
+aggregate number is not read as the cost of aggregating.
 
 Two of those are shaped by what Graphoria actually generates:
 
@@ -92,16 +118,28 @@ Requests are issued **one at a time over HTTP**, from a client on the same host
 as the database container. So:
 
 - The latency figures are single-client service time under no contention.
-- The throughput figure is what one sequential client can drive, not a
-  saturation number. Measuring saturation needs a concurrent load generator that
-  is not co-located with the server.
+- **Authentication is disabled.** `benchConfig` in `run.ts` sets
+  `auth: { enabled: false }`, so no figure here includes token verification,
+  role resolution or a capability check. A deployment with auth on pays more
+  than these numbers say.
 - The database round trip is over loopback. On a deployment where the database
   is a network hop away, every scenario's absolute latency rises and
   `cached-repeat` gains proportionally more.
+- Nothing here is a saturation number. Measuring saturation needs a concurrent
+  load generator that is not co-located with the server. The Markdown report
+  deliberately carries **no throughput column**: the `throughputPerSecond` field
+  in the JSON is `1000 / mean`, the reciprocal of latency, and carries no
+  concurrency information at all. It stays in the JSON because it is a real
+  field of `Summary`; it is not presented as throughput.
 
 They are useful as a regression baseline and as a relative comparison between
 scenarios. They are not a cross-product comparison, and nothing here supports a
 claim about another product.
+
+Absolute numbers also move with whatever else the machine is doing: two runs of
+identical code on the same laptop have differed by up to 1.3x on p95. That is
+why the gate compares two runs on one machine rather than a run against the
+committed report.
 
 ## Query strategy
 

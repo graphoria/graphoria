@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { assertProductive } from "./scenarios";
+import { aggregateQuery, assertProductive, filteredAggregateQuery, scenarios } from "./scenarios";
 
 describe("assertProductive", () => {
   it("accepts a payload whose root field returned rows", () => {
@@ -25,5 +25,36 @@ describe("assertProductive", () => {
 
   it("rejects a payload with no root fields at all", () => {
     expect(() => assertProductive("list", {})).toThrow("list produced no rows");
+  });
+});
+
+describe("the aggregate pair", () => {
+  it("bounds the filtered one with a where clause on the indexed foreign key", () => {
+    expect(filteredAggregateQuery("pg")).toContain("where: { project_id: { lt: 500 } }");
+  });
+
+  it("leaves the unfiltered one scanning the whole table", () => {
+    expect(aggregateQuery("pg")).not.toContain("where:");
+  });
+
+  it("computes the same five functions in both, so the two are comparable", () => {
+    for (const aggregate of ["count", "min", "max", "sum", "avg"]) {
+      expect(aggregateQuery("pg")).toContain(aggregate);
+      expect(filteredAggregateQuery("pg")).toContain(aggregate);
+    }
+  });
+});
+
+describe("scenarios", () => {
+  it("covers both aggregates alongside the original five workloads", () => {
+    expect(scenarios("pg").map((scenario) => scenario.name)).toEqual([
+      "list",
+      "filtered-list",
+      "nested",
+      "aggregate",
+      "filtered-aggregate",
+      "procedure",
+      "cached-repeat",
+    ]);
   });
 });
