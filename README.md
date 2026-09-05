@@ -48,8 +48,9 @@
 Graphoria connects to your database, introspects the schema, and generates a complete GraphQL and REST API layer — including CRUD operations, relationships, filtering, and ordering. On top of that, it integrates RabbitMQ and Kafka for event-driven workflows, supports scheduled background tasks with cron, and provides custom operations with type-safe handlers.
 
 Built with [Bun](https://bun.sh/) and TypeScript. Nested relationships resolve as a single SQL
-statement per request rather than one query per parent row; there is no published benchmark yet, so
-treat that as a design property, not a measured comparison.
+statement per request rather than one query per parent row — 100 projects with their tasks is one
+statement, 5.96 ms at p50 on the reference dataset. See
+[Performance](./docs/PERFORMANCE.md) for the method, the hardware, and what that figure excludes.
 
 > **v0.1.0** — All features are working. Breaking changes are expected before v1.0. See [below](#pre-10-stability) for details.
 
@@ -449,6 +450,7 @@ The three limits that ship on — query depth, page size and the statement timeo
 | [Subscriptions](./docs/SUBSCRIPTIONS.md)              | GraphQL subscriptions over WebSockets                                 |
 | [GraphQL Directives](./docs/DIRECTIVES.md)            | Built-in data-transformation and `@when` control-flow directives      |
 | [Virtual Columns](./docs/VIRTUAL_COLUMNS.md)          | Computed columns powered by SQL expressions or functions              |
+| [Performance](./docs/PERFORMANCE.md)                  | Query strategy, caching behaviour, measured numbers and the gate      |
 | [Remote GraphQL Schemas](./docs/REMOTE_SCHEMAS.md)    | Stitch external GraphQL APIs into the unified schema                  |
 | [Remote REST APIs](./docs/REMOTE_REST.md)             | Proxy external OpenAPI services under `/rest`                         |
 | [AI Agent](./docs/AI.md)                              | Admin-only natural-language → database Q&A over GraphQL and REST      |
