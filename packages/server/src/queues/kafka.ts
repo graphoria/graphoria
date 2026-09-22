@@ -6,6 +6,7 @@ import type { KafkaConfig } from "../types/zod/queue";
 
 import { queryEventEmitter } from "../configuration/gql/handleGraphQLSubscriptionFactory";
 import { logger } from "../logging";
+import { incMetric } from "../observability/metrics";
 
 // ============================================================================
 // Reconnection Configuration
@@ -58,9 +59,19 @@ export const startConsumer = async (
 
   await consumer.run({
     eachMessage: async (payload) => {
+      const record = (outcome: "success" | "error") =>
+        incMetric("graphoria_queue_messages_consumed_total", {
+          broker: "kafka",
+          queue: connectionName,
+          consumer: name,
+          outcome,
+        });
+
       try {
         sendMessage(connectionName, name, payload);
+        record("success");
       } catch (error) {
+        record("error");
         log.error({ err: error }, "message processing failed");
         // Note: Kafka doesn't have individual message nack like RabbitMQ
         // Error handling would be done through retry mechanisms or dead letter topics
@@ -107,7 +118,15 @@ process.on("warning", (warning) => {
   );
 });
 
-const createKafkaConnectionManager = (queueConfig: KafkaConfig): KafkaConnectionManager => {
+export type KafkaDependencies = {
+  /** Test seam: the manager builds its client through this. */
+  createKafka?: (config: ConstructorParameters<typeof Kafka>[0]) => Kafka;
+};
+
+export const createKafkaConnectionManager = (
+  queueConfig: KafkaConfig,
+  { createKafka = (config) => new Kafka(config) }: KafkaDependencies = {},
+): KafkaConnectionManager => {
   if (queueConfig.type !== "kafka") {
     throw new Error("Invalid queue type for Kafka connection manager");
   }
@@ -158,7 +177,7 @@ const createKafkaConnectionManager = (queueConfig: KafkaConfig): KafkaConnection
       const connConfig = getConnectionConfig();
 
       // Create Kafka client with built-in retry
-      const kafka = new Kafka({
+      const kafka = createKafka({
         clientId: connConfig.clientId ?? `datagraph-${queueConfig.name}`,
         brokers: connConfig.brokers,
         ssl: connConfig.ssl,
@@ -205,8 +224,17 @@ const createKafkaConnectionManager = (queueConfig: KafkaConfig): KafkaConnection
             name: p.name,
             topic: exchange.name,
             send: async (message: string | object, key?: string) => {
+              const publisher = `${queueConfig.name}_${p.name}`;
+              const record = (outcome: "success" | "error") =>
+                incMetric("graphoria_queue_messages_published_total", {
+                  broker: "kafka",
+                  publisher,
+                  outcome,
+                });
+
               if (!state.producer) {
                 log.error("cannot send: producer not available");
+                record("error");
                 return false;
               }
               try {
@@ -220,9 +248,11 @@ const createKafkaConnectionManager = (queueConfig: KafkaConfig): KafkaConnection
                     },
                   ],
                 });
+                record("success");
                 return true;
               } catch (error) {
                 log.error({ err: error, topic: exchange.name }, "failed to send message");
+                record("error");
                 return false;
               }
             },

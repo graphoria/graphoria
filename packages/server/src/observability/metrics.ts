@@ -16,6 +16,41 @@ const METRICS = {
     help: "Time spent handling a GraphQL operation, in seconds.",
     labelNames: ["operation", "role", "type"],
   },
+  graphoria_http_requests_total: {
+    type: "counter",
+    help: "HTTP requests answered by the GraphQL and REST routes, by status.",
+    labelNames: ["method", "route", "status"],
+  },
+  graphoria_http_request_duration_seconds: {
+    type: "histogram",
+    help: "Time spent answering an HTTP request, in seconds.",
+    labelNames: ["method", "route"],
+  },
+  graphoria_cron_runs_total: {
+    type: "counter",
+    help: "Cron ticks that ran to completion or threw, by job.",
+    labelNames: ["job", "outcome"],
+  },
+  graphoria_cron_run_duration_seconds: {
+    type: "histogram",
+    help: "Time spent in a cron tick, in seconds.",
+    labelNames: ["job"],
+  },
+  graphoria_queue_messages_published_total: {
+    type: "counter",
+    help: "Messages handed to a broker, by publisher and outcome.",
+    labelNames: ["broker", "outcome", "publisher"],
+  },
+  graphoria_queue_messages_consumed_total: {
+    type: "counter",
+    help: "Messages taken from a broker, by consumer and outcome.",
+    labelNames: ["broker", "consumer", "outcome", "queue"],
+  },
+  graphoria_rate_limit_rejections_total: {
+    type: "counter",
+    help: "Requests refused by the rate limiter, by the role the ceiling was read from.",
+    labelNames: ["role"],
+  },
   graphoria_graphql_rejections_total: {
     type: "counter",
     help: "GraphQL operations rejected before execution.",
@@ -192,6 +227,8 @@ const registry = (): Registry => {
   if (!instance) instance = createRegistry(options);
   return instance;
 };
+
+export const isMetricsEnabled = (): boolean => enabled;
 
 export const incMetric = (metric: MetricName, labels: Labels, value = 1): void => {
   if (!enabled) return;

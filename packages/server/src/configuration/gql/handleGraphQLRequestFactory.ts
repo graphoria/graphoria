@@ -12,7 +12,7 @@ import type { SessionContext } from "../../utils/sessionVariables";
 
 import { analyzeQuery } from "../../analyzeQuery";
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
-import { depthLimitRule } from "../../analyzeQuery/depthLimit";
+import { depthLimitRule, isDepthLimitError } from "../../analyzeQuery/depthLimit";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
 import { proxyRemoteField } from "../../remoteSchemas/proxy";
@@ -25,6 +25,7 @@ import { EntitySource } from "../../types/resolver";
 import { filterResultBySelection } from "../../utils/selection";
 import { handleAuthMeQuery, handleAuthMutation } from "./gqlAuthOperations";
 import { logger } from "../../logging";
+import { incMetric, isMetricsEnabled, observeMetric } from "../../observability/metrics";
 
 // Handle GraphQL query
 export const handleGraphQLRequestFactory = (
@@ -244,6 +245,7 @@ export const handleGraphQLRequestFactory = (
     ) => {
       const enforceDepthLimit = options?.enforceDepthLimit ?? true;
       const enforceCostLimit = options?.enforceCostLimit ?? true;
+      let costRejected = false;
       const entry = getCacheEntry(query);
       // Unparseable queries aren't cached; let parse surface the syntax error
       const document = entry?.document ?? parse(query);
@@ -271,7 +273,20 @@ export const handleGraphQLRequestFactory = (
           env.maxQueryCost,
         );
 
-        if (costError) validationErrors = [costError];
+        if (costError) {
+          validationErrors = [costError];
+          costRejected = true;
+        }
+      }
+
+      if (validationErrors.length > 0) {
+        incMetric("graphoria_graphql_rejections_total", {
+          reason: costRejected
+            ? "cost"
+            : validationErrors.some(isDepthLimitError)
+              ? "depth"
+              : "validation",
+        });
       }
 
       return {
@@ -317,180 +332,206 @@ export const handleGraphQLRequestFactory = (
       }
 
       const operation = queryAnalysis.operations[0];
-      log.debug(
-        {
-          operation: operation.operation,
-          name: operation.name,
-          fieldCount: operation.fields?.length,
-          queryLength: isString(query) ? query.length : undefined,
-        },
-        "graphql request",
-      );
-
-      // Single pass: validate, flatten object vars, resolve field args + session vars
-      // Returns an immutable ResolvedOperation — original operation is not mutated
-      const resolved = resolveVariables(operation, variables, session);
-
-      if (operation.operation === "query") {
-        // Separate auth fields, remote schema fields, and table fields
-        const authFields = resolved.fields.filter((field) => field.source === EntitySource.AUTH);
-        const remoteFields = resolved.fields.filter(
-          (field) => field.source === EntitySource.REMOTE_SCHEMA,
+      const recordOperation = (outcome: "success" | "error") => {
+        if (!isMetricsEnabled()) return;
+        const labels = {
+          // An anonymous operation is named by its root fields, exactly as the
+          // slow query log names one: the document itself would carry inline
+          // literals, which are caller data.
+          operation: operation.name ?? (operation.fields ?? []).map((field) => field.name).join(","),
+          type: operation.operation,
+          role: session?.role ?? "anonymous",
+        };
+        incMetric("graphoria_graphql_operations_total", { ...labels, outcome });
+        observeMetric(
+          "graphoria_graphql_operation_duration_seconds",
+          labels,
+          (Bun.nanoseconds() - startTime) / 1e9,
         );
-        const aiFields = resolved.fields.filter((field) => field.source === EntitySource.AI);
-        const tableFields = resolved.fields.filter(
-          (field) =>
-            field.source !== EntitySource.AUTH &&
-            field.source !== EntitySource.REMOTE_SCHEMA &&
-            field.source !== EntitySource.AI,
+      };
+      let outcome: "success" | "error" = "success";
+
+      try {
+        log.debug(
+          {
+            operation: operation.operation,
+            name: operation.name,
+            fieldCount: operation.fields?.length,
+            queryLength: isString(query) ? query.length : undefined,
+          },
+          "graphql request",
         );
 
-        // Handle auth queries (e.g. auth_me)
-        let authData: Record<string, unknown> = {};
-        for (const field of authFields) {
-          Object.assign(authData, handleAuthMeQuery(field, session));
-        }
+        // Single pass: validate, flatten object vars, resolve field args + session vars
+        // Returns an immutable ResolvedOperation — original operation is not mutated
+        const resolved = resolveVariables(operation, variables, session);
 
-        // Handle remote schema queries in parallel
-        let remoteData: Record<string, unknown> = {};
-        if (remoteFields.length > 0) {
-          const remoteResults = await Promise.all(
-            remoteFields.map(async (field) => {
-              const entry = entities.remoteQueriesMap[field.name];
-              if (!entry) {
-                throw new Error(`Remote schema query not found: ${field.name}`);
-              }
-              const result = await proxyRemoteField(
-                field,
-                entry.remoteSchema,
-                entry.originalFieldName,
-                resolved.allVariables,
-                "query",
-                req,
-              );
-              return { [field.alias || field.name]: result };
-            }),
+        if (operation.operation === "query") {
+          // Separate auth fields, remote schema fields, and table fields
+          const authFields = resolved.fields.filter((field) => field.source === EntitySource.AUTH);
+          const remoteFields = resolved.fields.filter(
+            (field) => field.source === EntitySource.REMOTE_SCHEMA,
           );
-          remoteData = remoteResults.reduce((acc, curr) => Object.assign(acc, curr), {});
-        }
+          const aiFields = resolved.fields.filter((field) => field.source === EntitySource.AI);
+          const tableFields = resolved.fields.filter(
+            (field) =>
+              field.source !== EntitySource.AUTH &&
+              field.source !== EntitySource.REMOTE_SCHEMA &&
+              field.source !== EntitySource.AI,
+          );
 
-        // Handle AI agent queries (admin-only `ask` field)
-        let aiData: Record<string, unknown> = {};
-        for (const field of aiFields) {
-          const alias = field.alias || field.name;
-          const prompt = String(field.arguments?.prompt ?? "");
-          audit().emit({
-            action: "ai.ask",
-            actor: actorFromSession(session),
-            target: { kind: "ai", via: "graphql" },
-            prompt,
-          });
-          aiData[alias] = await getAgent()(prompt);
-        }
+          // Handle auth queries (e.g. auth_me)
+          let authData: Record<string, unknown> = {};
+          for (const field of authFields) {
+            Object.assign(authData, handleAuthMeQuery(field, session));
+          }
 
-        // Skip SQL generation if there are no table fields
-        if (tableFields.length === 0) {
+          // Handle remote schema queries in parallel
+          let remoteData: Record<string, unknown> = {};
+          if (remoteFields.length > 0) {
+            const remoteResults = await Promise.all(
+              remoteFields.map(async (field) => {
+                const entry = entities.remoteQueriesMap[field.name];
+                if (!entry) {
+                  throw new Error(`Remote schema query not found: ${field.name}`);
+                }
+                const result = await proxyRemoteField(
+                  field,
+                  entry.remoteSchema,
+                  entry.originalFieldName,
+                  resolved.allVariables,
+                  "query",
+                  req,
+                );
+                return { [field.alias || field.name]: result };
+              }),
+            );
+            remoteData = remoteResults.reduce((acc, curr) => Object.assign(acc, curr), {});
+          }
+
+          // Handle AI agent queries (admin-only `ask` field)
+          let aiData: Record<string, unknown> = {};
+          for (const field of aiFields) {
+            const alias = field.alias || field.name;
+            const prompt = String(field.arguments?.prompt ?? "");
+            audit().emit({
+              action: "ai.ask",
+              actor: actorFromSession(session),
+              target: { kind: "ai", via: "graphql" },
+              prompt,
+            });
+            aiData[alias] = await getAgent()(prompt);
+          }
+
+          // Skip SQL generation if there are no table fields
+          if (tableFields.length === 0) {
+            log.debug(
+              { durationMs: (Bun.nanoseconds() - startTime) / 1e6 },
+              "graphql request completed (no table fields)",
+            );
+            return { data: { ...authData, ...remoteData, ...aiData } };
+          }
+
+          const tableQueryAnalysis = {
+            ...queryAnalysis,
+            operations: [
+              {
+                ...operation,
+                fields: tableFields,
+                variables: resolved.variables,
+              },
+            ],
+          };
+
+          const sqlQueries = generateSQL(
+            entities,
+            tableQueryAnalysis,
+            resolved.allVariables,
+            false,
+            (options?.enforcePageLimits ?? true) ? pageLimits : null,
+            options?.timeoutMs,
+          );
+
+          const data = await Promise.all<object>(
+            sqlQueries.map(([db, query]) =>
+              executeQueryJSON(
+                query,
+                db,
+                resolved.variables,
+                resolved.allVariables as Record<string, string | number | boolean | null>,
+                options?.timeoutMs,
+                {
+                  operation: {
+                    type: operation.operation,
+                    name: operation.name,
+                    fields: tableFields.map((field) => field.name),
+                  },
+                  role: session?.role,
+                },
+              ),
+            ),
+          );
+
+          log.debug(
+            { durationMs: (Bun.nanoseconds() - startTime) / 1e6, dbCount: sqlQueries.length },
+            "graphql request completed",
+          );
+
+          return {
+            ...(env.queryOnResponse
+              ? {
+                  sqlQueries: sqlQueries.map(([db, query]) => ({
+                    db: db.name,
+                    query,
+                  })),
+                }
+              : {}),
+            data: data.reduce((acc, curr) => Object.assign(acc, curr), {
+              ...authData,
+              ...remoteData,
+              ...aiData,
+            }),
+          };
+        } else if (operation.operation === "mutation") {
+          // Route mutation to the appropriate handler based on field source
+          let results: Record<string, object> = {};
+
+          for await (const field of resolved.fields) {
+            const source = field.source;
+
+            if (source && mutationHandlers[source]) {
+              const result = await mutationHandlers[source]!(
+                field,
+                resolved.allVariables,
+                queryAnalysis,
+                req,
+                session,
+              );
+
+              results = {
+                ...results,
+                ...result.data,
+              };
+            }
+          }
+
           log.debug(
             { durationMs: (Bun.nanoseconds() - startTime) / 1e6 },
-            "graphql request completed (no table fields)",
+            "graphql request completed",
           );
-          return { data: { ...authData, ...remoteData, ...aiData } };
+
+          return {
+            data: results,
+          };
         }
 
-        const tableQueryAnalysis = {
-          ...queryAnalysis,
-          operations: [
-            {
-              ...operation,
-              fields: tableFields,
-              variables: resolved.variables,
-            },
-          ],
-        };
-
-        const sqlQueries = generateSQL(
-          entities,
-          tableQueryAnalysis,
-          resolved.allVariables,
-          false,
-          (options?.enforcePageLimits ?? true) ? pageLimits : null,
-          options?.timeoutMs,
-        );
-
-        const data = await Promise.all<object>(
-          sqlQueries.map(([db, query]) =>
-            executeQueryJSON(
-              query,
-              db,
-              resolved.variables,
-              resolved.allVariables as Record<string, string | number | boolean | null>,
-              options?.timeoutMs,
-              {
-                operation: {
-                  type: operation.operation,
-                  name: operation.name,
-                  fields: tableFields.map((field) => field.name),
-                },
-                role: session?.role,
-              },
-            ),
-          ),
-        );
-
-        log.debug(
-          { durationMs: (Bun.nanoseconds() - startTime) / 1e6, dbCount: sqlQueries.length },
-          "graphql request completed",
-        );
-
-        return {
-          ...(env.queryOnResponse
-            ? {
-                sqlQueries: sqlQueries.map(([db, query]) => ({
-                  db: db.name,
-                  query,
-                })),
-              }
-            : {}),
-          data: data.reduce((acc, curr) => Object.assign(acc, curr), {
-            ...authData,
-            ...remoteData,
-            ...aiData,
-          }),
-        };
-      } else if (operation.operation === "mutation") {
-        // Route mutation to the appropriate handler based on field source
-        let results: Record<string, object> = {};
-
-        for await (const field of resolved.fields) {
-          const source = field.source;
-
-          if (source && mutationHandlers[source]) {
-            const result = await mutationHandlers[source]!(
-              field,
-              resolved.allVariables,
-              queryAnalysis,
-              req,
-              session,
-            );
-
-            results = {
-              ...results,
-              ...result.data,
-            };
-          }
-        }
-
-        log.debug(
-          { durationMs: (Bun.nanoseconds() - startTime) / 1e6 },
-          "graphql request completed",
-        );
-
-        return {
-          data: results,
-        };
+        return { data: {} };
+      } catch (error) {
+        outcome = "error";
+        throw error;
+      } finally {
+        recordOperation(outcome);
       }
-
-      return { data: {} };
     },
   };
 

@@ -44,6 +44,7 @@ import { logger, configureLogging } from "./logging";
 import { actorFromSession, audit } from "./logging/audit";
 import { createHealthRoutes } from "./observability/health";
 import { configureMetrics, renderMetrics } from "./observability/metrics";
+import { withHttpMetrics } from "./observability/httpMetrics";
 import { createMetricsRoute } from "./observability/metricsRoute";
 
 // Re-export for consumers
@@ -415,7 +416,9 @@ const createGraphQLServer = async (env: Env) => {
   // GraphQL endpoint
   routes[prefixes.graphql] = {
     ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-    GET: withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
+    GET: withHttpMetrics(
+      "graphql",
+      withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
       try {
         if (req.headers.get("upgrade") === "websocket") {
           const success = server.upgrade(req, {
@@ -426,9 +429,10 @@ const createGraphQLServer = async (env: Env) => {
         return new S404({ error: "Not Found" });
       } catch (error) {
         return new S400({ errors: [{ message: (error as Error)?.message }] });
-      }
-    }),
-    POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
+        }
+      }),
+    ),
+    POST: withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
       try {
         const { gql, session, limit } = await getRoleHandlers(req, server);
         if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
@@ -459,7 +463,7 @@ const createGraphQLServer = async (env: Env) => {
           return new S400({ errors: [{ message }] });
         }
       }
-    },
+    }),
   };
 
   const aiEnabled = projectConfiguration.ai?.enabled ?? false;
@@ -517,7 +521,9 @@ const createGraphQLServer = async (env: Env) => {
   }
 
   // REST API endpoint
-  routes[`${prefixes.rest}/*`] = async (req: BunRequest, server: Bun.Server<unknown>) => {
+  routes[`${prefixes.rest}/*`] = withHttpMetrics(
+    "rest",
+    async (req: BunRequest, server: Bun.Server<unknown>) => {
     if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
 
     try {
@@ -533,10 +539,11 @@ const createGraphQLServer = async (env: Env) => {
         req,
         session,
       );
-    } catch {
-      return new S400({ errors: [{ message: "Bad request" }] });
-    }
-  };
+      } catch {
+        return new S400({ errors: [{ message: "Bad request" }] });
+      }
+    },
+  );
 
   // Create WebSocket handler
   const websocketHandler = websocketHandlerFactory(analyzedConfiguration.roles);
