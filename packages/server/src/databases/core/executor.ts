@@ -1,9 +1,11 @@
 import type { VariableDefinition } from "../../analyzeQuery/types";
+import type { QuerySource } from "../../logging/slowQuery";
 import type { Database } from "../../types/configuration";
 import type { ProcedureResolver } from "../../types/db";
 
 import { databaseAdapters } from "./function-mapping";
 import { logger } from "../../logging";
+import { reportQueryDuration } from "../../logging/slowQuery";
 
 /**
  * Core database execution functions
@@ -16,6 +18,7 @@ export const executeQuery = async <T>(
   variables: Record<string, unknown>,
   /** Per-operation override. `undefined` leaves the engine on its own default. */
   timeoutMs?: number,
+  source?: QuerySource,
 ) => {
   const adapter = databaseAdapters[db?.type];
   if (!adapter) {
@@ -24,16 +27,26 @@ export const executeQuery = async <T>(
 
   const log = logger("db").child({ dbType: db.type, dbName: db.name });
   const startTime = Bun.nanoseconds();
+  const report = (durationMs: number, outcome: "success" | "error") =>
+    reportQueryDuration({
+      durationMs,
+      dbType: db.type,
+      dbName: db.name,
+      sql: query,
+      outcome,
+      ...source,
+    });
 
   try {
     const result = await adapter.execute<T>(query, db, variablesDefinition, variables, timeoutMs);
-    log.debug(
-      { durationMs: (Bun.nanoseconds() - startTime) / 1e6, queryLength: query.length },
-      "query executed",
-    );
+    const durationMs = (Bun.nanoseconds() - startTime) / 1e6;
+    log.debug({ durationMs, queryLength: query.length }, "query executed");
+    report(durationMs, "success");
     return result;
   } catch (error) {
-    log.error({ err: error, durationMs: (Bun.nanoseconds() - startTime) / 1e6 }, "query failed");
+    const durationMs = (Bun.nanoseconds() - startTime) / 1e6;
+    log.error({ err: error, durationMs }, "query failed");
+    report(durationMs, "error");
     throw error;
   }
 };
@@ -45,6 +58,7 @@ export const executeQueryJSON = async <T>(
   variables: Record<string, unknown>,
   /** Per-operation override. `undefined` leaves the engine on its own default. */
   timeoutMs?: number,
+  source?: QuerySource,
 ) => {
   const adapter = databaseAdapters[db.type];
   if (!adapter) {
@@ -53,6 +67,15 @@ export const executeQueryJSON = async <T>(
 
   const log = logger("db").child({ dbType: db.type, dbName: db.name });
   const startTime = Bun.nanoseconds();
+  const report = (durationMs: number, outcome: "success" | "error") =>
+    reportQueryDuration({
+      durationMs,
+      dbType: db.type,
+      dbName: db.name,
+      sql: query,
+      outcome,
+      ...source,
+    });
 
   try {
     const result = await adapter.executeJson<T>(
@@ -62,16 +85,14 @@ export const executeQueryJSON = async <T>(
       variables,
       timeoutMs,
     );
-    log.debug(
-      { durationMs: (Bun.nanoseconds() - startTime) / 1e6, queryLength: query.length },
-      "query executed (json)",
-    );
+    const durationMs = (Bun.nanoseconds() - startTime) / 1e6;
+    log.debug({ durationMs, queryLength: query.length }, "query executed (json)");
+    report(durationMs, "success");
     return result;
   } catch (error) {
-    log.error(
-      { err: error, durationMs: (Bun.nanoseconds() - startTime) / 1e6 },
-      "query failed (json)",
-    );
+    const durationMs = (Bun.nanoseconds() - startTime) / 1e6;
+    log.error({ err: error, durationMs }, "query failed (json)");
+    report(durationMs, "error");
     throw error;
   }
 };
@@ -79,6 +100,7 @@ export const executeQueryJSON = async <T>(
 export const callStoredProcedure = async (
   sp: ProcedureResolver,
   variables: Record<string, unknown> = {},
+  source?: QuerySource,
 ) => {
   const adapter = databaseAdapters[sp.db!.type];
   if (!adapter) {
@@ -91,16 +113,26 @@ export const callStoredProcedure = async (
     procedure: sp.dottedName,
   });
   const startTime = Bun.nanoseconds();
+  const report = (durationMs: number, outcome: "success" | "error") =>
+    reportQueryDuration({
+      durationMs,
+      dbType: sp.db!.type,
+      dbName: sp.db!.name,
+      procedure: sp.dottedName,
+      outcome,
+      ...source,
+    });
 
   try {
     const result = await adapter.callStoredProcedure(sp, variables);
-    log.debug({ durationMs: (Bun.nanoseconds() - startTime) / 1e6 }, "stored procedure executed");
+    const durationMs = (Bun.nanoseconds() - startTime) / 1e6;
+    log.debug({ durationMs }, "stored procedure executed");
+    report(durationMs, "success");
     return result;
   } catch (error) {
-    log.error(
-      { err: error, durationMs: (Bun.nanoseconds() - startTime) / 1e6 },
-      "stored procedure failed",
-    );
+    const durationMs = (Bun.nanoseconds() - startTime) / 1e6;
+    log.error({ err: error, durationMs }, "stored procedure failed");
+    report(durationMs, "error");
     throw error;
   }
 };
