@@ -153,7 +153,9 @@ Off by default. `RATE_LIMIT_MAX` is the request ceiling per window for an authen
 A caller gets **one bucket across every endpoint** — `/graphql` including the websocket upgrade,
 `/rest/*`, `/ai`, `/mcp` and the console login — because what exhausts a server is total request
 volume, not volume on one route. An idle bucket refills to `max`, so a caller may burst `max` then
-sustain `max` per window. Over budget is `429` with `Retry-After` in seconds.
+sustain `max` per window. Over budget is `429` with `Retry-After` in seconds. The
+[health endpoints](./OBSERVABILITY.md#health-endpoints) are outside the limit, so a probe is never
+answered `429`.
 
 Callers are identified by authenticated subject where there is one and by client address otherwise.
 **Neither the admin secret nor the superadmin role is exempt**, so set `RATE_LIMIT_MAX` above what

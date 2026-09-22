@@ -21,12 +21,13 @@ Reference guides for configuring and running Graphoria. New here? Start with the
 
 ## Data
 
-| Guide                                   | Description                                                      |
-| --------------------------------------- | ---------------------------------------------------------------- |
-| [Operations](./OPERATIONS.md)           | Custom query and handler operations, hooks, caching              |
-| [GraphQL Directives](./DIRECTIVES.md)   | Built-in data-transformation and `@when` control-flow directives |
-| [Virtual Columns](./VIRTUAL_COLUMNS.md) | Computed columns powered by SQL expressions or functions         |
-| [Performance](./PERFORMANCE.md)         | Query strategy, caching behaviour, measured numbers and the gate |
+| Guide                                   | Description                                                        |
+| --------------------------------------- | ------------------------------------------------------------------ |
+| [Operations](./OPERATIONS.md)           | Custom query and handler operations, hooks, caching                |
+| [GraphQL Directives](./DIRECTIVES.md)   | Built-in data-transformation and `@when` control-flow directives   |
+| [Virtual Columns](./VIRTUAL_COLUMNS.md) | Computed columns powered by SQL expressions or functions           |
+| [Performance](./PERFORMANCE.md)         | Query strategy, caching behaviour, measured numbers and the gate   |
+| [Observability](./OBSERVABILITY.md)     | Health endpoints for liveness and readiness probes, slow query log |
 
 ## Realtime & integrations
 
