@@ -173,3 +173,10 @@ Deliberately, for now: per-statement database timings and pool utilization (the 
 covers the first, and two of the three engines expose no pool statistics), cache hit ratio, and
 queue depth and consumer lag — the last needs RabbitMQ's management API and a Kafka admin client,
 which is new I/O on a timer rather than a counter in the request path.
+
+Not covered by the series above, which is a gap rather than a decision: **subscriptions**. A
+subscription is validated through the same path, so a rejected one is counted in
+`graphoria_graphql_rejections_total`, but the rows a poller pushes do not go through the GraphQL
+handler and are not counted or timed. The websocket upgrade itself answers no request, so it is not
+in `graphoria_http_requests_total` either. What a subscription publishes through a broker is
+counted, since that goes through a publisher.
