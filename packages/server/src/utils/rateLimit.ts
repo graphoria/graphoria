@@ -1,6 +1,7 @@
 import { LRUCache } from "lru-cache";
 
 import { logger } from "../logging";
+import { incMetric } from "../observability/metrics";
 
 export type ConsumeResult = { allowed: boolean; retryAfterMs: number };
 
@@ -203,7 +204,11 @@ export const createRateLimiter = ({
       const key =
         sub && sub !== "anonymous" ? `rl:${role}:${sub}` : `rl:${role}:ip:${address ?? "unknown"}`;
 
-      return resolvedStore.consume(key, max, max / windowMs, windowMs);
+      const verdict = await resolvedStore.consume(key, max, max / windowMs, windowMs);
+
+      if (!verdict.allowed) incMetric("graphoria_rate_limit_rejections_total", { role });
+
+      return verdict;
     },
   };
 };

@@ -267,3 +267,42 @@ describe("EnvZod scoped admin secrets", () => {
     expect(env.ai.mcp.secrets).toEqual(["mcp-new", "mcp-old"]);
   });
 });
+
+describe("EnvZod metrics", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("ships off, on /metrics, with no scoped secret and a 200-name cap", () => {
+    const env = EnvZod.parse(baseEnv);
+
+    expect(env.metrics).toEqual({
+      enabled: false,
+      endpoint: "/metrics",
+      secrets: [],
+      maxOperationLabels: 200,
+    });
+  });
+
+  it("reads the endpoint, the cap and a rotating secret list", () => {
+    const env = EnvZod.parse({
+      ...baseEnv,
+      METRICS_ENABLED: "true",
+      METRICS_ENDPOINT: "/_metrics",
+      METRICS_SECRET: "new,old",
+      METRICS_MAX_OPERATION_LABELS: "50",
+    });
+
+    expect(env.metrics).toEqual({
+      enabled: true,
+      endpoint: "/_metrics",
+      secrets: ["new", "old"],
+      maxOperationLabels: 50,
+    });
+  });
+
+  it("rejects a cap below one", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, METRICS_MAX_OPERATION_LABELS: "0" })).toThrow();
+  });
+});

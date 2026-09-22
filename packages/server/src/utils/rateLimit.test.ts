@@ -1,5 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
+import { configureMetrics, createRegistry, setMetricsRegistry } from "../observability/metrics";
 import {
   createMemoryRateLimitStore,
   createRateLimiter,
@@ -380,5 +381,49 @@ describe("resolveClientAddress", () => {
 
   it("is undefined when there is no server to ask", () => {
     expect(resolveClientAddress(request(), undefined, false)).toBeUndefined();
+  });
+});
+
+describe("createRateLimiter — metrics", () => {
+  let registry: ReturnType<typeof createRegistry>;
+
+  const limiterRefusing = (allowed: boolean) =>
+    createRateLimiter({
+      settings,
+      anonymousRole: "anonymous",
+      store: {
+        consume: async () => ({ allowed, retryAfterMs: allowed ? 0 : 1000 }),
+      },
+    })!;
+
+  beforeEach(() => {
+    registry = createRegistry();
+    setMetricsRegistry(registry);
+    configureMetrics({ enabled: true });
+  });
+
+  afterEach(() => {
+    setMetricsRegistry(null);
+    configureMetrics({ enabled: false });
+  });
+
+  it("counts a refusal against the caller's role", async () => {
+    await limiterRefusing(false).check({ role: "user", sub: "42" }, "1.2.3.4");
+
+    expect(registry.render()).toContain('graphoria_rate_limit_rejections_total{role="user"} 1');
+  });
+
+  it("counts an anonymous refusal under the anonymous role", async () => {
+    await limiterRefusing(false).check(null, "1.2.3.4");
+
+    expect(registry.render()).toContain(
+      'graphoria_rate_limit_rejections_total{role="anonymous"} 1',
+    );
+  });
+
+  it("counts nothing when the call is allowed", async () => {
+    await limiterRefusing(true).check({ role: "user", sub: "42" }, "1.2.3.4");
+
+    expect(registry.render()).not.toContain("graphoria_rate_limit_rejections_total");
   });
 });

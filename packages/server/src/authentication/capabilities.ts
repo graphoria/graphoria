@@ -3,7 +3,7 @@ import type { Env } from "../types/env";
 import { logger } from "../logging";
 import { matchesAnySecret } from "./secrets";
 
-export type Capability = "console:read" | "console:write" | "ai" | "mcp";
+export type Capability = "console:read" | "console:write" | "ai" | "mcp" | "metrics";
 
 /** `superset` is true when the admin secret, not a scoped credential, matched. */
 export type CapabilityGrant = { superset: boolean };
@@ -27,6 +27,8 @@ const scopedSecretsFor = (env: Env, capability: Capability): string[][] => {
       return [env.ai.secrets];
     case "mcp":
       return [env.ai.mcp.secrets];
+    case "metrics":
+      return [env.metrics.secrets];
   }
 };
 

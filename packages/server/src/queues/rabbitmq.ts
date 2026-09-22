@@ -7,6 +7,7 @@ import type { RabbitMQConfig } from "../types/zod/queue";
 import { queryEventEmitter } from "../configuration/gql/handleGraphQLSubscriptionFactory";
 import { InvalidationHelper } from "../singletons/cache/registry";
 import { logger } from "../logging";
+import { incMetric } from "../observability/metrics";
 
 // ============================================================================
 // Reconnection Configuration
@@ -41,6 +42,14 @@ export const startConsumer = async (
 ) => {
   const log = logger("rabbitmq").child({ queue: connectionName, consumer: name });
 
+  const record = (outcome: "success" | "error") =>
+    incMetric("graphoria_queue_messages_consumed_total", {
+      broker: "rabbitmq",
+      queue: connectionName,
+      consumer: name,
+      outcome,
+    });
+
   channel.consume(queueName, async (msg) => {
     if (msg !== null) {
       try {
@@ -58,10 +67,12 @@ export const startConsumer = async (
         }
 
         channel.ack(msg);
+        record("success");
       } catch (error) {
         log.error({ err: error }, "message processing failed");
 
         channel.nack(msg);
+        record("error");
       }
     }
   });
@@ -162,16 +173,28 @@ export const createRabbitMQConnectionManager = (
             routingKey: p.routingKey,
             exchangeName: exchange.name,
             send: (message: string | object) => {
+              const publisher = `${queueConfig.name}_${p.name}`;
+              const record = (outcome: "success" | "error") =>
+                incMetric("graphoria_queue_messages_published_total", {
+                  broker: "rabbitmq",
+                  publisher,
+                  outcome,
+                });
+
               if (!state.channel) {
                 log.error("cannot send: channel not available");
+                record("error");
                 return false;
               }
-              return state.channel.publish(
+
+              const sent = state.channel.publish(
                 exchange.name,
                 p.routingKey,
                 Buffer.from(typeof message === "string" ? message : JSON.stringify(message)),
                 p.options,
               );
+              record(sent ? "success" : "error");
+              return sent;
             },
           };
         }

@@ -6,6 +6,7 @@ import type { AnalysisResult } from "../../analyzeQuery/types";
 import type { AuditEvent } from "../../logging/audit";
 import type { Auth } from "../../types/configuration";
 
+import { configureMetrics, createRegistry, setMetricsRegistry } from "../../observability/metrics";
 import { EntitySource } from "../../types/resolver";
 
 // `singletons/env` parses process.env at module load. Set required vars
@@ -534,5 +535,137 @@ describe("handleGraphQLRequestFactory — audit", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("handleGraphQLRequestFactory — metrics", () => {
+  let registry: ReturnType<typeof createRegistry>;
+
+  const analysis = (name: string | null): AnalysisResult => ({
+    operations: [
+      {
+        name,
+        operation: "query",
+        variables: [],
+        fields: [{ name: "auth_me", source: EntitySource.AUTH }],
+      },
+    ],
+    fragments: [],
+  });
+
+  beforeEach(() => {
+    registry = createRegistry();
+    setMetricsRegistry(registry);
+    configureMetrics({ enabled: true });
+  });
+
+  afterEach(() => {
+    setMetricsRegistry(null);
+    configureMetrics({ enabled: false });
+  });
+
+  it("counts a handled operation by name, type, role and outcome", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler(analysis("Me"), {}, fakeReq, { sub: "alice", role: "user" });
+
+    expect(registry.render()).toContain(
+      'graphoria_graphql_operations_total{operation="Me",outcome="success",role="user",type="query"} 1',
+    );
+  });
+
+  it("names an anonymous operation by its root fields", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler(analysis(null), {}, fakeReq, { sub: "alice", role: "user" });
+
+    expect(registry.render()).toContain('operation="auth_me"');
+  });
+
+  it("counts an operation with no session under the anonymous role", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler(analysis("Me"), {}, fakeReq, undefined);
+
+    expect(registry.render()).toContain('role="anonymous"');
+  });
+
+  it("times every handled operation", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler(analysis("Me"), {}, fakeReq, { sub: "alice", role: "user" });
+
+    expect(registry.render()).toContain(
+      'graphoria_graphql_operation_duration_seconds_count{operation="Me",role="user",type="query"} 1',
+    );
+  });
+
+  it("counts a failed operation as an error and still times it", async () => {
+    const factory = factoryFn(buildEntities({ withQueuePublisher: false }), gqlEntities);
+    const failing: AnalysisResult = {
+      operations: [
+        {
+          name: "Publish",
+          operation: "mutation",
+          variables: [],
+          fields: [
+            {
+              name: "queue_publish",
+              source: EntitySource.QUEUE_PUBLISHER,
+              arguments: { data: "$payload" },
+            },
+          ],
+        },
+      ],
+      fragments: [],
+    };
+
+    await expect(factory.handler(failing, { payload: "x" }, fakeReq, undefined)).rejects.toThrow();
+
+    const rendered = registry.render();
+    expect(rendered).toContain(
+      'graphoria_graphql_operations_total{operation="Publish",outcome="error",role="anonymous",type="mutation"} 1',
+    );
+    expect(rendered).toContain(
+      'graphoria_graphql_operation_duration_seconds_count{operation="Publish",role="anonymous",type="mutation"} 1',
+    );
+  });
+
+  it("records nothing for a request carrying no operation", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler({ operations: [], fragments: [] }, {}, fakeReq, undefined);
+
+    expect(registry.render()).toBe("");
+  });
+
+  it("counts a depth rejection", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    factory.hasErrors(`
+      query Deep {
+        users { posts { comments { replies { replies { replies { replies { replies { id } } } } } } } }
+      }
+    `);
+
+    expect(registry.render()).toContain('graphoria_graphql_rejections_total{reason="depth"} 1');
+  });
+
+  it("counts an unknown field as a validation rejection", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    factory.hasErrors("query { not_a_field }");
+
+    expect(registry.render()).toContain(
+      'graphoria_graphql_rejections_total{reason="validation"} 1',
+    );
+  });
+
+  it("counts nothing for a query that passes validation", () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    factory.hasErrors("query { users { id name } }");
+
+    expect(registry.render()).not.toContain("graphoria_graphql_rejections_total");
   });
 });

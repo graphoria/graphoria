@@ -1,9 +1,11 @@
-import { afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 
 import type { GqlQueryFn } from "../types/common";
 import type { CronJob } from "../types/configuration";
 import type { TickContext } from "../types/zod/cron";
 import type { StartCronJobsReturn } from "./index";
+
+import { configureMetrics, createRegistry, setMetricsRegistry } from "../observability/metrics";
 
 // `singletons/env` parses process.env at module load. Ensure required vars exist
 // before any transitive import touches it.
@@ -171,5 +173,69 @@ describe("croner 10 pattern semantics", () => {
 
     expect(nextRun?.getHours()).toBe(0);
     expect(nextRun?.getMinutes()).toBe(0);
+  });
+});
+
+describe("startCronJobs — metrics", () => {
+  let registry: ReturnType<typeof createRegistry>;
+
+  beforeEach(() => {
+    registry = createRegistry();
+    setMetricsRegistry(registry);
+    configureMetrics({ enabled: true });
+  });
+
+  afterEach(() => {
+    setMetricsRegistry(null);
+    configureMetrics({ enabled: false });
+  });
+
+  it("counts and times a tick that completes", async () => {
+    let ticks = 0;
+
+    await start([
+      {
+        name: "metrics_ok",
+        pattern: "* * * * * *",
+        maxRuns: 1,
+        catchErrors: true,
+        paused: false,
+        onTick: () => {
+          ticks++;
+        },
+      } as CronJob,
+    ]);
+
+    await waitFor(() => ticks === 1);
+    await waitFor(() => registry.render().includes("graphoria_cron_runs_total"));
+
+    const rendered = registry.render();
+    expect(rendered).toContain('graphoria_cron_runs_total{job="metrics_ok",outcome="success"} 1');
+    expect(rendered).toContain('graphoria_cron_run_duration_seconds_count{job="metrics_ok"} 1');
+  });
+
+  it("counts a tick that throws as a failure", async () => {
+    let ticks = 0;
+
+    await start([
+      {
+        name: "metrics_fail",
+        pattern: "* * * * * *",
+        maxRuns: 1,
+        catchErrors: true,
+        paused: false,
+        onTick: () => {
+          ticks++;
+          throw new Error("boom");
+        },
+      } as CronJob,
+    ]);
+
+    await waitFor(() => ticks === 1);
+    await waitFor(() => registry.render().includes("graphoria_cron_runs_total"));
+
+    expect(registry.render()).toContain(
+      'graphoria_cron_runs_total{job="metrics_fail",outcome="error"} 1',
+    );
   });
 });

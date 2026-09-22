@@ -77,6 +77,16 @@ function computeDepth(
  * const errors = validate(schema, parse(query), [depthLimitRule(10)]);
  * ```
  */
+/**
+ * Identity, not message matching: a caller classifying a rejection needs to
+ * tell this rule's error from an ordinary validation error, and the message is
+ * not a contract. Weak so a held error never pins the entry.
+ */
+const depthErrors = new WeakSet<GraphQLError>();
+
+export const isDepthLimitError = (error: unknown): boolean =>
+  error instanceof GraphQLError && depthErrors.has(error);
+
 export const depthLimitRule =
   (maxDepth: number) =>
   (context: ValidationContext): ASTVisitor => {
@@ -92,12 +102,12 @@ export const depthLimitRule =
           if (depth > maxDepth) {
             const operationName = def.name?.value ?? "anonymous";
 
-            context.reportError(
-              new GraphQLError(
-                `Query depth of ${depth} exceeds the maximum allowed depth of ${maxDepth} (operation: "${operationName}"). Raise MAX_QUERY_DEPTH to allow deeper queries.`,
-                { nodes: [def] },
-              ),
+            const error = new GraphQLError(
+              `Query depth of ${depth} exceeds the maximum allowed depth of ${maxDepth} (operation: "${operationName}"). Raise MAX_QUERY_DEPTH to allow deeper queries.`,
+              { nodes: [def] },
             );
+            depthErrors.add(error);
+            context.reportError(error);
           }
         }
       },

@@ -7,6 +7,7 @@ import type { TickContext } from "../types/zod/cron";
 import { databasesConnections, repositoryMap } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
 import { logger } from "../logging";
+import { incMetric, observeMetric } from "../observability/metrics";
 
 /**
  * Interface for a scheduled cron job instance
@@ -58,6 +59,9 @@ const createScheduledJob = (config: CronJob, gqlQuery: GqlQueryFn<true>): Schedu
       context: config.context,
     },
     async (self) => {
+      const startTime = Bun.nanoseconds();
+      let outcome: "success" | "error" = "success";
+
       try {
         log.info("executing");
 
@@ -91,8 +95,16 @@ const createScheduledJob = (config: CronJob, gqlQuery: GqlQueryFn<true>): Schedu
 
         log.info({ executionCount, nextRun: self.nextRun() }, "completed");
       } catch (error) {
+        outcome = "error";
         log.error({ err: error }, "failed");
         throw error;
+      } finally {
+        incMetric("graphoria_cron_runs_total", { job: config.name, outcome });
+        observeMetric(
+          "graphoria_cron_run_duration_seconds",
+          { job: config.name },
+          (Bun.nanoseconds() - startTime) / 1e9,
+        );
       }
     },
   );

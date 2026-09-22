@@ -43,6 +43,9 @@ import { writeSchema } from "./utils/writeSchema";
 import { logger, configureLogging } from "./logging";
 import { actorFromSession, audit } from "./logging/audit";
 import { createHealthRoutes } from "./observability/health";
+import { configureMetrics, renderMetrics } from "./observability/metrics";
+import { withHttpMetrics } from "./observability/httpMetrics";
+import { createMetricsRoute } from "./observability/metricsRoute";
 
 // Re-export for consumers
 export { configureLogging };
@@ -81,6 +84,7 @@ const generatePrefixes = (options: Env) => ({
   openapi: options.prefix + options.openApiEndpoint,
   console: options.prefix + options.console.endpoint,
   health: options.prefix + "/health",
+  metrics: options.prefix + options.metrics.endpoint,
 });
 
 /**
@@ -103,6 +107,10 @@ const bootAnalyzedConfiguration = async (env: Env) => {
 
   setQueryTimeoutMs(env.queryTimeoutMs);
   setSlowQueryMs(env.slowQueryMs);
+  configureMetrics({
+    enabled: env.metrics.enabled,
+    maxOperationLabels: env.metrics.maxOperationLabels,
+  });
 
   if (env.queryTimeoutMs === 0) {
     logger("graphoria").warn(
@@ -372,6 +380,20 @@ const createGraphQLServer = async (env: Env) => {
     }),
   );
 
+  // Prometheus exposition, opt-in via METRICS_ENABLED. Gated: the series name
+  // operations, roles and databases.
+  if (env.metrics.enabled) {
+    Object.assign(
+      routes,
+      createMetricsRoute({
+        path: prefixes.metrics,
+        secretHeader: env.admin.header,
+        authorize: (candidate) => authorizeCapability(candidate, "metrics"),
+        render: renderMetrics,
+      }),
+    );
+  }
+
   // Console (admin UI + status APIs), opt-in via CONSOLE_ENABLED
   if (env.console.enabled) {
     const consoleHandler = () => html(consoleHtml);
@@ -394,20 +416,23 @@ const createGraphQLServer = async (env: Env) => {
   // GraphQL endpoint
   routes[prefixes.graphql] = {
     ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-    GET: withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
-      try {
-        if (req.headers.get("upgrade") === "websocket") {
-          const success = server.upgrade(req, {
-            data: {},
-          });
-          return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+    GET: withHttpMetrics(
+      "graphql",
+      withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
+        try {
+          if (req.headers.get("upgrade") === "websocket") {
+            const success = server.upgrade(req, {
+              data: {},
+            });
+            return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+          }
+          return new S404({ error: "Not Found" });
+        } catch (error) {
+          return new S400({ errors: [{ message: (error as Error)?.message }] });
         }
-        return new S404({ error: "Not Found" });
-      } catch (error) {
-        return new S400({ errors: [{ message: (error as Error)?.message }] });
-      }
-    }),
-    POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
+      }),
+    ),
+    POST: withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
       try {
         const { gql, session, limit } = await getRoleHandlers(req, server);
         if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
@@ -438,7 +463,7 @@ const createGraphQLServer = async (env: Env) => {
           return new S400({ errors: [{ message }] });
         }
       }
-    },
+    }),
   };
 
   const aiEnabled = projectConfiguration.ai?.enabled ?? false;
@@ -496,26 +521,29 @@ const createGraphQLServer = async (env: Env) => {
   }
 
   // REST API endpoint
-  routes[`${prefixes.rest}/*`] = async (req: BunRequest, server: Bun.Server<unknown>) => {
-    if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
+  routes[`${prefixes.rest}/*`] = withHttpMetrics(
+    "rest",
+    async (req: BunRequest, server: Bun.Server<unknown>) => {
+      if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
 
-    try {
-      const { rest, session, limit } = await getRoleHandlers(req, server);
-      if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+      try {
+        const { rest, session, limit } = await getRoleHandlers(req, server);
+        if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
 
-      const urlParsed = new URL(req.url);
+        const urlParsed = new URL(req.url);
 
-      return await rest.handler(
-        urlParsed,
-        urlParsed.pathname.replace(prefixes.rest, ""),
-        req.method,
-        req,
-        session,
-      );
-    } catch {
-      return new S400({ errors: [{ message: "Bad request" }] });
-    }
-  };
+        return await rest.handler(
+          urlParsed,
+          urlParsed.pathname.replace(prefixes.rest, ""),
+          req.method,
+          req,
+          session,
+        );
+      } catch {
+        return new S400({ errors: [{ message: "Bad request" }] });
+      }
+    },
+  );
 
   // Create WebSocket handler
   const websocketHandler = websocketHandlerFactory(analyzedConfiguration.roles);
