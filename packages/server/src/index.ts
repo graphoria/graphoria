@@ -44,7 +44,9 @@ import { logger, configureLogging } from "./logging";
 import { actorFromSession, audit } from "./logging/audit";
 import { createHealthRoutes } from "./observability/health";
 import { configureMetrics, renderMetrics } from "./observability/metrics";
+import { configureTracing } from "./observability/tracing";
 import { withHttpMetrics } from "./observability/httpMetrics";
+import { withHttpTracing } from "./observability/httpTracing";
 import { createMetricsRoute } from "./observability/metricsRoute";
 
 // Re-export for consumers
@@ -110,6 +112,13 @@ const bootAnalyzedConfiguration = async (env: Env) => {
   configureMetrics({
     enabled: env.metrics.enabled,
     maxOperationLabels: env.metrics.maxOperationLabels,
+  });
+  configureTracing({
+    enabled: env.tracing.enabled,
+    endpoint: env.tracing.endpoint,
+    headers: env.tracing.headers,
+    serviceName: env.tracing.serviceName,
+    sampleRatio: env.tracing.sampleRatio,
   });
 
   if (env.queryTimeoutMs === 0) {
@@ -416,7 +425,9 @@ const createGraphQLServer = async (env: Env) => {
   // GraphQL endpoint
   routes[prefixes.graphql] = {
     ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-    GET: withHttpMetrics(
+    GET: withHttpTracing(
+      "graphql",
+      withHttpMetrics(
       "graphql",
       withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
         try {
@@ -432,7 +443,8 @@ const createGraphQLServer = async (env: Env) => {
         }
       }),
     ),
-    POST: withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
+    ),
+    POST: withHttpTracing("graphql", withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
       try {
         const { gql, session, limit } = await getRoleHandlers(req, server);
         if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
@@ -463,7 +475,7 @@ const createGraphQLServer = async (env: Env) => {
           return new S400({ errors: [{ message }] });
         }
       }
-    }),
+    })),
   };
 
   const aiEnabled = projectConfiguration.ai?.enabled ?? false;
@@ -521,7 +533,9 @@ const createGraphQLServer = async (env: Env) => {
   }
 
   // REST API endpoint
-  routes[`${prefixes.rest}/*`] = withHttpMetrics(
+  routes[`${prefixes.rest}/*`] = withHttpTracing(
+    "rest",
+    withHttpMetrics(
     "rest",
     async (req: BunRequest, server: Bun.Server<unknown>) => {
       if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
@@ -543,6 +557,7 @@ const createGraphQLServer = async (env: Env) => {
         return new S400({ errors: [{ message: "Bad request" }] });
       }
     },
+  ),
   );
 
   // Create WebSocket handler

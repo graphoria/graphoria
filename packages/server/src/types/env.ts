@@ -57,6 +57,14 @@ export const EnvZod = z
     METRICS_ENDPOINT: z.string().default("/metrics"),
     METRICS_SECRET: secretList,
     METRICS_MAX_OPERATION_LABELS: z.coerce.number().int().min(1).default(200),
+    // Only the gate is graphoria's own. The rest are the standard OpenTelemetry
+    // names, so a cluster that already injects them into its pods needs to set
+    // nothing but TRACING_ENABLED.
+    TRACING_ENABLED: z.stringbool().default(false),
+    OTEL_EXPORTER_OTLP_ENDPOINT: z.string().default("http://localhost:4318"),
+    OTEL_EXPORTER_OTLP_HEADERS: z.string().default(""),
+    OTEL_SERVICE_NAME: z.string().default("graphoria"),
+    OTEL_TRACES_SAMPLER_ARG: z.coerce.number().min(0).max(1).default(1),
     MAX_QUERY_COST: z.coerce.number().int().min(0).default(0),
     RATE_LIMIT_MAX: z.coerce.number().int().min(0).default(0),
     RATE_LIMIT_ANONYMOUS_MAX: z.coerce.number().int().min(0).default(0),
@@ -135,6 +143,13 @@ export const EnvZod = z
       endpoint: env.METRICS_ENDPOINT,
       secrets: env.METRICS_SECRET,
       maxOperationLabels: env.METRICS_MAX_OPERATION_LABELS,
+    },
+    tracing: {
+      enabled: env.TRACING_ENABLED,
+      endpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
+      headers: env.OTEL_EXPORTER_OTLP_HEADERS,
+      serviceName: env.OTEL_SERVICE_NAME,
+      sampleRatio: env.OTEL_TRACES_SAMPLER_ARG,
     },
     console: {
       enabled: env.CONSOLE_ENABLED,
