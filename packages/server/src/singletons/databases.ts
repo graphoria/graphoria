@@ -50,6 +50,11 @@ export const instantiateDatabasesConnections = async (databases: Database[]) => 
   return { databasesConnections, repositoryMap };
 };
 
+export const pingConnection = (connection: SQL | ConnectionPool, type: string) =>
+  type === "mssql"
+    ? (connection as ConnectionPool).query("SELECT 1")
+    : (connection as SQL).unsafe("SELECT 1");
+
 /**
  * Close every open database connection and clear the singleton maps. Bun's `SQL`
  * and mssql's `ConnectionPool` both expose `close()`. Used by

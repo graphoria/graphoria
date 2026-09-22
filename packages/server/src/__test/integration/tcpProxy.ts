@@ -27,9 +27,9 @@ export const createTcpProxy = async (target: { host: string; port: number }): Pr
     socket.on("error", () => socket.destroy());
   };
 
-  const up = () =>
-    new Promise<void>((resolve) => {
-      server = createServer((client) => {
+  const listen = () =>
+    new Promise<Server>((resolve, reject) => {
+      const next = createServer((client) => {
         const upstream = createConnection(target.port, target.host);
         track(client);
         track(upstream);
@@ -37,11 +37,24 @@ export const createTcpProxy = async (target: { host: string; port: number }): Pr
         upstream.on("close", () => client.destroy());
         client.pipe(upstream).pipe(client);
       });
-      server.listen(port, "127.0.0.1", () => {
-        port = (server!.address() as { port: number }).port;
-        resolve();
-      });
+      next.once("error", reject);
+      next.listen(port, "127.0.0.1", () => resolve(next));
     });
+
+  // The port a closed listener held is not always free again at once.
+  const up = async () => {
+    if (server) return;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        server = await listen();
+        port = (server.address() as { port: number }).port;
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE" || attempt >= 50) throw error;
+        await Bun.sleep(100);
+      }
+    }
+  };
 
   const down = () =>
     new Promise<void>((resolve) => {

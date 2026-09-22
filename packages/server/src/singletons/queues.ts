@@ -6,7 +6,11 @@ import { startKafkaConnections } from "../queues/kafka";
 import { startRabbitMQConnections } from "../queues/rabbitmq";
 import { logger } from "../logging";
 
-export type QueueConnectionStatus = { type: "rabbitmq" | "kafka"; connected: boolean };
+export type QueueConnectionStatus = {
+  type: "rabbitmq" | "kafka";
+  name: string;
+  connected: boolean;
+};
 
 export type QueueManager = {
   publisherMap: () => Record<string, RabbitMQPublisher | KafkaPublisher>;
@@ -40,8 +44,9 @@ export const instantiateQueues = async (queues: QueueConfig[]) => {
       publisherMap: rabbitMQManager.publisherMap,
       sendMessage: rabbitMQManager.sendMessage,
       connections: () =>
-        rabbitMQManager.managers.map((manager) => ({
+        rabbitMQManager.managers.map((manager, index) => ({
           type: "rabbitmq" as const,
+          name: rabbitMQQueues[index]!.name,
           connected: manager.isConnected(),
         })),
     });
@@ -55,8 +60,9 @@ export const instantiateQueues = async (queues: QueueConfig[]) => {
       publisherMap: kafkaManager.publisherMap,
       sendMessage: kafkaManager.sendMessage,
       connections: () =>
-        kafkaManager.managers.map((manager) => ({
+        kafkaManager.managers.map((manager, index) => ({
           type: "kafka" as const,
+          name: kafkaQueues[index]!.name,
           connected: manager.isConnected(),
         })),
       cleanup: kafkaManager.cleanup,

@@ -20,12 +20,17 @@ import { createCapabilityAuthorizer } from "./authentication/capabilities";
 import { getAgent, instantiateAI } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
 import { instantiateCronJobs } from "./singletons/cron";
-import { disconnectDatabases, instantiateDatabasesConnections } from "./singletons/databases";
+import {
+  databasesConnections,
+  disconnectDatabases,
+  instantiateDatabasesConnections,
+  pingConnection,
+} from "./singletons/databases";
 import { getCacheRedisClient } from "./singletons/cache/redisClient";
 import { env } from "./singletons/env";
 import { setQueryTimeoutMs } from "./singletons/queryTimeout";
 import { setSlowQueryMs } from "./logging/slowQuery";
-import { instantiateQueues } from "./singletons/queues";
+import { instantiateQueues, queueManager } from "./singletons/queues";
 import { ConfigurationZod } from "./types/zod/configuration";
 import {
   createMemoryRateLimitStore,
@@ -37,6 +42,7 @@ import { S200, S400, S401, S404, S429 } from "./utils/responses";
 import { writeSchema } from "./utils/writeSchema";
 import { logger, configureLogging } from "./logging";
 import { actorFromSession, audit } from "./logging/audit";
+import { createHealthRoutes } from "./observability/health";
 
 // Re-export for consumers
 export { configureLogging };
@@ -46,6 +52,8 @@ type RouteHandler =
   | ((req: BunRequest, server: Bun.Server<unknown>) => Response | Promise<Response | undefined>);
 
 type RoutesMap = Record<string, RouteHandler | Record<string, RouteHandler>>;
+
+const HEALTH_CHECK_TIMEOUT_MS = 2000;
 
 const renderPlayground = async (filepath: string, replacements: Record<string, string>) => {
   const path = join(import.meta.dir, filepath);
@@ -72,6 +80,7 @@ const generatePrefixes = (options: Env) => ({
   rest: options.prefix + options.restApiPrefix,
   openapi: options.prefix + options.openApiEndpoint,
   console: options.prefix + options.console.endpoint,
+  health: options.prefix + "/health",
 });
 
 /**
@@ -331,6 +340,37 @@ const createGraphQLServer = async (env: Env) => {
   routes[prefixes.openapi] = () => new S200(analyzedConfiguration.openapi);
   routes[prefixes.graphiql] = () => html(graphiqlFile);
   routes[prefixes.scalar] = () => html(scalarFile);
+
+  // Probes for an orchestrator: no auth, no rate limit. Redis is a dependency
+  // only where something reads it — the token repository or the redis cache.
+  const redisInUse = projectConfiguration.auth?.enabled || env.cache.store === "redis";
+  Object.assign(
+    routes,
+    createHealthRoutes({
+      basePath: prefixes.health,
+      timeoutMs: HEALTH_CHECK_TIMEOUT_MS,
+      checks: () => [
+        ...analyzedConfiguration.databases.map((database) => ({
+          kind: "database",
+          name: database.name,
+          probe: async () => {
+            const connection = databasesConnections[database.name];
+            if (!connection) return false;
+            await pingConnection(connection, database.type);
+            return true;
+          },
+        })),
+        ...(redisInUse
+          ? [{ kind: "redis", probe: async () => (await getCacheRedisClient().ping()) === "PONG" }]
+          : []),
+        ...(queueManager?.connections() ?? []).map(({ type, name, connected }) => ({
+          kind: type,
+          name,
+          probe: () => connected,
+        })),
+      ],
+    }),
+  );
 
   // Console (admin UI + status APIs), opt-in via CONSOLE_ENABLED
   if (env.console.enabled) {

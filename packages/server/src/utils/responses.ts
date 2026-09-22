@@ -56,3 +56,9 @@ export class S500 extends ClientResponse {
     super(body, { ...init, status: 500 });
   }
 }
+
+export class S503 extends ClientResponse {
+  constructor(body?: object | null, init?: ResponseInit) {
+    super(body, { ...init, status: 503 });
+  }
+}

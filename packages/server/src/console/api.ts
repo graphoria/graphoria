@@ -11,7 +11,7 @@ import { createConsoleSessions } from "./session";
 import { getTags } from "../configuration/rest/generateOpenAPI";
 import { audit } from "../logging/audit";
 import { getCronJobs } from "../singletons/cron";
-import { databasesConnections } from "../singletons/databases";
+import { databasesConnections, pingConnection } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
 import { resolveClientAddress } from "../utils/rateLimit";
 import { S200, S400, S401, S403, S404, S429 } from "../utils/responses";
@@ -34,11 +34,6 @@ type ConsoleRouteHandler = (
 ) => Response | Promise<Response>;
 
 const PING_TIMEOUT_MS = 2000;
-
-const pingConnection = (connection: SQL | ConnectionPool, type: string) =>
-  type === "mssql"
-    ? (connection as ConnectionPool).query("SELECT 1")
-    : (connection as SQL).unsafe("SELECT 1");
 
 const measureLatency = async (connection: SQL | ConnectionPool, type: string) => {
   const start = performance.now();
