@@ -163,9 +163,12 @@ exposition's size when you do.
 
 Recording is a counter increment and a bucket increment behind one boolean. Measured at roughly 70ns
 for a counter and 134ns against a histogram, against 1–50ms for a database round trip — so it does
-not show up in a request. While `METRICS_ENABLED` is off every call site pays one branch (~30ns) and
-allocates nothing. `metrics.perf.test.ts` holds those bounds an order of magnitude loose, so the
-suite catches a change that makes recording expensive without turning red on a busy CI runner.
+not show up in a request. While `METRICS_ENABLED` is off a call site costs about 30ns: the labels its
+caller builds, then one branch. The branch allocates nothing, but the labels are an argument
+expression, so they are built before `incMetric` is entered and can consult the gate — measured
+across the shapes the call sites actually use, that whole cost stays between 7 and 27ns.
+`metrics.perf.test.ts` holds those bounds an order of magnitude loose, so the suite catches a change
+that makes recording expensive without turning red on a busy CI runner.
 
 ### Not exported
 

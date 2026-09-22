@@ -21,8 +21,12 @@ const perCallNs = (run: () => void) => {
  * rather than a small one. A JSON round trip per observation costs ~300ns and
  * stays green, which was measured rather than assumed. The claim being defended
  * is the order of magnitude: recording must stay far below the 1–50ms a
- * database round trip costs, so instrumentation never shows up in a request. A database round trip is 1–50ms, so the budget for the whole
- * instrumentation of a request is microseconds.
+ * database round trip costs, so instrumentation never shows up in a request.
+ *
+ * The disabled figure includes the labels the caller builds, which is where that
+ * cost sits — the gate itself is a branch. The literals below are within a few
+ * nanoseconds of the shapes the call sites use, so the bound measures a call
+ * site rather than an allocation the optimizer was free to drop.
  */
 describe("metrics overhead", () => {
   afterEach(() => {
