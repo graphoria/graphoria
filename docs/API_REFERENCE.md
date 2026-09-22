@@ -83,6 +83,7 @@ type Prefixes = {
   scalar: string; // e.g. "/scalar"
   rest: string; // e.g. "/rest"
   openapi: string; // e.g. "/openapi.json"
+  health: string; // e.g. "/health" — serves /health/live and /health/ready
 };
 ```
 

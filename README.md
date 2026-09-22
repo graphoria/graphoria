@@ -269,26 +269,7 @@ Rate-limit rejections are not audit events: under an attack they would flood the
 
 ### Slow query log
 
-A statement that runs longer than `SLOW_QUERY_MS` (default `1000`, `0` turns it off) is written as one `warn` record tagged `component: "slow-query"`, with the SQL that ran and the GraphQL operation it was generated for. That covers caller queries, stored-procedure mutations and subscription polls, and through them REST operations, cron jobs and MCP, which all execute through the GraphQL handler. Two kinds of statement bypass it and are never reported: the ones an operation handler runs itself through `databases` or `repository`, and the auth tables' own lookups.
-
-```json
-{
-  "component": "slow-query",
-  "msg": "slow query",
-  "durationMs": 1843.2,
-  "thresholdMs": 1000,
-  "dbType": "pg",
-  "dbName": "main",
-  "sql": "SELECT … FROM \"public\".\"orders\" …",
-  "operation": { "type": "query", "name": "RecentOrders", "fields": ["orders"] },
-  "role": "user",
-  "outcome": "success"
-}
-```
-
-A stored procedure carries `procedure` in place of `sql`. A statement that fails after crossing the threshold — one cancelled by `QUERY_TIMEOUT_MS`, say — is recorded too, with `outcome: "error"`. `operation.name` is `null` for an anonymous operation; `fields` still names the root fields it asked for.
-
-Variable values are never recorded, and neither is the GraphQL document: every literal in a document reaches the database as a bound parameter, so the SQL text carries no caller data, but the document itself would. Unlike audit records, slow-query records follow `LOG_LEVEL`, so `LOG_LEVEL=error` silences them.
+A statement that runs longer than `SLOW_QUERY_MS` (default `1000`, `0` turns it off) is logged at `warn` with the SQL that ran and the GraphQL operation it came from. See [Observability](./docs/OBSERVABILITY.md#slow-query-log) for the record and what it leaves out.
 
 ### Integration with Existing Bun App
 
@@ -397,6 +378,8 @@ Generated GraphQL fields follow the `{schema}_{name}` pattern by default — e.g
 | POST     | `/mcp`          | Model Context Protocol server (anonymous, opt-in; gate with `ADMIN_SECRET` or `AI_MCP_SECRET`). |
 | POST     | `/ai`           | AI agent — NL → database Q&A (`ADMIN_SECRET` or `AI_SECRET`, opt-in).                           |
 | GET      | `/_console`     | Admin console UI + status APIs (session from `ADMIN_SECRET` or a console credential, opt-in).   |
+| GET      | `/health/live`  | Liveness probe — `200` while the process serves HTTP. No auth.                                  |
+| GET      | `/health/ready` | Readiness probe — `503` while a database, Redis or a broker is unreachable. No auth.            |
 
 All paths are configurable via environment variables. Auth: `Authorization: Bearer <token>`. Admin: `x-admin-secret` header carrying `ADMIN_SECRET` or a [scoped credential](./docs/SECURITY_MODEL.md#scoped-credentials).
 
@@ -474,6 +457,7 @@ The three limits that ship on — query depth, page size and the statement timeo
 | [GraphQL Directives](./docs/DIRECTIVES.md)            | Built-in data-transformation and `@when` control-flow directives      |
 | [Virtual Columns](./docs/VIRTUAL_COLUMNS.md)          | Computed columns powered by SQL expressions or functions              |
 | [Performance](./docs/PERFORMANCE.md)                  | Query strategy, caching behaviour, measured numbers and the gate      |
+| [Observability](./docs/OBSERVABILITY.md)              | Health endpoints for liveness and readiness probes, slow query log    |
 | [Remote GraphQL Schemas](./docs/REMOTE_SCHEMAS.md)    | Stitch external GraphQL APIs into the unified schema                  |
 | [Remote REST APIs](./docs/REMOTE_REST.md)             | Proxy external OpenAPI services under `/rest`                         |
 | [AI Agent](./docs/AI.md)                              | Admin-only natural-language → database Q&A over GraphQL and REST      |

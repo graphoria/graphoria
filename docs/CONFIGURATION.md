@@ -26,7 +26,7 @@ All secrets and runtime knobs are set via environment variables. Bun auto-loads 
 | ---------------- | -------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LOG_LEVEL`      | `string` | `debug` (dev) / `info` (prod) | pino log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. [Audit records](../README.md#audit-log) are written at `info` regardless |
 | `NODE_ENV`       | `string` | `DEVELOPMENT`                 | `PRODUCTION` disables pino-pretty formatting                                                                                                 |
-| `SLOW_QUERY_MS`  | `number` | `1000`                        | Log a statement that runs longer than this, in ms, at `warn`. `0` is off — see [Slow query log](../README.md#slow-query-log)                 |
+| `SLOW_QUERY_MS`  | `number` | `1000`                        | Log a statement that runs longer than this, in ms, at `warn`. `0` is off — see [Slow query log](./OBSERVABILITY.md#slow-query-log)           |
 | `MAX_QUERY_COST` | `number` | `0`                           | Estimated cost ceiling for a caller's query. `0` is off — see [Bounding how much one query asks for](#bounding-how-much-one-query-asks-for)  |
 
 See [`.env.example`](../.env.example) for the full list.
