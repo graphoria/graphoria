@@ -24,6 +24,7 @@ import { disconnectDatabases, instantiateDatabasesConnections } from "./singleto
 import { getCacheRedisClient } from "./singletons/cache/redisClient";
 import { env } from "./singletons/env";
 import { setQueryTimeoutMs } from "./singletons/queryTimeout";
+import { setSlowQueryMs } from "./logging/slowQuery";
 import { instantiateQueues } from "./singletons/queues";
 import { ConfigurationZod } from "./types/zod/configuration";
 import {
@@ -92,6 +93,7 @@ const bootAnalyzedConfiguration = async (env: Env) => {
   }
 
   setQueryTimeoutMs(env.queryTimeoutMs);
+  setSlowQueryMs(env.slowQueryMs);
 
   if (env.queryTimeoutMs === 0) {
     logger("graphoria").warn(

@@ -46,6 +46,7 @@ export const createDatabaseSubscriptionStrategy = (): SubscriptionStrategy => ({
       variables,
       schemaEntity,
       eventEmitter,
+      session,
     } = context;
 
     const subscriptionKey = this.getSubscriptionKey(context);
@@ -69,6 +70,7 @@ export const createDatabaseSubscriptionStrategy = (): SubscriptionStrategy => ({
       subscriptionKey,
       eventEmitter,
       pollIntervalMs: 1000,
+      role: session.role,
     });
 
     // Store poll reference for cleanup by event emitter

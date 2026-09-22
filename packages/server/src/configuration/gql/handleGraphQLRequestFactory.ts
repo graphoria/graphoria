@@ -107,7 +107,7 @@ export const handleGraphQLRequestFactory = (
       };
     },
 
-    [EntitySource.STORED_PROCEDURE]: async (field, variables) => {
+    [EntitySource.STORED_PROCEDURE]: async (field, variables, queryAnalysis, _req, session) => {
       const sp = entities.mutationsMap[field.name];
 
       if (!sp) {
@@ -124,6 +124,14 @@ export const handleGraphQLRequestFactory = (
       const result = await callStoredProcedure(
         sp,
         argumentsReplaced as Record<string, string | number | boolean | null>,
+        {
+          operation: {
+            type: "mutation",
+            name: queryAnalysis.operations[0]?.name ?? null,
+            fields: [field.name],
+          },
+          role: session?.role,
+        },
       );
 
       return {
@@ -417,6 +425,14 @@ export const handleGraphQLRequestFactory = (
               resolved.variables,
               resolved.allVariables as Record<string, string | number | boolean | null>,
               options?.timeoutMs,
+              {
+                operation: {
+                  type: operation.operation,
+                  name: operation.name,
+                  fields: tableFields.map((field) => field.name),
+                },
+                role: session?.role,
+              },
             ),
           ),
         );

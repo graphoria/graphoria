@@ -267,6 +267,29 @@ A record is `{ action, actor: { type, sub?, role?, ip? }, target: { kind, … },
 
 Rate-limit rejections are not audit events: under an attack they would flood the sink.
 
+### Slow query log
+
+A statement that runs longer than `SLOW_QUERY_MS` (default `1000`, `0` turns it off) is written as one `warn` record tagged `component: "slow-query"`, with the SQL that ran and the GraphQL operation it was generated for. That covers caller queries, stored-procedure mutations and subscription polls, and through them REST operations, cron jobs and MCP, which all execute through the GraphQL handler. Two kinds of statement bypass it and are never reported: the ones an operation handler runs itself through `databases` or `repository`, and the auth tables' own lookups.
+
+```json
+{
+  "component": "slow-query",
+  "msg": "slow query",
+  "durationMs": 1843.2,
+  "thresholdMs": 1000,
+  "dbType": "pg",
+  "dbName": "main",
+  "sql": "SELECT … FROM \"public\".\"orders\" …",
+  "operation": { "type": "query", "name": "RecentOrders", "fields": ["orders"] },
+  "role": "user",
+  "outcome": "success"
+}
+```
+
+A stored procedure carries `procedure` in place of `sql`. A statement that fails after crossing the threshold — one cancelled by `QUERY_TIMEOUT_MS`, say — is recorded too, with `outcome: "error"`. `operation.name` is `null` for an anonymous operation; `fields` still names the root fields it asked for.
+
+Variable values are never recorded, and neither is the GraphQL document: every literal in a document reaches the database as a bound parameter, so the SQL text carries no caller data, but the document itself would. Unlike audit records, slow-query records follow `LOG_LEVEL`, so `LOG_LEVEL=error` silences them.
+
 ### Integration with Existing Bun App
 
 ```typescript

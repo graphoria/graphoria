@@ -1,5 +1,6 @@
 import type { AnalysisResult, VariableDefinition } from "../../analyzeQuery/types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
+import type { QuerySource } from "../../logging/slowQuery";
 import type { Database } from "../../types/configuration";
 import type { DatabasePoller, QueryEventEmitter } from "../types";
 
@@ -15,6 +16,7 @@ export interface DatabasePollerConfig {
   subscriptionKey: string;
   eventEmitter: QueryEventEmitter;
   pollIntervalMs?: number;
+  role?: string | undefined;
 }
 
 /**
@@ -32,12 +34,15 @@ const getResultHash = async (
   db: Database,
   variableDefinitions: VariableDefinition[],
   variables: Record<string, unknown>,
+  source: QuerySource,
 ): Promise<string> => {
   const hashResult = await executeQuery<{ ResultHash: string }>(
     queryHash,
     db,
     variableDefinitions,
     variables,
+    undefined,
+    source,
   );
   return Buffer.from(hashResult[0].ResultHash)?.toString("hex");
 };
@@ -56,6 +61,7 @@ export const createDatabasePoller = async (
     subscriptionKey,
     eventEmitter,
     pollIntervalMs = 1000,
+    role,
   } = config;
 
   const firstFieldName = getFirstFieldName(analysis);
@@ -67,18 +73,34 @@ export const createDatabasePoller = async (
   const [[, queryData]] = generateSQL(schemaEntity, analysis, variables, false, pageLimits);
   const [[, queryHash]] = generateSQL(schemaEntity, analysis, variables, true, pageLimits);
 
+  const operation = analysis.operations[0];
+  const source: QuerySource = {
+    operation: {
+      type: operation.operation,
+      name: operation.name,
+      fields: operation.fields.map((field) => field.name),
+    },
+    role,
+  };
+
   // Get initial hash and send initial data
-  let previousHash = await getResultHash(queryHash, db, variableDefinitions, variables);
+  let previousHash = await getResultHash(queryHash, db, variableDefinitions, variables, source);
 
   eventEmitter.sendDataUpdate(subscriptionKey, {
-    data: await executeQueryJSON(queryData, db, variableDefinitions, variables),
+    data: await executeQueryJSON(queryData, db, variableDefinitions, variables, undefined, source),
   });
 
   // Poll function that checks for changes
   const log = logger("polling").child({ subscription: subscriptionKey });
   const poll = async () => {
     try {
-      const currentHash = await getResultHash(queryHash, db, variableDefinitions, variables);
+      const currentHash = await getResultHash(
+        queryHash,
+        db,
+        variableDefinitions,
+        variables,
+        source,
+      );
 
       if (currentHash !== previousHash) {
         log.info(
@@ -89,7 +111,14 @@ export const createDatabasePoller = async (
         previousHash = currentHash;
 
         eventEmitter.sendDataUpdate(subscriptionKey, {
-          data: await executeQueryJSON(queryData, db, variableDefinitions, variables),
+          data: await executeQueryJSON(
+            queryData,
+            db,
+            variableDefinitions,
+            variables,
+            undefined,
+            source,
+          ),
         });
       }
     } catch (error) {

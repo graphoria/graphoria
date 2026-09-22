@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import type { VariableDefinition } from "../../analyzeQuery/types";
+import type { QuerySource, SlowQueryRecord } from "../../logging/slowQuery";
 import type { Database } from "../../types/configuration";
 import type { ProcedureResolver } from "../../types/db";
 
 import { dbMSSQL, dbMySQL, dbPostgreSQL } from "../../__test/dbMocks";
+import { setSlowQueryLog, setSlowQueryMs } from "../../logging/slowQuery";
 import { callStoredProcedure, executeQuery, executeQueryJSON } from "./executor";
 import { databaseAdapters } from "./function-mapping";
 
@@ -211,5 +213,146 @@ describe("callStoredProcedure", () => {
     await callStoredProcedure(buildSP(dbPostgreSQL));
 
     expect(recorded[0]).toEqual({});
+  });
+});
+
+describe("slow query log", () => {
+  const restorers: Array<() => void> = [];
+  const records: Array<SlowQueryRecord & { thresholdMs: number }> = [];
+
+  const source: QuerySource = {
+    operation: { type: "query", name: "RecentOrders", fields: ["orders"] },
+    role: "user",
+  };
+
+  const slowly =
+    <T>(value: T) =>
+    async () => {
+      await Bun.sleep(20);
+      return value;
+    };
+
+  const failingSlowly = async () => {
+    await Bun.sleep(20);
+    throw new Error("canceling statement due to statement timeout");
+  };
+
+  beforeEach(() => {
+    restorers.length = 0;
+    records.length = 0;
+    setSlowQueryLog({ emit: (record) => records.push(record) });
+    setSlowQueryMs(5);
+  });
+  afterEach(() => {
+    while (restorers.length) restorers.pop()?.();
+    setSlowQueryLog(null);
+    setSlowQueryMs(0);
+  });
+
+  it("reports a slow JSON query with its SQL, the operation and the role", async () => {
+    restorers.push(
+      stub("pg", "executeJson", slowly({}) as (typeof databaseAdapters)[EngineKey]["executeJson"]),
+    );
+
+    await executeQueryJSON(
+      'SELECT "id" FROM "public"."orders"',
+      dbPostgreSQL,
+      variableDefs,
+      { id: 7 },
+      undefined,
+      source,
+    );
+
+    expect(records).toHaveLength(1);
+    const [record] = records;
+    expect(record.sql).toBe('SELECT "id" FROM "public"."orders"');
+    expect(record.operation).toEqual(source.operation);
+    expect(record.role).toBe("user");
+    expect(record.dbType).toBe("pg");
+    expect(record.dbName).toBe(dbPostgreSQL.name);
+    expect(record.outcome).toBe("success");
+    expect(record.durationMs).toBeGreaterThan(5);
+    expect(record.thresholdMs).toBe(5);
+  });
+
+  it("reports a slow plain query", async () => {
+    restorers.push(
+      stub("mysql", "execute", slowly([]) as (typeof databaseAdapters)[EngineKey]["execute"]),
+    );
+
+    await executeQuery("SELECT 1", dbMySQL, variableDefs, {}, undefined, source);
+
+    expect(records).toHaveLength(1);
+    expect(records[0].sql).toBe("SELECT 1");
+    expect(records[0].operation).toEqual(source.operation);
+  });
+
+  it("reports a slow stored procedure by name", async () => {
+    restorers.push(
+      stub(
+        "mssql",
+        "callStoredProcedure",
+        slowly(undefined) as (typeof databaseAdapters)[EngineKey]["callStoredProcedure"],
+      ),
+    );
+
+    const sp = {
+      db: dbMSSQL,
+      name: "sp_x",
+      dottedName: "dbo.sp_x",
+    } as unknown as ProcedureResolver;
+    await callStoredProcedure(sp, {}, source);
+
+    expect(records).toHaveLength(1);
+    expect(records[0].procedure).toBe("dbo.sp_x");
+    expect(records[0].sql).toBeUndefined();
+    expect(records[0].operation).toEqual(source.operation);
+  });
+
+  it("reports a statement that failed after running past the threshold", async () => {
+    restorers.push(
+      stub(
+        "pg",
+        "executeJson",
+        failingSlowly as (typeof databaseAdapters)[EngineKey]["executeJson"],
+      ),
+    );
+
+    await expect(
+      executeQueryJSON("SELECT pg_sleep(30)", dbPostgreSQL, variableDefs, {}, undefined, source),
+    ).rejects.toThrow("statement timeout");
+
+    expect(records).toHaveLength(1);
+    expect(records[0].outcome).toBe("error");
+    expect(records[0].sql).toBe("SELECT pg_sleep(30)");
+  });
+
+  it("never carries the variable values", async () => {
+    restorers.push(
+      stub("pg", "executeJson", slowly({}) as (typeof databaseAdapters)[EngineKey]["executeJson"]),
+    );
+
+    await executeQueryJSON(
+      "SELECT 1",
+      dbPostgreSQL,
+      variableDefs,
+      { id: "ana@acme.test" },
+      undefined,
+      source,
+    );
+
+    expect(records).toHaveLength(1);
+    expect(JSON.stringify(records)).not.toContain("ana@acme.test");
+  });
+
+  it("stays silent for a statement under the threshold", async () => {
+    setSlowQueryMs(10_000);
+    restorers.push(
+      stub("pg", "executeJson", slowly({}) as (typeof databaseAdapters)[EngineKey]["executeJson"]),
+    );
+
+    await executeQueryJSON("SELECT 1", dbPostgreSQL, variableDefs, {}, undefined, source);
+
+    expect(records).toHaveLength(0);
   });
 });
