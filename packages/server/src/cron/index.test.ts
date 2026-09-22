@@ -5,7 +5,9 @@ import type { CronJob } from "../types/configuration";
 import type { TickContext } from "../types/zod/cron";
 import type { StartCronJobsReturn } from "./index";
 
+import { installSpanSink, stringAttribute } from "../__test/spanSink";
 import { configureMetrics, createRegistry, setMetricsRegistry } from "../observability/metrics";
+import { activeSpanContext } from "../observability/tracing";
 
 // `singletons/env` parses process.env at module load. Ensure required vars exist
 // before any transitive import touches it.
@@ -237,5 +239,71 @@ describe("startCronJobs — metrics", () => {
     expect(registry.render()).toContain(
       'graphoria_cron_runs_total{job="metrics_fail",outcome="error"} 1',
     );
+  });
+});
+
+describe("startCronJobs — tracing", () => {
+  let sink: ReturnType<typeof installSpanSink>;
+
+  beforeEach(() => {
+    sink = installSpanSink();
+  });
+
+  afterEach(() => {
+    sink.restore();
+  });
+
+  it("roots a trace per tick, named for the job", async () => {
+    let ticks = 0;
+    let insideTick: ReturnType<typeof activeSpanContext>;
+
+    await start([
+      {
+        name: "tracing_ok",
+        pattern: "* * * * * *",
+        maxRuns: 1,
+        catchErrors: true,
+        paused: false,
+        onTick: () => {
+          insideTick = activeSpanContext();
+          ticks++;
+        },
+      } as CronJob,
+    ]);
+
+    await waitFor(() => ticks === 1);
+    // The span ends in the tick's `finally`, one turn after `onTick` returns.
+    await Bun.sleep(20);
+
+    const [span] = await sink.spans();
+
+    expect(span!.name).toBe("cron.tick");
+    expect(span!.parentSpanId).toBeUndefined();
+    expect(stringAttribute(span!, "graphoria.cron.job")).toBe("tracing_ok");
+    // Entered, so whatever the tick runs through gqlQuery lands under it.
+    expect(insideTick!.spanId).toBe(span!.spanId);
+  });
+
+  it("marks a tick that throws as errored", async () => {
+    let ticks = 0;
+
+    await start([
+      {
+        name: "tracing_fail",
+        pattern: "* * * * * *",
+        maxRuns: 1,
+        catchErrors: true,
+        paused: false,
+        onTick: () => {
+          ticks++;
+          throw new Error("boom");
+        },
+      } as CronJob,
+    ]);
+
+    await waitFor(() => ticks === 1);
+    await Bun.sleep(20);
+
+    expect((await sink.spans())[0]!.status).toEqual({ code: 2, message: "boom" });
   });
 });

@@ -6,7 +6,9 @@ import type { AnalysisResult } from "../../analyzeQuery/types";
 import type { AuditEvent } from "../../logging/audit";
 import type { Auth } from "../../types/configuration";
 
+import { attributeOf, installSpanSink, stringAttribute } from "../../__test/spanSink";
 import { configureMetrics, createRegistry, setMetricsRegistry } from "../../observability/metrics";
+import { startSpan, withActiveSpan } from "../../observability/tracing";
 import { EntitySource } from "../../types/resolver";
 
 // `singletons/env` parses process.env at module load. Set required vars
@@ -667,5 +669,134 @@ describe("handleGraphQLRequestFactory — metrics", () => {
     factory.hasErrors("query { users { id name } }");
 
     expect(registry.render()).not.toContain("graphoria_graphql_rejections_total");
+  });
+});
+
+describe("handleGraphQLRequestFactory — tracing", () => {
+  let sink: ReturnType<typeof installSpanSink>;
+
+  const analysis = (name: string | null): AnalysisResult => ({
+    operations: [
+      {
+        name,
+        operation: "query",
+        variables: [],
+        fields: [{ name: "auth_me", source: EntitySource.AUTH }],
+      },
+    ],
+    fragments: [],
+  });
+
+  beforeEach(() => {
+    sink = installSpanSink();
+  });
+
+  afterEach(() => {
+    sink.restore();
+  });
+
+  const operationSpan = (spans: Awaited<ReturnType<typeof sink.spans>>) =>
+    spans.find((span) => span.name !== "graphoria.analyze")!;
+
+  it("names the operation span for its type and its name", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler(analysis("Me"), {}, fakeReq, { sub: "alice", role: "user" });
+
+    const span = operationSpan(await sink.spans());
+
+    expect(span.name).toBe("query Me");
+    expect(stringAttribute(span, "graphql.operation.name")).toBe("Me");
+    expect(stringAttribute(span, "graphql.operation.type")).toBe("query");
+    expect(stringAttribute(span, "graphoria.role")).toBe("user");
+  });
+
+  it("names an anonymous operation by its root fields", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler(analysis(null), {}, fakeReq, { sub: "alice", role: "user" });
+
+    expect(operationSpan(await sink.spans()).name).toBe("query auth_me");
+  });
+
+  it("attributes an operation with no session to the anonymous role", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler(analysis("Me"), {}, fakeReq, undefined);
+
+    expect(stringAttribute(operationSpan(await sink.spans()), "graphoria.role")).toBe("anonymous");
+  });
+
+  it("marks a failing operation errored", async () => {
+    const factory = factoryFn(buildEntities({ withQueuePublisher: false }), gqlEntities);
+    const failing: AnalysisResult = {
+      operations: [
+        {
+          name: "Publish",
+          operation: "mutation",
+          variables: [],
+          fields: [
+            {
+              name: "queue_publish",
+              source: EntitySource.QUEUE_PUBLISHER,
+              arguments: { data: "$payload" },
+            },
+          ],
+        },
+      ],
+      fragments: [],
+    };
+
+    await expect(factory.handler(failing, { payload: "x" }, fakeReq, undefined)).rejects.toThrow();
+
+    expect(operationSpan(await sink.spans()).status.code).toBe(2);
+  });
+
+  it("spans the analysis and reports a miss then a hit on a repeated query", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+    const query = "query Repeated { auth_me { username role } }";
+
+    await factory.handler(query, {}, fakeReq, { sub: "alice", role: "user" });
+    await factory.handler(query, {}, fakeReq, { sub: "alice", role: "user" });
+
+    const analyzeSpans = (await sink.spans()).filter((span) => span.name === "graphoria.analyze");
+
+    expect(
+      analyzeSpans.map(
+        (span) =>
+          (attributeOf(span, "graphoria.analysis.cached") as { boolValue: boolean }).boolValue,
+      ),
+    ).toEqual([false, true]);
+  });
+
+  it("puts the analysis and the operation under the request's trace", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+    const parent = { traceId: "a".repeat(32), spanId: "b".repeat(16), sampled: true };
+
+    await withActiveSpan(startSpan("POST graphql", { parent }), () =>
+      factory.handler("query Traced { auth_me { username } }", {}, fakeReq, undefined),
+    );
+
+    const spans = await sink.spans();
+
+    expect(spans).toHaveLength(2);
+    expect(spans.map((span) => span.traceId)).toEqual([parent.traceId, parent.traceId]);
+  });
+
+  it("spans the analysis but no operation for a request carrying none", async () => {
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler({ operations: [], fragments: [] }, {}, fakeReq, undefined);
+
+    expect((await sink.spans()).map((span) => span.name)).toEqual(["graphoria.analyze"]);
+  });
+
+  it("records nothing while tracing is disabled", async () => {
+    sink.restore();
+    const factory = factoryFn(buildEntities(), gqlEntities);
+
+    await factory.handler(analysis("Me"), {}, fakeReq, undefined);
+
+    expect(await sink.spans()).toHaveLength(0);
   });
 });

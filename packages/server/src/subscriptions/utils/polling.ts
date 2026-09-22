@@ -6,6 +6,7 @@ import type { DatabasePoller, QueryEventEmitter } from "../types";
 
 import { executeQuery, executeQueryJSON, generateSQL } from "../../databases";
 import { logger } from "../../logging";
+import { withSpan } from "../../observability/tracing";
 import { env } from "../../singletons/env";
 
 export interface DatabasePollerConfig {
@@ -83,48 +84,77 @@ export const createDatabasePoller = async (
     role,
   };
 
-  // Get initial hash and send initial data
-  let previousHash = await getResultHash(queryHash, db, variableDefinitions, variables, source);
+  // A poll is not inside a request, so each one roots its own trace. The span is
+  // entered, which is what puts the statements it runs underneath it. An empty
+  // poll still gets a span — an empty poll that is slow is worth seeing.
+  const pollSpan = <T>(run: () => Promise<T>) =>
+    withSpan(
+      "subscription.poll",
+      {
+        parent: null,
+        attributes: {
+          "graphql.operation.name": source.operation.name ?? undefined,
+          "graphql.operation.type": source.operation.type,
+          "graphoria.role": source.role,
+        },
+      },
+      run,
+    );
 
-  eventEmitter.sendDataUpdate(subscriptionKey, {
-    data: await executeQueryJSON(queryData, db, variableDefinitions, variables, undefined, source),
+  // Get initial hash and send initial data
+  let previousHash = "";
+
+  await pollSpan(async () => {
+    previousHash = await getResultHash(queryHash, db, variableDefinitions, variables, source);
+
+    eventEmitter.sendDataUpdate(subscriptionKey, {
+      data: await executeQueryJSON(
+        queryData,
+        db,
+        variableDefinitions,
+        variables,
+        undefined,
+        source,
+      ),
+    });
   });
 
   // Poll function that checks for changes
   const log = logger("polling").child({ subscription: subscriptionKey });
-  const poll = async () => {
-    try {
-      const currentHash = await getResultHash(
-        queryHash,
-        db,
-        variableDefinitions,
-        variables,
-        source,
-      );
-
-      if (currentHash !== previousHash) {
-        log.info(
-          { changed: !!previousHash, operation: analysis.operations[0].name },
-          previousHash ? "data changed" : "initial fetch",
+  const poll = () =>
+    pollSpan(async () => {
+      try {
+        const currentHash = await getResultHash(
+          queryHash,
+          db,
+          variableDefinitions,
+          variables,
+          source,
         );
 
-        previousHash = currentHash;
+        if (currentHash !== previousHash) {
+          log.info(
+            { changed: !!previousHash, operation: analysis.operations[0].name },
+            previousHash ? "data changed" : "initial fetch",
+          );
 
-        eventEmitter.sendDataUpdate(subscriptionKey, {
-          data: await executeQueryJSON(
-            queryData,
-            db,
-            variableDefinitions,
-            variables,
-            undefined,
-            source,
-          ),
-        });
+          previousHash = currentHash;
+
+          eventEmitter.sendDataUpdate(subscriptionKey, {
+            data: await executeQueryJSON(
+              queryData,
+              db,
+              variableDefinitions,
+              variables,
+              undefined,
+              source,
+            ),
+          });
+        }
+      } catch (error) {
+        log.error({ err: error }, "polling failed");
       }
-    } catch (error) {
-      log.error({ err: error }, "polling failed");
-    }
-  };
+    });
 
   // Poller control
   let stopped = false;
