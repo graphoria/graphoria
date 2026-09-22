@@ -1,12 +1,11 @@
-import { RedisClient as ValkeyClient } from "bun";
-
 import { env } from "../env";
+import { createRedisClient } from "../../utils/redis";
 
-let client: InstanceType<typeof ValkeyClient> | null = null;
+let client: ReturnType<typeof createRedisClient> | null = null;
 
-export const getCacheRedisClient = (): InstanceType<typeof ValkeyClient> => {
+export const getCacheRedisClient = (): ReturnType<typeof createRedisClient> => {
   if (!client) {
-    client = new ValkeyClient(env.cache.redisUrl);
+    client = createRedisClient(env.cache.redisUrl);
   }
   return client;
 };

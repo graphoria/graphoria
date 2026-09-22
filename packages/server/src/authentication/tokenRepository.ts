@@ -1,7 +1,6 @@
-import { RedisClient as ValkeyClient } from "bun";
-
 import { parseDurationToMs } from "./duration";
 import { logger } from "../logging";
+import { createRedisClient } from "../utils/redis";
 
 export type TokenRepository = {
   saveJti(jti: string, expiresIn: string): Promise<void>;
@@ -80,4 +79,4 @@ export const createTokenRepository = (redisUrl: string): TokenRepository =>
   // Bun's RedisClient exposes the same hset/hmget/expire surface we need but
   // its declared types are wider than TokenRepositoryClient. The cast is the
   // structural-typing bridge and is intentional.
-  createTokenRepositoryWithClient(new ValkeyClient(redisUrl) as unknown as TokenRepositoryClient);
+  createTokenRepositoryWithClient(createRedisClient(redisUrl) as unknown as TokenRepositoryClient);
