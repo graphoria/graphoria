@@ -8,9 +8,8 @@ process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
 const { createRabbitMQConnectionManager, startConsumer } = await import("./rabbitmq");
-const { configureMetrics, createRegistry, setMetricsRegistry } = await import(
-  "../observability/metrics"
-);
+const { configureMetrics, createRegistry, setMetricsRegistry } =
+  await import("../observability/metrics");
 
 type FakeChannel = EventEmitter & Partial<Channel>;
 type FakeConnection = EventEmitter & {

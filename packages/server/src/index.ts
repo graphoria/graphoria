@@ -419,16 +419,16 @@ const createGraphQLServer = async (env: Env) => {
     GET: withHttpMetrics(
       "graphql",
       withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
-      try {
-        if (req.headers.get("upgrade") === "websocket") {
-          const success = server.upgrade(req, {
-            data: {},
-          });
-          return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
-        }
-        return new S404({ error: "Not Found" });
-      } catch (error) {
-        return new S400({ errors: [{ message: (error as Error)?.message }] });
+        try {
+          if (req.headers.get("upgrade") === "websocket") {
+            const success = server.upgrade(req, {
+              data: {},
+            });
+            return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+          }
+          return new S404({ error: "Not Found" });
+        } catch (error) {
+          return new S400({ errors: [{ message: (error as Error)?.message }] });
         }
       }),
     ),
@@ -524,21 +524,21 @@ const createGraphQLServer = async (env: Env) => {
   routes[`${prefixes.rest}/*`] = withHttpMetrics(
     "rest",
     async (req: BunRequest, server: Bun.Server<unknown>) => {
-    if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
+      if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
 
-    try {
-      const { rest, session, limit } = await getRoleHandlers(req, server);
-      if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+      try {
+        const { rest, session, limit } = await getRoleHandlers(req, server);
+        if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
 
-      const urlParsed = new URL(req.url);
+        const urlParsed = new URL(req.url);
 
-      return await rest.handler(
-        urlParsed,
-        urlParsed.pathname.replace(prefixes.rest, ""),
-        req.method,
-        req,
-        session,
-      );
+        return await rest.handler(
+          urlParsed,
+          urlParsed.pathname.replace(prefixes.rest, ""),
+          req.method,
+          req,
+          session,
+        );
       } catch {
         return new S400({ errors: [{ message: "Bad request" }] });
       }

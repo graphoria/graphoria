@@ -338,7 +338,8 @@ export const handleGraphQLRequestFactory = (
           // An anonymous operation is named by its root fields, exactly as the
           // slow query log names one: the document itself would carry inline
           // literals, which are caller data.
-          operation: operation.name ?? (operation.fields ?? []).map((field) => field.name).join(","),
+          operation:
+            operation.name ?? (operation.fields ?? []).map((field) => field.name).join(","),
           type: operation.operation,
           role: session?.role ?? "anonymous",
         };

@@ -5,11 +5,7 @@ import type { CronJob } from "../types/configuration";
 import type { TickContext } from "../types/zod/cron";
 import type { StartCronJobsReturn } from "./index";
 
-import {
-  configureMetrics,
-  createRegistry,
-  setMetricsRegistry,
-} from "../observability/metrics";
+import { configureMetrics, createRegistry, setMetricsRegistry } from "../observability/metrics";
 
 // `singletons/env` parses process.env at module load. Ensure required vars exist
 // before any transitive import touches it.
@@ -214,9 +210,7 @@ describe("startCronJobs — metrics", () => {
     await waitFor(() => registry.render().includes("graphoria_cron_runs_total"));
 
     const rendered = registry.render();
-    expect(rendered).toContain(
-      'graphoria_cron_runs_total{job="metrics_ok",outcome="success"} 1',
-    );
+    expect(rendered).toContain('graphoria_cron_runs_total{job="metrics_ok",outcome="success"} 1');
     expect(rendered).toContain('graphoria_cron_run_duration_seconds_count{job="metrics_ok"} 1');
   });
 

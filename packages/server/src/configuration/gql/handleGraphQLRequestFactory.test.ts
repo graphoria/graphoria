@@ -6,11 +6,7 @@ import type { AnalysisResult } from "../../analyzeQuery/types";
 import type { AuditEvent } from "../../logging/audit";
 import type { Auth } from "../../types/configuration";
 
-import {
-  configureMetrics,
-  createRegistry,
-  setMetricsRegistry,
-} from "../../observability/metrics";
+import { configureMetrics, createRegistry, setMetricsRegistry } from "../../observability/metrics";
 import { EntitySource } from "../../types/resolver";
 
 // `singletons/env` parses process.env at module load. Set required vars

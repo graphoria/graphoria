@@ -63,7 +63,9 @@ describe.skipIf(!integrationEnabled)("metrics endpoint", () => {
     expect(body).toContain(
       'graphoria_http_requests_total{method="POST",route="graphql",status="200"} 1',
     );
-    expect(body).toContain('graphoria_http_request_duration_seconds_count{method="POST",route="graphql"}');
+    expect(body).toContain(
+      'graphoria_http_request_duration_seconds_count{method="POST",route="graphql"}',
+    );
   });
 
   it("counts a REST request under the rest route", async () => {

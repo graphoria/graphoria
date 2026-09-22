@@ -7,9 +7,8 @@ process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
 const { createKafkaConnectionManager, startConsumer } = await import("./kafka");
-const { configureMetrics, createRegistry, setMetricsRegistry } = await import(
-  "../observability/metrics"
-);
+const { configureMetrics, createRegistry, setMetricsRegistry } =
+  await import("../observability/metrics");
 
 const minimalConfig = (): KafkaConfig =>
   ({

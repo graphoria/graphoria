@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import {
-  configureMetrics,
-  createRegistry,
-  setMetricsRegistry,
-} from "../observability/metrics";
+import { configureMetrics, createRegistry, setMetricsRegistry } from "../observability/metrics";
 import {
   createMemoryRateLimitStore,
   createRateLimiter,
@@ -414,9 +410,7 @@ describe("createRateLimiter — metrics", () => {
   it("counts a refusal against the caller's role", async () => {
     await limiterRefusing(false).check({ role: "user", sub: "42" }, "1.2.3.4");
 
-    expect(registry.render()).toContain(
-      'graphoria_rate_limit_rejections_total{role="user"} 1',
-    );
+    expect(registry.render()).toContain('graphoria_rate_limit_rejections_total{role="user"} 1');
   });
 
   it("counts an anonymous refusal under the anonymous role", async () => {
