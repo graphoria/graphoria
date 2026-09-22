@@ -428,54 +428,57 @@ const createGraphQLServer = async (env: Env) => {
     GET: withHttpTracing(
       "graphql",
       withHttpMetrics(
-      "graphql",
-      withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
-        try {
-          if (req.headers.get("upgrade") === "websocket") {
-            const success = server.upgrade(req, {
-              data: {},
-            });
-            return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+        "graphql",
+        withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
+          try {
+            if (req.headers.get("upgrade") === "websocket") {
+              const success = server.upgrade(req, {
+                data: {},
+              });
+              return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+            }
+            return new S404({ error: "Not Found" });
+          } catch (error) {
+            return new S400({ errors: [{ message: (error as Error)?.message }] });
           }
-          return new S404({ error: "Not Found" });
+        }),
+      ),
+    ),
+    POST: withHttpTracing(
+      "graphql",
+      withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
+        try {
+          const { gql, session, limit } = await getRoleHandlers(req, server);
+          if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+          const { query, variables } = await req.json();
+
+          if (gql.isIntrospectionQuery(query)) return new S200(gql.introspectionResult);
+
+          if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
+
+          const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
+
+          if (hasErrors)
+            return new S400({
+              errors: validationErrors.map((error) => ({
+                message: error.message,
+                locations: error.locations,
+              })),
+            });
+
+          return new S200(await gql.handler(query, variables, req, session));
         } catch (error) {
-          return new S400({ errors: [{ message: (error as Error)?.message }] });
+          const message = (error as Error)?.message;
+
+          if (message === "Invalid username or password") {
+            return new S401({ errors: [{ message }] });
+          } else {
+            return new S400({ errors: [{ message }] });
+          }
         }
       }),
     ),
-    ),
-    POST: withHttpTracing("graphql", withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
-      try {
-        const { gql, session, limit } = await getRoleHandlers(req, server);
-        if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
-
-        const { query, variables } = await req.json();
-
-        if (gql.isIntrospectionQuery(query)) return new S200(gql.introspectionResult);
-
-        if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
-
-        const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
-
-        if (hasErrors)
-          return new S400({
-            errors: validationErrors.map((error) => ({
-              message: error.message,
-              locations: error.locations,
-            })),
-          });
-
-        return new S200(await gql.handler(query, variables, req, session));
-      } catch (error) {
-        const message = (error as Error)?.message;
-
-        if (message === "Invalid username or password") {
-          return new S401({ errors: [{ message }] });
-        } else {
-          return new S400({ errors: [{ message }] });
-        }
-      }
-    })),
   };
 
   const aiEnabled = projectConfiguration.ai?.enabled ?? false;
@@ -535,9 +538,7 @@ const createGraphQLServer = async (env: Env) => {
   // REST API endpoint
   routes[`${prefixes.rest}/*`] = withHttpTracing(
     "rest",
-    withHttpMetrics(
-    "rest",
-    async (req: BunRequest, server: Bun.Server<unknown>) => {
+    withHttpMetrics("rest", async (req: BunRequest, server: Bun.Server<unknown>) => {
       if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
 
       try {
@@ -556,8 +557,7 @@ const createGraphQLServer = async (env: Env) => {
       } catch {
         return new S400({ errors: [{ message: "Bad request" }] });
       }
-    },
-  ),
+    }),
   );
 
   // Create WebSocket handler
