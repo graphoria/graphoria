@@ -53,6 +53,10 @@ export const EnvZod = z
     MAX_PAGE_SIZE: z.coerce.number().int().min(0).default(1000),
     QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).default(10000),
     SLOW_QUERY_MS: z.coerce.number().int().min(0).default(1000),
+    METRICS_ENABLED: z.stringbool().default(false),
+    METRICS_ENDPOINT: z.string().default("/metrics"),
+    METRICS_SECRET: secretList,
+    METRICS_MAX_OPERATION_LABELS: z.coerce.number().int().min(1).default(200),
     MAX_QUERY_COST: z.coerce.number().int().min(0).default(0),
     RATE_LIMIT_MAX: z.coerce.number().int().min(0).default(0),
     RATE_LIMIT_ANONYMOUS_MAX: z.coerce.number().int().min(0).default(0),
@@ -125,6 +129,12 @@ export const EnvZod = z
     },
     superadmin: {
       role: env.SUPERADMIN_ROLE,
+    },
+    metrics: {
+      enabled: env.METRICS_ENABLED,
+      endpoint: env.METRICS_ENDPOINT,
+      secrets: env.METRICS_SECRET,
+      maxOperationLabels: env.METRICS_MAX_OPERATION_LABELS,
     },
     console: {
       enabled: env.CONSOLE_ENABLED,

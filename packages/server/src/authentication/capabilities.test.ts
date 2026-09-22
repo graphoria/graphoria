@@ -8,6 +8,7 @@ const env = {
   admin: { secrets: ["admin-new", "admin-old"], header: "x-admin-secret" },
   console: { readSecrets: ["read"], writeSecrets: ["write"] },
   ai: { secrets: ["ai"], mcp: { secrets: ["mcp"] } },
+  metrics: { secrets: ["metrics"] },
 } as unknown as Env;
 
 const withWarnings = () => {
@@ -23,7 +24,7 @@ const withWarnings = () => {
 describe("createCapabilityAuthorizer", () => {
   it("grants every capability to the admin secret, as the superset", () => {
     const { authorize } = withWarnings();
-    for (const capability of ["console:read", "console:write", "ai", "mcp"] as const) {
+    for (const capability of ["console:read", "console:write", "ai", "mcp", "metrics"] as const) {
       expect(authorize("admin-new", capability)).toEqual({ superset: true });
     }
   });
@@ -54,6 +55,9 @@ describe("createCapabilityAuthorizer", () => {
     expect(authorize("ai", "console:write")).toBeNull();
     expect(authorize("mcp", "mcp")).toEqual({ superset: false });
     expect(authorize("mcp", "ai")).toBeNull();
+    expect(authorize("metrics", "metrics")).toEqual({ superset: false });
+    expect(authorize("metrics", "ai")).toBeNull();
+    expect(authorize("ai", "metrics")).toBeNull();
   });
 
   it("grants console read but not write to the read secret", () => {

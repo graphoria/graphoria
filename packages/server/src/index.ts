@@ -43,6 +43,8 @@ import { writeSchema } from "./utils/writeSchema";
 import { logger, configureLogging } from "./logging";
 import { actorFromSession, audit } from "./logging/audit";
 import { createHealthRoutes } from "./observability/health";
+import { configureMetrics, renderMetrics } from "./observability/metrics";
+import { createMetricsRoute } from "./observability/metricsRoute";
 
 // Re-export for consumers
 export { configureLogging };
@@ -81,6 +83,7 @@ const generatePrefixes = (options: Env) => ({
   openapi: options.prefix + options.openApiEndpoint,
   console: options.prefix + options.console.endpoint,
   health: options.prefix + "/health",
+  metrics: options.prefix + options.metrics.endpoint,
 });
 
 /**
@@ -103,6 +106,10 @@ const bootAnalyzedConfiguration = async (env: Env) => {
 
   setQueryTimeoutMs(env.queryTimeoutMs);
   setSlowQueryMs(env.slowQueryMs);
+  configureMetrics({
+    enabled: env.metrics.enabled,
+    maxOperationLabels: env.metrics.maxOperationLabels,
+  });
 
   if (env.queryTimeoutMs === 0) {
     logger("graphoria").warn(
@@ -371,6 +378,20 @@ const createGraphQLServer = async (env: Env) => {
       ],
     }),
   );
+
+  // Prometheus exposition, opt-in via METRICS_ENABLED. Gated: the series name
+  // operations, roles and databases.
+  if (env.metrics.enabled) {
+    Object.assign(
+      routes,
+      createMetricsRoute({
+        path: prefixes.metrics,
+        secretHeader: env.admin.header,
+        authorize: (candidate) => authorizeCapability(candidate, "metrics"),
+        render: renderMetrics,
+      }),
+    );
+  }
 
   // Console (admin UI + status APIs), opt-in via CONSOLE_ENABLED
   if (env.console.enabled) {
