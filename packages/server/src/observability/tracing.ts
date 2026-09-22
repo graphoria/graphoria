@@ -91,10 +91,16 @@ const ZERO_SPAN_ID = "0".repeat(16);
 
 const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
 
-const hex = (bytes: number) =>
-  Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
+// A span is minted per statement, so the id path is on the request's critical
+// path: a lookup table beats formatting each byte.
+const HEX = Array.from({ length: 256 }, (_, byte) => byte.toString(16).padStart(2, "0"));
+
+const hex = (bytes: number) => {
+  const buffer = crypto.getRandomValues(new Uint8Array(bytes));
+  let id = "";
+  for (let index = 0; index < bytes; index++) id += HEX[buffer[index]!];
+  return id;
+};
 
 // An all-zero id is invalid per the W3C spec and a collector rejects the span,
 // so the (vanishing) draw is re-rolled rather than exported.
