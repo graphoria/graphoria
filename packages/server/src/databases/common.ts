@@ -59,6 +59,18 @@ const resolveBooleanOperand = (
 
 export const generateTableAlias = (level: number): string => `t${level}`;
 
+/**
+ * A table whose alias is lexically in scope above the join being emitted, outermost
+ * first and including the immediate parent. Nested selections compile to correlated
+ * subqueries, so every enclosing alias stays referenceable — this is what lets a
+ * relationship condition name a column on an ancestor rather than a literal.
+ *
+ * Built fresh at each recursion rather than read off `aliasMap`: that map is flat,
+ * shared and written by two different level counters, so it cannot distinguish an
+ * enclosing scope from a sibling that merely ran earlier.
+ */
+export type QueryPathFrame = { table: string; alias: string };
+
 const mappingDbTypeCharVar: Record<DatabaseType, string> = {
   pg: "$",
   mysql: "$",
@@ -76,6 +88,7 @@ export const buildConditions = (
   aliasMap: { [alias: string]: string },
   /** Query name of the table being filtered — resolves its virtual columns. */
   tableName?: string,
+  ancestors: readonly QueryPathFrame[] = [],
 ): string => {
   if (!whereArgs) return "";
 
@@ -135,6 +148,13 @@ export const buildConditions = (
 
       const parentTableName = aliasMap[tableAlias];
 
+      // An EXISTS sits inside the WHERE of the block that binds `tableAlias`, so that
+      // block encloses it just as a selection subquery would. Extending the scope here
+      // is what makes a relation filter emit the same predicate as the selection form.
+      const scope = parentTableName
+        ? [...ancestors, { table: parentTableName, alias: tableAlias }]
+        : ancestors;
+
       const joinCondition = findJoinCondition(
         entities,
         parentTableName,
@@ -142,6 +162,7 @@ export const buildConditions = (
         tableAlias,
         nestedTableAlias,
         dbType,
+        scope,
       );
 
       // Record this relation's alias→table so a deeper nested where (3+ levels) can resolve
@@ -159,6 +180,7 @@ export const buildConditions = (
         level + 1,
         aliasMap,
         fieldName,
+        scope,
       );
 
       const existsClause = `EXISTS (
@@ -324,6 +346,47 @@ const columnCollation = (
   return column && "collation" in column ? column.collation : undefined;
 };
 
+// Resolves an `ancestor` condition to a qualified column on an enclosing alias.
+// Matches on entity identity rather than on the frame's key, because a frame may be
+// keyed by a suffixed relationship name (`app_users_ref`) and because resolverName
+// depends on the database's configurable `fieldNaming` — neither is comparable to
+// the schema/name pair the config declares. Nearest enclosing match wins, so a
+// self-referential chain binds to the closest occurrence.
+const ancestorOperand = (
+  entities: MergedEntities,
+  ancestors: readonly QueryPathFrame[],
+  ancestor: { schema: string; name: string; column: string },
+  leftTable: string,
+  leftColumn: string,
+  dbType: DatabaseType,
+): { sql: string; collate: string } => {
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const frame = ancestors[i]!;
+    const entity = entities.queriesMap[frame.table];
+
+    if (entity?.schema !== ancestor.schema || entity.name !== ancestor.name) continue;
+
+    return {
+      sql: `${frame.alias}.${wrapIdentifierFp(dbType)(ancestor.column)}`,
+      // Unlike a literal comparison, this equates two character columns that may
+      // carry different collations — the case collateSuffix exists for.
+      collate: collateSuffix(
+        dbType,
+        columnCollation(entities, leftTable, leftColumn),
+        columnCollation(entities, frame.table, ancestor.column),
+      ),
+    };
+  }
+
+  const inScope = ancestors.map((a) => a.table).join(" > ");
+
+  throw new Error(
+    `Relationship condition references ancestor table "${ancestor.schema}.${ancestor.name}", which is not in this query's path. ` +
+      `In scope here: ${inScope || "(none)"}. ` +
+      `Nest this selection under ${ancestor.schema}.${ancestor.name}, or drop the "ancestor" condition.`,
+  );
+};
+
 const pairsToAnd = (
   pairs: {
     parentAlias: string;
@@ -377,6 +440,7 @@ const renderCondition = (
   column: string,
   operator: string,
   value: string | number | boolean | undefined,
+  ancestor?: { sql: string; collate: string },
 ): string => {
   const target = `${alias}.${wrapIdentifierFp(dbType)(column)}`;
 
@@ -384,7 +448,13 @@ const renderCondition = (
   if (operator === "is_not_null") return `${target} IS NOT NULL`;
 
   const sqlOperator = RELATIONSHIP_CONDITION_SQL_OPERATORS[operator];
-  if (!sqlOperator || value === undefined) {
+  if (!sqlOperator) {
+    throw new Error(`Invalid relationship condition operator "${operator}"`);
+  }
+
+  if (ancestor) return `${target} ${sqlOperator} ${ancestor.sql}${ancestor.collate}`;
+
+  if (value === undefined) {
     throw new Error(`Invalid relationship condition operator "${operator}"`);
   }
 
@@ -396,16 +466,25 @@ const renderCondition = (
 // toAlias). The from/to aliases flip between forward and reverse joins.
 const conditionsToAnd = (
   conditions: readonly RelationshipCondition[] | undefined,
-  fromAlias: string,
-  toAlias: string,
+  from: { alias: string; table: string },
+  to: { alias: string; table: string },
   dbType: DatabaseType,
+  entities: MergedEntities,
+  ancestors: readonly QueryPathFrame[],
 ): string =>
   (conditions ?? [])
-    .map((c) =>
-      c.source !== undefined
-        ? renderCondition(dbType, fromAlias, c.source, c.operator ?? "eq", c.value)
-        : renderCondition(dbType, toAlias, c.target!, c.operator ?? "eq", c.value),
-    )
+    .map((c) => {
+      const side = c.source !== undefined ? from : to;
+      const column = (c.source ?? c.target)!;
+
+      // The from/to flip above picks the left operand only; an ancestor is the right
+      // operand and resolves by table identity, so it is direction-independent.
+      const ancestor = c.ancestor
+        ? ancestorOperand(entities, ancestors, c.ancestor, side.table, column, dbType)
+        : undefined;
+
+      return renderCondition(dbType, side.alias, column, c.operator ?? "eq", c.value, ancestor);
+    })
     .join(" AND ");
 
 const joinParts = (...parts: string[]): string => parts.filter(Boolean).join(" AND ");
@@ -417,6 +496,7 @@ export const findJoinCondition = (
   parentAlias: string,
   childAlias: string,
   dbType: DatabaseType,
+  ancestors: readonly QueryPathFrame[] = [],
 ): string => {
   const relations = entities.getForeignKeysBetweenTables(parentTableName, childTableName);
 
@@ -436,7 +516,14 @@ export const findJoinCondition = (
           })),
           dbType,
         ),
-        conditionsToAnd(relation.conditions, parentAlias, childAlias, dbType),
+        conditionsToAnd(
+          relation.conditions,
+          { alias: parentAlias, table: parentTableName },
+          { alias: childAlias, table: childTableName },
+          dbType,
+          entities,
+          ancestors,
+        ),
       ),
     ) ?? []),
     ...(relations.relationshipsReversed?.map((relation) =>
@@ -452,7 +539,14 @@ export const findJoinCondition = (
           })),
           dbType,
         ),
-        conditionsToAnd(relation.conditions, childAlias, parentAlias, dbType),
+        conditionsToAnd(
+          relation.conditions,
+          { alias: childAlias, table: childTableName },
+          { alias: parentAlias, table: parentTableName },
+          dbType,
+          entities,
+          ancestors,
+        ),
       ),
     ) ?? []),
   ].join(" AND ");
@@ -470,6 +564,7 @@ export const buildWhereClauseFp =
     parentTableAlias: string | null,
     level: number,
     aliasMap: { [alias: string]: string },
+    ancestors: readonly QueryPathFrame[] = [],
   ): string => {
     const whereConditions: string[] = [
       buildConditions(
@@ -482,7 +577,10 @@ export const buildWhereClauseFp =
         level + 1,
         aliasMap,
         field.name ?? aliasMap[tableAlias],
+        ancestors,
       ),
+      // `ancestors` already ends with this join's parent, and the child is the field
+      // being emitted, so the scope needs no splicing here.
       parentTableName && parentTableAlias
         ? findJoinCondition(
             entities,
@@ -491,6 +589,7 @@ export const buildWhereClauseFp =
             parentTableAlias,
             tableAlias,
             dbType,
+            ancestors,
           )
         : null,
     ].filter(Boolean) as string[];

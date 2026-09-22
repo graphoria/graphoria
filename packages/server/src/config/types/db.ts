@@ -51,14 +51,28 @@ export const RelationshipConditionZod = z
     operator: z.enum(RELATIONSHIP_CONDITION_OPERATORS).optional().default("eq"),
     /** Literal compared against the column (omit for `is_null` / `is_not_null`) */
     value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+    /**
+     * Column on an ancestor table, compared against this condition's column
+     * instead of a literal. The ancestor must sit above the relationship in the
+     * query path; the nearest match wins, and a query that does not traverse it
+     * is rejected rather than joined without the predicate.
+     */
+    ancestor: z
+      .strictObject({ schema: z.string(), name: z.string(), column: z.string() })
+      .optional(),
   })
   .refine((cond) => (cond.source === undefined) !== (cond.target === undefined), {
     message: 'Relationship condition must set exactly one of "source" or "target"',
   })
   .refine(
     (cond) =>
-      cond.operator === "is_null" || cond.operator === "is_not_null" || cond.value !== undefined,
-    { message: 'Relationship condition requires a "value" unless operator is is_null/is_not_null' },
+      cond.operator === "is_null" || cond.operator === "is_not_null"
+        ? cond.ancestor === undefined
+        : (cond.value === undefined) !== (cond.ancestor === undefined),
+    {
+      message:
+        'Relationship condition requires exactly one of "value" or "ancestor", and neither operand may be an "ancestor" when operator is is_null/is_not_null',
+    },
   );
 
 export type RelationshipCondition = z.input<typeof RelationshipConditionZod>;

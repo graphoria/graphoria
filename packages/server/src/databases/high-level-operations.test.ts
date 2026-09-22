@@ -738,5 +738,91 @@ describe("getDatabasesStructure", () => {
 
       expect(run).rejects.toThrow("Condition column ghost not found in table posts");
     });
+
+    const withAncestor = (ancestor: unknown, extraTables: EnrichedTable[] = []) =>
+      getTables(
+        [
+          table("public", "posts", ["id", "author_id"]),
+          table("public", "users", ["id", "org_id"]),
+          table("public", "organizations", ["id", "Tenant_Id"]),
+          ...extraTables,
+        ],
+        dbWith({
+          public_posts: override({
+            relationships: [
+              {
+                schema: "public",
+                name: "users",
+                columns: [{ source: "author_id", target: "id" }],
+                conditions: [{ target: "org_id", operator: "eq", ancestor }],
+              },
+            ],
+          }),
+        }),
+      );
+
+    it("resolves an ancestor table and column to their introspected casing", async () => {
+      const out = await withAncestor({
+        schema: "PUBLIC",
+        name: "Organizations",
+        column: "tenant_id",
+      });
+
+      const posts = out.find((t) => t.resolverName === "public_posts")!;
+      expect(posts.relationships[0]!.conditions).toEqual([
+        {
+          target: "org_id",
+          operator: "eq",
+          ancestor: { schema: "public", name: "organizations", column: "Tenant_Id" },
+        },
+      ]);
+    });
+
+    it("throws when an ancestor condition references a missing table", async () => {
+      expect(withAncestor({ schema: "public", name: "ghost", column: "id" })).rejects.toThrow(
+        "Ancestor table public_ghost not found in database main",
+      );
+    });
+
+    it("throws when an ancestor condition references a missing column", async () => {
+      expect(
+        withAncestor({ schema: "public", name: "organizations", column: "nope" }),
+      ).rejects.toThrow("Ancestor column nope not found in table organizations");
+    });
+
+    it("throws when an ancestor condition names an excluded table", async () => {
+      const run = getTables(
+        [
+          table("public", "posts", ["id", "author_id"]),
+          table("public", "users", ["id", "org_id"]),
+          table("public", "organizations", ["id", "tenant_id"]),
+        ],
+        dbWith(
+          {
+            public_posts: override({
+              relationships: [
+                {
+                  schema: "public",
+                  name: "users",
+                  columns: [{ source: "author_id", target: "id" }],
+                  conditions: [
+                    {
+                      target: "org_id",
+                      operator: "eq" as const,
+                      ancestor: { schema: "public", name: "organizations", column: "tenant_id" },
+                    },
+                  ],
+                },
+              ],
+            }),
+          },
+          ["public_organizations"],
+        ),
+      );
+
+      expect(run).rejects.toThrow(
+        "Ancestor table public_organizations is in excludedTables and can never be in a query path",
+      );
+    });
   });
 });

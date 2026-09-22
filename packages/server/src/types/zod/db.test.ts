@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { DatabaseConnectionZod, TableColumnZod } from "./db";
+import { TableRelationshipZod } from "../../config/types/db";
 
 describe("TableColumnZod", () => {
   it("defaults description to null when absent", () => {
@@ -87,5 +88,53 @@ describe("DatabaseConnectionZod schema overrides", () => {
     const onConnect = () => {};
     const parsed = DatabaseConnectionZod.parse({ ...base, onConnect });
     expect(parsed.onConnect).toBe(onConnect);
+  });
+});
+
+// Asserted against TableRelationshipZod rather than through DatabaseConnectionZod:
+// DatabaseSchemaConfigZod.database applies `.catch(...)` per table override, which
+// swallows any validation error inside one and substitutes empty defaults.
+describe("TableRelationshipZod ancestor operand", () => {
+  const ancestor = { schema: "public", name: "a", column: "third_col" };
+
+  const rel = (condition: unknown) => ({
+    schema: "public",
+    name: "c",
+    columns: [{ source: "second_col", target: "second_col" }],
+    conditions: [condition],
+  });
+
+  it("accepts an ancestor in place of a value and defaults the operator", () => {
+    const parsed = TableRelationshipZod.parse(rel({ target: "third_col", ancestor }));
+    expect(parsed.conditions![0]).toEqual({ target: "third_col", operator: "eq", ancestor });
+  });
+
+  it("rejects a condition carrying both a value and an ancestor", () => {
+    expect(() =>
+      TableRelationshipZod.parse(rel({ target: "third_col", value: "x", ancestor })),
+    ).toThrow();
+  });
+
+  it("rejects a condition carrying neither a value nor an ancestor", () => {
+    expect(() => TableRelationshipZod.parse(rel({ target: "third_col" }))).toThrow();
+  });
+
+  it("rejects an ancestor on a null-check operator, which would silently ignore it", () => {
+    expect(() =>
+      TableRelationshipZod.parse(rel({ target: "third_col", operator: "is_null", ancestor })),
+    ).toThrow();
+  });
+
+  it("still accepts a null-check operator with no operand", () => {
+    const parsed = TableRelationshipZod.parse(rel({ target: "third_col", operator: "is_null" }));
+    expect(parsed.conditions![0]).toEqual({ target: "third_col", operator: "is_null" });
+  });
+
+  it("rejects an ancestor missing a column", () => {
+    expect(() =>
+      TableRelationshipZod.parse(
+        rel({ target: "third_col", ancestor: { schema: "public", name: "a" } }),
+      ),
+    ).toThrow();
   });
 });
