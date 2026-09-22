@@ -185,7 +185,8 @@ counted, since that goes through a publisher.
 
 One trace per request, from the HTTP handler down to the statements the database ran, exported over
 OTLP/HTTP to any OpenTelemetry collector. It ships **off**: set `TRACING_ENABLED=true` to turn it
-on. While off, every span site pays one boolean and the async context is never entered.
+on. While off, a span site costs about 80ns — the attributes its caller builds, then one boolean —
+and the async context is never entered.
 
 Everything but the gate reads the standard OpenTelemetry variable names, so a cluster whose operator
 already injects them into its pods sets one graphoria-specific variable and inherits the rest.
@@ -257,10 +258,16 @@ consulted, so an upstream service's decision holds for the whole trace.
 
 ### Cost
 
-A span costs roughly 2.8µs to start and end, and 2.3µs when it also enters the async context,
-against 1–50ms for a database round trip. While `TRACING_ENABLED` is off a span site costs about
-13ns and allocates nothing. `tracing.perf.test.ts` holds those bounds several times loose, so the
-suite catches a change that makes tracing expensive without turning red on a busy CI runner.
+A span costs roughly 3µs to start and end, and about the same again when it enters the async
+context, against 1–50ms for a database round trip.
+
+While `TRACING_ENABLED` is off a span site costs about 80ns, and that cost is the caller's, not the
+tracer's: the attributes are an argument expression, so they are built and allocated before
+`startSpan` is entered and can consult the gate. The gate check itself is a boolean. Measuring
+`startSpan(name)` with no attributes reports a few nanoseconds, which is the optimizer dropping an
+allocation nothing consumes rather than what a span site costs — `tracing.perf.test.ts` bounds the
+call-site shape for that reason. Its bounds sit several times above the measurements, so the suite
+catches a change that makes tracing expensive without turning red on a busy CI runner.
 
 Spans are batched and posted in the background: at most 512 per export, every 5 seconds, and at most
 2048 queued. Past that ceiling the **oldest** spans are dropped and a `warn` line says how many — the
