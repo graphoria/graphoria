@@ -48,6 +48,44 @@ export const getDatabasesStructure = async (
     // do-not-serve list, so a name spelled in the wrong case served the table.
     const excluded = new Set((db.schema?.excludedTables ?? []).map((name) => name.toLowerCase()));
 
+    // Normalising the ancestor to introspected casing here is what lets the query
+    // builder match it with a plain === against the entity it resolves at runtime.
+    // Resolution is per-database by construction, so a cross-database ancestor
+    // cannot resolve — which is correct, nothing joins across connections.
+    const resolveAncestor = (ancestor: { schema: string; name: string; column: string }) => {
+      const ancestorTable = tables.find(
+        (a) =>
+          `${ancestor.schema}_${ancestor.name}`.toLowerCase() ===
+          `${a.schema}_${a.name}`.toLowerCase(),
+      );
+
+      if (!ancestorTable) {
+        throw new Error(
+          `Ancestor table ${ancestor.schema}_${ancestor.name} not found in database ${db.name}`,
+        );
+      }
+
+      // An excluded table can never appear in a query path, so the condition could
+      // only ever throw at request time. Fail at boot instead.
+      if (excluded.has(ancestorTable.schemaName.toLowerCase())) {
+        throw new Error(
+          `Ancestor table ${ancestor.schema}_${ancestor.name} is in excludedTables and can never be in a query path`,
+        );
+      }
+
+      const column = ancestorTable.columns.find(
+        (c) => c.name.toLowerCase() === ancestor.column.toLowerCase(),
+      );
+
+      if (!column) {
+        throw new Error(
+          `Ancestor column ${ancestor.column} not found in table ${ancestorTable.name}`,
+        );
+      }
+
+      return { schema: ancestorTable.schema, name: ancestorTable.name, column: column.name };
+    };
+
     tableNamesByDatabase[db.name] = tables.map((t) => t.schemaName);
 
     const tablesToAdd = tables
@@ -117,6 +155,10 @@ export const getDatabasesStructure = async (
                 };
               }),
               conditions: (fk.conditions ?? []).map((cond) => {
+                const ancestor = cond.ancestor
+                  ? { ancestor: resolveAncestor(cond.ancestor) }
+                  : undefined;
+
                 if (cond.source !== undefined) {
                   const sourceColumn = t.columns.find(
                     (col) => col.name.toLowerCase() === cond.source!.toLowerCase(),
@@ -126,7 +168,7 @@ export const getDatabasesStructure = async (
                     throw new Error(`Condition column ${cond.source} not found in table ${t.name}`);
                   }
 
-                  return { ...cond, source: sourceColumn.name };
+                  return { ...cond, ...ancestor, source: sourceColumn.name };
                 }
 
                 const targetColumn = toTable.columns.find(
@@ -139,7 +181,7 @@ export const getDatabasesStructure = async (
                   );
                 }
 
-                return { ...cond, target: targetColumn.name };
+                return { ...cond, ...ancestor, target: targetColumn.name };
               }),
             };
           });

@@ -4,7 +4,7 @@ import type {
   VariableDefinition,
 } from "../../../../analyzeQuery/types";
 import type { MergedEntities } from "../../../../configuration/getSchemas/mergeEntities";
-import type { GroupByInfo, PageLimits } from "../../../common";
+import type { GroupByInfo, PageLimits, QueryPathFrame } from "../../../common";
 
 import {
   buildOrderByClausePG,
@@ -242,6 +242,7 @@ export const buildSQLForField = (
   level: number,
   aliasMap: { [alias: string]: string },
   pageLimits: PageLimits | null,
+  ancestors: readonly QueryPathFrame[] = [],
 ): string => {
   const tableAlias = generateTableAlias(level);
 
@@ -267,6 +268,7 @@ export const buildSQLForField = (
     parentTableAlias,
     level,
     aliasMap,
+    ancestors,
   );
 
   // Check if this is a GROUP BY query
@@ -307,6 +309,7 @@ export const buildSQLForField = (
         level,
         aliasMap,
         pageLimits,
+        [...ancestors, { table: resolverName, alias: tableAlias }],
       ),
     ([name, selector]) => `'${name}', ${selector}`,
   );

@@ -1266,3 +1266,197 @@ describe("filterBasedOnDirective (@when, @skip, @include)", () => {
     });
   });
 });
+
+describe("findJoinCondition ancestor conditions", () => {
+  // Frames are keyed the way the query builder keys them (by resolver name), and the
+  // condition names the table by schema/name — identity matching bridges the two.
+  const ancestorEntities = (
+    relationships: unknown[] = [],
+    relationshipsReversed: unknown[] = [],
+    queriesMap: Record<string, unknown> = {},
+  ): MergedEntities =>
+    stubEntities({
+      queriesMap: {
+        parent: { schema: "schema", name: "B", columns: [] },
+        child: { schema: "schema", name: "C", columns: [] },
+        root: { schema: "schema", name: "A", columns: [] },
+        ...queriesMap,
+      } as unknown as MergedEntities["queriesMap"],
+      getForeignKeysBetweenTables: (() => ({
+        relationships,
+        relationshipsReversed,
+      })) as unknown as MergedEntities["getForeignKeysBetweenTables"],
+    });
+
+  const relation = (conditions: unknown[], columns?: unknown[]) => ({
+    columns: columns ?? [{ source: "second_col", target: "second_col" }],
+    conditions,
+  });
+
+  const A = { schema: "schema", name: "A", column: "third_col" };
+  const scope = [
+    { table: "root", alias: "t1" },
+    { table: "parent", alias: "t2" },
+  ];
+
+  it("compares a target column against an ancestor column", () => {
+    const entities = ancestorEntities([relation([{ target: "third_col", ancestor: A }])]);
+    expect(findJoinCondition(entities, "parent", "child", "t2", "t3", "pg", scope)).toBe(
+      `t2."second_col" = t3."second_col" AND t3."third_col" = t1."third_col"`,
+    );
+  });
+
+  it("compares a source column against an ancestor column", () => {
+    const entities = ancestorEntities([relation([{ source: "owner_id", ancestor: A }])]);
+    expect(findJoinCondition(entities, "parent", "child", "t2", "t3", "pg", scope)).toBe(
+      `t2."second_col" = t3."second_col" AND t2."owner_id" = t1."third_col"`,
+    );
+  });
+
+  it("flips only the left operand on a reversed join, not the ancestor", () => {
+    const entities = ancestorEntities([], [relation([{ target: "third_col", ancestor: A }])]);
+    expect(findJoinCondition(entities, "parent", "child", "t2", "t3", "pg", scope)).toBe(
+      `t2."second_col" = t3."second_col" AND t2."third_col" = t1."third_col"`,
+    );
+  });
+
+  it("binds to the nearest enclosing frame when a table repeats", () => {
+    const entities = ancestorEntities([relation([{ target: "third_col", ancestor: A }])]);
+    const selfReferential = [
+      { table: "root", alias: "t1" },
+      { table: "root", alias: "t2" },
+      { table: "parent", alias: "t3" },
+    ];
+    expect(findJoinCondition(entities, "parent", "child", "t3", "t4", "pg", selfReferential)).toBe(
+      `t3."second_col" = t4."second_col" AND t4."third_col" = t2."third_col"`,
+    );
+  });
+
+  it("resolves the immediate parent as an ancestor", () => {
+    const entities = ancestorEntities([
+      relation([
+        { target: "third_col", ancestor: { schema: "schema", name: "B", column: "b_col" } },
+      ]),
+    ]);
+    expect(findJoinCondition(entities, "parent", "child", "t2", "t3", "pg", scope)).toBe(
+      `t2."second_col" = t3."second_col" AND t3."third_col" = t2."b_col"`,
+    );
+  });
+
+  it("applies a non-eq operator to an ancestor comparison", () => {
+    const entities = ancestorEntities([
+      relation([{ target: "third_col", operator: "gte", ancestor: A }]),
+    ]);
+    expect(findJoinCondition(entities, "parent", "child", "t2", "t3", "pg", scope)).toBe(
+      `t2."second_col" = t3."second_col" AND t3."third_col" >= t1."third_col"`,
+    );
+  });
+
+  it("ANDs a composite key, a static condition and an ancestor condition in order", () => {
+    const entities = ancestorEntities([
+      relation(
+        [
+          { target: "Type", value: "editorial" },
+          { target: "third_col", ancestor: A },
+        ],
+        [
+          { source: "a", target: "x" },
+          { source: "b", target: "y" },
+        ],
+      ),
+    ]);
+    expect(findJoinCondition(entities, "parent", "child", "t2", "t3", "pg", scope)).toBe(
+      `t2."a" = t3."x" AND t2."b" = t3."y" AND t3."Type" = 'editorial' AND t3."third_col" = t1."third_col"`,
+    );
+  });
+
+  it("throws when the ancestor is absent from the query path", () => {
+    const entities = ancestorEntities([relation([{ target: "third_col", ancestor: A }])]);
+    expect(() =>
+      findJoinCondition(entities, "parent", "child", "t2", "t3", "pg", [
+        { table: "parent", alias: "t2" },
+      ]),
+    ).toThrow(
+      /ancestor table "schema\.A", which is not in this query's path.*In scope here: parent/s,
+    );
+  });
+
+  it("names the empty scope when nothing encloses the join", () => {
+    const entities = ancestorEntities([relation([{ target: "third_col", ancestor: A }])]);
+    expect(() => findJoinCondition(entities, "parent", "child", "t2", "t3", "pg")).toThrow(
+      /In scope here: \(none\)/,
+    );
+  });
+
+  it("appends COLLATE when the two compared columns differ in collation", () => {
+    const entities = ancestorEntities([relation([{ target: "third_col", ancestor: A }])], [], {
+      child: {
+        schema: "schema",
+        name: "C",
+        columns: [{ name: "third_col", collation: "utf8mb4_general_ci" }],
+      },
+      root: {
+        schema: "schema",
+        name: "A",
+        columns: [{ name: "third_col", collation: "utf8mb4_unicode_ci" }],
+      },
+    });
+    expect(findJoinCondition(entities, "parent", "child", "t2", "t3", "mysql", scope)).toBe(
+      "t2.`second_col` = t3.`second_col` AND t3.`third_col` = t1.`third_col` COLLATE utf8mb4_general_ci",
+    );
+  });
+
+  it("omits COLLATE when the collations match", () => {
+    const entities = ancestorEntities([relation([{ target: "third_col", ancestor: A }])], [], {
+      child: {
+        schema: "schema",
+        name: "C",
+        columns: [{ name: "third_col", collation: "utf8mb4_general_ci" }],
+      },
+      root: {
+        schema: "schema",
+        name: "A",
+        columns: [{ name: "third_col", collation: "utf8mb4_general_ci" }],
+      },
+    });
+    expect(findJoinCondition(entities, "parent", "child", "t2", "t3", "mysql", scope)).toBe(
+      "t2.`second_col` = t3.`second_col` AND t3.`third_col` = t1.`third_col`",
+    );
+  });
+
+  it("forwards the query path from buildWhereClauseFp into the join predicate", () => {
+    const entities = ancestorEntities([relation([{ target: "third_col", ancestor: A }])]);
+    expect(
+      buildWhereClauseFp("pg")(
+        entities,
+        vars(),
+        {},
+        field({}, "child"),
+        "t3",
+        "parent",
+        "t2",
+        0,
+        {},
+        scope,
+      ),
+    ).toBe(`WHERE t2."second_col" = t3."second_col" AND t3."third_col" = t1."third_col"`);
+  });
+
+  it("emits the same ancestor predicate inside a relation filter's EXISTS", () => {
+    const entities = ancestorEntities([relation([{ target: "third_col", ancestor: A }])]);
+    const sql = buildWhereClauseFp("pg")(
+      entities,
+      vars("v"),
+      { v: 1 },
+      field({ where: { child: { id: { eq: "$v" } } } }, "parent"),
+      "t2",
+      null,
+      null,
+      2,
+      { t2: "parent" },
+      [{ table: "root", alias: "t1" }],
+    );
+    expect(sql).toContain(`t2."second_col" = t3."second_col"`);
+    expect(sql).toContain(`t3."third_col" = t1."third_col"`);
+  });
+});

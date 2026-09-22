@@ -392,6 +392,9 @@ type RelationshipCondition = {
   target?: string;
   operator?: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "like" | "is_null" | "is_not_null"; // default "eq"
   value?: string | number | boolean;
+  // Compare against a column on an ancestor table instead of a literal.
+  // Exactly one of `value` / `ancestor`; neither for is_null / is_not_null.
+  ancestor?: { schema: string; name: string; column: string };
 };
 ```
 
@@ -432,6 +435,48 @@ schema: {
 ```
 
 Values are rendered as SQL literals (strings quoted and escaped, booleans emitted per dialect), so no user input is bound here — keep `value` fixed in config.
+
+#### Ancestor join conditions
+
+Some joins are only correct when constrained by a column from further up the query path. Given `A → B → C`, where the `B → C` match also has to agree on a column of `A`:
+
+```sql
+SELECT * FROM schema.A a
+JOIN schema.B b ON a.first_col = b.first_col
+JOIN schema.C c ON b.second_col = c.second_col AND a.third_col = c.third_col
+```
+
+Declare the extra predicate with `ancestor` in place of `value`:
+
+```typescript
+schema: {
+  database: {
+    schema_B: {
+      relationships: [
+        {
+          schema: "schema",
+          name: "C",
+          columns: [{ source: "second_col", target: "second_col" }],
+          // ON B.second_col = C.second_col AND C.third_col = A.third_col
+          conditions: [
+            { target: "third_col", ancestor: { schema: "schema", name: "A", column: "third_col" } },
+          ],
+        },
+      ],
+    },
+  },
+}
+```
+
+Nested selections compile to correlated subqueries, so every enclosing table's alias stays in scope — that is what lets the predicate reach past the immediate parent. `ancestor` works with every comparison operator, and composite `columns` arrays already AND together, so both can be combined.
+
+Rules worth knowing before reaching for this:
+
+- **The ancestor must be in the query path.** `A { B { C } }` resolves; `B { C }` on its own is rejected with an error naming the missing table. The predicate is never silently dropped, because dropping it would widen the result set rather than fail.
+- **Nearest match wins** when the same table appears more than once in the path, which is what you want for self-referential chains.
+- **Reverse traversal usually will not resolve.** Graphoria exposes every relationship in both directions, but the reverse field (`C { B }`) only has `A` above it if the query happens to nest it that way. Expect an ancestor-bearing relationship to be one-directional in practice.
+- **Put `ancestor` on the existing relationship** if a real foreign key already links the two tables. A second declaration for the same pair emits a duplicate field and fails at boot.
+- The join stays a correlated subquery, not the inner join in the SQL above: an `A` row whose `B`/`C` do not match is still returned, with an empty `C`.
 
 ---
 
