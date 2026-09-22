@@ -306,3 +306,49 @@ describe("EnvZod metrics", () => {
     expect(() => EnvZod.parse({ ...baseEnv, METRICS_MAX_OPERATION_LABELS: "0" })).toThrow();
   });
 });
+
+describe("EnvZod tracing", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("ships off, pointed at a local collector, sampling everything", () => {
+    const env = EnvZod.parse(baseEnv);
+
+    expect(env.tracing).toEqual({
+      enabled: false,
+      endpoint: "http://localhost:4318",
+      headers: "",
+      serviceName: "graphoria",
+      sampleRatio: 1,
+    });
+  });
+
+  it("reads the gate and the standard OTEL variables around it", () => {
+    const env = EnvZod.parse({
+      ...baseEnv,
+      TRACING_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.internal:4318",
+      OTEL_EXPORTER_OTLP_HEADERS: "api-key=abc",
+      OTEL_SERVICE_NAME: "graphoria-eu",
+      OTEL_TRACES_SAMPLER_ARG: "0.25",
+    });
+
+    expect(env.tracing).toEqual({
+      enabled: true,
+      endpoint: "https://collector.internal:4318",
+      headers: "api-key=abc",
+      serviceName: "graphoria-eu",
+      sampleRatio: 0.25,
+    });
+  });
+
+  it("keeps TRACING_ENABLED=false off rather than coercing it on", () => {
+    expect(EnvZod.parse({ ...baseEnv, TRACING_ENABLED: "false" }).tracing.enabled).toBe(false);
+  });
+
+  it.each(["-0.1", "1.5"])("rejects a sampler ratio outside 0..1 (%s)", (ratio) => {
+    expect(() => EnvZod.parse({ ...baseEnv, OTEL_TRACES_SAMPLER_ARG: ratio })).toThrow();
+  });
+});

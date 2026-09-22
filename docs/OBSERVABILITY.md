@@ -1,8 +1,8 @@
 # Observability
 
 What a running Graphoria server tells you about itself: health endpoints for an orchestrator's
-probes, a log line for every statement that runs too long, and a Prometheus exposition of its
-request, cron and queue counters. The [audit log](../README.md#audit-log)
+probes, a log line for every statement that runs too long, a Prometheus exposition of its request,
+cron and queue counters, and an OTLP trace per request. The [audit log](../README.md#audit-log)
 records privileged actions, and the [admin console](./CONSOLE.md) has a status page for a human.
 
 ## Health endpoints
@@ -180,3 +180,116 @@ subscription is validated through the same path, so a rejected one is counted in
 handler and are not counted or timed. The websocket upgrade itself answers no request, so it is not
 in `graphoria_http_requests_total` either. What a subscription publishes through a broker is
 counted, since that goes through a publisher.
+
+## Tracing
+
+One trace per request, from the HTTP handler down to the statements the database ran, exported over
+OTLP/HTTP to any OpenTelemetry collector. It ships **off**: set `TRACING_ENABLED=true` to turn it
+on. While off, a span site costs about 80ns — the attributes its caller builds, then one boolean —
+and the async context is never entered.
+
+Everything but the gate reads the standard OpenTelemetry variable names, so a cluster whose operator
+already injects them into its pods sets one graphoria-specific variable and inherits the rest.
+
+| Variable                      | Default                 | Means                                                                   |
+| ----------------------------- | ----------------------- | ----------------------------------------------------------------------- |
+| `TRACING_ENABLED`             | `false`                 | The gate                                                                |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Base URL; spans are posted to `${endpoint}/v1/traces` as OTLP/HTTP JSON |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | _(empty)_               | `k=v,k2=v2`, sent on every export — an API key for a hosted collector   |
+| `OTEL_SERVICE_NAME`           | `graphoria`             | The OTLP resource's `service.name`                                      |
+| `OTEL_TRACES_SAMPLER_ARG`     | `1`                     | Head-sampling ratio, `0`–`1`. See [Sampling](#sampling)                 |
+
+The resource also carries `service.version`, taken from the running package's version, so a trace
+names the build it came from.
+
+There is no new runtime dependency: the ids, the W3C propagation and the OTLP payload are written by
+hand, the same way the Prometheus exposition above is.
+
+### What is traced
+
+| Span                      | Kind     | Opened by                            | Attributes                                                                                       |
+| ------------------------- | -------- | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `<METHOD> <route>`        | server   | The GraphQL and REST routes          | `http.request.method`, `http.route`, `url.scheme`, `server.address`, `http.response.status_code` |
+| `graphoria.analyze`       | internal | The GraphQL handler                  | `graphoria.analysis.cached`                                                                      |
+| `<type> <operation>`      | internal | The GraphQL handler                  | `graphql.operation.name`, `graphql.operation.type`, `graphoria.role`                             |
+| `db.query`                | client   | Every statement through the executor | `db.system`, `db.name`, `db.statement`, plus the operation's name, type and role when it has one |
+| `db.procedure`            | client   | A stored-procedure call              | `db.system`, `db.name`, `db.operation` — the dotted procedure name, and no statement             |
+| `subscription.poll`       | internal | Each poll of a database subscription | `graphql.operation.name`, `graphql.operation.type`, `graphoria.role`                             |
+| `cron.tick`               | internal | Each cron tick                       | `graphoria.cron.job`                                                                             |
+| `queue.publish`           | producer | Each publish to a broker             | `messaging.system`, `messaging.destination.name`, `graphoria.queue.publisher`                    |
+| `graphoria.remote_schema` | client   | A remote GraphQL field               | `http.request.method`, `server.address`, `http.response.status_code`                             |
+| `graphoria.remote_rest`   | client   | A remote REST proxy                  | `http.request.method`, `server.address`, `http.response.status_code`                             |
+
+A request roots one trace; a cron tick and a subscription poll each root their own, because neither
+sits inside one. REST operations, cron queries, an operation hook's `gqlQuery` and MCP's
+`graphql_execute` all run through the GraphQL handler, so they get the operation span without
+anything further.
+
+An operation is named the way the metrics label and the slow query log name one: its own name, or
+its root field names joined by a comma when the document is anonymous.
+
+**Variable values are never recorded, on any span, ever. Neither is the GraphQL document, a queue
+message's body, or a remote URL's path and query string** — a remote span carries the host alone.
+`db.statement` holds the generated SQL in full because every literal in a document is hoisted into a
+bound parameter before it reaches the database, so the statement text carries no caller data. The
+document would carry those literals verbatim, which is why it never appears.
+
+### Propagation
+
+An inbound `traceparent` is honored: a well-formed one continues that trace and the server's span
+becomes a child of the caller's. A malformed one is ignored and a fresh trace starts — it never
+throws into the request path. `tracestate` is passed along unmodified but is neither parsed nor
+extended.
+
+Outbound, a remote schema call and a remote REST proxy each carry a `traceparent` for the client
+span they opened, so a remote service's spans join the same trace.
+
+A caller can forge a trace id and cost your trace store an entry. That is the exposure every
+OTel-instrumented service accepts, and the sampler below bounds the volume.
+
+### Sampling
+
+The sampler is head-based and decides once, at the root of a trace; a child never re-samples, so a
+trace is never half-recorded. `OTEL_TRACES_SAMPLER_ARG` is the ratio, defaulting to `1` — whoever
+turned tracing on wants the traces. Lower it on a busy deployment without touching collector config.
+
+When an inbound `traceparent` is present its sampled flag decides and the local ratio is not
+consulted, so an upstream service's decision holds for the whole trace.
+
+### Cost
+
+A span costs roughly 3µs to start and end, and about the same again when it enters the async
+context, against 1–50ms for a database round trip.
+
+While `TRACING_ENABLED` is off a span site costs about 80ns, and that cost is the caller's, not the
+tracer's: the attributes are an argument expression, so they are built and allocated before
+`startSpan` is entered and can consult the gate. The gate check itself is a boolean. Measuring
+`startSpan(name)` with no attributes reports a few nanoseconds, which is the optimizer dropping an
+allocation nothing consumes rather than what a span site costs — `tracing.perf.test.ts` bounds the
+call-site shape for that reason. Its bounds sit several times above the measurements, so the suite
+catches a change that makes tracing expensive without turning red on a busy CI runner.
+
+Spans are batched and posted in the background: at most 512 per export, every 5 seconds, and at most
+2048 queued. Past that ceiling the **oldest** spans are dropped and a `warn` line says how many — the
+thing that observes the server must never be the thing that sinks it. A failed export is logged at
+`warn` and the batch is dropped. There is no retry buffer, deliberately: an unbounded one is the
+failure mode that turns an observability feature into the outage.
+
+The export timer does not hold the process open. There is no graceful-shutdown hook, so whatever
+was queued when the process exits is lost; call `flushSpans()` from your own shutdown path if you
+have one.
+
+### Not traced
+
+Deliberately: **cache lookups**. A hit on the in-process LRU is sub-microsecond, so a span per lookup
+is export volume for a number that is always about zero. Worth revisiting if the Redis cache store
+becomes the common path, where a lookup is real I/O.
+
+Not covered, which is a gap rather than a decision: statements that **bypass the executor** —
+whatever an operation handler runs itself against a raw pool from `databases` or `repository`, and
+the auth tables' own lookups. It is the same boundary the slow query log documents; closing it means
+wrapping the pools handed to operator code.
+
+The rows a subscription pushes are covered, unlike in the metrics above: a poll is a unit of work
+with a start, an end and statements under it, so it roots a trace the way a cron tick does. The
+websocket upgrade itself answers no request, so it gets no span.

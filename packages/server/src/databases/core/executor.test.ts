@@ -6,6 +6,8 @@ import type { Database } from "../../types/configuration";
 import type { ProcedureResolver } from "../../types/db";
 
 import { dbMSSQL, dbMySQL, dbPostgreSQL } from "../../__test/dbMocks";
+import { attributeOf, installSpanSink, stringAttribute } from "../../__test/spanSink";
+import { startSpan, withActiveSpan } from "../../observability/tracing";
 import { setSlowQueryLog, setSlowQueryMs } from "../../logging/slowQuery";
 import { callStoredProcedure, executeQuery, executeQueryJSON } from "./executor";
 import { databaseAdapters } from "./function-mapping";
@@ -354,5 +356,125 @@ describe("slow query log", () => {
     await executeQueryJSON("SELECT 1", dbPostgreSQL, variableDefs, {}, undefined, source);
 
     expect(records).toHaveLength(0);
+  });
+});
+
+describe("tracing", () => {
+  const restorers: Array<() => void> = [];
+  let sink: ReturnType<typeof installSpanSink>;
+
+  const source: QuerySource = {
+    operation: { type: "query", name: "RecentOrders", fields: ["orders"] },
+    role: "user",
+  };
+
+  beforeEach(() => {
+    restorers.length = 0;
+    sink = installSpanSink();
+  });
+
+  afterEach(() => {
+    sink.restore();
+    while (restorers.length) restorers.pop()?.();
+  });
+
+  it("spans a statement with the engine, the database and the SQL it sent", async () => {
+    restorers.push(stub("pg", "executeJson", (async () => ({})) as never));
+
+    await executeQueryJSON("SELECT 1", dbPostgreSQL, variableDefs, {}, undefined, source);
+
+    const [span] = await sink.spans();
+
+    expect(span!.name).toBe("db.query");
+    expect(span!.kind).toBe(3);
+    expect(stringAttribute(span!, "db.system")).toBe(dbPostgreSQL.type);
+    expect(stringAttribute(span!, "db.name")).toBe(dbPostgreSQL.name);
+    expect(stringAttribute(span!, "db.statement")).toBe("SELECT 1");
+    expect(stringAttribute(span!, "graphql.operation.name")).toBe("RecentOrders");
+    expect(stringAttribute(span!, "graphql.operation.type")).toBe("query");
+    expect(stringAttribute(span!, "graphoria.role")).toBe("user");
+  });
+
+  it("spans a non-JSON statement the same way", async () => {
+    restorers.push(stub("mysql", "execute", (async () => []) as never));
+
+    await executeQuery("SELECT 2", dbMySQL, variableDefs, {}, undefined, source);
+
+    const [span] = await sink.spans();
+
+    expect(span!.name).toBe("db.query");
+    expect(stringAttribute(span!, "db.statement")).toBe("SELECT 2");
+  });
+
+  it("names a stored procedure rather than carrying a statement", async () => {
+    restorers.push(stub("mssql", "callStoredProcedure", (async () => undefined) as never));
+
+    const sp = {
+      db: dbMSSQL,
+      name: "sp_x",
+      dottedName: "dbo.sp_x",
+    } as unknown as ProcedureResolver;
+    await callStoredProcedure(sp, {}, source);
+
+    const [span] = await sink.spans();
+
+    expect(span!.name).toBe("db.procedure");
+    expect(stringAttribute(span!, "db.operation")).toBe("dbo.sp_x");
+    expect(attributeOf(span!, "db.statement")).toBeUndefined();
+  });
+
+  it("marks a failed statement errored and still rethrows", async () => {
+    restorers.push(
+      stub("pg", "executeJson", (async () => {
+        throw new Error("statement timeout");
+      }) as never),
+    );
+
+    await expect(
+      executeQueryJSON("SELECT 3", dbPostgreSQL, variableDefs, {}, undefined, source),
+    ).rejects.toThrow("statement timeout");
+
+    const [span] = await sink.spans();
+
+    expect(span!.status).toEqual({ code: 2, message: "statement timeout" });
+  });
+
+  it("parents the statement on whatever span is active", async () => {
+    restorers.push(stub("pg", "executeJson", (async () => ({})) as never));
+
+    const parent = { traceId: "a".repeat(32), spanId: "b".repeat(16), sampled: true };
+    await withActiveSpan(startSpan("operation", { parent }), () =>
+      executeQueryJSON("SELECT 4", dbPostgreSQL, variableDefs, {}, undefined, source),
+    );
+
+    const spans = await sink.spans();
+    const statement = spans.find((span) => span.name === "db.query")!;
+
+    expect(statement.traceId).toBe(parent.traceId);
+    expect(statement.parentSpanId).not.toBe(parent.spanId);
+  });
+
+  it("never carries the variable values", async () => {
+    restorers.push(stub("pg", "executeJson", (async () => ({})) as never));
+
+    await executeQueryJSON(
+      "SELECT 5",
+      dbPostgreSQL,
+      variableDefs,
+      { id: "ana@acme.test" },
+      undefined,
+      source,
+    );
+
+    expect(JSON.stringify(await sink.spans())).not.toContain("ana@acme.test");
+  });
+
+  it("records nothing while tracing is disabled", async () => {
+    sink.restore();
+    restorers.push(stub("pg", "executeJson", (async () => ({})) as never));
+
+    await executeQueryJSON("SELECT 6", dbPostgreSQL, variableDefs, {}, undefined, source);
+
+    expect(await sink.spans()).toHaveLength(0);
   });
 });

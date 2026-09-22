@@ -1,6 +1,8 @@
 import type { SelectionAnalysis } from "../analyzeQuery/types";
 import type { RemoteSchemaResolved } from "./types";
 
+import { formatTraceparent, startSpan } from "../observability/tracing";
+
 /**
  * Build the sub-query string for a remote field by stripping the prefix from
  * the field name and type references.
@@ -110,6 +112,16 @@ export const proxyRemoteField = async (
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), remoteSchema.config.timeout ?? 10000);
 
+  // The host only: a remote URL's path and query string carry caller data.
+  const span = startSpan("graphoria.remote_schema", {
+    kind: "client",
+    attributes: {
+      "http.request.method": "POST",
+      "server.address": new URL(remoteSchema.config.url).host,
+    },
+  });
+  if (span) headers["traceparent"] = formatTraceparent(span.context);
+
   try {
     const response = await fetch(remoteSchema.config.url, {
       method: "POST",
@@ -120,6 +132,7 @@ export const proxyRemoteField = async (
       }),
       signal: controller.signal,
     });
+    span?.setAttribute("http.response.status_code", response.status);
 
     if (!response.ok) {
       throw new Error(
@@ -140,7 +153,11 @@ export const proxyRemoteField = async (
 
     // Extract the result for the original field name
     return json.data?.[originalFieldName] ?? null;
+  } catch (error) {
+    span?.recordError(error);
+    throw error;
   } finally {
+    span?.end();
     clearTimeout(timeoutId);
   }
 };

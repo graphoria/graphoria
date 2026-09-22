@@ -87,6 +87,7 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 - **OpenAPI** spec generation from operations
 - **React SDK** — `@graphoria/react` with auth hooks, Apollo Client, and route-based access control
 - **Structured logging** — pino-based JSON logging with configurable levels
+- **Observability** — health endpoints, a slow query log, a Prometheus exposition and OpenTelemetry tracing
 
 ## Why Graphoria?
 
@@ -159,7 +160,6 @@ What's actively being built or on the near-term roadmap:
 | **Official Docker images** — multi-arch, published to GHCR                            | Planned     |
 | **SQLite support** — embedded database for edge and local dev                         | Planned     |
 | **Rate limiting & throttling** — per-role, per-operation                              | Planned     |
-| **Metrics & tracing** — OpenTelemetry integration                                     | Planned     |
 
 Want to influence the roadmap? [Open an issue](https://github.com/graphoria/graphoria/issues) or upvote existing ones.
 
@@ -457,7 +457,7 @@ The three limits that ship on — query depth, page size and the statement timeo
 | [GraphQL Directives](./docs/DIRECTIVES.md)            | Built-in data-transformation and `@when` control-flow directives      |
 | [Virtual Columns](./docs/VIRTUAL_COLUMNS.md)          | Computed columns powered by SQL expressions or functions              |
 | [Performance](./docs/PERFORMANCE.md)                  | Query strategy, caching behaviour, measured numbers and the gate      |
-| [Observability](./docs/OBSERVABILITY.md)              | Health endpoints for liveness and readiness probes, slow query log    |
+| [Observability](./docs/OBSERVABILITY.md)              | Health endpoints, slow query log, Prometheus metrics, OTLP tracing    |
 | [Remote GraphQL Schemas](./docs/REMOTE_SCHEMAS.md)    | Stitch external GraphQL APIs into the unified schema                  |
 | [Remote REST APIs](./docs/REMOTE_REST.md)             | Proxy external OpenAPI services under `/rest`                         |
 | [AI Agent](./docs/AI.md)                              | Admin-only natural-language → database Q&A over GraphQL and REST      |

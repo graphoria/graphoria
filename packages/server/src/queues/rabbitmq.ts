@@ -8,6 +8,7 @@ import { queryEventEmitter } from "../configuration/gql/handleGraphQLSubscriptio
 import { InvalidationHelper } from "../singletons/cache/registry";
 import { logger } from "../logging";
 import { incMetric } from "../observability/metrics";
+import { startSpan } from "../observability/tracing";
 
 // ============================================================================
 // Reconnection Configuration
@@ -174,12 +175,24 @@ export const createRabbitMQConnectionManager = (
             exchangeName: exchange.name,
             send: (message: string | object) => {
               const publisher = `${queueConfig.name}_${p.name}`;
-              const record = (outcome: "success" | "error") =>
+              // No message body on the span — it is caller data.
+              const span = startSpan("queue.publish", {
+                kind: "producer",
+                attributes: {
+                  "messaging.system": "rabbitmq",
+                  "messaging.destination.name": exchange.name,
+                  "graphoria.queue.publisher": publisher,
+                },
+              });
+              const record = (outcome: "success" | "error") => {
                 incMetric("graphoria_queue_messages_published_total", {
                   broker: "rabbitmq",
                   publisher,
                   outcome,
                 });
+                if (outcome === "error") span?.setStatus("error");
+                span?.end();
+              };
 
               if (!state.channel) {
                 log.error("cannot send: channel not available");

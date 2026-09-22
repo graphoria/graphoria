@@ -1,5 +1,7 @@
 import type { RemoteRESTResolved, RemoteRESTRoute } from "./types";
 
+import { formatTraceparent, startSpan } from "../observability/tracing";
+
 /**
  * Build headers for the remote request by merging:
  * 1. Static headers from configuration
@@ -62,6 +64,16 @@ export const proxyRemoteRESTRequest = async (
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), resolved.config.timeout ?? 10000);
 
+  // The host only: a remote URL's path and query string carry caller data.
+  const span = startSpan("graphoria.remote_rest", {
+    kind: "client",
+    attributes: {
+      "http.request.method": route.method.toUpperCase(),
+      "server.address": new URL(targetUrl).host,
+    },
+  });
+  if (span) headers["traceparent"] = formatTraceparent(span.context);
+
   try {
     const fetchInit: RequestInit = {
       method: route.method.toUpperCase(),
@@ -77,6 +89,7 @@ export const proxyRemoteRESTRequest = async (
     }
 
     const response = await fetch(targetUrl, fetchInit);
+    span?.setAttribute("http.response.status_code", response.status);
 
     // Return the response with the same status and body
     return new Response(response.body, {
@@ -86,7 +99,11 @@ export const proxyRemoteRESTRequest = async (
         "content-type": response.headers.get("content-type") ?? "application/json",
       },
     });
+  } catch (error) {
+    span?.recordError(error);
+    throw error;
   } finally {
+    span?.end();
     clearTimeout(timeoutId);
   }
 };

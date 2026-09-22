@@ -105,3 +105,16 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+
+  # The tracing acceptance check renders an OTLP payload and posts it here, so
+  # the pass means a real collector accepted it rather than that it matched our
+  # reading of the specification. The image ships a default config with an OTLP
+  # receiver on 4317/4318 and a debug exporter, which is all this needs.
+  #
+  # It is distroless, so there is no shell to probe it with and it carries no
+  # healthcheck; the acceptance test retries its first POST until the receiver
+  # is listening.
+  otel-collector:
+    image: otel/opentelemetry-collector:0.139.0
+    ports:
+      - "54318:4318"

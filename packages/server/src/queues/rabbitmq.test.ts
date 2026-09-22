@@ -8,6 +8,7 @@ process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
 const { createRabbitMQConnectionManager, startConsumer } = await import("./rabbitmq");
+const { installSpanSink, stringAttribute } = await import("../__test/spanSink");
 const { configureMetrics, createRegistry, setMetricsRegistry } =
   await import("../observability/metrics");
 
@@ -201,5 +202,57 @@ describe("RabbitMQ metrics", () => {
     expect(registry.render()).toContain(
       'graphoria_queue_messages_consumed_total{broker="rabbitmq",consumer="sub1",outcome="error",queue="test-q"} 1',
     );
+  });
+});
+
+describe("RabbitMQ tracing", () => {
+  let sink: ReturnType<typeof installSpanSink>;
+
+  beforeEach(() => {
+    sink = installSpanSink();
+  });
+
+  afterEach(() => {
+    sink.restore();
+  });
+
+  const connectedManager = async (channelPublishes: boolean) => {
+    const { conn, channel } = makeFake();
+    channel.publish = () => channelPublishes;
+    const manager = createRabbitMQConnectionManager(minimalConfig(), {
+      connect: (async () => conn as ChannelModel) as unknown as typeof connectFn,
+    });
+    await manager.connect();
+    return manager;
+  };
+
+  it("spans a publish as a producer, naming the broker and the exchange", async () => {
+    const manager = await connectedManager(true);
+
+    manager.getPublishers()["test-q_p1"]!.send({ hello: "world" });
+
+    const [span] = await sink.spans();
+
+    expect(span!.name).toBe("queue.publish");
+    expect(span!.kind).toBe(4);
+    expect(stringAttribute(span!, "messaging.system")).toBe("rabbitmq");
+    expect(stringAttribute(span!, "messaging.destination.name")).toBe("t");
+    expect(stringAttribute(span!, "graphoria.queue.publisher")).toBe("test-q_p1");
+  });
+
+  it("never carries the message body", async () => {
+    const manager = await connectedManager(true);
+
+    manager.getPublishers()["test-q_p1"]!.send({ hello: "ana@acme.test" });
+
+    expect(JSON.stringify(await sink.spans())).not.toContain("ana@acme.test");
+  });
+
+  it("marks a publish the broker refused as errored", async () => {
+    const manager = await connectedManager(false);
+
+    manager.getPublishers()["test-q_p1"]!.send({ hello: "world" });
+
+    expect((await sink.spans())[0]!.status.code).toBe(2);
   });
 });

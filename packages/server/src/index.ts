@@ -44,7 +44,9 @@ import { logger, configureLogging } from "./logging";
 import { actorFromSession, audit } from "./logging/audit";
 import { createHealthRoutes } from "./observability/health";
 import { configureMetrics, renderMetrics } from "./observability/metrics";
+import { configureTracing } from "./observability/tracing";
 import { withHttpMetrics } from "./observability/httpMetrics";
+import { withHttpTracing } from "./observability/httpTracing";
 import { createMetricsRoute } from "./observability/metricsRoute";
 
 // Re-export for consumers
@@ -110,6 +112,13 @@ const bootAnalyzedConfiguration = async (env: Env) => {
   configureMetrics({
     enabled: env.metrics.enabled,
     maxOperationLabels: env.metrics.maxOperationLabels,
+  });
+  configureTracing({
+    enabled: env.tracing.enabled,
+    endpoint: env.tracing.endpoint,
+    headers: env.tracing.headers,
+    serviceName: env.tracing.serviceName,
+    sampleRatio: env.tracing.sampleRatio,
   });
 
   if (env.queryTimeoutMs === 0) {
@@ -416,54 +425,60 @@ const createGraphQLServer = async (env: Env) => {
   // GraphQL endpoint
   routes[prefixes.graphql] = {
     ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-    GET: withHttpMetrics(
+    GET: withHttpTracing(
       "graphql",
-      withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
-        try {
-          if (req.headers.get("upgrade") === "websocket") {
-            const success = server.upgrade(req, {
-              data: {},
-            });
-            return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+      withHttpMetrics(
+        "graphql",
+        withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
+          try {
+            if (req.headers.get("upgrade") === "websocket") {
+              const success = server.upgrade(req, {
+                data: {},
+              });
+              return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+            }
+            return new S404({ error: "Not Found" });
+          } catch (error) {
+            return new S400({ errors: [{ message: (error as Error)?.message }] });
           }
-          return new S404({ error: "Not Found" });
+        }),
+      ),
+    ),
+    POST: withHttpTracing(
+      "graphql",
+      withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
+        try {
+          const { gql, session, limit } = await getRoleHandlers(req, server);
+          if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+          const { query, variables } = await req.json();
+
+          if (gql.isIntrospectionQuery(query)) return new S200(gql.introspectionResult);
+
+          if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
+
+          const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
+
+          if (hasErrors)
+            return new S400({
+              errors: validationErrors.map((error) => ({
+                message: error.message,
+                locations: error.locations,
+              })),
+            });
+
+          return new S200(await gql.handler(query, variables, req, session));
         } catch (error) {
-          return new S400({ errors: [{ message: (error as Error)?.message }] });
+          const message = (error as Error)?.message;
+
+          if (message === "Invalid username or password") {
+            return new S401({ errors: [{ message }] });
+          } else {
+            return new S400({ errors: [{ message }] });
+          }
         }
       }),
     ),
-    POST: withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
-      try {
-        const { gql, session, limit } = await getRoleHandlers(req, server);
-        if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
-
-        const { query, variables } = await req.json();
-
-        if (gql.isIntrospectionQuery(query)) return new S200(gql.introspectionResult);
-
-        if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
-
-        const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
-
-        if (hasErrors)
-          return new S400({
-            errors: validationErrors.map((error) => ({
-              message: error.message,
-              locations: error.locations,
-            })),
-          });
-
-        return new S200(await gql.handler(query, variables, req, session));
-      } catch (error) {
-        const message = (error as Error)?.message;
-
-        if (message === "Invalid username or password") {
-          return new S401({ errors: [{ message }] });
-        } else {
-          return new S400({ errors: [{ message }] });
-        }
-      }
-    }),
   };
 
   const aiEnabled = projectConfiguration.ai?.enabled ?? false;
@@ -521,9 +536,9 @@ const createGraphQLServer = async (env: Env) => {
   }
 
   // REST API endpoint
-  routes[`${prefixes.rest}/*`] = withHttpMetrics(
+  routes[`${prefixes.rest}/*`] = withHttpTracing(
     "rest",
-    async (req: BunRequest, server: Bun.Server<unknown>) => {
+    withHttpMetrics("rest", async (req: BunRequest, server: Bun.Server<unknown>) => {
       if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
 
       try {
@@ -542,7 +557,7 @@ const createGraphQLServer = async (env: Env) => {
       } catch {
         return new S400({ errors: [{ message: "Bad request" }] });
       }
-    },
+    }),
   );
 
   // Create WebSocket handler

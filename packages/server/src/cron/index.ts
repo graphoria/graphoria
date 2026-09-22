@@ -8,6 +8,7 @@ import { databasesConnections, repositoryMap } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
 import { logger } from "../logging";
 import { incMetric, observeMetric } from "../observability/metrics";
+import { startSpan, withActiveSpan } from "../observability/tracing";
 
 /**
  * Interface for a scheduled cron job instance
@@ -61,51 +62,61 @@ const createScheduledJob = (config: CronJob, gqlQuery: GqlQueryFn<true>): Schedu
     async (self) => {
       const startTime = Bun.nanoseconds();
       let outcome: "success" | "error" = "success";
+      // A tick is not inside a request, so it roots its own trace. The span is
+      // entered so anything `onTick` runs through `gqlQuery` lands under it.
+      const span = startSpan("cron.tick", {
+        parent: null,
+        attributes: { "graphoria.cron.job": config.name },
+      });
 
-      try {
-        log.info("executing");
+      return withActiveSpan(span, async () => {
+        try {
+          log.info("executing");
 
-        executionCount++;
+          executionCount++;
 
-        // Execute query if provided
-        const response = config.query
-          ? await gqlQuery(config.query, config.variables ?? {})
-          : undefined;
+          // Execute query if provided
+          const response = config.query
+            ? await gqlQuery(config.query, config.variables ?? {})
+            : undefined;
 
-        const tickContext: TickContext = {
-          name: config.name,
-          pattern: config.pattern,
-          variables: config.variables || {},
-          executionCount,
-          nextRun: self.nextRun(),
-          previousRun: self.previousRun(),
-        };
+          const tickContext: TickContext = {
+            name: config.name,
+            pattern: config.pattern,
+            variables: config.variables || {},
+            executionCount,
+            nextRun: self.nextRun(),
+            previousRun: self.previousRun(),
+          };
 
-        // Call the onTick callback if provided, passing options object
-        await config.onTick?.(
-          {
-            gqlQuery,
-            databases: databasesConnections,
-            queues: queueManager,
-            repository: repositoryMap,
-          },
-          tickContext,
-          response,
-        );
+          // Call the onTick callback if provided, passing options object
+          await config.onTick?.(
+            {
+              gqlQuery,
+              databases: databasesConnections,
+              queues: queueManager,
+              repository: repositoryMap,
+            },
+            tickContext,
+            response,
+          );
 
-        log.info({ executionCount, nextRun: self.nextRun() }, "completed");
-      } catch (error) {
-        outcome = "error";
-        log.error({ err: error }, "failed");
-        throw error;
-      } finally {
-        incMetric("graphoria_cron_runs_total", { job: config.name, outcome });
-        observeMetric(
-          "graphoria_cron_run_duration_seconds",
-          { job: config.name },
-          (Bun.nanoseconds() - startTime) / 1e9,
-        );
-      }
+          log.info({ executionCount, nextRun: self.nextRun() }, "completed");
+        } catch (error) {
+          outcome = "error";
+          log.error({ err: error }, "failed");
+          span?.recordError(error);
+          throw error;
+        } finally {
+          incMetric("graphoria_cron_runs_total", { job: config.name, outcome });
+          observeMetric(
+            "graphoria_cron_run_duration_seconds",
+            { job: config.name },
+            (Bun.nanoseconds() - startTime) / 1e9,
+          );
+          span?.end();
+        }
+      });
     },
   );
 
