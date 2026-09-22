@@ -1,7 +1,9 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 import type { RemoteRESTResolved, RemoteRESTRoute } from "./types";
 
+import { attributeOf, installSpanSink, stringAttribute } from "../__test/spanSink";
+import { startSpan, withActiveSpan } from "../observability/tracing";
 import { proxyRemoteRESTRequest } from "./proxy";
 
 const baseResolved: RemoteRESTResolved = {
@@ -256,5 +258,82 @@ describe("Remote REST Proxy", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("Remote REST Proxy — tracing", () => {
+  let sink: ReturnType<typeof installSpanSink>;
+
+  beforeEach(() => {
+    sink = installSpanSink();
+  });
+
+  afterEach(() => {
+    sink.restore();
+  });
+
+  const withFetchMock = async (run: () => Promise<unknown>) => {
+    const calls: RequestInit[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock((_url: string, init: RequestInit) => {
+      calls.push(init);
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as unknown as typeof globalThis.fetch;
+
+    try {
+      await run();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    return calls[0]!.headers as Record<string, string>;
+  };
+
+  const proxy = () =>
+    proxyRemoteRESTRequest(
+      makeRoute("get", "/pets/{petId}"),
+      baseResolved,
+      new Request("http://localhost:3000/rest/petstore/pets/1"),
+      { petId: "1" },
+      "token=secret",
+    );
+
+  it("spans the remote call as a client, naming the host but not the path", async () => {
+    await withFetchMock(proxy);
+
+    const [span] = await sink.spans();
+
+    expect(span!.name).toBe("graphoria.remote_rest");
+    expect(span!.kind).toBe(3);
+    expect(stringAttribute(span!, "http.request.method")).toBe("GET");
+    expect(stringAttribute(span!, "server.address")).toBe("petstore.example.com");
+    expect(attributeOf(span!, "http.response.status_code")).toEqual({ intValue: "200" });
+    expect(JSON.stringify(span)).not.toContain("secret");
+  });
+
+  it("carries a traceparent matching the span it opened", async () => {
+    const headers = await withFetchMock(proxy);
+
+    const [span] = await sink.spans();
+
+    expect(headers["traceparent"]).toBe(`00-${span!.traceId}-${span!.spanId}-01`);
+  });
+
+  it("continues the trace it was called inside", async () => {
+    const parent = { traceId: "a".repeat(32), spanId: "b".repeat(16), sampled: true };
+
+    await withFetchMock(() => withActiveSpan(startSpan("GET rest", { parent }), proxy));
+
+    const remote = (await sink.spans()).find((span) => span.name === "graphoria.remote_rest")!;
+
+    expect(remote.traceId).toBe(parent.traceId);
+  });
+
+  it("sends no traceparent while tracing is disabled", async () => {
+    sink.restore();
+
+    const headers = await withFetchMock(proxy);
+
+    expect(headers["traceparent"]).toBeUndefined();
   });
 });
