@@ -191,11 +191,11 @@ curl -X POST http://localhost:3000/graphql \
   --data '{"query": "{ public_orders { id } }"}'
 ```
 
-The header name is configurable via `ADMIN_SECRET_HEADER`. The comparison uses `crypto.timingSafeEqual`, so you cannot probe for the value by measuring response times. `ADMIN_SECRET` accepts a comma-separated list so it can be [rotated](#rotating-secrets) like the signing keys. It is the superset of four scoped credentials — `CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET` and `AI_MCP_SECRET` — each of which opens one surface and nothing else; see [Scoped credentials](./SECURITY_MODEL.md#scoped-credentials).
+The header name is configurable via `ADMIN_SECRET_HEADER`. The comparison uses `crypto.timingSafeEqual`, so you cannot probe for the value by measuring response times. `ADMIN_SECRET` accepts a comma-separated list so it can be [rotated](#rotating-secrets) like the signing keys. It is the superset of five scoped credentials — `CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET` and `METRICS_SECRET` — each of which opens one surface and nothing else; see [Scoped credentials](./SECURITY_MODEL.md#scoped-credentials).
 
 ## Rotating secrets
 
-`ADMIN_SECRET`, the four scoped credentials (`CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET`), `JWT_SECRET`, `PASETO_LOCAL_KEY` and `PASETO_PUBLIC_KEY` each accept a comma-separated list. The **first** entry is the one in use — it signs JWTs and encrypts PASETO local tokens, and it is the one to hand to new callers — and **every** entry is accepted on the way in. Whitespace around entries is trimmed and blank entries are ignored. A secret is therefore split on commas and cannot contain one.
+`ADMIN_SECRET`, the five scoped credentials (`CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET`, `METRICS_SECRET`), `JWT_SECRET`, `PASETO_LOCAL_KEY` and `PASETO_PUBLIC_KEY` each accept a comma-separated list. The **first** entry is the one in use — it signs JWTs and encrypts PASETO local tokens, and it is the one to hand to new callers — and **every** entry is accepted on the way in. Whitespace around entries is trimmed and blank entries are ignored. A secret is therefore split on commas and cannot contain one.
 
 Rotation is two deploys, with no cut-over in between:
 

@@ -84,6 +84,7 @@ type Prefixes = {
   rest: string; // e.g. "/rest"
   openapi: string; // e.g. "/openapi.json"
   health: string; // e.g. "/health" — serves /health/live and /health/ready
+  metrics: string; // e.g. "/metrics" — mounted only when METRICS_ENABLED
 };
 ```
 

@@ -88,6 +88,7 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 | Audit log (privileged actions)                                  | `logging/audit.ts` — `audit().emit`, `actorFromSession`; `setAuditLog` is the test seam                                                           |
 | Slow query log                                                  | `logging/slowQuery.ts` — `reportQueryDuration`, called by `databases/core/executor.ts`; `setSlowQueryLog` is the test seam                        |
 | Health endpoints (`/health/live`, `/health/ready`)              | `observability/health.ts` — `createHealthRoutes`; the readiness checks are assembled in `index.ts`                                                |
+| Metrics (registry, `/metrics`, HTTP wrapper)                    | `observability/{metrics,metricsRoute,httpMetrics}.ts`; `configureMetrics` runs at boot in `index.ts`                                              |
 | Redis clients                                                   | `utils/redis.ts` — `createRedisClient`, `keepRedisConnected`                                                                                      |
 | RabbitMQ / Kafka runtime                                        | `queues/rabbitmq.ts`, `queues/kafka.ts`                                                                                                           |
 | Cron runtime                                                    | `cron/`, `singletons/cron.ts`                                                                                                                     |
@@ -225,10 +226,11 @@ Database/Redis/RabbitMQ for local dev: see [CONTRIBUTING.md](./CONTRIBUTING.md).
 | GET      | `/openapi.json` | Unified OpenAPI spec (operations + remote-REST).                                                                                                                                                                                      |
 | POST     | `/mcp`          | Model Context Protocol (anonymous-only, opt-in via `ai.mcp.enabled` or `AI_MCP_ENABLED`). Path configurable via `AI_MCP_ENDPOINT`. Gate (`AI_MCP_REQUIRE_ADMIN_SECRET`) takes `ADMIN_SECRET` or `AI_MCP_SECRET`.                      |
 | POST     | `/ai`           | AI agent — NL → database Q&A (`ADMIN_SECRET` or `AI_SECRET`, opt-in via `ai.enabled`). Path configurable via `ai.endpoint`. Also a `superadmin`-only GraphQL `ask(prompt): String` query.                                             |
+| GET      | `/metrics`      | Prometheus exposition (opt-in via `METRICS_ENABLED`, path via `METRICS_ENDPOINT`). Gated by `ADMIN_SECRET` or `METRICS_SECRET` in the admin-secret header; not rate limited. See [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md).    |
 | GET      | `/health/*`     | `/health/live` (no I/O) and `/health/ready` (databases, Redis where used, brokers; `503` when one is down). No auth, no rate limit, under `PREFIX`. See [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md).                             |
 | GET      | `/_console`     | Admin console UI (Bun HTMLBundle from `src/console/`) + `/_console/api/*` status APIs (session-cookie gated, issued by `/api/login`; `/api/meta` and `/api/login` unauth). Opt-in via `CONSOLE_ENABLED`; path via `CONSOLE_ENDPOINT`. |
 
-Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HEADER`). Admin secret: header `x-admin-secret` (configurable via `ADMIN_SECRET_HEADER`). The admin secret bypasses RBAC. Scoped credentials (`CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET`) ride the same header and each open one surface only; the admin secret is their superset and logs a `warn` when used where one would do.
+Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HEADER`). Admin secret: header `x-admin-secret` (configurable via `ADMIN_SECRET_HEADER`). The admin secret bypasses RBAC. Scoped credentials (`CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET`, `METRICS_SECRET`) ride the same header and each open one surface only; the admin secret is their superset and logs a `warn` when used where one would do.
 
 ---
 
@@ -259,7 +261,7 @@ Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HE
 | Remote REST                   | [docs/REMOTE_REST.md](./docs/REMOTE_REST.md)                                                                            |
 | MCP server                    | [docs/MCP.md](./docs/MCP.md)                                                                                            |
 | Admin console                 | [docs/CONSOLE.md](./docs/CONSOLE.md)                                                                                    |
-| Health endpoints, slow query  | [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)                                                                        |
+| Health, slow query, metrics   | [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)                                                                        |
 | AI agent                      | [docs/AI.md](./docs/AI.md)                                                                                              |
 | React SDK                     | [docs/REACT.md](./docs/REACT.md)                                                                                        |
 | Contributing                  | [CONTRIBUTING.md](./CONTRIBUTING.md)                                                                                    |
