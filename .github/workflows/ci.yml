@@ -91,8 +91,25 @@ jobs:
       # --wait blocks on the healthchecks in docker-compose.test.yml and fails
       # the step if a container never reports healthy. SQL Server is the long
       # pole at ~30-60s, hence the raised timeout.
+      #
+      # Retried once, because this job gates merges: the runner has failed to
+      # program external connectivity for a published port often enough to
+      # block one on nothing (run 33958543925). A retry costs a minute in the
+      # case that used to cost a re-run, and a second failure still fails the
+      # step, so a container that genuinely cannot come up is still red. The
+      # teardown is what makes the retry worth anything — the first attempt
+      # leaves containers behind, and starting over on top of them reproduces
+      # the same port conflict.
       - name: Start backing services
-        run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 180
+        run: |
+          up() {
+            docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 180
+          }
+          if ! up; then
+            echo "::warning::compose up failed, tearing down and retrying once"
+            docker compose -f docker-compose.test.yml down -v
+            up
+          fi
 
       - name: Integration tests
         run: bun run test:integration
