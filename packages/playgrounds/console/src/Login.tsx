@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import type { ConsoleScope, Meta } from "./client";
 
+import mark from "../../public/graphoria-mark.svg";
 import { login } from "./client";
 
 export const Login = ({
@@ -31,6 +32,7 @@ export const Login = ({
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-50">
       <form onSubmit={submit} className="w-full max-w-sm">
+        <img src={mark} alt="Graphoria" className="w-12 h-12 mb-4" />
         <h1 className="text-2xl font-bold mb-2">{meta.name}</h1>
         <p className="text-gray-400 mb-4">
           Enter the admin secret or a console credential to open the console.
