@@ -1,4 +1,4 @@
-import { graphql, type ResultOf } from "gql.tada";
+import { graphql, type ResultOf } from "../graphql";
 import { cn } from "cnfast";
 import { useQuery } from "urql";
 import { CalendarIcon, LoadingIcon } from "../components/icons";

@@ -70,7 +70,7 @@ export const App = () => (
     routeConfig={routeConfig}
     onLogout={() => {
       // Drop urql's normalized cache + in-flight subscriptions.
-      // No first-class clearStore in urql v4 → recreate client or
+      // No first-class clearStore in urql → recreate client or
       // dispatch a reset event. Cheapest: full reload.
       window.location.assign("/login");
     }}

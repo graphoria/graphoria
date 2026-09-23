@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "@graphoria/server/config";
 
 export const Public_CommentsSchema = z.object({
   author: z.string(),
