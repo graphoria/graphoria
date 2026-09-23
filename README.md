@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/graphoria-banner.png" alt="Graphoria — instant GraphQL &amp; REST from your database" width="880">
+</p>
+
 # Graphoria
 
 [![Apache 2.0 License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://choosealicense.com/licenses/apache-2.0/)
