@@ -246,26 +246,25 @@ Auth: `Authorization: Bearer <token>` (header configurable via `AUTHORIZATION_HE
 
 ## Reference docs
 
-| Topic                         | File                                                                                                                    |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Quickstart                    | [docs/QUICKSTART.md](./docs/QUICKSTART.md)                                                                              |
-| Configuration reference       | [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)                                                                        |
-| API reference (exports)       | [docs/API_REFERENCE.md](./docs/API_REFERENCE.md)                                                                        |
-| Auth                          | [docs/AUTHENTICATION.md](./docs/AUTHENTICATION.md)                                                                      |
-| Permissions / RBAC            | [docs/PERMISSIONS.md](./docs/PERMISSIONS.md)                                                                            |
-| Operations                    | [docs/OPERATIONS.md](./docs/OPERATIONS.md)                                                                              |
-| Directives                    | [docs/DIRECTIVES.md](./docs/DIRECTIVES.md)                                                                              |
-| Virtual columns               | [docs/VIRTUAL_COLUMNS.md](./docs/VIRTUAL_COLUMNS.md)                                                                    |
-| Cron                          | [docs/CRON.md](./docs/CRON.md)                                                                                          |
-| Queues                        | [docs/QUEUES.md](./docs/QUEUES.md)                                                                                      |
-| Subscriptions                 | [docs/SUBSCRIPTIONS.md](./docs/SUBSCRIPTIONS.md)                                                                        |
-| Remote schemas                | [docs/REMOTE_SCHEMAS.md](./docs/REMOTE_SCHEMAS.md)                                                                      |
-| Remote REST                   | [docs/REMOTE_REST.md](./docs/REMOTE_REST.md)                                                                            |
-| MCP server                    | [docs/MCP.md](./docs/MCP.md)                                                                                            |
-| Admin console                 | [docs/CONSOLE.md](./docs/CONSOLE.md)                                                                                    |
-| Health, slow query, metrics   | [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)                                                                        |
-| AI agent                      | [docs/AI.md](./docs/AI.md)                                                                                              |
-| React SDK                     | [docs/REACT.md](./docs/REACT.md)                                                                                        |
-| Contributing                  | [CONTRIBUTING.md](./CONTRIBUTING.md)                                                                                    |
-| Release notes                 | [GitHub Releases](https://github.com/graphoria/graphoria/releases)                                                      |
-| Backlog (deferred follow-ups) | [BACKLOG.md](./BACKLOG.md) — read before adding "future improvement" suggestions; the user item may already be tracked. |
+| Topic                       | File                                                               |
+| --------------------------- | ------------------------------------------------------------------ |
+| Quickstart                  | [docs/QUICKSTART.md](./docs/QUICKSTART.md)                         |
+| Configuration reference     | [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)                   |
+| API reference (exports)     | [docs/API_REFERENCE.md](./docs/API_REFERENCE.md)                   |
+| Auth                        | [docs/AUTHENTICATION.md](./docs/AUTHENTICATION.md)                 |
+| Permissions / RBAC          | [docs/PERMISSIONS.md](./docs/PERMISSIONS.md)                       |
+| Operations                  | [docs/OPERATIONS.md](./docs/OPERATIONS.md)                         |
+| Directives                  | [docs/DIRECTIVES.md](./docs/DIRECTIVES.md)                         |
+| Virtual columns             | [docs/VIRTUAL_COLUMNS.md](./docs/VIRTUAL_COLUMNS.md)               |
+| Cron                        | [docs/CRON.md](./docs/CRON.md)                                     |
+| Queues                      | [docs/QUEUES.md](./docs/QUEUES.md)                                 |
+| Subscriptions               | [docs/SUBSCRIPTIONS.md](./docs/SUBSCRIPTIONS.md)                   |
+| Remote schemas              | [docs/REMOTE_SCHEMAS.md](./docs/REMOTE_SCHEMAS.md)                 |
+| Remote REST                 | [docs/REMOTE_REST.md](./docs/REMOTE_REST.md)                       |
+| MCP server                  | [docs/MCP.md](./docs/MCP.md)                                       |
+| Admin console               | [docs/CONSOLE.md](./docs/CONSOLE.md)                               |
+| Health, slow query, metrics | [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)                   |
+| AI agent                    | [docs/AI.md](./docs/AI.md)                                         |
+| React SDK                   | [docs/REACT.md](./docs/REACT.md)                                   |
+| Contributing                | [CONTRIBUTING.md](./CONTRIBUTING.md)                               |
+| Release notes               | [GitHub Releases](https://github.com/graphoria/graphoria/releases) |

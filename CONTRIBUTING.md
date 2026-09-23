@@ -179,10 +179,6 @@ Before opening a PR:
 
 PRs should be focused. If you find unrelated improvements while working on something, file them as separate PRs — even small ones — so review stays tractable.
 
-## Picking something to work on
-
-If you don't have a specific bug in mind, [BACKLOG.md](./BACKLOG.md) tracks known follow-ups that have been intentionally deferred from prior work. Each entry explains why it was deferred and roughly what the fix shape is — they're a good starting point for first contributions.
-
 ## Reporting bugs and security issues
 
 - **Functional bugs**: open an issue with a reproducer (config snippet, query, expected vs actual).
