@@ -47,15 +47,11 @@ exposed on localhost:
 
 ```bash
 docker compose -f ../docker-compose.yml up -d
-
-# The MSSQL image can't pre-create a database — do it once after boot:
-docker compose -f ../docker-compose.yml exec mssql \
-  /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Str0ng!Passw0rd' -C \
-  -Q "CREATE DATABASE my_app"
 ```
 
 Each engine serves a `my_app` database; Postgres and MySQL create it from the
-compose environment. All three connections are hard-coded in
+compose environment, and the one-shot `mssql-init` service creates it on SQL
+Server once the engine is healthy. All three connections are hard-coded in
 [`graphoria.ts`](./graphoria.ts) under `databases[*].connection`.
 
 DBGate (http://localhost:9000) is pre-wired with a connection per engine.

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "@graphoria/server/config";
 
 import { Public_TasksSchema } from "../models/tasks";
 import { Public_CommentsSchema } from "../models/comments";

@@ -1,5 +1,4 @@
-import { operation } from "@graphoria/server/config";
-import { z } from "zod";
+import { operation, z } from "@graphoria/server/config";
 
 // Shared schema — GraphQL input and REST query params use the same Zod object.
 // This is the key insight: one schema validates both transport layers.
