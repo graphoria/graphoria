@@ -4,6 +4,7 @@ import { useHashLocation } from "wouter/use-hash-location";
 
 import type { ConfigResponse, ConsoleScope, Meta } from "./client";
 
+import mark from "../../public/graphoria-mark-dark.svg";
 import { apiFetch, getMeta, logout, onAuthFail } from "./client";
 import { Login } from "./Login";
 import { ApisPage } from "./pages/ApisPage";
@@ -49,6 +50,7 @@ export const App = () => {
       <div className="flex min-h-screen bg-gray-50">
         <aside className="w-52 shrink-0 bg-gray-900 text-gray-300 flex flex-col py-4">
           <div className="flex flex-col px-4 pb-4 border-b border-gray-700">
+            <img src={mark} alt="Graphoria" className="w-8 h-8 mb-2" />
             <strong>{meta.name}</strong>
             <span className="text-gray-400 text-sm">v{meta.version}</span>
             {scope === "read" && (

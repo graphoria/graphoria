@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/graphoria/graphoria/main/docs/brand/graphoria-banner.png" alt="Graphoria — instant GraphQL &amp; REST from your database" width="880">
+</p>
+
 # @graphoria/react
 
 Client-agnostic React auth + route helpers for Graphoria servers. Owns the auth lifecycle (`auth_login` / `auth_refresh` / `auth_logout`, proactive token refresh, single-flight 401 retry) and exposes a tiny event API your GraphQL client of choice — Apollo, urql, relay, raw fetch — plugs into.

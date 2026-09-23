@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/graphoria/graphoria/main/docs/brand/graphoria-banner.png" alt="Graphoria — instant GraphQL &amp; REST from your database" width="880">
+</p>
+
 # @graphoria/server
 
 The runtime that powers Graphoria — schema introspection, GraphQL/REST handlers, JWT/PASETO authentication, RBAC, message queues, cron, remote schemas, and remote REST integration. This package is what you install into a Bun application to get a complete API server out of one configuration file.
