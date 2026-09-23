@@ -30,6 +30,12 @@ updates:
       - dependency-name: "monaco-editor"
         versions:
           - ">=0.53.0"
+      # TypeScript 7 has no JavaScript API, which gql.tada's CLI and ts-plugin
+      # load, and the published packages declare a typescript ^6 peer. Stay on
+      # 6 so type-check runs the compiler consumers actually use.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
     labels:
       - dependencies
 
