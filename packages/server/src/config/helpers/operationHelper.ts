@@ -30,9 +30,6 @@ type InferOutput<TOutputSchema> = TOutputSchema extends z.ZodType<infer T> ? T :
 /**
  * Infer the parsed shape of an optional REST parameter schema.
  * Resolves to `undefined` when that source has no schema configured.
- *
- * Mirrors the helpers on the `OperationFn` authoring surface so both
- * `operation()` entry points expose identical `beforeRequest` context types.
  */
 type InferRestParam<T> = T extends z.ZodType<infer O> ? O : undefined;
 
@@ -106,9 +103,13 @@ type HandlerOperationConfig<
   HandlerOperation<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TInitData, TRepository>,
   "handler" | "input" | "output" | "hooks" | "rest"
 > & {
+  /** Input schema (Zod) */
   input?: TInputSchema;
+  /** Output schema (Zod) */
   output?: TOutputSchema;
+  /** Custom handler function */
   handler: OperationHandler<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TRepository>;
+  /** Hooks for initialization and request transformation */
   hooks?: OperationHooksConfig<
     InferInput<TInputSchema>,
     InferOutput<TOutputSchema>,
@@ -117,6 +118,7 @@ type HandlerOperationConfig<
     TQueryParams,
     TBody
   >;
+  /** REST exposure configuration */
   rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
 };
 
@@ -137,8 +139,11 @@ type QueryOperationConfig<
 > & {
   /** GraphQL query to execute (a string or a gql.tada `graphql()` document) */
   query: TQuery;
+  /** Input schema (Zod) */
   input?: TInputSchema;
+  /** Output schema (Zod) */
   output?: TOutputSchema;
+  /** Hooks for initialization and request transformation */
   hooks?: OperationHooksConfig<
     InferInput<TInputSchema>,
     InferOutput<TOutputSchema>,
@@ -148,6 +153,7 @@ type QueryOperationConfig<
     TBody,
     QueryResultOf<TQuery>
   >;
+  /** REST exposure configuration */
   rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
 };
 
