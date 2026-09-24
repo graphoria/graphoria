@@ -85,12 +85,17 @@ export type OperationCacheConfig = z.input<typeof OperationCacheConfigZod>;
 
 export const OperationZod = z
   .strictObject({
+    /** Description for documentation */
     description: z.string().optional(),
     query: z.string().optional(),
     // oxlint-disable-next-line typescript/no-explicit-any
     handler: z.custom<OperationHandler<any, any, any>>().optional(),
-    // oxlint-disable-next-line typescript/no-explicit-any
-    input: z.custom<z.ZodType<any>>().optional(),
+    input: z
+      // oxlint-disable-next-line typescript/no-explicit-any
+      .custom<z.ZodType<any>>((value) => value instanceof z.ZodObject, {
+        message: "Operation input must be a Zod object schema",
+      })
+      .optional(),
     // oxlint-disable-next-line typescript/no-explicit-any
     output: z.custom<z.ZodType<any>>().optional(),
     hooks: z
@@ -105,8 +110,11 @@ export const OperationZod = z
         afterRequest: z.custom<OperationAfterRequestHook<any>>().optional(),
       })
       .optional(),
+    /** REST exposure configuration */
     rest: OperationRestConfigZod.optional(),
+    /** GraphQL exposure configuration (enabled by default) */
     graphql: OperationGraphQLConfigZod.optional().default({ enabled: true }),
+    /** Cache configuration */
     cache: OperationCacheConfigZod.optional(),
     /** Statement timeout in milliseconds. Overrides QUERY_TIMEOUT_MS for this operation. */
     timeout: z.number().int().positive().optional(),
@@ -232,9 +240,10 @@ export type OperationHandler<TInput = DefaultInput, TOutput = unknown, TReposito
 /**
  * Base operation properties shared by all operation types
  */
-export type BaseOperation<TInput, TOutput, TInitData> = {
-  /** Description for documentation */
-  description?: string;
+export type BaseOperation<TInput, TOutput, TInitData> = Omit<
+  Operation,
+  "query" | "handler" | "input" | "output" | "hooks"
+> & {
   /** Input schema (Zod) - defines what the operation accepts */
   input?: z.ZodType<TInput>;
   /** Output schema (Zod) - defines what the operation returns (for OpenAPI) */
@@ -245,14 +254,6 @@ export type BaseOperation<TInput, TOutput, TInitData> = {
     beforeRequest?: OperationBeforeRequestHook<TInput, TInitData>;
     afterRequest?: OperationAfterRequestHook<TOutput>;
   };
-  /** REST exposure configuration */
-  rest?: OperationRestConfig;
-  /** GraphQL exposure configuration (enabled by default) */
-  graphql?: OperationGraphQLConfig;
-  /** Cache configuration */
-  cache?: OperationCacheConfig;
-  /** Statement timeout in milliseconds. Overrides `QUERY_TIMEOUT_MS` for this operation. */
-  timeout?: number;
 };
 
 /**

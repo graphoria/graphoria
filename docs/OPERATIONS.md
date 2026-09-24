@@ -13,7 +13,7 @@ Every operation is one of two types — they share the same surrounding shape bu
 - **Query operations** declare a GraphQL `query` string. Graphoria runs it (with input validation, RBAC, hooks, and caching) on each call.
 - **Handler operations** declare an async `handler` function. You write the logic in TypeScript and have full access to the database, queue publishers, and your typed repositories.
 
-Both types accept the same surrounding fields: `description`, `input`, `output`, `hooks`, `rest`, `graphql`, `cache`. The difference is whether you supply `query` or `handler`.
+Both types accept the same surrounding fields: `description`, `input`, `output`, `hooks`, `rest`, `graphql`, `cache`. The difference is whether you supply `query` or `handler`. `input` must be a Zod object schema (`z.object(...)`, refined or not); any other schema fails at startup.
 
 ## Query operations
 

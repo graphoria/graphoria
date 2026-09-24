@@ -1,7 +1,7 @@
 import { isString } from "es-toolkit";
 
 import { AuthConfigZod } from "../../config";
-import type { TableFilter } from "../configuration";
+import type { TablePermission } from "../../config";
 
 // Re-export base types and schemas from the config module
 export type {
@@ -26,12 +26,7 @@ export {
 // Permissions Normalization Transform
 // ============================================================================
 
-type TablePermissionsDictionary = Record<
-  string,
-  {
-    columns: "ALL" | string[];
-  } & TableFilter
->;
+type TablePermissionsDictionary = Record<string, TablePermission>;
 
 /**
  * Auth schema with permissions-dictionary normalization.

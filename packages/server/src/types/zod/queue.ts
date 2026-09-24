@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-import { BaseQueueConfigZod, KafkaConnectionZod, RabbitMQConnectionZod } from "../../config";
+import { BaseQueueConfigZod } from "../../config";
 import type { SubscriberHandler } from "../../config";
+import { KafkaConfigZod, RabbitMQConfigZod } from "../../config/types/queue";
 
 // Re-export base types and schemas from the config module
 export type {
@@ -24,26 +25,6 @@ export {
   RabbitMQConnectionZod,
   KafkaConnectionZod,
 } from "../../config";
-
-// ============================================================================
-// RabbitMQ Configuration (extends base)
-// ============================================================================
-
-const RabbitMQConfigZod = BaseQueueConfigZod.extend({
-  type: z.literal("rabbitmq"),
-  /** Connection config or AMQP URL string */
-  connection: z.union([z.url(), RabbitMQConnectionZod]),
-});
-
-// ============================================================================
-// Kafka Configuration (extends base)
-// ============================================================================
-
-const KafkaConfigZod = BaseQueueConfigZod.extend({
-  type: z.literal("kafka"),
-  /** Connection config or broker string "host:port" */
-  connection: z.union([z.string(), KafkaConnectionZod]),
-});
 
 // ============================================================================
 // Union Type with Transform for Backward Compatibility
@@ -140,10 +121,6 @@ export const QueueConfigZod = z.discriminatedUnion("type", [
 export type QueueConfig = z.infer<typeof QueueConfigZod>;
 export type RabbitMQConfig = z.infer<typeof RabbitMQConfigTransformed>;
 export type KafkaConfig = z.infer<typeof KafkaConfigTransformed>;
-
-/** Pre-transform input types — the shape users write in graphoria.ts */
-export type RabbitMQConfigInput = z.input<typeof RabbitMQConfigTransformed>;
-export type KafkaConfigInput = z.input<typeof KafkaConfigTransformed>;
 
 // ============================================================================
 // Transform helpers — Convert simplified config to internal format

@@ -186,7 +186,7 @@ Re-exported Zod library for convenience.
 | `ConfigurationFn`             | Type for the configuration function `(helpers) => ConfigurationInput`                 |
 | `ConfigurationHelpers`        | Type for the helpers object (`z`, `operation`, virtual column fns)                    |
 | `ConfigurationInput`          | Full configuration shape                                                              |
-| `OperationFn`                 | Type for the `operation()` helper (4 overloads + `.typed`)                            |
+| `OperationFn`                 | Type for the `operation()` helper (`typeof operation`: 2 overloads + `.typed`)        |
 | `TypedOperation`              | Union of `QueryOperation` and `HandlerOperation`                                      |
 | `OperationHandler`            | `(options, input) => output` handler function type                                    |
 | `OperationOptions`            | `{ gqlQuery, databases, queues, repository }` passed to handlers                      |

@@ -153,20 +153,26 @@ export type KafkaConnection = z.input<typeof KafkaConnectionZod>;
 // ============================================================================
 // Pre-transform Queue Config Union (used by ConfigurationInput)
 // ============================================================================
-// These mirror the .extend() logic in types/zod/queue.ts — the shape users
-// write in graphoria.ts before transformQueueConfig derives exchanges/queues.
+// The shape users write in graphoria.ts, before transformQueueConfig in
+// types/zod/queue.ts derives exchanges/queues.
+
+export const RabbitMQConfigZod = BaseQueueConfigZod.extend({
+  type: z.literal("rabbitmq"),
+  /** Connection config or AMQP URL string */
+  connection: z.union([z.url(), RabbitMQConnectionZod]),
+});
+
+export const KafkaConfigZod = BaseQueueConfigZod.extend({
+  type: z.literal("kafka"),
+  /** Connection config or broker string "host:port" */
+  connection: z.union([z.string(), KafkaConnectionZod]),
+});
 
 /** RabbitMQ queue config as authored by the user (pre-transform) */
-export type RabbitMQQueueConfig = z.input<typeof BaseQueueConfigZod> & {
-  type: "rabbitmq";
-  connection: string | RabbitMQConnection;
-};
+export type RabbitMQQueueConfig = z.input<typeof RabbitMQConfigZod>;
 
 /** Kafka queue config as authored by the user (pre-transform) */
-export type KafkaQueueConfig = z.input<typeof BaseQueueConfigZod> & {
-  type: "kafka";
-  connection: string | KafkaConnection;
-};
+export type KafkaQueueConfig = z.input<typeof KafkaConfigZod>;
 
 /** Queue configuration union — the shape users write in graphoria.ts */
 export type QueueConfig = RabbitMQQueueConfig | KafkaQueueConfig;

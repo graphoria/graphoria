@@ -1,4 +1,4 @@
-import type { KafkaConfigInput, RabbitMQConfigInput } from "../../types/zod/queue";
+import type { KafkaQueueConfig, RabbitMQQueueConfig } from "../types/queue";
 
 /**
  * Builder for a queue (RabbitMQ or Kafka) configuration. Adds the `type`
@@ -15,12 +15,12 @@ import type { KafkaConfigInput, RabbitMQConfigInput } from "../../types/zod/queu
  * ```
  */
 export const queue = {
-  rabbitmq: (config: Omit<RabbitMQConfigInput, "type">): RabbitMQConfigInput => ({
+  rabbitmq: (config: Omit<RabbitMQQueueConfig, "type">): RabbitMQQueueConfig => ({
     ...config,
     type: "rabbitmq",
   }),
 
-  kafka: (config: Omit<KafkaConfigInput, "type">): KafkaConfigInput => ({
+  kafka: (config: Omit<KafkaQueueConfig, "type">): KafkaQueueConfig => ({
     ...config,
     type: "kafka",
   }),

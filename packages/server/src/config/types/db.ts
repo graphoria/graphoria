@@ -16,7 +16,9 @@ import { VirtualColumnZod } from "./virtual-columns";
 // Database Type
 // ============================================================================
 
-export type DatabaseType = "mssql" | "pg" | "mysql";
+const DatabaseTypeZod = z.union([z.literal("mssql"), z.literal("pg"), z.literal("mysql")]);
+
+export type DatabaseType = z.infer<typeof DatabaseTypeZod>;
 
 // ============================================================================
 // Relationship Join Condition (static-value predicate)
@@ -263,7 +265,7 @@ export const DatabaseConnectionZod = z.strictObject({
   /** Whether the database is enabled */
   enabled: z.boolean(),
   /** Database type */
-  type: z.union([z.literal("mssql"), z.literal("pg"), z.literal("mysql")]),
+  type: DatabaseTypeZod,
   /** Connection configuration */
   connection: z.strictObject({
     host: z.string(),
@@ -285,9 +287,7 @@ export const DatabaseConnectionZod = z.strictObject({
 });
 
 // ============================================================================
-// Database Config (hand-written generic wrapper over z.input field inventory)
-// The generic `T` narrowing of `onConnect` / `repository` / `connectionOptions`
-// is load-bearing — Zod can't express this narrowing.
+// Database Config
 // ============================================================================
 
 /**
@@ -298,23 +298,16 @@ export type DatabaseConnection = z.input<typeof DatabaseConnectionZod>["connecti
 /**
  * Database configuration with engine-type narrowing.
  */
-export type DatabaseConfig<T extends DatabaseType = DatabaseType> = {
-  /** Unique name for the database connection */
-  name: string;
-  /** Whether the database is enabled */
-  enabled: boolean;
+export type DatabaseConfig<T extends DatabaseType = DatabaseType> = Omit<
+  z.input<typeof DatabaseConnectionZod>,
+  "type" | "repository" | "onConnect" | "connectionOptions"
+> & {
   /** Database type */
   type: T;
-  /** Connection configuration */
-  connection: DatabaseConnection;
-  /** Field naming pattern (default: "{schema}_{name}") */
-  fieldNaming?: string;
   /** Factory function to create custom database repository */
   repository?: CustomRepositoryFactory<T>;
   /** Handler run once at startup against the connected database */
   onConnect?: OnConnectHandler<T>;
-  /** Schema configuration (virtual columns, relationships, excluded tables) */
-  schema?: DatabaseSchemaConfig;
   /** Optional connection pool and transport options */
   connectionOptions?: ConnectionOptionsForType<T>;
 };
