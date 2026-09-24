@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { FilterCondition, OrderByClause } from "../config";
+import type { TablePermission } from "../config";
 import type { ConfigurationZod } from "./zod/configuration";
 
 // Re-export base types from the config module
@@ -35,10 +35,7 @@ export type Auth = Configuration["auth"];
 export type Permissions = Auth["permissions"];
 export type Role = Permissions[keyof Permissions];
 
-export type TableFilter = {
-  filter?: FilterCondition;
-  orderBy?: OrderByClause[];
-};
+export type TableFilter = Omit<TablePermission, "columns">;
 
 export type MessageQueue = Configuration["queues"][number];
 
