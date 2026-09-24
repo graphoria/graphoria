@@ -12,6 +12,11 @@ if (rawArgs[0] === "seed-auth") {
   await seedAuthCommand(rawArgs.slice(1));
 }
 
+if (rawArgs[0] === "init") {
+  const { initCommand } = await import("./src/cli/init");
+  await initCommand(rawArgs.slice(1));
+}
+
 const { values } = parseArgs({
   args: rawArgs,
   options: {
@@ -32,6 +37,7 @@ graphoria v${version}
 
 Usage: graphoria [options]
        graphoria seed-auth --user <name> --password <pwd> --role <role> [--config <path>] [--claims <json>]
+       graphoria init [--yes] [--database pg|mysql|mssql] [--no-install]
 
 Options:
   -c, --config <path>    Path to configuration file (env: CONFIGURATION)
@@ -43,6 +49,7 @@ Options:
 
 Subcommands:
   seed-auth              Insert an auth user (argon2id-hashed) into the configured auth database
+  init                   Scaffold a Graphoria project with Docker Compose in the current directory
 
 Environment variables:
   ADMIN_SECRET           Admin secret for superadmin access (required)

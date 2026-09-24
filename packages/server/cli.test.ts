@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -85,6 +85,89 @@ describe("cli without env", () => {
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("Usage: graphoria");
+  });
+});
+
+describe("cli init", () => {
+  const FILES = [
+    ".dockerignore",
+    ".env",
+    ".gitignore",
+    "Dockerfile",
+    "docker-compose.yml",
+    "graphoria.ts",
+    "index.ts",
+    "package.json",
+    "seed.sql",
+    "tsconfig.json",
+  ];
+
+  const init = async (args: string[], stdin?: string) => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    const result = Bun.spawnSync(["bun", join(import.meta.dir, "cli.ts"), "init", ...args], {
+      cwd,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+    });
+    return { cwd, result };
+  };
+
+  const env = async (cwd: string) =>
+    Object.fromEntries(
+      (await readFile(join(cwd, ".env"), "utf8"))
+        .split("\n")
+        .filter((line) => /^[A-Z_]+=/.test(line))
+        .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+    );
+
+  const cwds: string[] = [];
+  afterAll(() => Promise.all(cwds.map((cwd) => rm(cwd, { recursive: true, force: true }))));
+
+  it("scaffolds a project with every default", async () => {
+    const { cwd, result } = await init(["--yes", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect((await readdir(cwd)).sort()).toEqual(FILES);
+    const values = await env(cwd);
+    expect(values.ADMIN_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(values.JWT_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(values).toMatchObject({ DB_USER: "postgres", DB_NAME: "app", DB_PORT: "5432" });
+    expect(JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies).toEqual({
+      "@graphoria/server": `^${version}`,
+    });
+  });
+
+  it("reads the answers from stdin", async () => {
+    const { cwd, result } = await init(["--no-install"], "mysql\nshop\n\n13306\n");
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(await env(cwd)).toMatchObject({ DB_USER: "root", DB_NAME: "shop", DB_PORT: "13306" });
+  });
+
+  it("writes nothing when a file it would create exists", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await writeFile(join(cwd, "package.json"), "{}");
+    const result = Bun.spawnSync(["bun", join(import.meta.dir, "cli.ts"), "init", "--yes"], {
+      cwd,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("package.json");
+    expect(await readdir(cwd)).toEqual(["package.json"]);
+    expect(await readFile(join(cwd, "package.json"), "utf8")).toBe("{}");
+  });
+
+  it("rejects an unknown engine as a usage error", async () => {
+    const { cwd, result } = await init(["--database", "oracle"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("Usage: graphoria init");
+    expect(await readdir(cwd)).toEqual([]);
   });
 });
 
