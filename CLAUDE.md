@@ -18,23 +18,18 @@ Don't "improve" adjacent code, comments, or formatting. Match existing style.
 Define success criteria. Loop until verified.
 Don't follow steps. Define success and iterate independently.
 
-## Rule 5 — Token budgets are not advisory
-
-Per-task: 4,000 tokens. Per-session: 30,000 tokens.
-If approaching budget, summarize and start fresh. Surface the breach.
-
-## Rule 6 — Read before you write
+## Rule 5 — Read before you write
 
 Before adding code, read exports, immediate callers, shared utilities.
 
 If unsure why code is structured a certain way, ask.
 
-## Rule 7 — Checkpoint after every significant step
+## Rule 6 — Checkpoint after every significant step
 
 Summarize what was done, what's verified, what's left.
 Don't continue from a state you can't describe back. Stop and restate.
 
-## Rule 8 — Fail loud
+## Rule 7 — Fail loud
 
 "Completed" is wrong if anything was skipped silently.
 "Tests pass" is wrong if any were skipped.
