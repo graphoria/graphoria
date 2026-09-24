@@ -103,7 +103,7 @@ Environment variables:
 
 - Strict mode is on; aim for zero `any`. If you must use `any`, leave a comment explaining why.
 - Public types live in `packages/server/src/config/types/` (consumed by users via `@graphoria/server/config`) or `packages/server/src/types/` (internal).
-- Validate at boundaries with Zod schemas in `packages/server/src/types/zod/`.
+- The config shape is declared once, as Zod: authoring schemas in `packages/server/src/config/types/`, server transforms in `packages/server/src/types/zod/`. Derive types with `z.input` / `z.output`; a hand-written type must not mirror a schema. Validate at boundaries with those schemas.
 
 ### Naming
 

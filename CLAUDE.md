@@ -99,12 +99,12 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 | AI agent (LLM tool-calling loop)                                | `ai/agent/{agent,index,types}.ts` + `ai/agent/providers/` ; singleton `singletons/ai.ts`; field wired in `handleGraphQLRequestFactory.ts` (`ask`) |
 | MCP server (tools + resources)                                  | `ai/mcp/{create-server,index}.ts`                                                                                                                 |
 | AI/MCP shared tool executors                                    | `ai/tools/core.ts` (`list_entities`/`describe_entity`/`graphql_execute` core, role-bound)                                                         |
-| Zod schemas (config validation)                                 | `types/zod/configuration.ts` + per-feature files                                                                                                  |
+| Zod schemas (config validation)                                 | Authoring in `config/types/*.ts` (public); server transforms (`ConfigurationZod`, auth normalization, queue pivot, cron) in `types/zod/*.ts`      |
 | Env loader                                                      | `types/env.ts` (`EnvZod`)                                                                                                                         |
 | Test fixtures                                                   | `__test/fixtures/`, `__test/dbMocks.ts`, `__test/dataset/`                                                                                        |
 | Generated per-role schemas (build artefact)                     | `__schemas/`                                                                                                                                      |
 
-`src/config/types/` holds the config shape: `configuration.ts`, `operation.ts`, `cron.ts`, `virtual-columns.ts` (public via `@graphoria/server/config`).
+`src/config/types/` declares the config shape as Zod (public via `@graphoria/server/config`). The authoring types are `z.input` of those schemas, with generic overlays only where Zod types a field as `z.custom`.
 
 ---
 
@@ -152,17 +152,17 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 
 ### Add a `ConfigurationInput` field
 
-1. Type it in `packages/server/src/config/types/configuration.ts`.
-2. Add a Zod schema in `packages/server/src/types/zod/` and reference it from `configuration.ts` Zod.
-3. If it has runtime behavior, add an instantiator in `singletons/` and wire it into the boot path in `index.ts` or `configuration/index.ts`.
+1. Add its schema in `packages/server/src/config/types/<feature>.ts` and its key (with JSDoc) to `ConfigurationZod` in `packages/server/src/types/zod/configuration.ts`. `ConfigurationInput` follows.
+2. If it has runtime behavior, add an instantiator in `singletons/` and wire it into the boot path in `index.ts` or `configuration/index.ts`.
+3. Don't hand-write a type that mirrors a schema: derive it with `z.input` / `z.output`.
 
 ### Add a custom permission key
 
-RBAC permission keys live on `RolePermission` in `packages/server/src/config/types/configuration.ts`. The actual filtering happens in `configuration/index.ts` → `sourcesForEachRole` (in `high-level-operations.ts`). Add the key, update the type, and decide which entity collection it filters.
+RBAC permission keys live on `RolePermissionZod` in `packages/server/src/config/types/auth.ts`. The actual filtering happens in `configuration/index.ts` → `sourcesForEachRole` (in `high-level-operations.ts`). Add the key to the schema (the `RolePermission` type follows) and decide which entity collection it filters.
 
 ### Add a new operation hook
 
-Hooks (`init`, `beforeRequest`, `afterRequest`) are wired inline in `configuration/rest/handleRESTRequestFactory.ts`. To add one, extend `BaseOperation.hooks` in `packages/server/src/config/types/operation.ts`, then call it at the right moment in the factory. `init` is cached per route (lifetime of the process); `beforeRequest` runs per-request before the handler/query; `afterRequest` runs only on custom-handler routes after the handler returns.
+Hooks (`init`, `beforeRequest`, `afterRequest`) are wired inline in `configuration/rest/handleRESTRequestFactory.ts`. To add one, extend `OperationZod`'s `hooks` and the `BaseOperation.hooks` generic overlay in `packages/server/src/config/types/operation.ts` (and `OperationHooksConfig` in `config/helpers/operationHelper.ts`, which types the `operation()` helper), then call it at the right moment in the factory. `init` is cached per route (lifetime of the process); `beforeRequest` runs per-request before the handler/query; `afterRequest` runs only on custom-handler routes after the handler returns.
 
 ### Test code that needs Redis / a DB / a broker
 
