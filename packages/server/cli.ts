@@ -91,6 +91,7 @@ if (values.cluster || values.workers) {
   }
 
   process.on("SIGINT", kill);
+  process.on("SIGTERM", kill);
   process.on("exit", kill);
 } else {
   const child = Bun.spawn({
@@ -101,5 +102,6 @@ if (values.cluster || values.workers) {
   });
 
   process.on("SIGINT", () => child.kill());
+  process.on("SIGTERM", () => child.kill());
   process.on("exit", () => child.kill());
 }
