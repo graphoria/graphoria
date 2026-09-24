@@ -1,0 +1,6 @@
+# The image installs its own dependencies from bun.lock.
+node_modules
+# Secrets come from Compose, never from a layer: Bun loads .env from the working directory.
+.env
+.env.*
+*.md

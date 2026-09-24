@@ -53,10 +53,12 @@ updates:
       - dependencies
       - ci
 
-  # The Docker Compose examples' Dockerfiles. Both stages use the same
+  # The Docker Compose examples' Dockerfiles. Every stage uses the same
   # oven/bun tag, so the group keeps them in one PR.
   - package-ecosystem: docker
-    directory: /examples/docker-compose-starter
+    directories:
+      - /examples/docker-compose-starter
+      - /examples/taskly
     schedule:
       interval: weekly
       day: monday

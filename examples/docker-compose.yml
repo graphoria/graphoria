@@ -1,9 +1,14 @@
 # Backing services for local Graphoria testing.
 #
-#   docker compose -f example/docker-compose.yml up -d
+#   docker compose -f examples/docker-compose.yml up -d
 #
 # Then run your Graphoria server on the host with `bun run index.ts`.
 # Credentials below match the config in docs/QUICKSTART.md.
+#
+# Taskly can run here too, built from examples/taskly/Dockerfile (it takes the
+# host's port 3000, so stop a host-run Taskly first):
+#
+#   docker compose -f examples/docker-compose.yml --profile taskly up -d --build
 services:
   postgres:
     image: postgres:18
@@ -84,6 +89,46 @@ services:
     ports:
       - "5672:5672" # AMQP
       - "15672:15672" # management UI (http://localhost:15672, guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Taskly in its own image. Off unless the profile is named (see the header).
+  taskly:
+    profiles: [taskly]
+    build: ./taskly
+    # Bun as PID 1 ignores SIGTERM; the init forwards it, so `stop` is immediate.
+    init: true
+    restart: on-failure
+    env_file:
+      - path: taskly/.env.example
+      - path: taskly/.env
+        required: false
+    environment:
+      PG_HOST: postgres
+      MYSQL_HOST: mysql
+      MSSQL_HOST: mssql
+      RABBITMQ_HOST: rabbitmq
+      REDIS_URL: redis://redis:6379
+      # The image cannot write under /app.
+      PRINT_SCHEMAS: "false"
+    ports:
+      - "3000:3000"
+    # Graphoria connects once at boot, with no retry.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      mssql-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
 
   dbgate:
     image: dbgate/dbgate
