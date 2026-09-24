@@ -13,6 +13,16 @@
         "typescript": "6.0.3",
       },
     },
+    "packages/graphoria": {
+      "name": "graphoria",
+      "version": "0.5.1",
+      "bin": {
+        "graphoria": "./cli.ts",
+      },
+      "dependencies": {
+        "@graphoria/server": "0.5.1",
+      },
+    },
     "packages/playgrounds": {
       "name": "@graphoria/playgrounds",
       "version": "0.5.1",
@@ -729,6 +739,8 @@
     "graphiql": ["graphiql@5.4.0", "", { "dependencies": { "@graphiql/plugin-doc-explorer": "^0.4.4", "@graphiql/plugin-history": "^0.4.4", "@graphiql/react": "^0.39.0", "react-compiler-runtime": "19.1.0-rc.1" }, "peerDependencies": { "graphql": "^15.5.0 || ^16.0.0 || ^17.0.0", "react": "^18 || ^19", "react-dom": "^18 || ^19" } }, "sha512-8wmv8T1KqvKWm77ws3hkncio/dSkWlgrslee6GBgiN2h/x0LQNDn4jgG2OGPWiss/Gl5GHyH74kfeqDjcCXWRg=="],
 
     "graphiql-explorer": ["graphiql-explorer@0.9.0", "", { "peerDependencies": { "graphql": "^0.6.0 || ^0.7.0 || ^0.8.0-b || ^0.9.0 || ^0.10.0 || ^0.11.0 || ^0.12.0 || ^0.13.0 || ^14.0.0 || ^15.0.0", "react": "^15.6.0 || ^16.0.0", "react-dom": "^15.6.0 || ^16.0.0" } }, "sha512-fZC/wsuatqiQDO2otchxriFO0LaWIo/ovF/CQJ1yOudmY0P7pzDiP+l9CEHUiWbizk3e99x6DQG4XG1VxA+d6A=="],
+
+    "graphoria": ["graphoria@workspace:packages/graphoria"],
 
     "graphql": ["graphql@17.0.2", "", {}, "sha512-FRWbddMxfkjiB7z+aQDWIR+E34xo9I8c9mtK2RPv8PmMzKRvrdsreHL/Ui/TmwHJfhHChEtsFPyMHKI+xuarQQ=="],
 
