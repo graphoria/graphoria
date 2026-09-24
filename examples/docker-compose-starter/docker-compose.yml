@@ -1,0 +1,40 @@
+# Postgres and a Graphoria project built from this directory.
+#
+#   docker compose up -d --build
+#
+# Then open http://localhost:3000/graphiql. `docker compose down -v` stops it
+# and resets the database.
+services:
+  postgres:
+    image: postgres:18
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: my_app
+    volumes:
+      - ./seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    # Over TCP: while the seed runs, Postgres listens on its unix socket only.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "my_app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # No published port, so this never clashes with a Postgres on the host.
+
+  graphoria:
+    build: .
+    # Bun as PID 1 ignores SIGTERM; the init forwards it, so `stop` is immediate.
+    init: true
+    restart: on-failure
+    environment:
+      # Dev-only defaults. Override them from the shell or a .env next to this file.
+      ADMIN_SECRET: ${ADMIN_SECRET:-change-me}
+      JWT_SECRET: ${JWT_SECRET:-change-me-too}
+      PG_HOST: postgres
+    ports:
+      - "3000:3000"
+    # Graphoria connects once at boot, with no retry.
+    depends_on:
+      postgres:
+        condition: service_healthy

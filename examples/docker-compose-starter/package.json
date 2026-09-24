@@ -1,0 +1,15 @@
+{
+  "name": "docker-compose-starter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "@graphoria/server": "0.5.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3"
+  }
+}
