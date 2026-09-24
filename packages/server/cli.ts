@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
 import { parseArgs } from "util";
 
-import { seedAuthCommand } from "./src/cli/seedAuth";
 import { version } from "./package.json";
 
 const rawArgs = Bun.argv.slice(2);
 
+// Loaded on demand: seed-auth reaches the env singleton, which rejects a missing
+// ADMIN_SECRET at import, and --help or --version must run without one.
 if (rawArgs[0] === "seed-auth") {
+  const { seedAuthCommand } = await import("./src/cli/seedAuth");
   await seedAuthCommand(rawArgs.slice(1));
 }
 

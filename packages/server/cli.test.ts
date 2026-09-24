@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { version } from "./package.json";
+
 let dir: string;
 let configPath: string;
 const spawned: number[] = [];
@@ -60,6 +62,30 @@ afterAll(() => rm(dir, { recursive: true, force: true }));
 
 afterEach(() => {
   for (const pid of spawned.splice(0)) if (isAlive(pid)) process.kill(pid, "SIGKILL");
+});
+
+describe("cli without env", () => {
+  const run = (args: string[]) =>
+    Bun.spawnSync(["bun", join(import.meta.dir, "cli.ts"), ...args], {
+      cwd: dir,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    });
+
+  it("prints the version", () => {
+    const result = run(["--version"]);
+
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe(version);
+  });
+
+  it("prints the help", () => {
+    const result = run(["--help"]);
+
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("Usage: graphoria");
+  });
 });
 
 describe("cli SIGTERM", () => {
