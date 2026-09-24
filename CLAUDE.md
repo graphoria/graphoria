@@ -202,16 +202,16 @@ Hooks (`init`, `beforeRequest`, `afterRequest`) are wired inline in `configurati
 
 ## Dev commands
 
-| Command                  | What it does                                  |
-| ------------------------ | --------------------------------------------- |
-| `bun run dev`            | Hot-reload dev server. Uses `./graphoria.ts`. |
-| `bun run start`          | Production start (no reload).                 |
-| `bun run cluster`        | Cluster-mode start.                           |
-| `bun run build`          | Compile each package to `dist/`.              |
-| `bun run type-check`     | `tsc --noEmit` across all packages.           |
-| `bun run lint`           | `oxlint` over source.                         |
-| `bun test`               | Full test suite.                              |
-| `bun run prepublishOnly` | Type-check + build + test.                    |
+| Command                  | What it does                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `bun run dev`            | Hot-reload dev server. Reads the root `.env` (`CONFIGURATION`, `JWT_SECRET`). |
+| `bun run start`          | Same, no reload.                                                              |
+| `bun run cluster`        | Same, one worker per core.                                                    |
+| `bun run build`          | Compile each package to `dist/`.                                              |
+| `bun run type-check`     | `tsc --noEmit` across all packages.                                           |
+| `bun run lint`           | `oxlint` over source.                                                         |
+| `bun test`               | Full test suite.                                                              |
+| `bun run prepublishOnly` | Type-check + build + test.                                                    |
 
 Database/Redis/RabbitMQ for local dev: see [CONTRIBUTING.md](./CONTRIBUTING.md).
 

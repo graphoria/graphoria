@@ -489,7 +489,7 @@ bun install
 ### 3. Setup Development Environment
 
 ```bash
-cp .env.example .env
+cp .env.example .env   # then set CONFIGURATION (e.g. ./graphoria.ts) and JWT_SECRET
 bun run dev
 ```
 

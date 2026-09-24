@@ -38,7 +38,7 @@ docker run -d --name graphoria-pg \
   -p 5432:5432 postgres:16
 ```
 
-Create a `graphoria.ts` at the repo root (see [Quickstart](./docs/QUICKSTART.md) for a minimal example) and run:
+Create a `graphoria.ts` at the repo root (see [Quickstart](./docs/QUICKSTART.md) for a minimal example). Copy `.env.example` to `.env` and set `CONFIGURATION=./graphoria.ts` and `JWT_SECRET` in it. Then run:
 
 ```bash
 bun run dev
