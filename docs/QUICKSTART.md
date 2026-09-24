@@ -10,6 +10,59 @@ This guide gets you from zero to a running Graphoria server in about five minute
 - A running database — PostgreSQL, MySQL, or SQL Server. The examples use PostgreSQL on `localhost:5432`.
 - Optional: [Redis](https://redis.io) (or Valkey) — only required if you enable authentication. The default URL is `redis://localhost:6379`.
 
+## Scaffold a project with `bunx graphoria init`
+
+The shortest way in needs Docker with Compose instead of a running database. In an empty directory:
+
+```bash
+mkdir my-api && cd my-api
+bunx graphoria init
+```
+
+`init` asks for the database engine (`pg`, `mysql` or `mssql`), the database name, its password and the port it gets on your machine; Enter takes the default shown. It then writes the project and runs `bun install`:
+
+| File                                          | What it holds                                                                                                                    |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `graphoria.ts`                                | The configuration. It reads the database connection from the environment.                                                        |
+| `index.ts`                                    | The entry point.                                                                                                                 |
+| `.env`                                        | A random `ADMIN_SECRET` and `JWT_SECRET`, and the database settings (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`). |
+| `docker-compose.yml`                          | The database and Graphoria. The database's port is published on your machine too.                                                |
+| `Dockerfile`, `.dockerignore`                 | The image recipe of the [Docker Compose starter](../examples/docker-compose-starter/).                                           |
+| `seed.sql`                                    | Two related tables, `authors` and `books`, with a few rows.                                                                      |
+| `package.json`, `tsconfig.json`, `.gitignore` | The usual; `.gitignore` keeps `.env` out of git.                                                                                 |
+
+Run everything in Docker:
+
+```bash
+docker compose up -d --build
+```
+
+Or run the database in Docker and Graphoria on your machine, where `bun run dev` reloads on every change:
+
+```bash
+docker compose up -d --wait db   # SQL Server: docker compose run --rm db-init
+bun run dev
+```
+
+Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the `ADMIN_SECRET` from `.env`, and query the seed:
+
+```graphql
+{
+  public_authors {
+    name
+    public_books {
+      title
+    }
+  }
+}
+```
+
+Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, and the database name on MySQL (`app_authors` with the default name).
+
+`--yes` takes every default without asking, `--database pg|mysql|mssql` picks the engine, and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command.
+
+The rest of this guide sets a project up by hand, against a database you already run.
+
 ## 1. Install
 
 Create a new project directory and install the runtime package:

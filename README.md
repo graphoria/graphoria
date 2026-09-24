@@ -432,10 +432,11 @@ The three limits that ship on — query depth, page size and the statement timeo
 
 ## Packages
 
-| Package                                  | Description                                                         |
-| ---------------------------------------- | ------------------------------------------------------------------- |
-| [`@graphoria/server`](./packages/server) | Main server — API generation, auth, queues, cron                    |
-| [`@graphoria/react`](./packages/react)   | React hooks for auth, Apollo Client, and route-based access control |
+| Package                                  | Description                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| [`@graphoria/server`](./packages/server) | Main server — API generation, auth, queues, cron                           |
+| [`@graphoria/react`](./packages/react)   | React hooks for auth, Apollo Client, and route-based access control        |
+| [`graphoria`](./packages/graphoria)      | The CLI under its unscoped name: `bunx graphoria init` scaffolds a project |
 
 ## Documentation
 
