@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { parse } from "graphql";
 import { z } from "zod";
 
+import { OperationZod } from "../types/operation";
 import { operation } from "./operationHelper";
 
 // Stand-in for a gql.tada `graphql()` document: a DocumentNode that carries its
@@ -48,5 +49,19 @@ describe("operation() query documents", () => {
     });
 
     expect(true).toBe(true);
+  });
+});
+
+describe("operation() input", () => {
+  // Type-checked too: the @ts-expect-error fails the build if a non-object
+  // schema is accepted again.
+  it("takes only an object schema", () => {
+    const op = operation({
+      handler: async () => "ok",
+      // @ts-expect-error input must be a Zod object schema
+      input: z.string(),
+    });
+
+    expect(OperationZod.safeParse(op).success).toBe(false);
   });
 });

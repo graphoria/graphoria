@@ -90,8 +90,12 @@ export const OperationZod = z
     query: z.string().optional(),
     // oxlint-disable-next-line typescript/no-explicit-any
     handler: z.custom<OperationHandler<any, any, any>>().optional(),
-    // oxlint-disable-next-line typescript/no-explicit-any
-    input: z.custom<z.ZodType<any>>().optional(),
+    input: z
+      // oxlint-disable-next-line typescript/no-explicit-any
+      .custom<z.ZodType<any>>((value) => value instanceof z.ZodObject, {
+        message: "Operation input must be a Zod object schema",
+      })
+      .optional(),
     // oxlint-disable-next-line typescript/no-explicit-any
     output: z.custom<z.ZodType<any>>().optional(),
     hooks: z

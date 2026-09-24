@@ -93,7 +93,7 @@ type OperationHooksConfig<
  */
 type HandlerOperationConfig<
   TRepository,
-  TInputSchema extends z.ZodType | undefined,
+  TInputSchema extends z.ZodObject | undefined,
   TOutputSchema extends z.ZodType | undefined,
   TInitData,
   TPathParams extends z.ZodType | undefined,
@@ -126,7 +126,7 @@ type HandlerOperationConfig<
  * Config type for query-based operations with inference
  */
 type QueryOperationConfig<
-  TInputSchema extends z.ZodType | undefined,
+  TInputSchema extends z.ZodObject | undefined,
   TOutputSchema extends z.ZodType | undefined,
   TInitData,
   TPathParams extends z.ZodType | undefined,
@@ -159,7 +159,7 @@ type QueryOperationConfig<
 
 // Overload 1: Query-based operation (has `query`, no `handler`)
 export function operation<
-  TInputSchema extends z.ZodType | undefined = undefined,
+  TInputSchema extends z.ZodObject | undefined = undefined,
   TOutputSchema extends z.ZodType | undefined = undefined,
   TInitData = unknown,
   TPathParams extends z.ZodType | undefined = undefined,
@@ -180,7 +180,7 @@ export function operation<
 
 // Overload 2: Handler-based operation without custom repository type (no generic provided)
 export function operation<
-  TInputSchema extends z.ZodType | undefined = undefined,
+  TInputSchema extends z.ZodObject | undefined = undefined,
   TOutputSchema extends z.ZodType | undefined = undefined,
   TInitData = unknown,
   TPathParams extends z.ZodType | undefined = undefined,
@@ -239,7 +239,7 @@ export function operation(config: unknown): unknown {
  */
 operation.typed = <TRepository>() => {
   return <
-    TInputSchema extends z.ZodType | undefined = undefined,
+    TInputSchema extends z.ZodObject | undefined = undefined,
     TOutputSchema extends z.ZodType | undefined = undefined,
     TInitData = unknown,
     TPathParams extends z.ZodType | undefined = undefined,
