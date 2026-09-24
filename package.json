@@ -16,8 +16,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter @graphoria/server dev",
-    "dev:server": "bun run --filter @graphoria/server dev",
+    "dev": "bun run --filter @graphoria/server build:playgrounds && bun --watch packages/server/standalone.ts",
+    "dev:server": "bun run --filter @graphoria/server build:playgrounds && bun --watch packages/server/standalone.ts",
+    "start": "bun run --filter @graphoria/server build:playgrounds && bun packages/server/standalone.ts",
+    "cluster": "bun run --filter @graphoria/server build:playgrounds && bun packages/server/cli.ts --cluster",
     "build": "bun run --filter '!@graphoria/playgrounds' build",
     "build:server": "bun run --filter @graphoria/server build",
     "build:react": "bun run --filter @graphoria/react build",

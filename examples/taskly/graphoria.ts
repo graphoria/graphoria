@@ -27,7 +27,7 @@ export default {
       // `schema.database` block below is keyed on.
       fieldNaming: "{database}_{name}",
       connection: {
-        host: "localhost",
+        host: process.env.PG_HOST ?? "localhost",
         port: 5432,
         user: "postgres",
         password: "postgrespassword",
@@ -88,12 +88,15 @@ export default {
       // Same reasoning as the pg block above.
       fieldNaming: "{database}_{name}",
       connection: {
-        host: "localhost",
+        host: process.env.MYSQL_HOST ?? "localhost",
         port: 3306,
         user: "root",
         password: "mysqlpassword",
         database: "my_app",
       },
+      // MySQL 8 authenticates with caching_sha2_password, whose RSA key
+      // exchange Bun's client refuses over plain TCP unless allowed.
+      connectionOptions: { allowPublicKeyRetrieval: true },
 
       onConnect: async (sql) => {
         const seed = await Bun.file("seed.mysql.sql").text();
@@ -148,7 +151,7 @@ export default {
       enabled: true,
       fieldNaming: "{database}_{name}",
       connection: {
-        host: "localhost",
+        host: process.env.MSSQL_HOST ?? "localhost",
         port: 1433,
         user: "sa",
         // Matches MSSQL_SA_PASSWORD in examples/docker-compose.yml.
@@ -354,7 +357,7 @@ export default {
       enabled: true,
       autoSetup: true,
       connection: {
-        hostname: "localhost",
+        hostname: process.env.RABBITMQ_HOST ?? "localhost",
         port: 5672,
         username: "guest",
         password: "guest",

@@ -12,7 +12,7 @@ concurrency:
 env:
   # Kept at or above the root package.json `engines.bun` floor (>=1.3.4). Pinned
   # rather than floating so a Bun release cannot turn a green PR red on its own.
-  BUN_VERSION: 1.4.0
+  BUN_VERSION: 1.4.2
 
 jobs:
   check:
@@ -38,6 +38,11 @@ jobs:
 
       - name: Type check
         run: bun run type-check
+
+      # cli.test.ts boots a real server, which reads the gitignored playground
+      # HTML at boot; see the same step in the integration job.
+      - name: Build playgrounds
+        run: bun run --filter @graphoria/server build:playgrounds
 
       - name: Test
         run: bun test

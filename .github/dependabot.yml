@@ -52,3 +52,21 @@ updates:
     labels:
       - dependencies
       - ci
+
+  # The Docker Compose examples' Dockerfiles. Every stage uses the same
+  # oven/bun tag, so the group keeps them in one PR.
+  - package-ecosystem: docker
+    directories:
+      - /examples/docker-compose-starter
+      - /examples/taskly
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      bun:
+        patterns:
+          - "oven/bun"
+    labels:
+      - dependencies
+      - docker

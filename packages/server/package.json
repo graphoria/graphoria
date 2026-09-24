@@ -63,9 +63,9 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
+    "dev": "bun run --watch standalone.ts",
     "cluster": "bun run cli.ts --cluster",
-    "start": "bun run src/index.ts",
+    "start": "bun run standalone.ts",
     "build": "tsc",
     "type-check": "tsc --noEmit",
     "standalone": "bun run cli.ts",

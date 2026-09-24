@@ -38,7 +38,7 @@ docker run -d --name graphoria-pg \
   -p 5432:5432 postgres:16
 ```
 
-Create a `graphoria.ts` at the repo root (see [Quickstart](./docs/QUICKSTART.md) for a minimal example) and run:
+Create a `graphoria.ts` at the repo root (see [Quickstart](./docs/QUICKSTART.md) for a minimal example). Copy `.env.example` to `.env` and set `CONFIGURATION=./graphoria.ts` and `JWT_SECRET` in it. Then run:
 
 ```bash
 bun run dev
@@ -71,26 +71,12 @@ bun run prepublishOnly  # Type-check, build, and test (the publish gate)
 
 ## Docker
 
-Build from the monorepo root (the Dockerfile lives at `packages/server/Dockerfile`).
+There is no official image. A Graphoria project builds its own image, from its own `package.json`, `bun.lock`, `index.ts` and `graphoria.ts`. Two examples carry the recipe (Bun slim image, non-root, healthcheck on `/health/live`):
 
-```bash
-# Development image (with hot reload)
-docker build --build-arg BUN_VERSION=1.3.6 --target dev -t graphoria:dev -f packages/server/Dockerfile .
+- [`examples/docker-compose-starter/`](./examples/docker-compose-starter/): Postgres and the app. Start from its `Dockerfile`, `.dockerignore` and `docker-compose.yml`.
+- [`examples/taskly/`](./examples/taskly/): the full stack, `docker compose -f examples/docker-compose.yml --profile taskly up -d --build`.
 
-# Production image
-docker build --build-arg BUN_VERSION=1.3.6 --target release -t graphoria:latest -f packages/server/Dockerfile .
-```
-
-Run with a configuration file mounted (swap `<path-to>/configuration.ts` for your own):
-
-```bash
-docker run --rm -p 3000:3000 \
-  -e ADMIN_SECRET=your-admin-secret \
-  -e JWT_SECRET=your-jwt-secret \
-  -e CONFIGURATION=/app/configuration.ts \
-  -v <path-to>/configuration.ts:/app/configuration.ts \
-  graphoria:latest
-```
+Both install `@graphoria/server` from npm, so they run the published release, not this checkout.
 
 Environment variables:
 
