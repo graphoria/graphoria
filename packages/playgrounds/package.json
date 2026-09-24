@@ -16,7 +16,7 @@
   "dependencies": {
     "@graphiql/plugin-explorer": "5.1.5",
     "@graphiql/toolkit": "0.12.1",
-    "@scalar/api-reference": "^1.69.2",
+    "@scalar/api-reference": "^1.70.0",
     "graphiql": "5.4.0",
     "graphql": "17.0.2",
     "graphql-ws": "^6.2.2",
