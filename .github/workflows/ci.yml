@@ -39,6 +39,11 @@ jobs:
       - name: Type check
         run: bun run type-check
 
+      # cli.test.ts boots a real server, which reads the gitignored playground
+      # HTML at boot; see the same step in the integration job.
+      - name: Build playgrounds
+        run: bun run --filter @graphoria/server build:playgrounds
+
       - name: Test
         run: bun test
 
