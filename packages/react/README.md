@@ -198,6 +198,8 @@ subscribeAccessToken(() => wsClient.terminate());
 export const urqlClient = new Client({
   url: "/graphql",
   fetchOptions: { credentials: "include" },
+  // Graphoria answers queries over POST; GET /graphql is its websocket.
+  preferGetMethod: false,
   exchanges: [
     cacheExchange,
     authExchange(async () => ({

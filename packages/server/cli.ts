@@ -1,13 +1,20 @@
 #!/usr/bin/env bun
 import { parseArgs } from "util";
 
-import { seedAuthCommand } from "./src/cli/seedAuth";
 import { version } from "./package.json";
 
 const rawArgs = Bun.argv.slice(2);
 
+// Loaded on demand: seed-auth reaches the env singleton, which rejects a missing
+// ADMIN_SECRET at import, and --help or --version must run without one.
 if (rawArgs[0] === "seed-auth") {
+  const { seedAuthCommand } = await import("./src/cli/seedAuth");
   await seedAuthCommand(rawArgs.slice(1));
+}
+
+if (rawArgs[0] === "init") {
+  const { initCommand } = await import("./src/cli/init");
+  await initCommand(rawArgs.slice(1));
 }
 
 const { values } = parseArgs({
@@ -30,6 +37,7 @@ graphoria v${version}
 
 Usage: graphoria [options]
        graphoria seed-auth --user <name> --password <pwd> --role <role> [--config <path>] [--claims <json>]
+       graphoria init [--yes] [--database pg|mysql|mssql] [--frontend] [--no-install]
 
 Options:
   -c, --config <path>    Path to configuration file (env: CONFIGURATION)
@@ -41,6 +49,7 @@ Options:
 
 Subcommands:
   seed-auth              Insert an auth user (argon2id-hashed) into the configured auth database
+  init                   Scaffold a Graphoria project with Docker Compose in the current directory
 
 Environment variables:
   ADMIN_SECRET           Admin secret for superadmin access (required)

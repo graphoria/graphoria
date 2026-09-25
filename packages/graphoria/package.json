@@ -1,0 +1,40 @@
+{
+  "name": "graphoria",
+  "version": "0.5.1",
+  "description": "The Graphoria CLI: bunx graphoria init scaffolds a project",
+  "keywords": [
+    "bun",
+    "cli",
+    "graphoria",
+    "graphql",
+    "rest-api",
+    "scaffold"
+  ],
+  "homepage": "https://github.com/graphoria/graphoria#readme",
+  "bugs": {
+    "url": "https://github.com/graphoria/graphoria/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Alex Ferreli <ferreli.ale@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/graphoria/graphoria.git",
+    "directory": "packages/graphoria"
+  },
+  "bin": {
+    "graphoria": "./cli.ts"
+  },
+  "files": [
+    "cli.ts",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "type": "module",
+  "dependencies": {
+    "@graphoria/server": "0.5.1"
+  },
+  "engines": {
+    "bun": ">=1.3.4"
+  }
+}

@@ -374,7 +374,7 @@ Generated GraphQL fields follow the `{schema}_{name}` pattern by default — e.g
 
 | Verb     | Path            | Description                                                                                     |
 | -------- | --------------- | ----------------------------------------------------------------------------------------------- |
-| GET/POST | `/graphql`      | GraphQL HTTP. WebSocket upgrade on GET (graphql-ws protocol).                                   |
+| GET/POST | `/graphql`      | GraphQL over HTTP, POST only. GET is the WebSocket upgrade (graphql-ws); a plain GET is `404`.  |
 | GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies).                                                    |
 | GET      | `/graphiql`     | Bundled GraphiQL playground.                                                                    |
 | GET      | `/scalar`       | Bundled Scalar API docs.                                                                        |
@@ -432,10 +432,11 @@ The three limits that ship on — query depth, page size and the statement timeo
 
 ## Packages
 
-| Package                                  | Description                                                         |
-| ---------------------------------------- | ------------------------------------------------------------------- |
-| [`@graphoria/server`](./packages/server) | Main server — API generation, auth, queues, cron                    |
-| [`@graphoria/react`](./packages/react)   | React hooks for auth, Apollo Client, and route-based access control |
+| Package                                  | Description                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| [`@graphoria/server`](./packages/server) | Main server — API generation, auth, queues, cron                           |
+| [`@graphoria/react`](./packages/react)   | React hooks for auth, Apollo Client, and route-based access control        |
+| [`graphoria`](./packages/graphoria)      | The CLI under its unscoped name: `bunx graphoria init` scaffolds a project |
 
 ## Documentation
 
