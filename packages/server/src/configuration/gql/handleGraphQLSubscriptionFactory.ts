@@ -37,10 +37,23 @@ const handleGraphQLSubscriptionFactory = (
   >,
 ) => {
   return async (ws: ServerWebSocket<unknown>, body: string) => {
+    let parsed;
     try {
-      const parsed = JSON.parse(body);
-      const { id, type, payload } = parsed;
+      parsed = JSON.parse(body);
+    } catch (error) {
+      logger("subscriptions").warn({ err: error }, "syntax error in subscription message");
+      ws.close(4400, "Invalid message");
+      return;
+    }
 
+    if (parsed === null || typeof parsed !== "object") {
+      ws.close(4400, "Invalid message");
+      return;
+    }
+
+    const { id, type, payload } = parsed;
+
+    try {
       // Validate message format
       if (!type) {
         ws.send(
@@ -102,7 +115,11 @@ const handleGraphQLSubscriptionFactory = (
         }
 
         const { query, variables, operationName } = payload ?? {};
-        const session = subscriptionMapping.get(ws)!;
+        const session = subscriptionMapping.get(ws);
+        if (!session) {
+          ws.close(4401, "Unauthorized");
+          return;
+        }
         const schemaEntity = roles[session.role!];
 
         // Validate query
@@ -228,13 +245,15 @@ const handleGraphQLSubscriptionFactory = (
         queryEventEmitter.removeSubscription(ws, id);
       }
     } catch (error) {
-      if (error instanceof SyntaxError) {
-        logger("subscriptions").warn({ err: error }, "syntax error in subscription message");
-      } else {
-        logger("subscriptions").error({ err: error }, "subscription handler error");
-      }
+      logger("subscriptions").error({ err: error }, "subscription handler error");
 
-      throw error;
+      if (type === "subscribe" && id) {
+        ws.send(
+          JSON.stringify({ id, type: "error", payload: [{ message: "Internal server error" }] }),
+        );
+      } else {
+        ws.close(4500, "Internal server error");
+      }
     }
   };
 };
@@ -260,7 +279,7 @@ export const websocketHandlerFactory = (
 
   return {
     async message(ws, message) {
-      handleGraphQLSubscription(ws, message as string);
+      await handleGraphQLSubscription(ws, message as string);
     },
     close(ws) {
       logger("subscriptions").debug("client disconnected");
