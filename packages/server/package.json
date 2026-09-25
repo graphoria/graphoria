@@ -1,6 +1,6 @@
 {
   "name": "@graphoria/server",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Auto-generated GraphQL and REST APIs from database schema - Connect your database to modern APIs instantly",
   "keywords": [
     "auto-generated",

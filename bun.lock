@@ -15,7 +15,7 @@
     },
     "packages/playgrounds": {
       "name": "@graphoria/playgrounds",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "dependencies": {
         "@graphiql/plugin-explorer": "5.1.5",
         "@graphiql/toolkit": "0.12.1",
@@ -39,7 +39,7 @@
     },
     "packages/react": {
       "name": "@graphoria/react",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.14.5",
         "@sinonjs/fake-timers": "^15.4.0",
@@ -59,7 +59,7 @@
     },
     "packages/server": {
       "name": "@graphoria/server",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "bin": {
         "graphoria": "./cli.ts",
       },
