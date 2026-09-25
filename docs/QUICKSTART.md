@@ -19,7 +19,7 @@ mkdir my-api && cd my-api
 bunx graphoria init
 ```
 
-`init` asks for the database engine (`pg`, `mysql` or `mssql`), the database name, its password and the port it gets on your machine; Enter takes the default shown. It then writes the project and runs `bun install`:
+`init` asks for the database engine (`pg`, `mysql` or `mssql`), the database name, its password, the port it gets on your machine and whether to add a React frontend; Enter takes the default shown. It then writes the project and runs `bun install`:
 
 | File                                          | What it holds                                                                                                                    |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -60,6 +60,28 @@ Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the 
 Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, and the database name on MySQL (`app_authors` with the default name).
 
 `--yes` takes every default without asking, `--database pg|mysql|mssql` picks the engine, and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command.
+
+### Add a React frontend with `--frontend`
+
+Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books:
+
+| File                                                | What it holds                                                                                                           |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `web/index.html`, `web/frontend.tsx`, `web/App.tsx` | The page, its entry point, and the component that queries the seed with [urql](https://nearform.com/open-source/urql/). |
+| `web/graphql.ts`                                    | [gql.tada](https://gql-tada.0no.co/), which types each query from the schema.                                           |
+| `web/styles.css`, `bunfig.toml`                     | Tailwind CSS, which Bun builds through `bun-plugin-tailwind`.                                                           |
+
+Five files change too: `graphoria.ts` opens the seed to anonymous reads (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
+
+The app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off.
+
+The query types come from the schema, which `bun run dev` prints to `.graphoria/schemas/`. Once it has, run:
+
+```bash
+bun run types
+```
+
+It writes `web/graphql-env.d.ts`; commit that file. Until it exists the app still runs, but `tsc` reports errors in `web/`. After a change to the tables, restart `bun run dev` and run `bun run types` again.
 
 The rest of this guide sets a project up by hand, against a database you already run.
 
