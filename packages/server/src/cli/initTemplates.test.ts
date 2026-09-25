@@ -5,10 +5,12 @@ import { join } from "node:path";
 
 import type { DatabaseType } from "../config";
 
+import { genResolverName } from "../databases/transformers/genResolverName";
 import { ConfigurationZod } from "../types/zod/configuration";
-import { PROJECT_FILES, renderProject, type ProjectValues } from "./initTemplates";
+import { FRONTEND_FILES, PROJECT_FILES, renderProject, type ProjectValues } from "./initTemplates";
 
 const STARTER = join(import.meta.dir, "../../../../examples/docker-compose-starter");
+const PLAYGROUNDS = join(import.meta.dir, "../../../playgrounds/package.json");
 
 const values = (database: DatabaseType): ProjectValues => ({
   database,
@@ -16,6 +18,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   dbName: "shop",
   dbPassword: "Pa55word.x",
   dbPort: 15432,
+  frontend: false,
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
 });
@@ -273,5 +276,191 @@ describe("renderProject seed.sql", () => {
     const statements = seed.replace(/^--.*\n/gm, "");
 
     expect(statements.trimStart()).toStartWith("IF OBJECT_ID(N'dbo.authors') IS NULL");
+  });
+});
+
+describe("renderProject with the frontend", () => {
+  const renderWeb = (database: DatabaseType) =>
+    renderProject({ ...values(database), frontend: true }, versions);
+
+  const WEB_PATHS = [
+    "bunfig.toml",
+    "web/App.tsx",
+    "web/frontend.tsx",
+    "web/graphql.ts",
+    "web/index.html",
+    "web/styles.css",
+  ];
+
+  // The seed's schema, which prefixes its field names: a MySQL schema is its database.
+  const SCHEMAS = { pg: "public", mysql: "shop", mssql: "dbo" } as const;
+
+  it.each(ENGINES)("renders sixteen files for %s", (database) => {
+    expect(Object.keys(renderWeb(database)).sort()).toEqual([...PATHS, ...WEB_PATHS].sort());
+  });
+
+  it("lists the added files in FRONTEND_FILES", () => {
+    expect(Array.from<string>(FRONTEND_FILES).sort()).toEqual(WEB_PATHS);
+  });
+
+  it("pins React and Tailwind to the playgrounds' versions", async () => {
+    const playgrounds = JSON.parse(await readFile(PLAYGROUNDS, "utf8"));
+    const repo = { ...playgrounds.dependencies, ...playgrounds.devDependencies };
+    const exact = (name: string) => repo[name].replace(/^[\^~]/, "");
+    const pkg = JSON.parse(renderWeb("pg")["package.json"]!);
+
+    expect(pkg.dependencies).toMatchObject({
+      "@graphoria/server": "^0.6.0",
+      react: exact("react"),
+      "react-dom": exact("react-dom"),
+      tailwindcss: exact("tailwindcss"),
+      "bun-plugin-tailwind": exact("bun-plugin-tailwind"),
+    });
+    expect(pkg.devDependencies).toEqual({
+      "@types/bun": "latest",
+      "@types/react": exact("@types/react"),
+      "@types/react-dom": exact("@types/react-dom"),
+      typescript: "^6.0.0",
+    });
+  });
+
+  it("pins urql and gql.tada to exact versions, as runtime dependencies", () => {
+    const pkg = JSON.parse(renderWeb("pg")["package.json"]!);
+
+    expect(Object.keys(pkg.dependencies).sort()).toEqual([
+      "@graphoria/server",
+      "bun-plugin-tailwind",
+      "gql.tada",
+      "react",
+      "react-dom",
+      "tailwindcss",
+      "urql",
+    ]);
+    expect(pkg.dependencies.urql).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(pkg.dependencies["gql.tada"]).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("prints the schemas in dev and generates the types from them", () => {
+    const pkg = JSON.parse(renderWeb("pg")["package.json"]!);
+
+    expect(pkg.scripts).toEqual({
+      dev: "PRINT_SCHEMAS=true bun --watch index.ts",
+      start: "bun index.ts",
+      types: "gql-tada generate output",
+    });
+  });
+
+  it("types JSX, the DOM and the anonymous schema's queries", () => {
+    const { compilerOptions } = JSON.parse(renderWeb("pg")["tsconfig.json"]!);
+
+    expect(compilerOptions.lib).toEqual(["ESNext", "DOM"]);
+    expect(compilerOptions.jsx).toBe("react-jsx");
+    expect(compilerOptions.allowImportingTsExtensions).toBe(true);
+    expect(compilerOptions.plugins).toEqual([
+      {
+        name: "gql.tada/ts-plugin",
+        schema: "./.graphoria/schemas/schema_anonymous.graphql",
+        tadaOutputLocation: "./web/graphql-env.d.ts",
+      },
+    ]);
+  });
+
+  it("serves the app on / next to Graphoria's routes", () => {
+    const index = renderWeb("pg")["index.ts"]!;
+
+    expect(index).toContain("createHandlers(");
+    expect(index).not.toContain("createBunServer");
+    expect(index).toContain('import web from "./web/index.html"');
+    expect(index).toContain('"/": web');
+    // A catch-all would replace the CORS preflight route, `${PREFIX}/*`.
+    expect(index).not.toContain('"/*"');
+  });
+
+  it("builds the Tailwind classes and ignores the printed schemas", () => {
+    const files = renderWeb("pg");
+
+    expect(Bun.TOML.parse(files["bunfig.toml"]!)).toEqual({
+      serve: { static: { plugins: ["bun-plugin-tailwind"] } },
+    });
+    expect(files["web/styles.css"]).toBe('@import "tailwindcss";\n');
+    expect(files[".gitignore"]!.split("\n")).toContain(".graphoria");
+  });
+
+  it("loads the app and its styles from index.html", () => {
+    const html = renderWeb("pg")["web/index.html"]!;
+
+    expect(html).toContain('<div id="root"></div>');
+    expect(html).toContain('href="./styles.css"');
+    expect(html).toContain('<script type="module" src="./frontend.tsx"></script>');
+  });
+
+  it("queries Graphoria over POST, since GET /graphql is the websocket", () => {
+    const frontend = renderWeb("pg")["web/frontend.tsx"]!;
+
+    expect(frontend).toContain('url: "/graphql"');
+    expect(frontend).toContain("preferGetMethod: false");
+  });
+
+  it("types the queries from the generated introspection", () => {
+    expect(renderWeb("pg")["web/graphql.ts"]).toContain(
+      'import type { introspection } from "./graphql-env.d.ts";',
+    );
+  });
+
+  it.each(ENGINES)("queries the %s seed by its field names", (database) => {
+    const app = renderWeb(database)["web/App.tsx"]!;
+    const schema = SCHEMAS[database];
+
+    expect(app).toContain(`${genResolverName(schema, "authors", "table")}(`);
+    expect(app).toContain(`${genResolverName(schema, "books", "table")}(`);
+    for (const other of Object.values(SCHEMAS).filter((name) => name !== schema)) {
+      expect(app).not.toContain(`${other}_`);
+    }
+  });
+
+  describe("graphoria.ts", () => {
+    let dir: string;
+
+    beforeAll(async () => {
+      dir = await mkdtemp(join(tmpdir(), "graphoria-init-frontend-"));
+      process.env.DB_HOST = "db.internal";
+      process.env.DB_PORT = "15432";
+      process.env.DB_USER = "someone";
+      process.env.DB_PASSWORD = "Pa55word.x";
+      process.env.DB_NAME = "shop";
+    });
+
+    afterAll(async () => {
+      for (const key of ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]) {
+        delete process.env[key];
+      }
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    const parse = async (frontend: boolean, database: DatabaseType) => {
+      const path = join(dir, `${database}-${frontend}.graphoria.ts`);
+      await writeFile(
+        path,
+        renderProject({ ...values(database), frontend }, versions)["graphoria.ts"]!,
+      );
+      const configure = (await import(path)).default as (helpers: object) => unknown;
+      return ConfigurationZod.parse(configure({}));
+    };
+
+    it.each(ENGINES)("grants anonymous the two %s seed tables, auth off", async (database) => {
+      const { auth } = await parse(true, database);
+      const schema = SCHEMAS[database];
+
+      expect(auth.enabled).toBe(false);
+      expect(Object.keys(auth.permissions)).toEqual(["anonymous"]);
+      expect(auth.permissions.anonymous!.tables).toEqual({
+        [genResolverName(schema, "authors", "table")]: { columns: "ALL" },
+        [genResolverName(schema, "books", "table")]: { columns: "ALL" },
+      });
+    });
+
+    it("grants nothing without the frontend", async () => {
+      expect((await parse(false, "pg")).auth.permissions).toEqual({});
+    });
   });
 });

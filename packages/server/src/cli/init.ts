@@ -9,7 +9,7 @@ import type { InitAnswers } from "./initTemplates";
 
 import { version } from "../../package.json";
 import { DATABASE_TYPES, isDatabaseType, parseInitArgs } from "./initArgs";
-import { ENGINES, PROJECT_FILES, renderProject } from "./initTemplates";
+import { ENGINES, FRONTEND_FILES, PROJECT_FILES, renderProject, seedSchema } from "./initTemplates";
 
 type Ask = (question: string, fallback: string) => string | null;
 type Say = (line: string) => void;
@@ -108,7 +108,15 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
     question(ask, say, "Database port on this host", String(ENGINES[database].port), portError),
   );
 
-  return { database, dbName, dbPassword, dbPort };
+  const frontend =
+    args.frontend ??
+    /^y(es)?$/i.test(
+      question(ask, say, "Add a React frontend? (y/N)", "n", (answer) =>
+        /^(y(es)?|no?)$/i.test(answer) ? undefined : "Answer y or n.",
+      ),
+    );
+
+  return { database, dbName, dbPassword, dbPort, frontend };
 };
 
 export const isPortFree = (port: number): boolean => {
@@ -131,10 +139,8 @@ export const portWarning = (
   return `Port ${port} is in use on this host, so Docker Compose cannot publish the database on it. Set DB_PORT in .env to a free port${suggestion} before \`docker compose up\`.`;
 };
 
-// The seed's tables under the default `{schema}_{name}` field naming; a MySQL
-// schema is its database.
-export const sampleQuery = ({ database, dbName }: InitAnswers): string => {
-  const schema = { pg: "public", mysql: dbName, mssql: "dbo" }[database];
+export const sampleQuery = (answers: Pick<InitAnswers, "database" | "dbName">): string => {
+  const schema = seedSchema(answers);
   return `{ ${schema}_authors { name ${schema}_books { title } } }`;
 };
 
@@ -143,19 +149,29 @@ const nextSteps = (answers: InitAnswers, installed: boolean) =>
     ...(installed ? [] : ["First run `bun install`: the Dockerfile needs its bun.lock.", ""]),
     "Run everything in Docker:",
     "  docker compose up -d --build",
-    "  then open http://localhost:3000/graphiql",
+    answers.frontend
+      ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
+      : "  then open http://localhost:3000/graphiql",
     "",
     "Or run Graphoria on the host against the database container:",
     answers.database === "mssql"
       ? "  docker compose run --rm db-init"
       : "  docker compose up -d --wait db",
     "  bun run dev",
+    ...(answers.frontend
+      ? [
+          "",
+          "Once `bun run dev` has printed the schema, `bun run types` writes",
+          "web/graphql-env.d.ts, which types the app's queries. Commit it.",
+        ]
+      : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try: ${sampleQuery(answers)}`,
   ].join("\n");
 
-const USAGE = "Usage: graphoria init [--yes] [--database pg|mysql|mssql] [--no-install]";
+const USAGE =
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql] [--frontend] [--no-install]";
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
@@ -168,14 +184,17 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   }
 
   const dir = process.cwd();
-  const conflicts = findConflicts(dir, [...PROJECT_FILES, "bun.lock"]);
-  if (conflicts.length > 0) {
+  const refuseExisting = (paths: readonly string[]) => {
+    const conflicts = findConflicts(dir, paths);
+    if (conflicts.length === 0) return;
     console.error("init: these files already exist, so nothing was written:");
     for (const path of conflicts) console.error(`  ${path}`);
     process.exit(1);
-  }
+  };
 
+  refuseExisting([...PROJECT_FILES, "bun.lock"]);
   const answers = collectAnswers(args, args.yes ? () => null : prompt, console.log);
+  if (answers.frontend) refuseExisting(FRONTEND_FILES);
   const warning = portWarning(answers.dbPort);
   if (warning) console.warn(warning);
 

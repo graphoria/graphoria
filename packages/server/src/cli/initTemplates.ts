@@ -5,6 +5,7 @@ export type InitAnswers = {
   dbName: string;
   dbPassword: string;
   dbPort: number;
+  frontend: boolean;
 };
 
 export type ProjectValues = InitAnswers & { name: string; adminSecret: string; jwtSecret: string };
@@ -44,15 +45,57 @@ export const PROJECT_FILES = [
   "seed.sql",
 ] as const;
 
-const packageJson = ({ name }: ProjectValues, { graphoria }: Versions) =>
+export const FRONTEND_FILES = [
+  "bunfig.toml",
+  "web/index.html",
+  "web/frontend.tsx",
+  "web/App.tsx",
+  "web/graphql.ts",
+  "web/styles.css",
+] as const;
+
+// The seed's schema, which prefixes its field names under the default
+// `{schema}_{name}` field naming; a MySQL schema is its database.
+export const seedSchema = ({ database, dbName }: Pick<InitAnswers, "database" | "dbName">) =>
+  ({ pg: "public", mysql: dbName, mssql: "dbo" })[database];
+
+// Exact versions. A test holds React and Tailwind to packages/playgrounds, which
+// dependabot bumps; urql and gql.tada are bumped here by hand. Runtime
+// dependencies, not dev: the image installs with --production and Bun bundles
+// the app when the server starts.
+const FRONTEND_DEPENDENCIES = {
+  "bun-plugin-tailwind": "0.1.2",
+  "gql.tada": "1.11.3",
+  react: "19.3.0",
+  "react-dom": "19.3.0",
+  tailwindcss: "4.3.3",
+  urql: "5.0.4",
+};
+
+const FRONTEND_DEV_DEPENDENCIES = { "@types/react": "19.3.0", "@types/react-dom": "19.3.0" };
+
+const packageJson = ({ name, frontend }: ProjectValues, { graphoria }: Versions) =>
   JSON.stringify(
     {
       name,
       private: true,
       type: "module",
-      scripts: { dev: "bun --watch index.ts", start: "bun index.ts" },
-      dependencies: { "@graphoria/server": `^${graphoria}` },
-      devDependencies: { "@types/bun": "latest", typescript: "^6.0.0" },
+      scripts: frontend
+        ? {
+            dev: "PRINT_SCHEMAS=true bun --watch index.ts",
+            start: "bun index.ts",
+            types: "gql-tada generate output",
+          }
+        : { dev: "bun --watch index.ts", start: "bun index.ts" },
+      dependencies: {
+        "@graphoria/server": `^${graphoria}`,
+        ...(frontend && FRONTEND_DEPENDENCIES),
+      },
+      devDependencies: {
+        "@types/bun": "latest",
+        ...(frontend && FRONTEND_DEV_DEPENDENCIES),
+        typescript: "^6.0.0",
+      },
     },
     null,
     2,
@@ -72,15 +115,52 @@ const TSCONFIG = `{
 }
 `;
 
+const TSCONFIG_FRONTEND = `{
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "plugins": [
+      {
+        "name": "gql.tada/ts-plugin",
+        "schema": "./.graphoria/schemas/schema_anonymous.graphql",
+        "tadaOutputLocation": "./web/graphql-env.d.ts"
+      }
+    ]
+  }
+}
+`;
+
 const MYSQL_CONNECTION_OPTIONS = `      // MySQL 8 authenticates with caching_sha2_password, whose RSA key
       // exchange Bun's client refuses over plain TCP unless allowed.
       connectionOptions: { allowPublicKeyRetrieval: true },
 `;
 
-const graphoriaConfig = ({
-  name,
-  database,
-}: ProjectValues) => `import type { ConfigurationFn } from "@graphoria/server/config";
+const anonymousGrant = (values: ProjectValues) => {
+  const schema = seedSchema(values);
+  return `  // The frontend has no login, so anyone can read these two tables without a
+  // secret, in the app and in GraphiQL alike. Tables are read-only in the
+  // generated API.
+  auth: {
+    enabled: false,
+    database: "main",
+    permissions: {
+      anonymous: { tables: ["${schema}_authors", "${schema}_books"] },
+    },
+  },
+`;
+};
+
+const graphoriaConfig = (
+  values: ProjectValues,
+) => `import type { ConfigurationFn } from "@graphoria/server/config";
 
 // Bun loads these from .env; in Docker Compose they come from the environment.
 const env = (name: string) => {
@@ -90,12 +170,12 @@ const env = (name: string) => {
 };
 
 export default (() => ({
-  name: ${JSON.stringify(name)},
+  name: ${JSON.stringify(values.name)},
   version: "1.0.0",
   databases: [
     {
       name: "main",
-      type: "${database}",
+      type: "${values.database}",
       enabled: true,
       connection: {
         host: env("DB_HOST"),
@@ -104,9 +184,9 @@ export default (() => ({
         password: env("DB_PASSWORD"),
         database: env("DB_NAME"),
       },
-${database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
+${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
   ],
-})) satisfies ConfigurationFn;
+${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -117,6 +197,30 @@ const { server, prefixes } = await createBunServer({
   configuration: "./graphoria.ts",
 });
 
+console.log(\`GraphQL  → http://localhost:\${server.port}\${prefixes.graphql}\`);
+console.log(\`REST     → http://localhost:\${server.port}\${prefixes.rest}\`);
+console.log(\`GraphiQL → http://localhost:\${server.port}\${prefixes.graphiql}\`);
+console.log(\`Scalar   → http://localhost:\${server.port}\${prefixes.scalar}\`);
+`;
+
+const INDEX_FRONTEND = `import { createHandlers } from "@graphoria/server";
+
+import web from "./web/index.html";
+
+// No \`port\` here: the server listens on PORT (default 3000), the port the
+// image's healthcheck probes.
+const { serverHandlers, prefixes } = await createHandlers({
+  configuration: "./graphoria.ts",
+});
+
+const server = Bun.serve({
+  ...serverHandlers,
+  // The app on "/" alone: a catch-all would replace Graphoria's CORS preflight route.
+  routes: { ...serverHandlers.routes, "/": web },
+  development: process.env.NODE_ENV !== "production" && { hmr: true, console: true },
+});
+
+console.log(\`Frontend → http://localhost:\${server.port}\`);
 console.log(\`GraphQL  → http://localhost:\${server.port}\${prefixes.graphql}\`);
 console.log(\`REST     → http://localhost:\${server.port}\${prefixes.rest}\`);
 console.log(\`GraphiQL → http://localhost:\${server.port}\${prefixes.graphiql}\`);
@@ -138,6 +242,10 @@ DB_NAME=${values.dbName}
 
 const GITIGNORE = `node_modules
 .env
+`;
+
+// .graphoria holds the schemas `bun run dev` prints.
+const GITIGNORE_FRONTEND = `${GITIGNORE}.graphoria
 `;
 
 const dockerfile = ({ bun }: Versions) => `# Install stage: bun install and its cache stay here.
@@ -382,18 +490,137 @@ END;
 
 const SEEDS: Record<DatabaseType, string> = { pg: PG_SEED, mysql: MYSQL_SEED, mssql: MSSQL_SEED };
 
+const BUNFIG = `# Bun.serve bundles web/ with Tailwind.
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+`;
+
+const indexHtml = ({ name }: ProjectValues) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${name}</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./frontend.tsx"></script>
+  </body>
+</html>
+`;
+
+const FRONTEND_TSX = `import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { Client, Provider, cacheExchange, fetchExchange } from "urql";
+
+import { App } from "./App.tsx";
+
+const client = new Client({
+  url: "/graphql",
+  // Graphoria answers queries over POST; GET /graphql is its websocket.
+  preferGetMethod: false,
+  exchanges: [cacheExchange, fetchExchange],
+});
+
+const app = (
+  <StrictMode>
+    <Provider value={client}>
+      <App />
+    </Provider>
+  </StrictMode>
+);
+
+const root = document.getElementById("root")!;
+if (import.meta.hot) {
+  // Hot reload keeps one React root across updates.
+  (import.meta.hot.data.root ??= createRoot(root)).render(app);
+} else {
+  createRoot(root).render(app);
+}
+`;
+
+const appTsx = (values: ProjectValues) => {
+  const schema = seedSchema(values);
+  return `import { useQuery } from "urql";
+
+import { graphql } from "./graphql.ts";
+
+const AuthorsQuery = graphql(\`
+  query Authors {
+    ${schema}_authors(orderBy: [{ id: ASC }]) {
+      id
+      name
+      ${schema}_books(orderBy: [{ published_year: ASC }]) {
+        id
+        title
+        published_year
+      }
+    }
+  }
+\`);
+
+export function App() {
+  const [{ data, fetching, error }] = useQuery({ query: AuthorsQuery });
+
+  return (
+    <main className="mx-auto max-w-2xl p-8 font-sans">
+      <h1 className="mb-6 text-3xl font-bold">Authors</h1>
+      {fetching && <p className="text-gray-500">Loading…</p>}
+      {error && <p className="text-red-600">{error.message}</p>}
+      <ul className="space-y-6">
+        {data?.${schema}_authors.map((author) => (
+          <li key={author.id}>
+            <h2 className="text-xl font-semibold">{author.name}</h2>
+            <ul className="mt-2 list-disc pl-6">
+              {author.${schema}_books?.map(
+                (book) =>
+                  book && (
+                    <li key={book.id}>
+                      {book.title} <span className="text-gray-500">({book.published_year})</span>
+                    </li>
+                  ),
+              )}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+`;
+};
+
+const GRAPHQL_TS = `import { initGraphQLTada } from "gql.tada";
+
+// \`bun run types\` writes this file from the schema \`bun run dev\` prints.
+import type { introspection } from "./graphql-env.d.ts";
+
+export const graphql = initGraphQLTada<{ introspection: introspection }>();
+`;
+
+const frontendFiles = (values: ProjectValues): Record<(typeof FRONTEND_FILES)[number], string> => ({
+  "bunfig.toml": BUNFIG,
+  "web/index.html": indexHtml(values),
+  "web/frontend.tsx": FRONTEND_TSX,
+  "web/App.tsx": appTsx(values),
+  "web/graphql.ts": GRAPHQL_TS,
+  "web/styles.css": `@import "tailwindcss";\n`,
+});
+
 export const renderProject = (
   values: ProjectValues,
   versions: Versions,
-): Record<(typeof PROJECT_FILES)[number], string> => ({
+): Record<string, string> => ({
   "package.json": packageJson(values, versions),
-  "tsconfig.json": TSCONFIG,
+  "tsconfig.json": values.frontend ? TSCONFIG_FRONTEND : TSCONFIG,
   "graphoria.ts": graphoriaConfig(values),
-  "index.ts": INDEX,
+  "index.ts": values.frontend ? INDEX_FRONTEND : INDEX,
   ".env": dotEnv(values),
-  ".gitignore": GITIGNORE,
+  ".gitignore": values.frontend ? GITIGNORE_FRONTEND : GITIGNORE,
   Dockerfile: dockerfile(versions),
   ".dockerignore": DOCKERIGNORE,
   "docker-compose.yml": dockerCompose(values),
   "seed.sql": SEEDS[values.database],
+  ...(values.frontend && frontendFiles(values)),
 });

@@ -37,7 +37,7 @@ graphoria v${version}
 
 Usage: graphoria [options]
        graphoria seed-auth --user <name> --password <pwd> --role <role> [--config <path>] [--claims <json>]
-       graphoria init [--yes] [--database pg|mysql|mssql] [--no-install]
+       graphoria init [--yes] [--database pg|mysql|mssql] [--frontend] [--no-install]
 
 Options:
   -c, --config <path>    Path to configuration file (env: CONFIGURATION)

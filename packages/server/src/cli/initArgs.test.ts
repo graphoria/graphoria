@@ -22,6 +22,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs(["--no-install"]).install).toBe(false);
   });
 
+  it("answers the frontend question with --frontend or --no-frontend", () => {
+    expect(parseInitArgs(["--frontend"]).frontend).toBe(true);
+    expect(parseInitArgs(["--no-frontend"]).frontend).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("frontend");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql",

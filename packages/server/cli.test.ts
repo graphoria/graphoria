@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -85,6 +85,7 @@ describe("cli without env", () => {
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("Usage: graphoria");
+    expect(result.stdout.toString()).toContain("[--frontend]");
   });
 });
 
@@ -136,6 +137,42 @@ describe("cli init", () => {
     expect(JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies).toEqual({
       "@graphoria/server": `^${version}`,
     });
+  });
+
+  it("adds the React frontend with --frontend", async () => {
+    const { cwd, result } = await init(["--yes", "--frontend", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect((await readdir(cwd, { recursive: true })).sort()).toEqual(
+      [
+        ...FILES,
+        "bunfig.toml",
+        "web",
+        "web/App.tsx",
+        "web/frontend.tsx",
+        "web/graphql.ts",
+        "web/index.html",
+        "web/styles.css",
+      ].sort(),
+    );
+    expect(result.stdout.toString()).toContain("bun run types");
+  });
+
+  it("writes nothing when a frontend file it would create exists", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await mkdir(join(cwd, "web"));
+    await writeFile(join(cwd, "web", "App.tsx"), "mine");
+    const result = Bun.spawnSync(
+      ["bun", join(import.meta.dir, "cli.ts"), "init", "--yes", "--frontend", "--no-install"],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("web/App.tsx");
+    expect((await readdir(cwd, { recursive: true })).sort()).toEqual(["web", "web/App.tsx"]);
+    expect(await readFile(join(cwd, "web", "App.tsx"), "utf8")).toBe("mine");
   });
 
   it("reads the answers from stdin", async () => {

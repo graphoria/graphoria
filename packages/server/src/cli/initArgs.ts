@@ -5,6 +5,7 @@ import type { DatabaseType } from "../config";
 export type InitArgs = {
   yes: boolean;
   database?: DatabaseType;
+  frontend?: boolean;
   install: boolean;
 };
 
@@ -19,6 +20,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     options: {
       yes: { type: "boolean", short: "y", default: false },
       database: { type: "string", short: "d" },
+      frontend: { type: "boolean" },
       install: { type: "boolean", default: true },
     },
     allowNegative: true,
@@ -32,6 +34,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
   return {
     yes: values.yes,
     ...(values.database !== undefined && { database: values.database }),
+    ...(values.frontend !== undefined && { frontend: values.frontend }),
     install: values.install,
   };
 };

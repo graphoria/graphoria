@@ -44,7 +44,8 @@ describe("collectAnswers", () => {
     expect(answers.dbName).toBe("app");
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
     expect(answers.dbPort).toBe(5432);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432"]);
+    expect(answers.frontend).toBe(false);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n"]);
     expect(io.said).toEqual([]);
   });
 
@@ -64,6 +65,7 @@ describe("collectAnswers", () => {
       dbName: "shop",
       dbPassword: "S3cret.pass",
       dbPort: 13306,
+      frontend: false,
     });
   });
 
@@ -73,7 +75,7 @@ describe("collectAnswers", () => {
 
     expect(answers.database).toBe("mssql");
     expect(answers.dbPort).toBe(1433);
-    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433"]);
+    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n"]);
   });
 
   it.each([
@@ -115,7 +117,7 @@ describe("collectAnswers", () => {
     const io = prompter([...answers]);
 
     expect(collectAnswers(ARGS, io.ask, io.say)).toMatchObject(want);
-    expect(io.fallbacks).toHaveLength(5);
+    expect(io.fallbacks).toHaveLength(6);
     expect(io.said).toHaveLength(1);
   });
 
@@ -123,6 +125,35 @@ describe("collectAnswers", () => {
     const io = prompter(["pg", "My-DB", null]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).dbName).toBe("app");
+  });
+
+  it.each(["y", "yes", "Y", "YES", " Yes "])("adds the frontend on %p", (answer) => {
+    const io = prompter(["pg", "shop", "pw", "15432", answer]);
+
+    expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
+  });
+
+  it.each(["", "n", "no", "N", "No"])("leaves the frontend out on %p", (answer) => {
+    const io = prompter(["pg", "shop", "pw", "15432", answer]);
+
+    expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(false);
+    expect(io.said).toEqual([]);
+  });
+
+  it("asks the frontend question again after another answer, saying why", () => {
+    const io = prompter(["pg", "shop", "pw", "15432", "maybe", "y"]);
+
+    expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
+    expect(io.fallbacks).toHaveLength(6);
+    expect(io.said).toHaveLength(1);
+  });
+
+  it.each([true, false])("skips the frontend question when --frontend is %p", (frontend) => {
+    const io = prompter([]);
+    const answers = collectAnswers({ ...ARGS, frontend }, io.ask, io.say);
+
+    expect(answers.frontend).toBe(frontend);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432"]);
   });
 });
 
@@ -243,6 +274,6 @@ describe("sampleQuery", () => {
     ["mysql", "{ shop_authors { name shop_books { title } } }"],
     ["mssql", "{ dbo_authors { name dbo_books { title } } }"],
   ] as const)("uses the %s schema's field names", (database, query) => {
-    expect(sampleQuery({ database, dbName: "shop", dbPassword: "pw", dbPort: 1 })).toBe(query);
+    expect(sampleQuery({ database, dbName: "shop" })).toBe(query);
   });
 });
