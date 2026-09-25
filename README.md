@@ -374,7 +374,7 @@ Generated GraphQL fields follow the `{schema}_{name}` pattern by default — e.g
 
 | Verb     | Path            | Description                                                                                     |
 | -------- | --------------- | ----------------------------------------------------------------------------------------------- |
-| GET/POST | `/graphql`      | GraphQL HTTP. WebSocket upgrade on GET (graphql-ws protocol).                                   |
+| GET/POST | `/graphql`      | GraphQL over HTTP, POST only. GET is the WebSocket upgrade (graphql-ws); a plain GET is `404`.  |
 | GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies).                                                    |
 | GET      | `/graphiql`     | Bundled GraphiQL playground.                                                                    |
 | GET      | `/scalar`       | Bundled Scalar API docs.                                                                        |

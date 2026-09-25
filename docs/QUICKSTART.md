@@ -184,6 +184,17 @@ A list field that asks for no `limit` is served one page — 100 rows by default
 
 Every statement is also bounded in time: one still running after 10 seconds is aborted by the database itself, not merely abandoned by the client. `QUERY_TIMEOUT_MS` moves the bound and `0` removes it. See [Bounding how long a statement runs](./CONFIGURATION.md#bounding-how-long-a-statement-runs).
 
+Outside the playground, send queries and mutations to `/graphql` as a `POST` with a JSON body, and the admin secret from `.env` in the `x-admin-secret` header:
+
+```bash
+curl http://localhost:3000/graphql \
+  -H 'Content-Type: application/json' \
+  -H 'x-admin-secret: dev-admin-change-me' \
+  -d '{"query":"{ public_users(limit: 10) { id name } }"}'
+```
+
+`GET /graphql` only upgrades to the WebSocket that carries [subscriptions](./SUBSCRIPTIONS.md); any other `GET` answers `404`. Some clients send queries as `GET` — urql does by default — so switch them to `POST` (`preferGetMethod: false` on urql's `Client`).
+
 The corresponding REST endpoint is also live:
 
 ```bash
