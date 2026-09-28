@@ -22,11 +22,16 @@ const makeFake = () => {
   const channel = new EventEmitter() as FakeChannel;
   channel.publish = () => true;
   channel.consume = async () => ({}) as ReturnType<Channel["consume"]>;
-  channel.close = async () => undefined;
+  channel.close = async () => {
+    channel.emit("close");
+  };
 
+  // amqplib emits "close" on a deliberate close() too.
   const conn = new EventEmitter() as FakeConnection;
   conn.createChannel = async () => channel as Channel;
-  conn.close = async () => undefined;
+  conn.close = async () => {
+    conn.emit("close");
+  };
   return { conn, channel };
 };
 
@@ -125,6 +130,127 @@ describe("RabbitMQ reconnection", () => {
 
     expect(scheduled).toBe(true);
     expect(manager.isConnected()).toBe(false);
+  });
+});
+
+describe("RabbitMQ cleanup", () => {
+  const fakeTimers = () => {
+    const pending: Array<() => void> = [];
+    const setTimeoutFn = ((cb: () => void) => {
+      pending.push(cb);
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    return { pending, setTimeoutFn };
+  };
+
+  it("schedules no reconnect when cleanup closes the connection", async () => {
+    const { conn } = makeFake();
+    const timers = fakeTimers();
+    const manager = createRabbitMQConnectionManager(minimalConfig(), {
+      connect: (async () => conn as ChannelModel) as unknown as typeof connectFn,
+      setTimeout: timers.setTimeoutFn,
+    });
+    await manager.connect();
+
+    await manager.cleanup();
+
+    expect(timers.pending).toHaveLength(0);
+    expect(manager.isConnected()).toBe(false);
+  });
+
+  it("does not connect from a reconnect that was pending at cleanup", async () => {
+    let connects = 0;
+    const timers = fakeTimers();
+    const manager = createRabbitMQConnectionManager(minimalConfig(), {
+      connect: (async () => {
+        connects++;
+        throw new Error("refused");
+      }) as unknown as typeof connectFn,
+      setTimeout: timers.setTimeoutFn,
+    });
+    await manager.connect();
+    expect(timers.pending).toHaveLength(1);
+
+    await manager.cleanup();
+    timers.pending[0]!();
+    await new Promise((r) => setImmediate(r));
+
+    expect(connects).toBe(1);
+  });
+
+  it("schedules no reconnect when a connect fails after cleanup", async () => {
+    let rejectConnect!: (error: Error) => void;
+    const timers = fakeTimers();
+    const manager = createRabbitMQConnectionManager(minimalConfig(), {
+      connect: (() =>
+        new Promise<ChannelModel>((_resolve, reject) => {
+          rejectConnect = reject;
+        })) as unknown as typeof connectFn,
+      setTimeout: timers.setTimeoutFn,
+    });
+
+    const connecting = manager.connect();
+    await manager.cleanup();
+    rejectConnect(new Error("refused"));
+    await connecting;
+
+    expect(timers.pending).toHaveLength(0);
+  });
+
+  it("closes a connection that opens after cleanup", async () => {
+    const { conn } = makeFake();
+    let closed = 0;
+    conn.close = async () => {
+      closed++;
+      conn.emit("close");
+    };
+    let resolveConnect!: (connection: ChannelModel) => void;
+    const timers = fakeTimers();
+    const manager = createRabbitMQConnectionManager(minimalConfig(), {
+      connect: (() =>
+        new Promise<ChannelModel>((resolve) => {
+          resolveConnect = resolve;
+        })) as unknown as typeof connectFn,
+      setTimeout: timers.setTimeoutFn,
+    });
+
+    const connecting = manager.connect();
+    await manager.cleanup();
+    resolveConnect(conn as ChannelModel);
+    await connecting;
+
+    expect(closed).toBe(1);
+    expect(manager.isConnected()).toBe(false);
+    expect(timers.pending).toHaveLength(0);
+  });
+
+  it("closes a connection whose channel setup outlasts cleanup", async () => {
+    const { conn, channel } = makeFake();
+    let closed = 0;
+    conn.close = async () => {
+      closed++;
+      conn.emit("close");
+    };
+    let resolveChannel!: (value: Channel) => void;
+    conn.createChannel = () =>
+      new Promise<Channel>((resolve) => {
+        resolveChannel = resolve;
+      });
+    const timers = fakeTimers();
+    const manager = createRabbitMQConnectionManager(minimalConfig(), {
+      connect: (async () => conn as ChannelModel) as unknown as typeof connectFn,
+      setTimeout: timers.setTimeoutFn,
+    });
+
+    const connecting = manager.connect();
+    await Bun.sleep(0);
+    await manager.cleanup();
+    resolveChannel(channel as Channel);
+    await connecting;
+
+    expect(closed).toBe(1);
+    expect(manager.isConnected()).toBe(false);
+    expect(timers.pending).toHaveLength(0);
   });
 });
 

@@ -352,3 +352,27 @@ describe("EnvZod tracing", () => {
     expect(() => EnvZod.parse({ ...baseEnv, OTEL_TRACES_SAMPLER_ARG: ratio })).toThrow();
   });
 });
+
+describe("EnvZod SHUTDOWN_*", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("handles signals and drains for 8 seconds by default", () => {
+    expect(EnvZod.parse(baseEnv).shutdown).toEqual({ timeoutMs: 8000, handleSignals: true });
+  });
+
+  it("parses the string forms", () => {
+    const env = EnvZod.parse({
+      ...baseEnv,
+      SHUTDOWN_TIMEOUT_MS: "0",
+      SHUTDOWN_HANDLE_SIGNALS: "false",
+    });
+    expect(env.shutdown).toEqual({ timeoutMs: 0, handleSignals: false });
+  });
+
+  it("rejects a negative timeout", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, SHUTDOWN_TIMEOUT_MS: "-1" })).toThrow();
+  });
+});

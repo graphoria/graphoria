@@ -40,6 +40,10 @@ process.env["PASETO_PUBLIC_KEY"] ??= pasetoPublicKeys.publicKey;
 // a `cache` block ever construct it.
 process.env["CACHE_STORE"] ??= "redis";
 
+// Every boot would otherwise add its own SIGTERM / SIGINT listeners to the test
+// process; the suites that need them opt in through `env.shutdown`.
+process.env["SHUTDOWN_HANDLE_SIGNALS"] ??= "false";
+
 export type GraphQLResponse<T = Record<string, unknown>> = {
   data?: T;
   errors?: { message: string; extensions?: Record<string, unknown> }[];
@@ -174,6 +178,8 @@ const rawClient = async (engine: DatabaseType) => {
 
 export type StartedServer = {
   context: IntegrationContext;
+  /** The server's own graceful shutdown, as `createBunServer` returns it. */
+  shutdown: () => Promise<boolean>;
   /** Closes the raw client, the server, and every database pool. */
   stop: () => Promise<void>;
 };
@@ -193,7 +199,7 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
   const { createBunServer } = await import("../../index");
   const { disconnectDatabases } = await import("../../singletons/databases");
 
-  const { server, prefixes } = await createBunServer({
+  const { server, prefixes, shutdown } = await createBunServer({
     port: 0,
     ...env,
     configuration: { ...baseConfig(engine), ...config } as never,
@@ -320,6 +326,7 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
 
   return {
     context,
+    shutdown,
     stop: async () => {
       await raw.close();
       server.stop(true);

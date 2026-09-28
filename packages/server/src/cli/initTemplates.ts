@@ -209,7 +209,7 @@ import web from "./web/index.html";
 
 // No \`port\` here: the server listens on PORT (default 3000), the port the
 // image's healthcheck probes.
-const { serverHandlers, prefixes } = await createHandlers({
+const { serverHandlers, prefixes, handleSignals } = await createHandlers({
   configuration: "./graphoria.ts",
 });
 
@@ -219,6 +219,8 @@ const server = Bun.serve({
   routes: { ...serverHandlers.routes, "/": web },
   development: process.env.NODE_ENV !== "production" && { hmr: true, console: true },
 });
+// SIGTERM / SIGINT: finish in-flight requests, close connections, exit.
+handleSignals(server);
 
 console.log(\`Frontend → http://localhost:\${server.port}\`);
 console.log(\`GraphQL  → http://localhost:\${server.port}\${prefixes.graphql}\`);

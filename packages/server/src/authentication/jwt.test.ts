@@ -5,10 +5,16 @@ import type { TokenRepository } from "./tokenRepository";
 import { EnvZod } from "../types/env";
 import { createJWTService } from "./jwt";
 
-const createFakeRepo = (): TokenRepository => {
+type FakeRepo = TokenRepository & { closes: number };
+
+const createFakeRepo = (): FakeRepo => {
   const revoked = new Set<string>();
   const used = new Set<string>();
-  return {
+  const repo: FakeRepo = {
+    closes: 0,
+    close: () => {
+      repo.closes++;
+    },
     saveJti: async (jti) => {
       used.add(jti);
     },
@@ -18,6 +24,7 @@ const createFakeRepo = (): TokenRepository => {
     },
     isRevoked: async (jti) => revoked.has(jti),
   };
+  return repo;
 };
 
 const adminSecret = "admin-secret";
@@ -205,5 +212,16 @@ describe("JWT Service - secret rotation", () => {
 
     expect(await service.verifyTokenAndGetRole(null, "")).toBe(anonymousRole);
     expect(await service.verifyTokenAndGetRole(null, "anything")).toBe(anonymousRole);
+  });
+});
+
+describe("JWT Service - close", () => {
+  it("closes its token repository", () => {
+    const repo = createFakeRepo();
+    const service = createJWTService(envMock, repo);
+
+    service.close();
+
+    expect(repo.closes).toBe(1);
   });
 });

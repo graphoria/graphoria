@@ -210,8 +210,12 @@ export const createKafkaConnectionManager = (
       });
 
       producer.on("producer.disconnect", () => {
-        log.warn("producer disconnected, reconnecting");
         state.producer = null;
+        if (!shouldReconnect) {
+          log.info("producer disconnected");
+          return;
+        }
+        log.warn("producer disconnected, reconnecting");
         scheduleReconnect();
       });
 

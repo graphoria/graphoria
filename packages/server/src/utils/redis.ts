@@ -15,6 +15,8 @@ export type KeepRedisConnectedOptions = {
   setTimeout?: typeof setTimeout;
 };
 
+const keepAliveStops = new WeakMap<object, () => void>();
+
 /**
  * Bun's client reconnects on its own only until `maxRetries` runs out; then it
  * fires `onclose` and fails every later command with "Connection has failed",
@@ -30,6 +32,7 @@ export const keepRedisConnected = (
 
   let attempts = 0;
   let reconnecting = false;
+  let stopped = false;
 
   const scheduleReconnect = () => {
     if (reconnecting) return;
@@ -42,6 +45,7 @@ export const keepRedisConnected = (
     attempts++;
 
     setTimeoutFn(() => {
+      if (stopped) return;
       client.connect().then(
         () => {
           reconnecting = false;
@@ -58,10 +62,23 @@ export const keepRedisConnected = (
   };
 
   client.onclose = (error) => {
-    if (reconnecting) return;
+    if (reconnecting || stopped) return;
     log.warn({ err: error }, "connection lost, reconnecting");
     scheduleReconnect();
   };
+
+  keepAliveStops.set(client, () => {
+    stopped = true;
+  });
+};
+
+/**
+ * A deliberate `close()` fires `onclose` too, and a reconnect may already be
+ * pending, so a bare `close()` on a kept-alive client gets it revived.
+ */
+export const closeRedisClient = (client: { close(): void }) => {
+  keepAliveStops.get(client)?.();
+  client.close();
 };
 
 export const createRedisClient = (url: string) => {

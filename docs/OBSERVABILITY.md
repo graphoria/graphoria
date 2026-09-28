@@ -278,9 +278,10 @@ thing that observes the server must never be the thing that sinks it. A failed e
 `warn` and the batch is dropped. There is no retry buffer, deliberately: an unbounded one is the
 failure mode that turns an observability feature into the outage.
 
-The export timer does not hold the process open. There is no graceful-shutdown hook, so whatever
-was queued when the process exits is lost; call `flushSpans()` from your own shutdown path if you
-have one.
+The export timer does not hold the process open. A graceful shutdown flushes the queue as its last
+step, once the drained requests' spans have ended: on SIGTERM or SIGINT, or when you call
+`shutdown()` yourself (see [Graceful shutdown](./API_REFERENCE.md#graceful-shutdown)). A process
+that exits any other way loses whatever was still queued.
 
 ### Not traced
 

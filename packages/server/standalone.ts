@@ -21,12 +21,13 @@ if (values.port) process.env.PORT = values.port;
 
 const { createHandlers } = await import("./src/index.ts");
 
-const { serverHandlers } = await createHandlers();
+const { serverHandlers, handleSignals } = await createHandlers();
 
 const server = Bun.serve({
   ...serverHandlers,
   reusePort: values["reuse-port"] ?? false,
 });
+handleSignals(server);
 
 const { logger } = await import("./src/logging/index.ts");
 logger("graphoria").info({ port: server.port }, "server ready");

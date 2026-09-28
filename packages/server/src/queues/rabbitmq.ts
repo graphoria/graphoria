@@ -130,15 +130,20 @@ export const createRabbitMQConnectionManager = (
   let publishersChangedCallback: (() => void) | null = null;
 
   let reconnectAttempts = 0;
+  let closing = false;
 
   const setupConnection = async (): Promise<void> => {
-    if (state.isConnecting) return;
+    if (state.isConnecting || closing) return;
     state.isConnecting = true;
 
     try {
       log.info("connecting");
 
       const rmqConnection = await connectFn(queueConfig.connection);
+      if (closing) {
+        await rmqConnection.close();
+        return;
+      }
       const channel = await rmqConnection.createChannel();
 
       // Set up error handlers for reconnection
@@ -147,9 +152,13 @@ export const createRabbitMQConnectionManager = (
       });
 
       rmqConnection.on("close", () => {
-        log.warn("connection closed, reconnecting");
         state.connection = null;
         state.channel = null;
+        if (closing) {
+          log.info("connection closed");
+          return;
+        }
+        log.warn("connection closed, reconnecting");
         scheduleReconnect();
       });
 
@@ -158,8 +167,12 @@ export const createRabbitMQConnectionManager = (
       });
 
       channel.on("close", () => {
-        log.warn("channel closed");
         state.channel = null;
+        if (closing) {
+          log.info("channel closed");
+          return;
+        }
+        log.warn("channel closed");
       });
 
       // Set up exchanges and publishers
@@ -235,6 +248,10 @@ export const createRabbitMQConnectionManager = (
         await startConsumer(queueConfig.name, route.name, queueName, channel, route.handler);
       }
 
+      if (closing) {
+        await rmqConnection.close();
+        return;
+      }
       state.connection = rmqConnection;
       state.channel = channel;
       reconnectAttempts = 0;
@@ -254,6 +271,8 @@ export const createRabbitMQConnectionManager = (
   };
 
   const scheduleReconnect = () => {
+    if (closing) return;
+
     const delay = Math.min(
       RECONNECT_INITIAL_DELAY * Math.pow(RECONNECT_MULTIPLIER, reconnectAttempts),
       RECONNECT_MAX_DELAY,
@@ -270,6 +289,7 @@ export const createRabbitMQConnectionManager = (
   };
 
   const cleanup = async () => {
+    closing = true;
     try {
       if (state.channel) {
         await state.channel.close();

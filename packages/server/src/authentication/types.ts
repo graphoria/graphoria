@@ -75,4 +75,7 @@ export type TokenService = {
   revoke(jti: string): Promise<void>;
 
   isRevoked(jti: string): Promise<boolean>;
+
+  /** Closes the token store's Redis client. */
+  close(): void;
 };

@@ -71,6 +71,7 @@ beforeAll(async () => {
     isTokenUsed: async () => false,
     revoke: async () => {},
     isRevoked: async () => false,
+    close: () => {},
   });
 
   // Mint the session the authenticated cases run under through the login route

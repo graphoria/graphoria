@@ -53,6 +53,8 @@ export const EnvZod = z
     MAX_PAGE_SIZE: z.coerce.number().int().min(0).default(1000),
     QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).default(10000),
     SLOW_QUERY_MS: z.coerce.number().int().min(0).default(1000),
+    SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(0).default(8000),
+    SHUTDOWN_HANDLE_SIGNALS: z.stringbool().default(true),
     METRICS_ENABLED: z.stringbool().default(false),
     METRICS_ENDPOINT: z.string().default("/metrics"),
     METRICS_SECRET: secretList,
@@ -137,6 +139,10 @@ export const EnvZod = z
     },
     superadmin: {
       role: env.SUPERADMIN_ROLE,
+    },
+    shutdown: {
+      timeoutMs: env.SHUTDOWN_TIMEOUT_MS,
+      handleSignals: env.SHUTDOWN_HANDLE_SIGNALS,
     },
     metrics: {
       enabled: env.METRICS_ENABLED,
