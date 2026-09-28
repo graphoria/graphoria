@@ -138,7 +138,10 @@ const bootAnalyzedConfiguration = async (env: Env) => {
     : ConfigurationZod.parse(env.configuration);
 
   // Initialize databases (using pre-calculated enabledDatabases from parsing)
-  await instantiateDatabasesConnections(projectConfiguration.enabledDatabases);
+  await instantiateDatabasesConnections(
+    projectConfiguration.enabledDatabases,
+    env.dbConnectRetryMs,
+  );
 
   // Initialize token service based on configured strategy. AUTH_STRATEGY env
   // var overrides the configuration field when set, so per-deploy strategy

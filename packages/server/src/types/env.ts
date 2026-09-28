@@ -55,6 +55,7 @@ export const EnvZod = z
     SLOW_QUERY_MS: z.coerce.number().int().min(0).default(1000),
     SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(0).default(8000),
     SHUTDOWN_HANDLE_SIGNALS: z.stringbool().default(true),
+    DB_CONNECT_RETRY_MS: z.coerce.number().int().min(0).default(60000),
     METRICS_ENABLED: z.stringbool().default(false),
     METRICS_ENDPOINT: z.string().default("/metrics"),
     METRICS_SECRET: secretList,
@@ -107,6 +108,7 @@ export const EnvZod = z
     defaultPageSize: env.DEFAULT_PAGE_SIZE,
     maxPageSize: env.MAX_PAGE_SIZE,
     queryTimeoutMs: env.QUERY_TIMEOUT_MS,
+    dbConnectRetryMs: env.DB_CONNECT_RETRY_MS,
     slowQueryMs: env.SLOW_QUERY_MS,
     maxQueryCost: env.MAX_QUERY_COST,
     admin: {

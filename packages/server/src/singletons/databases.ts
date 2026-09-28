@@ -6,6 +6,7 @@ import type { Database } from "../types/configuration.ts";
 import { getPool as getPoolMSSQL } from "../databases/engines/mssql/connection.ts";
 import { getPool as getPoolMySQL } from "../databases/engines/mysql/connection.ts";
 import { getPool as getPoolPostgreSQL } from "../databases/engines/postgresql/connection.ts";
+import { logger } from "../logging";
 
 /**
  * Type for database connections mapping
@@ -22,18 +23,61 @@ export type RepositoryMap<TRepository = unknown> = Record<string, TRepository>;
 export const databasesConnections: DatabasesConnections = {};
 export const repositoryMap: RepositoryMap = {};
 
-export const instantiateDatabasesConnections = async (databases: Database[]) => {
+const RETRY_INITIAL_DELAY_MS = 1000;
+const RETRY_MAX_DELAY_MS = 30000;
+
+export type RetryClock = { now(): number; sleep(ms: number): Promise<unknown> };
+
+const systemClock: RetryClock = { now: () => Date.now(), sleep: (ms) => Bun.sleep(ms) };
+
+/**
+ * Keeps calling `connect` until it resolves or `deadline` passes, backing off
+ * 1 s → 30 s. The last wait is cut short so one final attempt runs at the
+ * deadline. The last error is rethrown.
+ */
+export const connectWithRetry = async <T>(
+  name: string,
+  connect: () => Promise<T>,
+  deadline: number,
+  clock: RetryClock = systemClock,
+): Promise<T> => {
+  let delay = RETRY_INITIAL_DELAY_MS;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await connect();
+    } catch (error) {
+      const remaining = deadline - clock.now();
+      if (remaining <= 0) throw error;
+      const wait = Math.min(delay, remaining);
+      logger("db").warn(
+        { database: name, attempt, retryInMs: wait, err: error },
+        "database connect failed, retrying",
+      );
+      await clock.sleep(wait);
+      delay = Math.min(delay * 2, RETRY_MAX_DELAY_MS);
+    }
+  }
+};
+
+export const instantiateDatabasesConnections = async (
+  databases: Database[],
+  retryMs = 0,
+  clock: RetryClock = systemClock,
+) => {
+  // One deadline for every database, so the whole connect phase has one budget.
+  const deadline = clock.now() + retryMs;
+
   for await (const db of databases) {
     let connection: SQL | ConnectionPool | undefined;
 
     if (db.type === "pg") {
-      connection = await getPoolPostgreSQL(db);
+      connection = await connectWithRetry(db.name, () => getPoolPostgreSQL(db), deadline, clock);
       databasesConnections[db.name] = connection;
     } else if (db.type === "mssql") {
-      connection = await getPoolMSSQL(db);
+      connection = await connectWithRetry(db.name, () => getPoolMSSQL(db), deadline, clock);
       databasesConnections[db.name] = connection;
     } else if (db.type === "mysql") {
-      connection = await getPoolMySQL(db);
+      connection = await connectWithRetry(db.name, () => getPoolMySQL(db), deadline, clock);
       databasesConnections[db.name] = connection;
     }
 
