@@ -29,7 +29,15 @@ export const setQueueManager = (manager: QueueManager | undefined) => {
   queueManager = manager;
 };
 
-export const instantiateQueues = async (queues: QueueConfig[]) => {
+export type QueueDependencies = {
+  /** Test seam: RabbitMQ connections start through this. */
+  startRabbitMQ?: typeof startRabbitMQConnections;
+};
+
+export const instantiateQueues = async (
+  queues: QueueConfig[],
+  { startRabbitMQ = startRabbitMQConnections }: QueueDependencies = {},
+) => {
   // Separate RabbitMQ and Kafka queues
   const rabbitMQQueues = queues.filter((queue) => queue.type === "rabbitmq");
   const kafkaQueues = queues.filter((queue) => queue.type === "kafka");
@@ -38,7 +46,7 @@ export const instantiateQueues = async (queues: QueueConfig[]) => {
 
   // Initialize RabbitMQ connections
   if (rabbitMQQueues.length > 0) {
-    const rabbitMQManager = await startRabbitMQConnections(rabbitMQQueues);
+    const rabbitMQManager = await startRabbitMQ(rabbitMQQueues);
 
     managers.push({
       publisherMap: rabbitMQManager.publisherMap,
@@ -49,6 +57,7 @@ export const instantiateQueues = async (queues: QueueConfig[]) => {
           name: rabbitMQQueues[index]!.name,
           connected: manager.isConnected(),
         })),
+      cleanup: rabbitMQManager.cleanup,
     });
   }
 
