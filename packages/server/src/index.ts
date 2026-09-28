@@ -19,14 +19,14 @@ import { createMCPRoutes } from "./ai";
 import { createCapabilityAuthorizer } from "./authentication/capabilities";
 import { getAgent, instantiateAI } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
-import { instantiateCronJobs } from "./singletons/cron";
+import { getCronJobs, instantiateCronJobs } from "./singletons/cron";
 import {
   databasesConnections,
   disconnectDatabases,
   instantiateDatabasesConnections,
   pingConnection,
 } from "./singletons/databases";
-import { getCacheRedisClient } from "./singletons/cache/redisClient";
+import { closeCacheRedisClient, getCacheRedisClient } from "./singletons/cache/redisClient";
 import { env } from "./singletons/env";
 import { setQueryTimeoutMs } from "./singletons/queryTimeout";
 import { setSlowQueryMs } from "./logging/slowQuery";
@@ -44,10 +44,11 @@ import { logger, configureLogging } from "./logging";
 import { actorFromSession, audit } from "./logging/audit";
 import { createHealthRoutes } from "./observability/health";
 import { configureMetrics, renderMetrics } from "./observability/metrics";
-import { configureTracing } from "./observability/tracing";
+import { configureTracing, flushSpans } from "./observability/tracing";
 import { withHttpMetrics } from "./observability/httpMetrics";
 import { withHttpTracing } from "./observability/httpTracing";
 import { createMetricsRoute } from "./observability/metricsRoute";
+import { createShutdown, createSignalHandler } from "./shutdown";
 
 // Re-export for consumers
 export { configureLogging };
@@ -216,8 +217,9 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
  * @param env - Resolved env-shaped config (`Env`). Required fields
  *   include `configuration` (path or `Configuration` object), `adminSecret`,
  *   and the chosen token strategy's keys (e.g. `jwtSecret`).
- * @returns `{ websocketHandler, routes, prefixes, logger, execute }` — `routes`
- *   is the map passed to `Bun.serve({ routes, websocket })`; `execute` runs a
+ * @returns `{ websocketHandler, closeWebsockets, routes, prefixes, logger,
+ *   execute }` — `routes` is the map passed to `Bun.serve({ routes, websocket })`;
+ *   `closeWebsockets(code, reason)` closes every open socket; `execute` runs a
  *   query in-process (see {@link createGraphQLEngine}); `logger` is the
  *   named-logger factory.
  */
@@ -561,10 +563,13 @@ const createGraphQLServer = async (env: Env) => {
   );
 
   // Create WebSocket handler
-  const websocketHandler = websocketHandlerFactory(analyzedConfiguration.roles);
+  const { handler: websocketHandler, closeAll: closeWebsockets } = websocketHandlerFactory(
+    analyzedConfiguration.roles,
+  );
 
   return {
     websocketHandler,
+    closeWebsockets,
     routes,
     prefixes,
     logger,
@@ -582,17 +587,21 @@ const createGraphQLServer = async (env: Env) => {
  * lifecycle, multiple ports, integration tests).
  *
  * @param options - Partial overrides merged on top of `env` defaults.
- * @returns `{ serverHandlers, options: Env, prefixes, logger, execute }` —
- *   `execute` runs a query in-process (see {@link createGraphQLEngine}).
+ * @returns `{ serverHandlers, options: Env, prefixes, logger, execute, shutdown,
+ *   handleSignals }` — `execute` runs a query in-process (see
+ *   {@link createGraphQLEngine}); `shutdown(server)` drains the server, then
+ *   closes cron, queues, Redis, database pools and pending spans, resolving
+ *   `true` when all of it was clean; `handleSignals(server)` runs `shutdown` on
+ *   SIGTERM / SIGINT, then exits 0 (clean) or 1.
  *
  * @example
  * ```ts
  * import { serve } from "bun";
  * import { createHandlers } from "@graphoria/server";
  *
- * const { serverHandlers, logger } = await createHandlers({ port: 4000 });
+ * const { serverHandlers, logger, handleSignals } = await createHandlers({ port: 4000 });
  * logger("my-app").info("starting");
- * serve(serverHandlers);
+ * handleSignals(serve(serverHandlers));
  * ```
  */
 export async function createHandlers(options?: Partial<Env>) {
@@ -601,8 +610,24 @@ export async function createHandlers(options?: Partial<Env>) {
     ...options,
   };
 
-  const { websocketHandler, routes, prefixes, execute } =
+  const { websocketHandler, closeWebsockets, routes, prefixes, execute } =
     await createGraphQLServer(optionsWithDefaults);
+
+  const shutdown = createShutdown({
+    timeoutMs: optionsWithDefaults.shutdown.timeoutMs,
+    stopIntake: [
+      { name: "websockets", run: () => closeWebsockets(1001, "server shutting down") },
+      { name: "cron", run: () => getCronJobs()?.stopAll() },
+    ],
+    // Queues close after the drain: a drained mutation can still publish.
+    teardown: [
+      { name: "queues", run: () => queueManager?.cleanup?.() },
+      { name: "cache redis", run: closeCacheRedisClient },
+      { name: "token redis", run: () => getTokenService().close() },
+      { name: "databases", run: disconnectDatabases },
+      { name: "spans", run: flushSpans },
+    ],
+  });
 
   return {
     serverHandlers: {
@@ -614,20 +639,27 @@ export async function createHandlers(options?: Partial<Env>) {
     prefixes,
     logger,
     execute,
+    shutdown,
+    handleSignals: createSignalHandler(shutdown),
   };
 }
 
 /**
  * One-call setup: build the handlers and start a `Bun.serve` instance.
- * The returned `server` is the live `Bun.Server` — call `server.stop()` to
- * shut it down. `prefixes` is the resolved set of route prefixes (graphql,
- * rest, openapi, graphiql, scalar) for client-side reference.
+ * The returned `server` is the live `Bun.Server`. `prefixes` is the resolved
+ * set of route prefixes (graphql, rest, openapi, graphiql, scalar) for
+ * client-side reference.
+ *
+ * SIGTERM and SIGINT drain the server and exit (see {@link createHandlers}'s
+ * `handleSignals`) unless `SHUTDOWN_HANDLE_SIGNALS=false`.
  *
  * @param options - Partial overrides merged on top of `env` defaults.
- * @returns `{ server, prefixes, logger, execute }` — `logger(name)` mints a
- *   component-named logger sharing the server's pino root (and any
+ * @returns `{ server, prefixes, logger, execute, shutdown }` — `logger(name)`
+ *   mints a component-named logger sharing the server's pino root (and any
  *   {@link configureLogging} / `env.logger` override); `execute` runs a query
- *   in-process against the same schema (see {@link createGraphQLEngine}).
+ *   in-process against the same schema (see {@link createGraphQLEngine});
+ *   `shutdown()` drains this server and closes everything it opened, without
+ *   exiting.
  *
  * @example
  * ```ts
@@ -639,14 +671,24 @@ export async function createHandlers(options?: Partial<Env>) {
  * ```
  */
 export async function createBunServer(options?: Partial<Env>) {
-  const { serverHandlers, prefixes, execute } = await createHandlers(options);
+  const {
+    serverHandlers,
+    options: resolved,
+    prefixes,
+    execute,
+    shutdown,
+    handleSignals,
+  } = await createHandlers(options);
 
   const server = serve(serverHandlers);
+
+  if (resolved.shutdown.handleSignals) handleSignals(server);
 
   return {
     server,
     prefixes,
     logger,
     execute,
+    shutdown: () => shutdown(server),
   };
 }

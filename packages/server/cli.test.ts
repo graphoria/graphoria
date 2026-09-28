@@ -227,3 +227,29 @@ describe("cli SIGTERM", () => {
     expect(await waitUntilGone(children)).toEqual([]);
   }, 30_000);
 });
+
+describe("standalone SIGTERM", () => {
+  it("drains the server, then exits 0", async () => {
+    const server = Bun.spawn(
+      ["bun", join(import.meta.dir, "standalone.ts"), "--config", configPath],
+      {
+        env: { ...process.env, ADMIN_SECRET: "cli-test", JWT_SECRET: "cli-test", PORT: "0" },
+        stdout: "pipe",
+        stderr: "inherit",
+      },
+    );
+    spawned.push(server.pid);
+
+    const decoder = new TextDecoder();
+    let output = "";
+    for await (const chunk of server.stdout) {
+      output += decoder.decode(chunk);
+      if (output.includes("server ready")) break;
+    }
+
+    server.kill("SIGTERM");
+
+    expect(await server.exited).toBe(0);
+    expect(server.signalCode).toBeNull();
+  }, 30_000);
+});

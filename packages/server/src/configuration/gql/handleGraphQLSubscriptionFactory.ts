@@ -260,7 +260,12 @@ const handleGraphQLSubscriptionFactory = (
 
 export const websocketHandlerFactory = (
   roles: AnalyzedConfiguration["roles"],
-): WebSocketHandler<unknown> => {
+): {
+  handler: WebSocketHandler<unknown>;
+  /** Closes every socket still open, e.g. `1001` on shutdown. */
+  closeAll: (code: number, reason: string) => void;
+} => {
+  const openSockets = new Set<ServerWebSocket<unknown>>();
   const subscriptionMapping: Map<ServerWebSocket<unknown>, SessionContext> = new Map();
   const activeSubscriptions: Map<
     string,
@@ -277,11 +282,15 @@ export const websocketHandlerFactory = (
     activeSubscriptions,
   );
 
-  return {
+  const handler: WebSocketHandler<unknown> = {
+    open(ws) {
+      openSockets.add(ws);
+    },
     async message(ws, message) {
       await handleGraphQLSubscription(ws, message as string);
     },
     close(ws) {
+      openSockets.delete(ws);
       logger("subscriptions").debug("client disconnected");
       // Clean up all subscriptions for this WebSocket
       for (const [subscriptionId, subscription] of activeSubscriptions.entries()) {
@@ -294,4 +303,10 @@ export const websocketHandlerFactory = (
       subscriptionMapping.delete(ws);
     },
   };
+
+  const closeAll = (code: number, reason: string) => {
+    for (const ws of openSockets) ws.close(code, reason);
+  };
+
+  return { handler, closeAll };
 };

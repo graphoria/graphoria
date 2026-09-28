@@ -376,6 +376,12 @@ describe("renderProject with the frontend", () => {
     expect(index).not.toContain('"/*"');
   });
 
+  it("drains its own server on SIGTERM", () => {
+    const index = renderWeb("pg")["index.ts"]!;
+
+    expect(index).toContain("handleSignals(server)");
+  });
+
   it("builds the Tailwind classes and ignores the printed schemas", () => {
     const files = renderWeb("pg");
 

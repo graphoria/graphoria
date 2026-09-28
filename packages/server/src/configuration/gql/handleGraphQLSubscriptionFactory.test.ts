@@ -9,7 +9,10 @@ process.env.ADMIN_SECRET ??= "test-admin-secret";
 process.env.JWT_SECRET ??= "test-jwt-secret";
 process.env.LOG_LEVEL ??= "silent";
 
-let websocketHandlerFactory: (roles: AnalyzedConfiguration["roles"]) => WebSocketHandler<unknown>;
+let websocketHandlerFactory: (roles: AnalyzedConfiguration["roles"]) => {
+  handler: WebSocketHandler<unknown>;
+  closeAll: (code: number, reason: string) => void;
+};
 let anonymousRole: string;
 
 beforeAll(async () => {
@@ -35,7 +38,7 @@ describe("websocketHandlerFactory message", () => {
     ["a JSON null frame", "null"],
     ["a binary frame that is not JSON", Buffer.from("not json")],
   ])("closes with 4400 on %s", async (_label, frame) => {
-    const handler = websocketHandlerFactory({});
+    const { handler } = websocketHandlerFactory({});
     const { socket, ws } = fakeSocket();
 
     await handler.message(ws, frame);
@@ -45,7 +48,7 @@ describe("websocketHandlerFactory message", () => {
   });
 
   it("closes with 4401 on a subscribe before connection_init", async () => {
-    const handler = websocketHandlerFactory({});
+    const { handler } = websocketHandlerFactory({});
     const { socket, ws } = fakeSocket();
 
     await handler.message(
@@ -69,7 +72,7 @@ describe("websocketHandlerFactory message", () => {
         },
       },
     } as unknown as AnalyzedConfiguration["roles"];
-    const handler = websocketHandlerFactory(roles);
+    const { handler } = websocketHandlerFactory(roles);
     const { socket, ws } = fakeSocket();
 
     await handler.message(ws, JSON.stringify({ type: "connection_init", payload: {} }));
@@ -83,7 +86,7 @@ describe("websocketHandlerFactory message", () => {
   });
 
   it("closes with 4500 when connection_init fails", async () => {
-    const handler = websocketHandlerFactory({});
+    const { handler } = websocketHandlerFactory({});
     const { socket, ws } = fakeSocket();
 
     await handler.message(
@@ -93,5 +96,22 @@ describe("websocketHandlerFactory message", () => {
 
     expect(socket.close).toHaveBeenCalledWith(4500, "Internal server error");
     expect(socket.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("websocketHandlerFactory closeAll", () => {
+  it("closes every socket still open with the given code", () => {
+    const { handler, closeAll } = websocketHandlerFactory({});
+    const first = fakeSocket();
+    const second = fakeSocket();
+    const gone = fakeSocket();
+    for (const { ws } of [first, second, gone]) handler.open!(ws);
+    handler.close!(gone.ws, 1000, "");
+
+    closeAll(1001, "server shutting down");
+
+    expect(first.socket.close).toHaveBeenCalledWith(1001, "server shutting down");
+    expect(second.socket.close).toHaveBeenCalledWith(1001, "server shutting down");
+    expect(gone.socket.close).not.toHaveBeenCalled();
   });
 });
