@@ -16,6 +16,7 @@ const noopRepository: TokenRepository = {
   isTokenUsed: async () => false,
   revoke: async () => {},
   isRevoked: async () => false,
+  close: () => {},
 };
 
 const PREVIOUS_ADMIN_SECRET = "console-admin-secret-previous";

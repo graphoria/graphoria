@@ -4,16 +4,20 @@ import type { TokenRepositoryClient } from "./tokenRepository";
 
 import { createTokenRepositoryWithClient } from "./tokenRepository";
 
-const createFakeClient = (): TokenRepositoryClient & {
+type FakeClient = TokenRepositoryClient & {
   store: Map<string, Record<string, string>>;
   ttls: Map<string, number>;
-} => {
+  closes: number;
+};
+
+const createFakeClient = (): FakeClient => {
   const store = new Map<string, Record<string, string>>();
   const ttls = new Map<string, number>();
 
-  return {
+  const client: FakeClient = {
     store,
     ttls,
+    closes: 0,
     hset: async (key, fields) => {
       const existing = store.get(key) ?? {};
       store.set(key, { ...existing, ...fields });
@@ -25,7 +29,11 @@ const createFakeClient = (): TokenRepositoryClient & {
     expire: async (key, seconds) => {
       ttls.set(key, seconds);
     },
+    close: () => {
+      client.closes++;
+    },
   };
+  return client;
 };
 
 describe("tokenRepository", () => {
@@ -90,9 +98,16 @@ describe("tokenRepository", () => {
       expire: async () => {
         throw new Error("redis down");
       },
+      close: () => {},
     };
     const failRepo = createTokenRepositoryWithClient(throwingClient);
     expect(await failRepo.isRevoked("any")).toBe(true);
     expect(await failRepo.isTokenUsed("any")).toBe(true);
+  });
+
+  it("close() closes its Redis client", () => {
+    repo.close();
+
+    expect(client.closes).toBe(1);
   });
 });

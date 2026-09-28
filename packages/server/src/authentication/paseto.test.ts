@@ -6,10 +6,16 @@ import type { TokenRepository } from "./tokenRepository";
 import { EnvZod } from "../types/env";
 import { createPASETOService } from "./paseto";
 
-const createFakeRepo = (): TokenRepository => {
+type FakeRepo = TokenRepository & { closes: number };
+
+const createFakeRepo = (): FakeRepo => {
   const revoked = new Set<string>();
   const used = new Set<string>();
-  return {
+  const repo: FakeRepo = {
+    closes: 0,
+    close: () => {
+      repo.closes++;
+    },
     saveJti: async (jti) => {
       used.add(jti);
     },
@@ -19,6 +25,7 @@ const createFakeRepo = (): TokenRepository => {
     },
     isRevoked: async (jti) => revoked.has(jti),
   };
+  return repo;
 };
 
 const adminSecret = "admin-secret";
@@ -351,5 +358,20 @@ describe("PASETO Service - key rotation", () => {
 
       await expect(rotated.verifyToken(pair.access_token)).rejects.toThrow();
     });
+  });
+});
+
+describe("PASETO Service - close", () => {
+  it("closes its token repository", () => {
+    const repo = createFakeRepo();
+    const service = createPASETOService(
+      EnvZod.parse({ ...baseEnv, PASETO_LOCAL_KEY: localKey }),
+      "local",
+      repo,
+    );
+
+    service.close();
+
+    expect(repo.closes).toBe(1);
   });
 });

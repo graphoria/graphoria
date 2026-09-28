@@ -223,5 +223,6 @@ export const createJWTService = (
     // the TTL for a JTI the repository has not seen before.
     revoke: (jti: string) => tokenRepository.revoke(jti, env.jwt.rtExpiresIn),
     isRevoked: tokenRepository.isRevoked,
+    close: tokenRepository.close,
   };
 };

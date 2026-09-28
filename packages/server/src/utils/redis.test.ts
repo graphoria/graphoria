@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { RevivableRedisClient } from "./redis";
 
-import { keepRedisConnected } from "./redis";
+import { closeRedisClient, keepRedisConnected } from "./redis";
 
 const createFakeClient = (outcomes: Array<"ok" | "fail">) => {
   const client: RevivableRedisClient & { connects: number } = {
@@ -117,5 +117,42 @@ describe("keepRedisConnected", () => {
     client.onclose!(new Error("Connection closed"));
 
     expect(timers.pending[0]!.unref).toBe(true);
+  });
+});
+
+describe("closeRedisClient", () => {
+  // Bun fires onclose on a deliberate close() too.
+  const createClosableClient = () => {
+    const client = Object.assign(createFakeClient([]), {
+      closes: 0,
+      close: () => {
+        client.closes++;
+        client.onclose?.(new Error("Connection closed"));
+      },
+    });
+    return client;
+  };
+
+  it("closes the client without scheduling a reconnect", () => {
+    const client = createClosableClient();
+    const timers = createFakeTimers();
+    keepRedisConnected(client, { setTimeout: timers.setTimeout });
+
+    closeRedisClient(client);
+
+    expect(client.closes).toBe(1);
+    expect(timers.pending).toHaveLength(0);
+  });
+
+  it("keeps a reconnect pending at close from reviving the client", async () => {
+    const client = createClosableClient();
+    const timers = createFakeTimers();
+    keepRedisConnected(client, { setTimeout: timers.setTimeout });
+    client.onclose!(new Error("Connection closed"));
+
+    closeRedisClient(client);
+    await timers.runNext();
+
+    expect(client.connects).toBe(0);
   });
 });

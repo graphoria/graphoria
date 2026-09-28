@@ -1,6 +1,6 @@
 import { parseDurationToMs } from "./duration";
 import { logger } from "../logging";
-import { createRedisClient } from "../utils/redis";
+import { closeRedisClient, createRedisClient } from "../utils/redis";
 
 export type TokenRepository = {
   saveJti(jti: string, expiresIn: string): Promise<void>;
@@ -8,12 +8,14 @@ export type TokenRepository = {
   /** `expiresIn` only applies to a JTI with no TTL of its own — see `revoke`. */
   revoke(jti: string, expiresIn: string): Promise<void>;
   isRevoked(jti: string): Promise<boolean>;
+  close(): void;
 };
 
 export type TokenRepositoryClient = {
   hset(key: string, fields: Record<string, string>): Promise<unknown>;
   hmget(key: string, fields: string[]): Promise<(string | null)[]>;
   expire(key: string, seconds: number): Promise<unknown>;
+  close(): void;
 };
 
 export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): TokenRepository => {
@@ -72,6 +74,7 @@ export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): 
     isTokenUsed,
     revoke,
     isRevoked,
+    close: () => closeRedisClient(client),
   };
 };
 
