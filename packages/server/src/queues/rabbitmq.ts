@@ -167,8 +167,12 @@ export const createRabbitMQConnectionManager = (
       });
 
       channel.on("close", () => {
-        log.warn("channel closed");
         state.channel = null;
+        if (closing) {
+          log.info("channel closed");
+          return;
+        }
+        log.warn("channel closed");
       });
 
       // Set up exchanges and publishers
@@ -244,6 +248,10 @@ export const createRabbitMQConnectionManager = (
         await startConsumer(queueConfig.name, route.name, queueName, channel, route.handler);
       }
 
+      if (closing) {
+        await rmqConnection.close();
+        return;
+      }
       state.connection = rmqConnection;
       state.channel = channel;
       reconnectAttempts = 0;

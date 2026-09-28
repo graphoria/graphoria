@@ -223,6 +223,35 @@ describe("RabbitMQ cleanup", () => {
     expect(manager.isConnected()).toBe(false);
     expect(timers.pending).toHaveLength(0);
   });
+
+  it("closes a connection whose channel setup outlasts cleanup", async () => {
+    const { conn, channel } = makeFake();
+    let closed = 0;
+    conn.close = async () => {
+      closed++;
+      conn.emit("close");
+    };
+    let resolveChannel!: (value: Channel) => void;
+    conn.createChannel = () =>
+      new Promise<Channel>((resolve) => {
+        resolveChannel = resolve;
+      });
+    const timers = fakeTimers();
+    const manager = createRabbitMQConnectionManager(minimalConfig(), {
+      connect: (async () => conn as ChannelModel) as unknown as typeof connectFn,
+      setTimeout: timers.setTimeoutFn,
+    });
+
+    const connecting = manager.connect();
+    await Bun.sleep(0);
+    await manager.cleanup();
+    resolveChannel(channel as Channel);
+    await connecting;
+
+    expect(closed).toBe(1);
+    expect(manager.isConnected()).toBe(false);
+    expect(timers.pending).toHaveLength(0);
+  });
 });
 
 describe("RabbitMQ metrics", () => {
