@@ -25,25 +25,48 @@ const childrenOf = (pid: number) =>
     .filter(Boolean)
     .map(Number);
 
-const startCli = async (args: string[], workers: number) => {
-  const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "--config", configPath, ...args], {
+/** Reads a child's stdout on demand, so a test can wait for more lines later. */
+const readOutput = (stream: ReadableStream<Uint8Array>) => {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  return {
+    /** The port of every worker that logged "server ready" so far. */
+    readyPorts: () =>
+      text
+        .split("\n")
+        .filter((line) => line.includes('"server ready"'))
+        .map((line) => (JSON.parse(line) as { port: number }).port),
+    waitFor: async (marker: string, count: number) => {
+      while (text.split(marker).length <= count) {
+        const { done, value } = await reader.read();
+        if (done) throw new Error(`output ended before ${count} × "${marker}"`);
+        text += decoder.decode(value);
+      }
+    },
+  };
+};
+
+const startCli = async (
+  args: string[],
+  workers: number,
+  { detached = false, config = configPath } = {},
+) => {
+  const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "--config", config, ...args], {
     env: { ...process.env, ADMIN_SECRET: "cli-test", JWT_SECRET: "cli-test", PORT: "0" },
     stdout: "pipe",
     stderr: "inherit",
+    detached,
   });
   spawned.push(cli.pid);
 
-  const decoder = new TextDecoder();
-  let output = "";
-  for await (const chunk of cli.stdout) {
-    output += decoder.decode(chunk);
-    if (output.split("server ready").length > workers) break;
-  }
+  const output = readOutput(cli.stdout);
+  await output.waitFor("server ready", workers);
 
   const children = childrenOf(cli.pid);
   spawned.push(...children);
   expect(children).toHaveLength(workers);
-  return { cli, children };
+  return { cli, children, output };
 };
 
 const waitUntilGone = async (pids: number[]) => {
@@ -209,22 +232,90 @@ describe("cli init", () => {
 });
 
 describe("cli SIGTERM", () => {
-  it("stops the server process", async () => {
+  it("stops the server process, then exits 0", async () => {
     const { cli, children } = await startCli([], 1);
 
     cli.kill("SIGTERM");
-    await cli.exited;
 
+    expect(await cli.exited).toBe(0);
     expect(await waitUntilGone(children)).toEqual([]);
   }, 30_000);
 
-  it("stops every cluster worker", async () => {
+  it("stops every cluster worker, then exits 0", async () => {
     const { cli, children } = await startCli(["--workers", "2"], 2);
 
     cli.kill("SIGTERM");
-    await cli.exited;
 
+    expect(await cli.exited).toBe(0);
     expect(await waitUntilGone(children)).toEqual([]);
+  }, 30_000);
+
+  it("hands the worker one signal when Ctrl-C reaches the whole process group", async () => {
+    const slow = join(dir, "slow.ts");
+    await writeFile(
+      slow,
+      `export default () => ({
+  name: "cli-test",
+  version: "1.0.0",
+  auth: { enabled: false, database: "", permissions: { anonymous: { operations: "ALL" } } },
+  operations: {
+    slow: {
+      handler: async () => {
+        await Bun.sleep(1000);
+        return { slow: true };
+      },
+      rest: { path: "/slow", method: "GET" },
+    },
+  },
+});
+`,
+    );
+    const { cli, children, output } = await startCli([], 1, { detached: true, config: slow });
+    const port = output.readyPorts()[0];
+    const inFlight = Bun.fetch(`http://localhost:${port}/rest/slow`).then(
+      (response) => response.status,
+      () => "reset",
+    );
+    await Bun.sleep(200);
+
+    // A worker that got the group's SIGINT and the parent's SIGTERM while
+    // draining would take the second as forced, and exit 1.
+    process.kill(-cli.pid, "SIGINT");
+
+    expect(await inFlight).toBe(200);
+    expect(await cli.exited).toBe(0);
+    expect(await waitUntilGone(children)).toEqual([]);
+  }, 30_000);
+});
+
+describe("cli supervisor", () => {
+  it("restarts a worker that dies", async () => {
+    const { cli, children, output } = await startCli(["--workers", "2"], 2);
+
+    process.kill(children[0]!, "SIGKILL");
+    await output.waitFor("server ready", 3);
+
+    const now = childrenOf(cli.pid);
+    spawned.push(...now);
+    expect(now).toHaveLength(2);
+    expect(now).not.toContain(children[0]);
+    expect(now).toContain(children[1]);
+  }, 30_000);
+
+  it("gives up with a non-zero exit when every worker crashes at boot", async () => {
+    const broken = join(dir, "broken.ts");
+    await writeFile(broken, `export default () => { throw new Error("broken config"); };\n`);
+    const cli = Bun.spawn(
+      ["bun", join(import.meta.dir, "cli.ts"), "--config", broken, "--workers", "5"],
+      {
+        env: { ...process.env, ADMIN_SECRET: "cli-test", JWT_SECRET: "cli-test", PORT: "0" },
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    );
+    spawned.push(cli.pid);
+
+    expect(await cli.exited).toBe(1);
   }, 30_000);
 });
 

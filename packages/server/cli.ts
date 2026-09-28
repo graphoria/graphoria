@@ -2,6 +2,7 @@
 import { parseArgs } from "util";
 
 import { version } from "./package.json";
+import { createSupervisor } from "./src/cli/supervisor";
 
 const rawArgs = Bun.argv.slice(2);
 
@@ -76,41 +77,26 @@ const cmd: string[] = ["bun", standaloneScript];
 if (values.config) cmd.push("--config", values.config);
 if (values.port) cmd.push("--port", values.port);
 
-if (values.cluster || values.workers) {
-  cmd.push("--reuse-port");
-  const requested = values.workers ? parseInt(values.workers, 10) : NaN;
-  const workers =
-    Number.isNaN(requested) || requested <= 0 ? navigator.hardwareConcurrency : requested;
+const clustered = values.cluster || values.workers;
+if (clustered) cmd.push("--reuse-port");
+const requested = values.workers ? parseInt(values.workers, 10) : NaN;
+const clusterSize =
+  Number.isNaN(requested) || requested <= 0 ? navigator.hardwareConcurrency : requested;
+const workers = clustered ? clusterSize : 1;
 
-  const children = Array.from({ length: workers }, () =>
-    Bun.spawn({
-      cmd,
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "inherit",
-    }),
-  );
+const supervisor = createSupervisor({
+  workers,
+  // Detached: the terminal's Ctrl-C reaches only this process, which passes
+  // each worker exactly one SIGTERM. A second signal would force its exit.
+  spawn: () =>
+    Bun.spawn({ cmd, stdout: "inherit", stderr: "inherit", stdin: "inherit", detached: true }),
+});
+supervisor.start();
 
-  console.log(`🚀 Cluster started with ${workers} workers`);
+if (clustered) console.log(`🚀 Cluster started with ${workers} workers`);
 
-  function kill() {
-    for (const child of children) {
-      child.kill();
-    }
-  }
-
-  process.on("SIGINT", kill);
-  process.on("SIGTERM", kill);
-  process.on("exit", kill);
-} else {
-  const child = Bun.spawn({
-    cmd,
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
-  });
-
-  process.on("SIGINT", () => child.kill());
-  process.on("SIGTERM", () => child.kill());
-  process.on("exit", () => child.kill());
+// SIGHUP too: detached workers no longer get the terminal's hang-up.
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(signal, () => supervisor.signal());
 }
+process.on("exit", () => supervisor.kill());
