@@ -1,8 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { generateKeys } from "paseto-ts/v4";
+
+import type { TokenStrategy } from "./types";
 
 import { createTokenService } from ".";
 import { EnvZod } from "../types/env";
+import { logger } from "../logging";
 
 const adminSecret = "admin-secret";
 const anonymousRole = "anonymous";
@@ -111,5 +114,121 @@ describe("createTokenService", () => {
     });
 
     expect(() => createTokenService(env, "paseto_public")).toThrow("PASETO_SECRET_KEY");
+  });
+});
+
+describe("createTokenService when nothing signs tokens", () => {
+  const STRATEGIES: TokenStrategy[] = ["jwt", "paseto_local", "paseto_public"];
+
+  const keyless = EnvZod.parse({ ADMIN_SECRET: adminSecret, ANONYMOUS_ROLE: anonymousRole });
+
+  const keyed = {
+    jwt: EnvZod.parse({
+      ADMIN_SECRET: adminSecret,
+      ANONYMOUS_ROLE: anonymousRole,
+      JWT_SECRET: "test-secret",
+    }),
+    paseto_local: EnvZod.parse({
+      ADMIN_SECRET: adminSecret,
+      ANONYMOUS_ROLE: anonymousRole,
+      PASETO_LOCAL_KEY: localKey,
+    }),
+    paseto_public: EnvZod.parse({
+      ADMIN_SECRET: adminSecret,
+      ANONYMOUS_ROLE: anonymousRole,
+      PASETO_SECRET_KEY: secretKey,
+      PASETO_PUBLIC_KEY: publicKey,
+    }),
+  };
+
+  const variable = {
+    jwt: "JWT_SECRET",
+    paseto_local: "PASETO_LOCAL_KEY",
+    paseto_public: "PASETO_PUBLIC_KEY",
+  } as const;
+
+  const spyOnWarn = () => spyOn(logger("auth"), "warn").mockImplementation((() => {}) as never);
+  let warn: ReturnType<typeof spyOnWarn>;
+
+  beforeEach(() => {
+    warn = spyOnWarn();
+  });
+
+  afterEach(() => warn.mockRestore());
+
+  const memberToken = async (strategy: TokenStrategy) => {
+    const issuer = createTokenService(keyed[strategy], strategy);
+    try {
+      return await issuer.createToken({ sub: "u", role: "member" }, { audience: "access" });
+    } finally {
+      issuer.close();
+    }
+  };
+
+  it.each(STRATEGIES)("%s: still throws without a key when one is required", (strategy) => {
+    expect(() => createTokenService(keyless, strategy, true)).toThrow(variable[strategy]);
+  });
+
+  it.each(STRATEGIES)(
+    "%s: without a key, warns once and treats every bearer token as anonymous",
+    async (strategy) => {
+      const token = await memberToken(strategy);
+      const service = createTokenService(keyless, strategy, false);
+
+      try {
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]![0]).toEqual({ strategy });
+        expect(String(warn.mock.calls[0]![1])).toContain(variable[strategy]);
+
+        expect(await service.verifyTokenAndGetSession(`Bearer ${token}`, null)).toEqual({
+          sub: "anonymous",
+          role: anonymousRole,
+        });
+        expect(await service.verifyTokenAndGetSession(null, adminSecret)).toEqual({
+          sub: "superadmin",
+          role: "superadmin",
+          authMethod: "admin_secret",
+        });
+        await expect(service.createToken({ sub: "u", role: "member" })).rejects.toThrow();
+      } finally {
+        service.close();
+      }
+    },
+  );
+
+  it.each(STRATEGIES)(
+    "%s: with the key, verifies as before and does not warn",
+    async (strategy) => {
+      const token = await memberToken(strategy);
+      const service = createTokenService(keyed[strategy], strategy, false);
+
+      try {
+        expect(warn).not.toHaveBeenCalled();
+        expect(await service.verifyToken(token, { audience: "access" })).toEqual(
+          expect.objectContaining({ role: "member" }),
+        );
+      } finally {
+        service.close();
+      }
+    },
+  );
+
+  it("paseto_public verifies with the public key alone", async () => {
+    const token = await memberToken("paseto_public");
+    const verifyOnly = EnvZod.parse({
+      ADMIN_SECRET: adminSecret,
+      ANONYMOUS_ROLE: anonymousRole,
+      PASETO_PUBLIC_KEY: publicKey,
+    });
+    const service = createTokenService(verifyOnly, "paseto_public", false);
+
+    try {
+      expect(warn).not.toHaveBeenCalled();
+      expect(await service.verifyToken(token, { audience: "access" })).toEqual(
+        expect.objectContaining({ role: "member" }),
+      );
+    } finally {
+      service.close();
+    }
   });
 });

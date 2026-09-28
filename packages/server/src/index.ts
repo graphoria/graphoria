@@ -153,7 +153,10 @@ const bootAnalyzedConfiguration = async (env: Env) => {
       "auth strategy override",
     );
   }
-  setTokenService(createTokenService(env, tokenStrategy));
+  // Only auth (login, refresh) and the console (its session cookie) sign tokens;
+  // with both off, a missing key just means bearer tokens are ignored.
+  const keyRequired = Boolean(projectConfiguration.auth?.enabled) || env.console.enabled;
+  setTokenService(createTokenService(env, tokenStrategy, keyRequired));
 
   // Analyze configuration
   const analyzedConfiguration = await analyzeConfiguration(projectConfiguration, env);
@@ -174,7 +177,8 @@ const bootAnalyzedConfiguration = async (env: Env) => {
  * and header-derived session variables) do not run.
  *
  * @param env - Resolved env-shaped config (`Env`); same shape the server takes.
- *   The configured token strategy's keys are still required.
+ *   The configured token strategy's keys are required when auth or the
+ *   console is enabled.
  * @returns `{ execute, roles, close, logger }` — call `close()` to release
  *   database connections.
  *
@@ -219,7 +223,8 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
  *
  * @param env - Resolved env-shaped config (`Env`). Required fields
  *   include `configuration` (path or `Configuration` object), `adminSecret`,
- *   and the chosen token strategy's keys (e.g. `jwtSecret`).
+ *   and, when auth or the console is enabled, the chosen token strategy's keys
+ *   (e.g. `jwtSecret`).
  * @returns `{ websocketHandler, closeWebsockets, routes, prefixes, logger,
  *   execute }` — `routes` is the map passed to `Bun.serve({ routes, websocket })`;
  *   `closeWebsockets(code, reason)` closes every open socket; `execute` runs a
