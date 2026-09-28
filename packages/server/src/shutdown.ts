@@ -131,3 +131,27 @@ export const createSignalHandler = <S>(
     target.on("SIGINT", onSignal);
   };
 };
+
+export type BootSignalTarget = SignalTarget & {
+  off(event: "SIGTERM" | "SIGINT", listener: (signal: NodeJS.Signals) => void): unknown;
+};
+
+/**
+ * Nothing is in flight before the server listens, so a signal during boot
+ * exits 0 at once. Returns the function that removes the listeners.
+ */
+export const exitOnSignalDuringBoot = (target: BootSignalTarget = process) => {
+  const log = logger("shutdown");
+  const onSignal = (signal: NodeJS.Signals) => {
+    log.info({ signal }, "signal during boot, exiting");
+    target.exit(0);
+  };
+
+  target.on("SIGTERM", onSignal);
+  target.on("SIGINT", onSignal);
+
+  return () => {
+    target.off("SIGTERM", onSignal);
+    target.off("SIGINT", onSignal);
+  };
+};

@@ -20,7 +20,7 @@ Open `http://localhost:3000/_console` and enter the admin secret (`ADMIN_SECRET`
 
 The secret is posted once to `POST {CONSOLE_ENDPOINT}/api/login`, which exchanges it for a **session cookie** — `graphoria_console_session`, `httpOnly`, `Secure`, `SameSite=Strict`, scoped to `CONSOLE_ENDPOINT`. The browser attaches it to every subsequent console request on its own; no JavaScript on the page can read it, and the admin secret itself is never stored client-side.
 
-The session is a token signed by the configured token strategy (`jwt`, `paseto_local` or `paseto_public`) carrying `aud: "console"`, so it cannot be used as an API access token and an access token cannot be used as a console session. It expires after `CONSOLE_SESSION_EXPIRES_IN`; there is no refresh, so the console asks for the secret again.
+The session is a token signed by the configured token strategy (`jwt`, `paseto_local` or `paseto_public`) carrying `aud: "console"`, so it cannot be used as an API access token and an access token cannot be used as a console session. It expires after `CONSOLE_SESSION_EXPIRES_IN`; there is no refresh, so the console asks for the secret again. Because the session is signed with it, the console needs the strategy's key (`JWT_SECRET`, or the PASETO keys) even with `auth` off: the server will not boot without one while `CONSOLE_ENABLED` is on.
 
 `POST {CONSOLE_ENDPOINT}/api/logout` revokes the session immediately and clears the cookie.
 

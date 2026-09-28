@@ -80,7 +80,7 @@ Both install `@graphoria/server` from npm, so they run the published release, no
 
 Environment variables:
 
-- **Required:** `ADMIN_SECRET` (superadmin access), `JWT_SECRET` (JWT signing secret)
+- **Required:** `ADMIN_SECRET` (superadmin access), `JWT_SECRET` (JWT signing secret, once auth or the console is on)
 - **Optional:** `PORT` (default `3000`), `JWT_EXPIRES_IN` (default `5m`), `JWT_RT_EXPIRES_IN` (default `7d`), `ANONYMOUS_ROLE` (default `anonymous`), `SUPERADMIN_ROLE` (default `superadmin`)
 
 ## Coding conventions

@@ -48,7 +48,7 @@ import { configureTracing, flushSpans } from "./observability/tracing";
 import { withHttpMetrics } from "./observability/httpMetrics";
 import { withHttpTracing } from "./observability/httpTracing";
 import { createMetricsRoute } from "./observability/metricsRoute";
-import { createShutdown, createSignalHandler } from "./shutdown";
+import { createShutdown, createSignalHandler, exitOnSignalDuringBoot } from "./shutdown";
 
 // Re-export for consumers
 export { configureLogging };
@@ -138,7 +138,10 @@ const bootAnalyzedConfiguration = async (env: Env) => {
     : ConfigurationZod.parse(env.configuration);
 
   // Initialize databases (using pre-calculated enabledDatabases from parsing)
-  await instantiateDatabasesConnections(projectConfiguration.enabledDatabases);
+  await instantiateDatabasesConnections(
+    projectConfiguration.enabledDatabases,
+    env.dbConnectRetryMs,
+  );
 
   // Initialize token service based on configured strategy. AUTH_STRATEGY env
   // var overrides the configuration field when set, so per-deploy strategy
@@ -150,7 +153,10 @@ const bootAnalyzedConfiguration = async (env: Env) => {
       "auth strategy override",
     );
   }
-  setTokenService(createTokenService(env, tokenStrategy));
+  // Only auth (login, refresh) and the console (its session cookie) sign tokens;
+  // with both off, a missing key just means bearer tokens are ignored.
+  const keyRequired = Boolean(projectConfiguration.auth?.enabled) || env.console.enabled;
+  setTokenService(createTokenService(env, tokenStrategy, keyRequired));
 
   // Analyze configuration
   const analyzedConfiguration = await analyzeConfiguration(projectConfiguration, env);
@@ -171,7 +177,8 @@ const bootAnalyzedConfiguration = async (env: Env) => {
  * and header-derived session variables) do not run.
  *
  * @param env - Resolved env-shaped config (`Env`); same shape the server takes.
- *   The configured token strategy's keys are still required.
+ *   The configured token strategy's keys are required when auth or the
+ *   console is enabled.
  * @returns `{ execute, roles, close, logger }` — call `close()` to release
  *   database connections.
  *
@@ -216,7 +223,8 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
  *
  * @param env - Resolved env-shaped config (`Env`). Required fields
  *   include `configuration` (path or `Configuration` object), `adminSecret`,
- *   and the chosen token strategy's keys (e.g. `jwtSecret`).
+ *   and, when auth or the console is enabled, the chosen token strategy's keys
+ *   (e.g. `jwtSecret`).
  * @returns `{ websocketHandler, closeWebsockets, routes, prefixes, logger,
  *   execute }` — `routes` is the map passed to `Bun.serve({ routes, websocket })`;
  *   `closeWebsockets(code, reason)` closes every open socket; `execute` runs a
@@ -651,7 +659,8 @@ export async function createHandlers(options?: Partial<Env>) {
  * client-side reference.
  *
  * SIGTERM and SIGINT drain the server and exit (see {@link createHandlers}'s
- * `handleSignals`) unless `SHUTDOWN_HANDLE_SIGNALS=false`.
+ * `handleSignals`) unless `SHUTDOWN_HANDLE_SIGNALS=false`. One received before
+ * the server listens exits 0 at once.
  *
  * @param options - Partial overrides merged on top of `env` defaults.
  * @returns `{ server, prefixes, logger, execute, shutdown }` — `logger(name)`
@@ -671,6 +680,10 @@ export async function createHandlers(options?: Partial<Env>) {
  * ```
  */
 export async function createBunServer(options?: Partial<Env>) {
+  const releaseBootSignals = { ...env, ...options }.shutdown.handleSignals
+    ? exitOnSignalDuringBoot()
+    : undefined;
+
   const {
     serverHandlers,
     options: resolved,
@@ -678,7 +691,7 @@ export async function createBunServer(options?: Partial<Env>) {
     execute,
     shutdown,
     handleSignals,
-  } = await createHandlers(options);
+  } = await createHandlers(options).finally(() => releaseBootSignals?.());
 
   const server = serve(serverHandlers);
 

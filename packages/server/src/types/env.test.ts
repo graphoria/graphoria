@@ -376,3 +376,26 @@ describe("EnvZod SHUTDOWN_*", () => {
     expect(() => EnvZod.parse({ ...baseEnv, SHUTDOWN_TIMEOUT_MS: "-1" })).toThrow();
   });
 });
+
+describe("EnvZod DB_CONNECT_RETRY_MS", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("defaults to 60000", () => {
+    expect(EnvZod.parse(baseEnv).dbConnectRetryMs).toBe(60000);
+  });
+
+  it("reads 0 as a single attempt", () => {
+    expect(EnvZod.parse({ ...baseEnv, DB_CONNECT_RETRY_MS: "0" }).dbConnectRetryMs).toBe(0);
+  });
+
+  it("coerces a number of milliseconds", () => {
+    expect(EnvZod.parse({ ...baseEnv, DB_CONNECT_RETRY_MS: "2500" }).dbConnectRetryMs).toBe(2500);
+  });
+
+  it("rejects a negative window", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, DB_CONNECT_RETRY_MS: "-1" })).toThrow();
+  });
+});

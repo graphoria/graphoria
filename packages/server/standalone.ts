@@ -19,9 +19,13 @@ const { values } = parseArgs({
 if (values.config) process.env.CONFIGURATION = values.config;
 if (values.port) process.env.PORT = values.port;
 
+const { exitOnSignalDuringBoot } = await import("./src/shutdown.ts");
+const releaseBootSignals = exitOnSignalDuringBoot();
+
 const { createHandlers } = await import("./src/index.ts");
 
 const { serverHandlers, handleSignals } = await createHandlers();
+releaseBootSignals();
 
 const server = Bun.serve({
   ...serverHandlers,
