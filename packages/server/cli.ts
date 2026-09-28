@@ -54,7 +54,7 @@ Subcommands:
 
 Environment variables:
   ADMIN_SECRET           Admin secret for superadmin access (required)
-  JWT_SECRET             JWT signing secret (required)
+  JWT_SECRET             JWT signing secret (required with auth or the console)
   CONFIGURATION          Path to configuration file
   PORT                   Server port (default: 3000)
   NODE_ENV               Environment mode (default: DEVELOPMENT)
