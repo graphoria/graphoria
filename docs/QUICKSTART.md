@@ -153,7 +153,7 @@ console.log(`Scalar   → http://localhost:${server.port}${prefixes.scalar}`);
 
 `createBunServer()` reads your configuration, introspects the database, builds the schema, and starts a Bun HTTP server. It returns the `server` instance plus the URL prefixes for each endpoint, so you can log them or redirect from your own routes.
 
-Secrets are read from the environment, not passed as options. Bun auto-loads a `.env` file — `ADMIN_SECRET` is always required, and `JWT_SECRET` is required for the default JWT strategy:
+Secrets are read from the environment, not passed as options. Bun auto-loads a `.env` file — `ADMIN_SECRET` is always required. `JWT_SECRET` is required by the default JWT strategy once auth or the console is on; without either you can leave it out, and bearer tokens are then ignored:
 
 ```bash
 # .env

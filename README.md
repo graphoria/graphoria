@@ -193,7 +193,7 @@ The [`examples/taskly/`](./examples/taskly) folder is a **complete, ready-to-run
 
 ### Environment
 
-Secrets are read from the environment, not passed as options. Bun auto-loads a `.env` file. `ADMIN_SECRET` is **always required** (the server will not boot without it), and `JWT_SECRET` is required for the default JWT auth strategy:
+Secrets are read from the environment, not passed as options. Bun auto-loads a `.env` file. `ADMIN_SECRET` is **always required** (the server will not boot without it), and `JWT_SECRET` is required by the default JWT auth strategy once auth or the console is on (without either it can be left out, and bearer tokens are then ignored):
 
 ```bash
 # .env
@@ -399,14 +399,14 @@ All paths are configurable via environment variables. Auth: `Authorization: Bear
 
 The variables you'll most likely touch for a first run. See [`.env.example`](./.env.example) for the full list.
 
-| Variable        | Default                  | Description                                                                                                                              |
-| --------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `ADMIN_SECRET`  | _(required)_             | Master secret; sent in the admin header it bypasses RBAC. No default — the server won't boot without it. Comma-separated list to rotate. |
-| `JWT_SECRET`    | _(required for JWT)_     | HMAC secret for signing tokens under the default `jwt` strategy. Comma-separated list to rotate: first signs, all verify.                |
-| `PORT`          | `3000`                   | HTTP port the server listens on.                                                                                                         |
-| `CACHE_STORE`   | `memory`                 | `memory` or `redis`. Use `redis` (and `REDIS_URL`) when auth is enabled.                                                                 |
-| `REDIS_URL`     | `redis://localhost:6379` | Redis/Valkey URL — required when authentication is enabled.                                                                              |
-| `AUTH_STRATEGY` | `jwt`                    | `jwt`, `paseto_local`, or `paseto_public`.                                                                                               |
+| Variable        | Default                           | Description                                                                                                                                                                               |
+| --------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_SECRET`  | _(required)_                      | Master secret; sent in the admin header it bypasses RBAC. No default — the server won't boot without it. Comma-separated list to rotate.                                                  |
+| `JWT_SECRET`    | _(required with auth or console)_ | HMAC secret for signing tokens under the default `jwt` strategy. Comma-separated list to rotate: first signs, all verify. Unset with auth and the console off: bearer tokens are ignored. |
+| `PORT`          | `3000`                            | HTTP port the server listens on.                                                                                                                                                          |
+| `CACHE_STORE`   | `memory`                          | `memory` or `redis`. Use `redis` (and `REDIS_URL`) when auth is enabled.                                                                                                                  |
+| `REDIS_URL`     | `redis://localhost:6379`          | Redis/Valkey URL — required when authentication is enabled.                                                                                                                               |
+| `AUTH_STRATEGY` | `jwt`                             | `jwt`, `paseto_local`, or `paseto_public`.                                                                                                                                                |
 
 ## Troubleshooting
 

@@ -79,6 +79,8 @@ process.on("SIGTERM", async () => {
 });
 ```
 
+Until the server listens there is nothing to drain: a SIGTERM or SIGINT received while `createBunServer` is still booting — waiting for the database, say — exits `0` at once, and so does one sent to a `graphoria` CLI worker. `SHUTDOWN_HANDLE_SIGNALS=false` turns this off with the rest. `createHandlers` installs nothing during boot either; the signals stay yours.
+
 The `graphoria` CLI supervises its server processes: it restarts one that crashes (after 1 s, doubling up to 30 s), stops at the 5th crash within 60 s with a non-zero exit, and on SIGTERM, SIGINT or SIGHUP stops every worker and exits `0` when all of them stopped cleanly.
 
 #### `createGraphQLEngine(env)`

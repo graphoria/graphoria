@@ -101,32 +101,34 @@ export default ({ operation }) => ({
 
 Each strategy issues short-lived access tokens (`JWT_EXPIRES_IN`, default `5m`) and longer-lived refresh tokens (`JWT_RT_EXPIRES_IN`, default `7d`). Refresh tokens are single-use: the JTI is stored in Redis with the same TTL as the token itself, so a stolen refresh token can be replayed once at most before the legitimate user's next refresh invalidates it.
 
+The strategy's key is needed only when something signs tokens: login and refresh (`auth.enabled`) or the [console](./CONSOLE.md)'s session cookie (`CONSOLE_ENABLED`). With both off it can be left unset: the server logs a warning at boot and treats every bearer token as anonymous, while the admin secret and the scoped credentials work as before. With the key set, bearer tokens are verified even when auth is off, so a token issued elsewhere with the same key keeps its role — provided it has the shape Graphoria issues (`aud: "access"`, a `jti`) and Redis answers the revocation check.
+
 ### `jwt` (default)
 
 Symmetric HMAC-SHA256 tokens issued via [`jose`](https://github.com/panva/jose). Cheap to issue, cheap to verify, but anyone with `JWT_SECRET` can forge tokens. Suitable when both issuance and verification happen inside the same trust boundary.
 
-| Variable            | Required | Notes                                                                                            |
-| ------------------- | -------- | ------------------------------------------------------------------------------------------------ |
-| `JWT_SECRET`        | yes      | Any non-empty string. Use 32+ random bytes. Comma-separated list to [rotate](#rotating-secrets). |
-| `JWT_EXPIRES_IN`    | no       | Access-token lifetime, e.g. `15m`. Default `5m`.                                                 |
-| `JWT_RT_EXPIRES_IN` | no       | Refresh-token lifetime, e.g. `30d`. Default `7d`.                                                |
+| Variable            | Required             | Notes                                                                                            |
+| ------------------- | -------------------- | ------------------------------------------------------------------------------------------------ |
+| `JWT_SECRET`        | with auth or console | Any non-empty string. Use 32+ random bytes. Comma-separated list to [rotate](#rotating-secrets). |
+| `JWT_EXPIRES_IN`    | no                   | Access-token lifetime, e.g. `15m`. Default `5m`.                                                 |
+| `JWT_RT_EXPIRES_IN` | no                   | Refresh-token lifetime, e.g. `30d`. Default `7d`.                                                |
 
 ### `paseto_local` (symmetric)
 
 [PASETO v4.local](https://github.com/paseto-standard/paseto-spec) tokens — XChaCha20-Poly1305 authenticated encryption. The token body is opaque to clients, which is useful when you need to put confidential claims in the payload.
 
-| Variable           | Required | Notes                                                                                                                                       |
-| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PASETO_LOCAL_KEY` | yes      | A 32-byte key in PASETO `k4.local.…` format. Generate with `paseto-ts/v4`'s key tools. Comma-separated list to [rotate](#rotating-secrets). |
+| Variable           | Required             | Notes                                                                                                                                       |
+| ------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PASETO_LOCAL_KEY` | with auth or console | A 32-byte key in PASETO `k4.local.…` format. Generate with `paseto-ts/v4`'s key tools. Comma-separated list to [rotate](#rotating-secrets). |
 
 ### `paseto_public` (asymmetric)
 
 PASETO v4.public — Ed25519 signatures. Verifiers only need the public key, so this is the right choice when downstream services validate tokens but should not be able to issue them.
 
-| Variable            | Required | Notes                                                                                 |
-| ------------------- | -------- | ------------------------------------------------------------------------------------- |
-| `PASETO_SECRET_KEY` | yes      | `k4.secret.…` (signs tokens). One key only.                                           |
-| `PASETO_PUBLIC_KEY` | yes      | `k4.public.…` (verifies tokens). Comma-separated list to [rotate](#rotating-secrets). |
+| Variable            | Required             | Notes                                                                                 |
+| ------------------- | -------------------- | ------------------------------------------------------------------------------------- |
+| `PASETO_SECRET_KEY` | with auth or console | `k4.secret.…` (signs tokens). One key only.                                           |
+| `PASETO_PUBLIC_KEY` | with auth or console | `k4.public.…` (verifies tokens). Comma-separated list to [rotate](#rotating-secrets). |
 
 If you start the server without the variables required for the chosen strategy, Graphoria fails fast with a clear error message — it will not silently fall back to a weaker strategy.
 

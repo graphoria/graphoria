@@ -22,18 +22,19 @@ export default (({ z, operation, cron, virtualColumnExpression, virtualColumnFun
 
 All secrets and runtime knobs are set via environment variables. Bun auto-loads `.env`.
 
-| Variable                       | Type      | Default                       | Notes                                                                                                                                        |
-| ------------------------------ | --------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOG_LEVEL`                    | `string`  | `debug` (dev) / `info` (prod) | pino log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. [Audit records](../README.md#audit-log) are written at `info` regardless |
-| `NODE_ENV`                     | `string`  | `DEVELOPMENT`                 | `PRODUCTION` disables pino-pretty formatting                                                                                                 |
-| `SLOW_QUERY_MS`                | `number`  | `1000`                        | Log a statement that runs longer than this, in ms, at `warn`. `0` is off — see [Slow query log](./OBSERVABILITY.md#slow-query-log)           |
-| `SHUTDOWN_TIMEOUT_MS`          | `number`  | `8000`                        | Drain time, in ms, for in-flight requests on shutdown. `0` resets them — see [Graceful shutdown](./API_REFERENCE.md#graceful-shutdown)       |
-| `SHUTDOWN_HANDLE_SIGNALS`      | `boolean` | `true`                        | `createBunServer` drains and exits on SIGTERM / SIGINT. `false` leaves the signals to your own code                                          |
-| `MAX_QUERY_COST`               | `number`  | `0`                           | Estimated cost ceiling for a caller's query. `0` is off — see [Bounding how much one query asks for](#bounding-how-much-one-query-asks-for)  |
-| `METRICS_ENABLED`              | `boolean` | `false`                       | Mount the Prometheus endpoint — see [Metrics](./OBSERVABILITY.md#metrics)                                                                    |
-| `METRICS_ENDPOINT`             | `string`  | `/metrics`                    | Path the exposition is served at, under `PREFIX`                                                                                             |
-| `METRICS_SECRET`               | `string`  | —                             | Scoped credential for scraping, in the admin-secret header. Comma-separated for rotation                                                     |
-| `METRICS_MAX_OPERATION_LABELS` | `number`  | `200`                         | Distinct GraphQL operation names given their own series before the rest fold into `other`                                                    |
+| Variable                       | Type      | Default                       | Notes                                                                                                                                                                              |
+| ------------------------------ | --------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOG_LEVEL`                    | `string`  | `debug` (dev) / `info` (prod) | pino log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. [Audit records](../README.md#audit-log) are written at `info` regardless                                       |
+| `NODE_ENV`                     | `string`  | `DEVELOPMENT`                 | `PRODUCTION` disables pino-pretty formatting                                                                                                                                       |
+| `SLOW_QUERY_MS`                | `number`  | `1000`                        | Log a statement that runs longer than this, in ms, at `warn`. `0` is off — see [Slow query log](./OBSERVABILITY.md#slow-query-log)                                                 |
+| `SHUTDOWN_TIMEOUT_MS`          | `number`  | `8000`                        | Drain time, in ms, for in-flight requests on shutdown. `0` resets them — see [Graceful shutdown](./API_REFERENCE.md#graceful-shutdown)                                             |
+| `SHUTDOWN_HANDLE_SIGNALS`      | `boolean` | `true`                        | `createBunServer` drains and exits on SIGTERM / SIGINT, and exits 0 at once on one received during boot. `false` leaves the signals to your own code                               |
+| `DB_CONNECT_RETRY_MS`          | `number`  | `60000`                       | How long boot keeps retrying a database it cannot connect to, in ms, before it exits 1. `0` tries once — see [Waiting for the database at boot](#waiting-for-the-database-at-boot) |
+| `MAX_QUERY_COST`               | `number`  | `0`                           | Estimated cost ceiling for a caller's query. `0` is off — see [Bounding how much one query asks for](#bounding-how-much-one-query-asks-for)                                        |
+| `METRICS_ENABLED`              | `boolean` | `false`                       | Mount the Prometheus endpoint — see [Metrics](./OBSERVABILITY.md#metrics)                                                                                                          |
+| `METRICS_ENDPOINT`             | `string`  | `/metrics`                    | Path the exposition is served at, under `PREFIX`                                                                                                                                   |
+| `METRICS_SECRET`               | `string`  | —                             | Scoped credential for scraping, in the admin-secret header. Comma-separated for rotation                                                                                           |
+| `METRICS_MAX_OPERATION_LABELS` | `number`  | `200`                         | Distinct GraphQL operation names given their own series before the rest fold into `other`                                                                                          |
 
 See [`.env.example`](../.env.example) for the full list.
 
@@ -197,6 +198,18 @@ One sharp edge behind that: `connectionOptions` is validated against an undiscri
 #### Bounding the wait for a connection
 
 `pool.acquireTimeout` caps how long a request waits for a free connection when the pool is saturated, so a slow-query storm fails callers instead of queueing them behind it. It is **MSSQL only** — Bun's SQL client, which backs `pg` and `mysql`, exposes no equivalent. Its `connectionTimeout` bounds opening a connection, not waiting for one.
+
+#### Waiting for the database at boot
+
+A database that cannot be reached at boot — down, still starting, or not scheduled yet — does not stop the server at once. Boot retries the connection, waiting 1 s, then 2 s, 4 s and so on up to 30 s between attempts, for up to `DB_CONNECT_RETRY_MS` (default `60000`). The last wait is cut short so that one final attempt runs when the window closes; if that fails too, the last error is thrown and the process exits `1`, leaving the restart to your orchestrator. Each failed attempt is logged at `warn` with the database's name and the error.
+
+- Every connection error is retried, a wrong password or an unknown database included; the `warn` line carries the engine's message.
+- The window covers every database together, not each one: with several databases, the ones connected first use up part of it.
+- An attempt that starts inside the window runs to its end, so against a host that drops packets the worst case is the window plus one `connectionTimeout` (30 s by default).
+- `DB_CONNECT_RETRY_MS=0` makes a single attempt.
+- [`onConnect`](#startup-handler-onconnect) is not retried: it runs once the connection is up, and an error there still aborts boot.
+
+The HTTP server starts only once boot is done, so `/health/live` does not answer while boot waits. On Kubernetes, give the pod a `startupProbe` whose budget covers the window plus one `connectionTimeout`, or the liveness probe kills it mid-wait. A SIGTERM or SIGINT received during the wait exits `0` at once (`createBunServer`, and the `graphoria` CLI's workers). The CLI restarts a worker whose boot failed; since each such failure takes a whole window, a single-worker CLI keeps retrying for as long as the database stays down.
 
 #### Bounding how long a statement runs
 
