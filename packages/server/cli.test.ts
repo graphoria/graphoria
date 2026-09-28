@@ -344,3 +344,93 @@ describe("standalone SIGTERM", () => {
     expect(server.signalCode).toBeNull();
   }, 30_000);
 });
+
+describe("signal during boot", () => {
+  const RETRYING = "database connect failed, retrying";
+  let unreachable: string;
+  let boot: string;
+
+  beforeAll(async () => {
+    unreachable = join(dir, "unreachable.ts");
+    await writeFile(
+      unreachable,
+      `export default () => ({
+  name: "boot-test",
+  version: "1.0.0",
+  databases: [
+    {
+      name: "down",
+      enabled: true,
+      type: "pg",
+      connection: { host: "127.0.0.1", port: 1, user: "u", password: "p", database: "d" },
+    },
+  ],
+});
+`,
+    );
+
+    boot = join(dir, "boot.ts");
+    await writeFile(
+      boot,
+      `import { createBunServer } from ${JSON.stringify(join(import.meta.dir, "src", "index.ts"))};\n\nawait createBunServer();\n`,
+    );
+  });
+
+  // LOG_LEVEL is explicit: other test files set it to "silent" in this process,
+  // and the child would inherit that and never print the marker.
+  const spawnBooting = (command: string[], env: Record<string, string> = {}) => {
+    const child = Bun.spawn(command, {
+      env: {
+        ...process.env,
+        ADMIN_SECRET: "cli-test",
+        JWT_SECRET: "cli-test",
+        PORT: "0",
+        CONFIGURATION: unreachable,
+        DB_CONNECT_RETRY_MS: "30000",
+        LOG_LEVEL: "info",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    spawned.push(child.pid);
+    return { child, output: readOutput(child.stdout) };
+  };
+
+  it("createBunServer exits 0 at once", async () => {
+    const { child, output } = spawnBooting(["bun", boot]);
+    await output.waitFor(RETRYING, 1);
+
+    const signalledAt = Date.now();
+    child.kill("SIGTERM");
+
+    expect(await child.exited).toBe(0);
+    expect(child.signalCode).toBeNull();
+    expect(Date.now() - signalledAt).toBeLessThan(2_000);
+  }, 30_000);
+
+  it("leaves the signal alone with SHUTDOWN_HANDLE_SIGNALS=false", async () => {
+    const { child, output } = spawnBooting(["bun", boot], { SHUTDOWN_HANDLE_SIGNALS: "false" });
+    await output.waitFor(RETRYING, 1);
+
+    child.kill("SIGTERM");
+    await child.exited;
+
+    expect(child.signalCode).toBe("SIGTERM");
+  }, 30_000);
+
+  it("a standalone worker exits 0 at once", async () => {
+    const { child, output } = spawnBooting([
+      "bun",
+      join(import.meta.dir, "standalone.ts"),
+      "--config",
+      unreachable,
+    ]);
+    await output.waitFor(RETRYING, 1);
+
+    child.kill("SIGTERM");
+
+    expect(await child.exited).toBe(0);
+    expect(child.signalCode).toBeNull();
+  }, 30_000);
+});

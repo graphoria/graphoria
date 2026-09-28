@@ -5,7 +5,7 @@ import type { ShutdownStep } from "./shutdown";
 
 process.env.LOG_LEVEL ??= "silent";
 
-const { createShutdown, createSignalHandler } = await import("./shutdown");
+const { createShutdown, createSignalHandler, exitOnSignalDuringBoot } = await import("./shutdown");
 
 /** A server whose drain finishes only when the test says so, or when forced. */
 const fakeServer = () => {
@@ -201,5 +201,38 @@ describe("createSignalHandler", () => {
 
     expect(target.listenerCount("SIGTERM")).toBe(1);
     expect(target.listenerCount("SIGINT")).toBe(1);
+  });
+});
+
+describe("exitOnSignalDuringBoot", () => {
+  const fakeProcess = () => {
+    const target = Object.assign(new EventEmitter(), {
+      exits: [] as number[],
+      exit: (code: number) => {
+        target.exits.push(code);
+      },
+    });
+    return target;
+  };
+
+  it.each(["SIGTERM", "SIGINT"] as const)("exits 0 at once on %s", (signal) => {
+    const target = fakeProcess();
+    exitOnSignalDuringBoot(target);
+
+    target.emit(signal, signal);
+
+    expect(target.exits).toEqual([0]);
+  });
+
+  it("stops listening once released", () => {
+    const target = fakeProcess();
+    const release = exitOnSignalDuringBoot(target);
+
+    release();
+    target.emit("SIGTERM", "SIGTERM");
+
+    expect(target.listenerCount("SIGTERM")).toBe(0);
+    expect(target.listenerCount("SIGINT")).toBe(0);
+    expect(target.exits).toEqual([]);
   });
 });

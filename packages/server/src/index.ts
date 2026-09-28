@@ -48,7 +48,7 @@ import { configureTracing, flushSpans } from "./observability/tracing";
 import { withHttpMetrics } from "./observability/httpMetrics";
 import { withHttpTracing } from "./observability/httpTracing";
 import { createMetricsRoute } from "./observability/metricsRoute";
-import { createShutdown, createSignalHandler } from "./shutdown";
+import { createShutdown, createSignalHandler, exitOnSignalDuringBoot } from "./shutdown";
 
 // Re-export for consumers
 export { configureLogging };
@@ -654,7 +654,8 @@ export async function createHandlers(options?: Partial<Env>) {
  * client-side reference.
  *
  * SIGTERM and SIGINT drain the server and exit (see {@link createHandlers}'s
- * `handleSignals`) unless `SHUTDOWN_HANDLE_SIGNALS=false`.
+ * `handleSignals`) unless `SHUTDOWN_HANDLE_SIGNALS=false`. One received before
+ * the server listens exits 0 at once.
  *
  * @param options - Partial overrides merged on top of `env` defaults.
  * @returns `{ server, prefixes, logger, execute, shutdown }` — `logger(name)`
@@ -674,6 +675,10 @@ export async function createHandlers(options?: Partial<Env>) {
  * ```
  */
 export async function createBunServer(options?: Partial<Env>) {
+  const releaseBootSignals = { ...env, ...options }.shutdown.handleSignals
+    ? exitOnSignalDuringBoot()
+    : undefined;
+
   const {
     serverHandlers,
     options: resolved,
@@ -681,7 +686,7 @@ export async function createBunServer(options?: Partial<Env>) {
     execute,
     shutdown,
     handleSignals,
-  } = await createHandlers(options);
+  } = await createHandlers(options).finally(() => releaseBootSignals?.());
 
   const server = serve(serverHandlers);
 
