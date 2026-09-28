@@ -209,7 +209,7 @@ A database that cannot be reached at boot — down, still starting, or not sched
 - `DB_CONNECT_RETRY_MS=0` makes a single attempt.
 - [`onConnect`](#startup-handler-onconnect) is not retried: it runs once the connection is up, and an error there still aborts boot.
 
-The HTTP server starts only once boot is done, so `/health/live` does not answer while boot waits. On Kubernetes, give the pod a `startupProbe` whose budget covers the window plus one `connectionTimeout`, or the liveness probe kills it mid-wait. A SIGTERM or SIGINT received during the wait exits `0` at once (`createBunServer`, and the `graphoria` CLI's workers). The CLI restarts a worker whose boot failed; since each such failure takes a whole window, a single-worker CLI keeps retrying for as long as the database stays down.
+The HTTP server starts only once boot is done, so `/health/live` does not answer while boot waits. On Kubernetes, give the pod a `startupProbe` whose budget covers the window plus one `connectionTimeout`, or the liveness probe kills it mid-wait. A SIGTERM or SIGINT received during the wait exits `0` at once (`createBunServer`, and the `graphoria` CLI's workers). The CLI restarts a worker whose boot failed and gives up after 5 worker crashes within 60 s. With the default window each failure takes 60 s, so a single-worker CLI never reaches that limit and keeps retrying for as long as the database stays down; a window shorter than about 11 s lets it give up.
 
 #### Bounding how long a statement runs
 
