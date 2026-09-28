@@ -16,7 +16,7 @@ Import: `import { createBunServer, createHandlers, createGraphQLEngine } from "@
 
 #### `createBunServer(options?)`
 
-Creates and starts a Bun HTTP server with all routes configured.
+Creates and starts a Bun HTTP server with all routes configured. It also installs SIGTERM and SIGINT handlers that shut the server down gracefully — see [Graceful shutdown](#graceful-shutdown).
 
 ```typescript
 async function createBunServer(options?: Partial<Env>): Promise<{
@@ -24,6 +24,7 @@ async function createBunServer(options?: Partial<Env>): Promise<{
   prefixes: Prefixes;
   logger: (name: string) => pino.Logger;
   execute: Execute;
+  shutdown: () => Promise<boolean>; // `shutdown(server)`, bound to this server
 }>;
 ```
 
@@ -42,8 +43,43 @@ async function createHandlers(options?: Partial<Env>): Promise<{
   prefixes: Prefixes;
   logger: (name: string) => pino.Logger;
   execute: Execute;
+  shutdown: (server: Bun.Server) => Promise<boolean>;
+  handleSignals: (server: Bun.Server) => void;
 }>;
 ```
+
+`createHandlers` installs no signal handler: hand the server you start to `handleSignals`.
+
+```typescript
+const { serverHandlers, handleSignals } = await createHandlers();
+handleSignals(Bun.serve(serverHandlers));
+```
+
+#### Graceful shutdown
+
+`shutdown(server)` stops the server and releases everything the handlers opened, in this order:
+
+1. The listener closes, so new connections are refused. Every open websocket gets a `1001` close ("server shutting down"), and cron schedules no new run.
+2. Requests in flight get up to `SHUTDOWN_TIMEOUT_MS` (default `8000`) to finish. Past that, the connections left are reset.
+3. The queue connections close, then both Redis clients, then the database pools, and last the spans still queued are flushed. This teardown gets one second.
+
+It runs once: a later call returns the first call's promise. It resolves `true` when the drain finished in time and every step succeeded, `false` otherwise, and never exits the process. A cron job already running when the pools close fails with a pool error.
+
+`handleSignals(server)` runs `shutdown(server)` on the first SIGTERM or SIGINT, then exits `0` when it resolved `true` and `1` otherwise. A second signal exits `1` at once. Calling it again installs nothing more.
+
+`createBunServer` calls `handleSignals` on its server. To keep the signals for your own code, set `SHUTDOWN_HANDLE_SIGNALS=false`, or pass `shutdown` in the options — with both fields, since options replace a whole `Env` key:
+
+```typescript
+const { shutdown } = await createBunServer({
+  shutdown: { timeoutMs: 8000, handleSignals: false },
+});
+
+process.on("SIGTERM", async () => {
+  process.exit((await shutdown()) ? 0 : 1);
+});
+```
+
+The `graphoria` CLI supervises its server processes: it restarts one that crashes (after 1 s, doubling up to 30 s), stops at the 5th crash within 60 s with a non-zero exit, and on SIGTERM, SIGINT or SIGHUP stops every worker and exits `0` when all of them stopped cleanly.
 
 #### `createGraphQLEngine(env)`
 
