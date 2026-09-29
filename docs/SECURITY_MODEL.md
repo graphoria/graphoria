@@ -122,11 +122,11 @@ anonymous, and it does not inherit another role's schema.
 ## Claims, and the tests behind them
 
 Every claim below is held up by integration tests that run against real PostgreSQL, MySQL and SQL
-Server instances — not mocks — on a two-tenant fixture where one tenant's rows appearing in the
-other's response is the failure condition. The suites live in
+Server instances and SQLite files — not mocks — on a two-tenant fixture where one tenant's rows
+appearing in the other's response is the failure condition. The suites live in
 `packages/server/src/__test/integration/rls/` and run with `bun run test:integration`.
 
-Sixty cases per engine, one hundred and eighty in total. Each is listed against the claim it holds.
+Sixty cases per engine, two hundred and forty in total. Each is listed against the claim it holds.
 
 ### C1 — A role's row filter reaches every read of the table
 
@@ -401,6 +401,10 @@ hook — so the bound rides in the SQL text as a `MAX_EXECUTION_TIME` optimiser 
 `SELECT`. Generated read queries are covered; a stored-procedure `CALL`, an auth query, and
 introspection are not. **Open gap**, documented rather than closed because the alternative is a
 pinned connection and an extra round trip on every query.
+
+### SQLite bounds no statement
+
+bun:sqlite runs a statement on the event loop and exposes no way to interrupt it, so on a `sqlite` database neither `QUERY_TIMEOUT_MS` nor an operation's `timeout` applies, and a slow query stalls every request on that worker. Boot logs a `warn`. **Open gap**, inherent in the driver: the depth, size and cost limits still apply, and they are the bound that remains.
 
 ### Console logout binds one worker
 

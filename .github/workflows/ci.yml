@@ -69,9 +69,9 @@ jobs:
       - name: Audit dependencies
         run: bun audit --audit-level=high
 
-  # Runs on every PR but is deliberately not a required status check: it boots
-  # three real database engines, and a container that fails to come up should
-  # not block a merge on its own. Watch it before promoting it to required.
+  # Runs on every PR and is a required status check under this name: renaming it
+  # blocks every merge until branch protection is updated to match. SQLite runs
+  # in this job too.
   integration:
     name: Integration (pg, mysql, mssql)
     runs-on: ubuntu-latest

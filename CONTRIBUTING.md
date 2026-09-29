@@ -128,6 +128,8 @@ When you add or change a feature:
 3. For tests that need fake collaborators (Redis, the database, queues), inject a fake at the boundary instead of mocking the module. See `packages/server/src/authentication/tokenRepository.test.ts` for the pattern.
 4. Run `bun test` locally before opening a PR.
 
+The SQLite engine's tests open real SQLite files and need no Docker: `bun test packages/server/src/databases/engines/sqlite` runs a query end to end in seconds.
+
 If you change documentation, double-check that the examples actually run — the docs are written to be copy-pasteable.
 
 ## Versioning and releases

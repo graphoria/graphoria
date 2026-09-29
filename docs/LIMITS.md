@@ -117,16 +117,19 @@ had taken.
 
 Each engine enforces it the only way it can:
 
-| Engine  | Mechanism                                                       | Covers                                                        |
-| ------- | --------------------------------------------------------------- | ------------------------------------------------------------- |
-| `pg`    | `statement_timeout`, set on every connection in the pool        | every statement, generated queries and auth and introspection |
-| `mssql` | `requestTimeout` on the pool, an attention packet when it fires | every request                                                 |
-| `mysql` | a `MAX_EXECUTION_TIME` hint on the generated statement          | generated read queries only                                   |
+| Engine   | Mechanism                                                       | Covers                                                        |
+| -------- | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| `pg`     | `statement_timeout`, set on every connection in the pool        | every statement, generated queries and auth and introspection |
+| `mssql`  | `requestTimeout` on the pool, an attention packet when it fires | every request                                                 |
+| `mysql`  | a `MAX_EXECUTION_TIME` hint on the generated statement          | generated read queries only                                   |
+| `sqlite` | none: nothing can interrupt a running statement                 | nothing — see [SQLite](./CONFIGURATION.md#sqlite)             |
 
 **MySQL is bounded only where the hint reaches.** Bun's MySQL adapter offers no hook to run a setting
 when a pooled connection opens, so there is no pool-level route on that engine, and auth logins,
 schema introspection and stored-procedure `CALL`s are not bounded there. They are on `pg` and `mssql`.
 Open gap; see [Security Model](./SECURITY_MODEL.md#mysql-bounds-fewer-statements-than-the-other-two-engines).
+
+**SQLite is not bounded at all**: bun:sqlite runs a statement on the event loop and cannot interrupt it. Boot warns. See [Configuration](./CONFIGURATION.md#sqlite).
 
 Two overrides, in precedence order:
 

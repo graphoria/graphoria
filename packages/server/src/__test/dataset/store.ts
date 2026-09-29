@@ -1,5 +1,5 @@
 import { DatabaseStructureZod } from "../../types/zod/db";
-import { createMockMSSQL, createMockMySQL, createMockPG } from "../common";
+import { createMockMSSQL, createMockMySQL, createMockPG, createMockSQLite } from "../common";
 
 export const structure = DatabaseStructureZod.parse({
   tables: [
@@ -317,3 +317,4 @@ export const structure = DatabaseStructureZod.parse({
 export const StoreMSSQL = createMockMSSQL(structure);
 export const StorePG = createMockPG(structure);
 export const StoreMySQL = createMockMySQL(structure);
+export const StoreSQLite = createMockSQLite(structure);

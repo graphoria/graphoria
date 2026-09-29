@@ -6,6 +6,7 @@ import type { DatabaseType, RelationshipCondition, VirtualColumn } from "../type
 
 import { FILTER_OPERATORS } from "../config/types/auth";
 import { applyDirectives } from "./directives";
+import { SqlTypeCategory, categorizeSqlType } from "./sqlTypeUtils";
 
 // Common aggregation types
 export interface AggregationField {
@@ -75,6 +76,7 @@ const mappingDbTypeCharVar: Record<DatabaseType, string> = {
   pg: "$",
   mysql: "$",
   mssql: "@",
+  sqlite: "$",
 };
 
 export const buildConditions = (
@@ -202,6 +204,7 @@ const identifierDelimiters: Record<DatabaseType, [string, string]> = {
   pg: ['"', '"'],
   mysql: ["`", "`"],
   mssql: ["[", "]"],
+  sqlite: ['"', '"'],
 };
 
 export const wrapIdentifierFp =
@@ -216,6 +219,7 @@ export const wrapIdentifierFp =
 export const wrapIdentifierPG = wrapIdentifierFp("pg");
 export const wrapIdentifierMSSQL = wrapIdentifierFp("mssql");
 export const wrapIdentifierMySQL = wrapIdentifierFp("mysql");
+export const wrapIdentifierSQLite = wrapIdentifierFp("sqlite");
 
 export const qualifiedNameFp =
   (dbType: DatabaseType) =>
@@ -289,10 +293,13 @@ const buildCondition = (
     case "lte":
       return `${target} <= ${value}`;
     // PostgreSQL and MySQL treat a backslash as the LIKE escape by default;
-    // T-SQL has no default escape character at all, so `100\%` matched a literal
-    // backslash and found nothing. Declare the escape to make the three agree.
+    // T-SQL and SQLite have no default escape character at all, so `100\%`
+    // matched a literal backslash and found nothing. Declare the escape to make
+    // the engines agree.
     case "like":
-      return dbType === "mssql" ? `${target} LIKE ${value} ESCAPE '\\'` : `${target} LIKE ${value}`;
+      return dbType === "mssql" || dbType === "sqlite"
+        ? `${target} LIKE ${value} ESCAPE '\\'`
+        : `${target} LIKE ${value}`;
     case "in":
       return `${target} IN (${Array.isArray(value) ? value.join(", ") : value})`;
     case "is_null":
@@ -600,6 +607,7 @@ export const buildWhereClauseFp =
 export const buildWhereClauseMSSQL = buildWhereClauseFp("mssql");
 export const buildWhereClausePG = buildWhereClauseFp("pg");
 export const buildWhereClauseMySQL = buildWhereClauseFp("mysql");
+export const buildWhereClauseSQLite = buildWhereClauseFp("sqlite");
 
 // Helper function to parse order direction and null handling
 const ORDER_DIRECTION_MAP: Record<string, { sort: string; nulls?: string }> = {
@@ -641,8 +649,8 @@ export const buildOrderByClauseFp =
           const target = columnTargetFp(dbType)(entities, field.name, colName, tableAlias);
 
           if (nulls) {
-            if (dbType === "pg") {
-              // PostgreSQL supports NULLS FIRST/LAST natively
+            if (dbType === "pg" || dbType === "sqlite") {
+              // PostgreSQL and SQLite support NULLS FIRST/LAST natively
               return `${target} ${sort} NULLS ${nulls}`;
             } else if (dbType === "mysql") {
               // MySQL: Use CASE statement for NULL handling
@@ -676,6 +684,7 @@ export const buildOrderByClauseFp =
 export const buildOrderByClauseMSSQL = buildOrderByClauseFp("mssql");
 export const buildOrderByClausePG = buildOrderByClauseFp("pg");
 export const buildOrderByClauseMySQL = buildOrderByClauseFp("mysql");
+export const buildOrderByClauseSQLite = buildOrderByClauseFp("sqlite");
 
 export const filterBasedOnDirective = (
   field: SelectionAnalysis,
@@ -775,6 +784,27 @@ export const filterBasedOnDirective = (
   return true;
 };
 
+/**
+ * A column as SQLite's JSON functions must receive it. SQLite stores a boolean
+ * as 0/1, so a column declared BOOLEAN would reach the client as a number behind
+ * a schema that says Boolean; and json_object() raises on a BLOB, failing the
+ * whole statement rather than the one field. The other engines' JSON handles both.
+ */
+export const sqliteJsonValue = (
+  entities: MergedEntities,
+  tableName: string,
+  columnName: string,
+  selector: string,
+): string => {
+  const column = entities.queriesMap[tableName]?.columns.find((c) => c.name === columnName);
+
+  if (column && categorizeSqlType(column.dataType) === SqlTypeCategory.BOOLEAN) {
+    return `CASE WHEN ${selector} IS NULL THEN NULL WHEN ${selector} THEN json('true') ELSE json('false') END`;
+  }
+
+  return `CASE WHEN typeof(${selector}) = 'blob' THEN hex(${selector}) ELSE ${selector} END`;
+};
+
 export const processFieldSelectionsFp =
   (dbType: DatabaseType = "pg") =>
   (
@@ -810,7 +840,12 @@ export const processFieldSelectionsFp =
               selectClauses.push([`${colName}`, `(${vc.expression})`]);
             }
           } else {
-            let querySelector = `${tableAlias}.${wrapIdentifierFp(dbType)(sqlColumnName(entities, tableName, sel.name))}`;
+            const sqlName = sqlColumnName(entities, tableName, sel.name);
+            let querySelector = `${tableAlias}.${wrapIdentifierFp(dbType)(sqlName)}`;
+
+            if (dbType === "sqlite") {
+              querySelector = sqliteJsonValue(entities, tableName, sqlName, querySelector);
+            }
 
             // Apply all directives using the handler registry
             querySelector = applyDirectives(
@@ -833,6 +868,7 @@ export const processFieldSelectionsFp =
 export const processFieldSelectionsPG = processFieldSelectionsFp("pg");
 export const processFieldSelectionsMSSQL = processFieldSelectionsFp("mssql");
 export const processFieldSelectionsMySQL = processFieldSelectionsFp("mysql");
+export const processFieldSelectionsSQLite = processFieldSelectionsFp("sqlite");
 
 // Helper function to check if a field is an aggregation
 export const isAggregationField = (fieldName: string): boolean => {
@@ -1006,3 +1042,4 @@ export const buildPaginationClauseFp =
 export const buildPaginationClausePG = buildPaginationClauseFp("pg");
 export const buildPaginationClauseMSSQL = buildPaginationClauseFp("mssql");
 export const buildPaginationClauseMySQL = buildPaginationClauseFp("mysql");
+export const buildPaginationClauseSQLite = buildPaginationClauseFp("sqlite");

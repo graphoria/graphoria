@@ -3,7 +3,7 @@ import { arch, cpus, platform, release, totalmem } from "node:os";
 import { join } from "node:path";
 
 import type { Summary } from "./stats";
-import type { DatabaseType } from "../src/types/configuration";
+import type { BenchEngine } from "./config";
 
 import { MYSQL_CONNECTION_OPTIONS } from "../src/__test/integration/config";
 import { startServer } from "../src/__test/integration/harness";
@@ -32,7 +32,7 @@ const flag = (name: string) =>
   Bun.argv.find((argument) => argument.startsWith(`--${name}=`))?.split("=")[1];
 
 const options = {
-  engine: (flag("engine") ?? "pg") as DatabaseType,
+  engine: (flag("engine") ?? "pg") as BenchEngine,
   iterations: Number(flag("iterations") ?? 200),
   warmup: Number(flag("warmup") ?? 20),
   seed: !Bun.argv.includes("--no-seed"),
@@ -43,7 +43,7 @@ if (!ENGINES.includes(options.engine)) {
   throw new Error(`--engine must be one of ${ENGINES.join(", ")}, got ${options.engine}`);
 }
 
-const VERSION_QUERY: Record<DatabaseType, string> = {
+const VERSION_QUERY: Record<BenchEngine, string> = {
   pg: "SELECT version() AS version",
   mysql: "SELECT VERSION() AS version",
   mssql: "SELECT @@VERSION AS version",
@@ -52,7 +52,7 @@ const VERSION_QUERY: Record<DatabaseType, string> = {
 type ScenarioResult = Summary & { name: string; description: string };
 
 type Report = {
-  engine: DatabaseType;
+  engine: BenchEngine;
   engineVersion: string;
   iterations: number;
   warmup: number;
@@ -70,7 +70,7 @@ type Report = {
   scenarios: ScenarioResult[];
 };
 
-const benchConfig = (engine: DatabaseType) => ({
+const benchConfig = (engine: BenchEngine) => ({
   name: "graphoria-bench",
   version: "1.0.0",
   databases: [

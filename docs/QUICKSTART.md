@@ -7,29 +7,29 @@ This guide gets you from zero to a running Graphoria server in about five minute
 ## Prerequisites
 
 - [Bun](https://bun.sh) **1.3.4** or newer
-- A running database — PostgreSQL, MySQL, or SQL Server. The examples use PostgreSQL on `localhost:5432`.
+- A database — PostgreSQL, MySQL or SQL Server running, or nothing at all with SQLite, which Graphoria opens as a file. The examples use PostgreSQL on `localhost:5432`.
 - Optional: [Redis](https://redis.io) (or Valkey) — only required if you enable authentication. The default URL is `redis://localhost:6379`.
 
 ## Scaffold a project with `bunx graphoria init`
 
-The shortest way in needs Docker with Compose instead of a running database. In an empty directory:
+The shortest way in needs Docker with Compose instead of a running database — or only Bun, with SQLite:
 
 ```bash
 mkdir my-api && cd my-api
 bunx graphoria init
 ```
 
-`init` asks for the database engine (`pg`, `mysql` or `mssql`), the database name, its password, the port it gets on your machine and whether to add a React frontend; Enter takes the default shown. It then writes the project and runs `bun install`:
+`init` asks for the database engine (`pg`, `mysql`, `mssql` or `sqlite`), the database name, its password, the port it gets on your machine (SQLite asks for neither) and whether to add a React frontend; Enter takes the default shown. It then writes the project and runs `bun install`:
 
-| File                                          | What it holds                                                                                                                    |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `graphoria.ts`                                | The configuration. It reads the database connection from the environment.                                                        |
-| `index.ts`                                    | The entry point.                                                                                                                 |
-| `.env`                                        | A random `ADMIN_SECRET` and `JWT_SECRET`, and the database settings (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`). |
-| `docker-compose.yml`                          | The database and Graphoria. The database's port is published on your machine too.                                                |
-| `Dockerfile`, `.dockerignore`                 | The image recipe of the [Docker Compose starter](../examples/docker-compose-starter/).                                           |
-| `seed.sql`                                    | Two related tables, `authors` and `books`, with a few rows.                                                                      |
-| `package.json`, `tsconfig.json`, `.gitignore` | The usual; `.gitignore` keeps `.env` out of git.                                                                                 |
+| File                                          | What it holds                                                                                                                                                  |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `graphoria.ts`                                | The configuration. It reads the database connection from the environment.                                                                                      |
+| `index.ts`                                    | The entry point.                                                                                                                                               |
+| `.env`                                        | A random `ADMIN_SECRET` and `JWT_SECRET`, and the database settings (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`); on SQLite, `DB_FILE` instead. |
+| `docker-compose.yml`                          | The database and Graphoria. On SQLite it's Graphoria alone, with the file on a volume; otherwise the database's port is published on your machine too.         |
+| `Dockerfile`, `.dockerignore`                 | The image recipe of the [Docker Compose starter](../examples/docker-compose-starter/).                                                                         |
+| `seed.sql`                                    | Two related tables, `authors` and `books`, with a few rows.                                                                                                    |
+| `package.json`, `tsconfig.json`, `.gitignore` | The usual; `.gitignore` keeps `.env` out of git.                                                                                                               |
 
 Run everything in Docker:
 
@@ -44,6 +44,8 @@ docker compose up -d --wait db   # SQL Server: docker compose run --rm db-init
 bun run dev
 ```
 
+With `--database sqlite` there is no database server: the database is the file `app.db` (named after the database name) next to `graphoria.ts`, and the first boot creates it and seeds it from `seed.sql`. `bun run dev` is all it takes, and `docker compose up -d --build` runs Graphoria alone, with the file on a volume. See [SQLite](./CONFIGURATION.md#sqlite) for what the engine cannot do.
+
 Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the `ADMIN_SECRET` from `.env`, and query the seed:
 
 ```graphql
@@ -57,9 +59,9 @@ Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the 
 }
 ```
 
-Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, and the database name on MySQL (`app_authors` with the default name).
+Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, `main_` on SQLite, and the database name on MySQL (`app_authors` with the default name).
 
-`--yes` takes every default without asking, `--database pg|mysql|mssql` picks the engine, and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command.
+`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command.
 
 ### Add a React frontend with `--frontend`
 

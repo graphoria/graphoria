@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 
-import type { BunSQLConnectionOptions } from "../../../config";
+import type { BunSQLConnectionOptions, ServerConnection } from "../../../config";
 import type { VariableDefinition } from "../../../analyzeQuery/types";
 import type { Database } from "../../../types/configuration";
 import type { ProcedureResolver } from "../../../types/db";
@@ -24,12 +24,15 @@ export const poolOptions = (db: Database, timeoutMs: number = getQueryTimeoutMs(
     ...(db.connectionOptions as BunSQLConnectionOptions | undefined),
   };
 
+  // Only a "pg" database is routed here, and its connection is a server's.
+  const connection = db.connection as ServerConnection;
+
   return {
-    host: db.connection.host,
-    port: db.connection.port,
-    user: db.connection.user,
-    password: db.connection.password,
-    database: db.connection.database,
+    host: connection.host,
+    port: connection.port,
+    user: connection.user,
+    password: connection.password,
+    database: connection.database,
     max: opts.max,
     idleTimeout: opts.idleTimeout,
     connectionTimeout: opts.connectionTimeout,

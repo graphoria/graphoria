@@ -27,7 +27,8 @@ const versions = { graphoria: "0.6.0", bun: "1.4.2" };
 
 const render = (database: DatabaseType) => renderProject(values(database), versions);
 
-const ENGINES: DatabaseType[] = ["pg", "mysql", "mssql"];
+const ENGINES: DatabaseType[] = ["pg", "mysql", "mssql", "sqlite"];
+const SERVER_ENGINES: DatabaseType[] = ["pg", "mysql", "mssql"];
 
 const PATHS = [
   ".dockerignore",
@@ -221,7 +222,7 @@ describe("renderProject graphoria.ts", () => {
     process.env.DB_NAME = "shop";
   };
 
-  it.each(ENGINES)("reads the %s connection from the environment", async (database) => {
+  it.each(SERVER_ENGINES)("reads the %s connection from the environment", async (database) => {
     setEnv();
     const configuration = ConfigurationZod.parse((await load(database))({}));
 
@@ -293,7 +294,7 @@ describe("renderProject with the frontend", () => {
   ];
 
   // The seed's schema, which prefixes its field names: a MySQL schema is its database.
-  const SCHEMAS = { pg: "public", mysql: "shop", mssql: "dbo" } as const;
+  const SCHEMAS = { pg: "public", mysql: "shop", mssql: "dbo", sqlite: "main" } as const;
 
   it.each(ENGINES)("renders sixteen files for %s", (database) => {
     expect(Object.keys(renderWeb(database)).sort()).toEqual([...PATHS, ...WEB_PATHS].sort());
@@ -453,20 +454,122 @@ describe("renderProject with the frontend", () => {
       return ConfigurationZod.parse(configure({}));
     };
 
-    it.each(ENGINES)("grants anonymous the two %s seed tables, auth off", async (database) => {
-      const { auth } = await parse(true, database);
-      const schema = SCHEMAS[database];
+    it.each(SERVER_ENGINES)(
+      "grants anonymous the two %s seed tables, auth off",
+      async (database) => {
+        const { auth } = await parse(true, database);
+        const schema = SCHEMAS[database];
 
-      expect(auth.enabled).toBe(false);
-      expect(Object.keys(auth.permissions)).toEqual(["anonymous"]);
-      expect(auth.permissions.anonymous!.tables).toEqual({
-        [genResolverName(schema, "authors", "table")]: { columns: "ALL" },
-        [genResolverName(schema, "books", "table")]: { columns: "ALL" },
-      });
-    });
+        expect(auth.enabled).toBe(false);
+        expect(Object.keys(auth.permissions)).toEqual(["anonymous"]);
+        expect(auth.permissions.anonymous!.tables).toEqual({
+          [genResolverName(schema, "authors", "table")]: { columns: "ALL" },
+          [genResolverName(schema, "books", "table")]: { columns: "ALL" },
+        });
+      },
+    );
 
     it("grants nothing without the frontend", async () => {
       expect((await parse(false, "pg")).auth.permissions).toEqual({});
+    });
+  });
+});
+
+describe("renderProject for SQLite", () => {
+  const files = render("sqlite");
+
+  it("points the project at a file, with no server settings", () => {
+    const lines = files[".env"]!.split("\n");
+
+    expect(lines).toContain("DB_FILE=shop.db");
+    expect(lines.some((line) => /^DB_(HOST|PORT|USER|PASSWORD|NAME)=/.test(line))).toBe(false);
+  });
+
+  it("keeps the database file and its journals out of git and out of the image", () => {
+    expect(files[".gitignore"]!.split("\n")).toEqual(expect.arrayContaining(["*.db", "*.db-*"]));
+    expect(files[".dockerignore"]!.split("\n")).toEqual(expect.arrayContaining(["*.db", "*.db-*"]));
+  });
+
+  it("gives the runtime user a data directory in the image", () => {
+    const lines = files.Dockerfile!.split("\n");
+
+    expect(lines.indexOf("RUN mkdir -p data && chown bun:bun data")).toBeLessThan(
+      lines.indexOf("USER bun"),
+    );
+    expect(lines).toContain("RUN mkdir -p data && chown bun:bun data");
+  });
+
+  it("runs Graphoria alone in Compose, with the file on a volume", () => {
+    const compose = Bun.YAML.parse(files["docker-compose.yml"]!) as {
+      services: Record<string, { environment?: Record<string, string>; volumes?: string[] }>;
+      volumes: Record<string, unknown>;
+    };
+
+    expect(Object.keys(compose.services)).toEqual(["graphoria"]);
+    expect(compose.services.graphoria!.environment).toEqual({ DB_FILE: "data/shop.db" });
+    expect(compose.services.graphoria!.volumes).toEqual(["db-data:/app/data"]);
+    expect(Object.keys(compose.volumes)).toEqual(["db-data"]);
+  });
+
+  it("creates the seed tables in SQLite's dialect", () => {
+    expect(files["seed.sql"]).toContain("id INTEGER PRIMARY KEY");
+    expect(files["seed.sql"]).toContain("'Ursula K. Le Guin'");
+
+    const statements = files["seed.sql"]!.replace(/^--.*\n/gm, "").trim();
+    expect(statements).toStartWith("BEGIN;");
+    expect(statements).toEndWith("COMMIT;");
+  });
+
+  describe("graphoria.ts", () => {
+    let dir: string;
+
+    beforeAll(async () => {
+      dir = await mkdtemp(join(tmpdir(), "graphoria-init-sqlite-"));
+    });
+
+    afterAll(async () => {
+      delete process.env.DB_FILE;
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    const load = async (frontend: boolean) => {
+      const path = join(dir, `sqlite-${frontend}.graphoria.ts`);
+      await writeFile(
+        path,
+        renderProject({ ...values("sqlite"), frontend }, versions)["graphoria.ts"]!,
+      );
+      await writeFile(join(dir, "seed.sql"), files["seed.sql"]!);
+      process.env.DB_FILE = join(dir, "shop.db");
+      return ConfigurationZod.parse(((await import(path)).default as (h: object) => unknown)({}));
+    };
+
+    it("reads the file from DB_FILE and seeds it once, on connect", async () => {
+      const { Database } = await import("bun:sqlite");
+      const configuration = await load(false);
+      const db = configuration.databases[0]!;
+
+      expect(db.type).toBe("sqlite");
+      expect(db.connection).toEqual({ filename: join(dir, "shop.db") });
+
+      const connection = new Database(join(dir, "shop.db"), { create: true });
+      try {
+        await db.onConnect!(connection as never, db as never);
+        await db.onConnect!(connection as never, db as never);
+
+        expect(connection.query("SELECT COUNT(*) AS n FROM authors").get()).toEqual({ n: 3 });
+        expect(connection.query("SELECT COUNT(*) AS n FROM books").get()).toEqual({ n: 6 });
+      } finally {
+        connection.close();
+      }
+    });
+
+    it("grants anonymous the two seed tables with the frontend", async () => {
+      const { auth } = await load(true);
+
+      expect(auth.permissions.anonymous!.tables).toEqual({
+        main_authors: { columns: "ALL" },
+        main_books: { columns: "ALL" },
+      });
     });
   });
 });

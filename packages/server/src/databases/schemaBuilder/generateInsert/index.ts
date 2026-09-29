@@ -30,3 +30,4 @@ export type GenerateInsertSQL = ReturnType<typeof generateInsertSQL>;
 export const generateInsertSQLMSSQL = generateInsertSQL("mssql");
 export const generateInsertSQLPostgreSQL = generateInsertSQL("pg");
 export const generateInsertSQLMySQL = generateInsertSQL("mysql");
+export const generateInsertSQLSQLite = generateInsertSQL("sqlite");

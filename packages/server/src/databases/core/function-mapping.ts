@@ -51,14 +51,31 @@ import { getDatabaseStructure as getStructurePostgreSQL } from "../engines/postg
 import { getViewsFromDB as viewPostgreSQL } from "../engines/postgresql/getViews";
 import { generateSQL as queryPostgreSQL } from "../engines/postgresql/query";
 import {
+  checkUserCredentials as checkUserCredentialsSQLite,
+  createAuthTables as createAuthTablesSQLite,
+  insertAuthUser as insertAuthUserSQLite,
+  verifyAuthTablesExist as verifyAuthTablesExistSQLite,
+} from "../engines/sqlite/auth";
+import {
+  callStoredProcedure as callStoredProcedureSQLite,
+  executeQueryJSON as executeQueryJsonSQLite,
+  executeQuery as executeQuerySQLite,
+} from "../engines/sqlite/connection";
+import { format as formatSQLite } from "../engines/sqlite/format";
+import { getDatabaseStructure as getStructureSQLite } from "../engines/sqlite/getStructure";
+import { getViewsFromDB as viewSQLite } from "../engines/sqlite/getViews";
+import { generateSQL as querySQLite } from "../engines/sqlite/query";
+import {
   generateCreateTableMSSQL,
   generateCreateTableMySQL,
   generateCreateTablePostgreSQL,
+  generateCreateTableSQLite,
 } from "../schemaBuilder/generateCreateTable";
 import {
   generateInsertSQLMSSQL,
   generateInsertSQLMySQL,
   generateInsertSQLPostgreSQL,
+  generateInsertSQLSQLite,
 } from "../schemaBuilder/generateInsert";
 
 export type CheckUserCredentialsResult =
@@ -176,5 +193,20 @@ export const databaseAdapters: Record<DatabaseType, DatabaseFunctions> = {
     checkUserCredentials: checkUserCredentialsMySQL,
     insertAuthUser: insertAuthUserMySQL,
     verifyAuthTablesExist: verifyAuthTablesExistMySQL,
+  },
+  sqlite: {
+    query: querySQLite,
+    callStoredProcedure: callStoredProcedureSQLite,
+    executeJson: executeQueryJsonSQLite,
+    execute: executeQuerySQLite,
+    getDatabaseStructure: getStructureSQLite,
+    getViews: viewSQLite,
+    format: formatSQLite,
+    generateInsertSQL: generateInsertSQLSQLite,
+    generateCreateTableSQL: generateCreateTableSQLite,
+    createAuthTables: createAuthTablesSQLite,
+    checkUserCredentials: checkUserCredentialsSQLite,
+    insertAuthUser: insertAuthUserSQLite,
+    verifyAuthTablesExist: verifyAuthTablesExistSQLite,
   },
 } as const;

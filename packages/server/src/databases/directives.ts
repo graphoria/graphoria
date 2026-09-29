@@ -23,8 +23,11 @@ const sqlString = (value: unknown): string => {
 export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
   uppercase: (querySelector) => `UPPER(${querySelector})`,
   lowercase: (querySelector) => `LOWER(${querySelector})`,
-  truncate: (querySelector, directive) =>
-    `LEFT(${querySelector}, ${directive.arguments!["length"]})`,
+  truncate: (querySelector, directive, dbType) =>
+    // SQLite has no LEFT().
+    dbType === "sqlite"
+      ? `SUBSTR(${querySelector}, 1, ${directive.arguments!["length"]})`
+      : `LEFT(${querySelector}, ${directive.arguments!["length"]})`,
   default: (querySelector, directive) =>
     `COALESCE(${querySelector}, ${sqlString(directive.arguments?.["value"] ?? "N/A")})`,
   trim: (querySelector) => `TRIM(${querySelector})`,
@@ -56,6 +59,15 @@ export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
         ? `LPAD(${querySelector}::TEXT, ${length}, ${char})`
         : `RPAD(${querySelector}::TEXT, ${length}, ${char})`;
     }
+    // SQLite has neither LPAD nor RPAD. The run of pad characters comes from
+    // ZEROBLOB. As in LPAD, the gap takes the run from its start, and a value
+    // already `length` long is cut from the right.
+    if (dbType === "sqlite") {
+      const run = `REPLACE(HEX(ZEROBLOB(${length})), '00', ${char})`;
+      return side === "left"
+        ? `CASE WHEN LENGTH(${querySelector}) >= ${length} THEN SUBSTR(${querySelector}, 1, ${length}) ELSE SUBSTR(${run}, 1, ${length} - LENGTH(${querySelector})) || ${querySelector} END`
+        : `SUBSTR(${querySelector} || ${run}, 1, ${length})`;
+    }
     // MySQL has LPAD/RPAD too, and needs no cast. It used to fall through to the
     // SQL Server branch, where REPLICATE and VARCHAR(MAX) are syntax errors.
     if (dbType === "mysql") {
@@ -73,6 +85,8 @@ export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
       throw new Error("@dateFormat is not supported on MySQL. Expose a virtual column instead.");
     }
     const format = directive.arguments!["format"] as string;
+    // SQLite takes a strftime format, and takes it first.
+    if (dbType === "sqlite") return `STRFTIME(${sqlString(format)}, ${querySelector})`;
     return dbType === "pg"
       ? `TO_CHAR(${querySelector}, ${sqlString(format)})`
       : `FORMAT(${querySelector}, ${sqlString(format)})`;
@@ -91,6 +105,7 @@ const mappingDbTypeCharVar: Record<DatabaseType, string> = {
   pg: "$",
   mysql: "$",
   mssql: "@",
+  sqlite: "$",
 };
 
 /**

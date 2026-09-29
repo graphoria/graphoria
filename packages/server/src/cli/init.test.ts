@@ -155,6 +155,20 @@ describe("collectAnswers", () => {
     expect(answers.frontend).toBe(frontend);
     expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432"]);
   });
+
+  it("asks neither a password nor a port for SQLite, which has no server", () => {
+    const io = prompter([]);
+    const answers = collectAnswers({ ...ARGS, database: "sqlite" }, io.ask, io.say);
+
+    expect(answers).toEqual({
+      database: "sqlite",
+      dbName: "app",
+      dbPassword: "",
+      dbPort: 0,
+      frontend: false,
+    });
+    expect(io.fallbacks).toEqual(["app", "n"]);
+  });
 });
 
 describe("passwordError", () => {
@@ -273,6 +287,7 @@ describe("sampleQuery", () => {
     ["pg", "{ public_authors { name public_books { title } } }"],
     ["mysql", "{ shop_authors { name shop_books { title } } }"],
     ["mssql", "{ dbo_authors { name dbo_books { title } } }"],
+    ["sqlite", "{ main_authors { name main_books { title } } }"],
   ] as const)("uses the %s schema's field names", (database, query) => {
     expect(sampleQuery({ database, dbName: "shop" })).toBe(query);
   });

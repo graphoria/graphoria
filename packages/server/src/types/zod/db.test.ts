@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
+import type { DatabaseConfig } from "../../config";
+
 import { DatabaseConnectionZod, TableColumnZod } from "./db";
 import { TableRelationshipZod } from "../../config/types/db";
 
@@ -136,5 +138,74 @@ describe("TableRelationshipZod ancestor operand", () => {
         rel({ target: "third_col", ancestor: { schema: "public", name: "a" } }),
       ),
     ).toThrow();
+  });
+});
+
+describe("DatabaseConnectionZod sqlite", () => {
+  const sqlite = {
+    name: "local",
+    enabled: true,
+    type: "sqlite" as const,
+    connection: { filename: "app.db" },
+  };
+
+  const paths = (input: unknown) => {
+    const result = DatabaseConnectionZod.safeParse(input);
+    if (result.success) throw new Error("expected parse to fail");
+    return result.error.issues.map((issue) => issue.path.join("."));
+  };
+
+  it("accepts a main file and the files it attaches", () => {
+    const parsed = DatabaseConnectionZod.parse({
+      ...sqlite,
+      connection: { filename: "app.db", attach: { catalog: "catalog.db" } },
+    });
+
+    expect(parsed.type).toBe("sqlite");
+    expect(parsed.connection).toEqual({ filename: "app.db", attach: { catalog: "catalog.db" } });
+  });
+
+  it("rejects a server connection on a sqlite database", () => {
+    expect(
+      paths({
+        ...sqlite,
+        connection: { host: "h", port: 1, user: "u", password: "p", database: "d" },
+      }),
+    ).toContain("connection.filename");
+  });
+
+  it("rejects a file connection on a server engine", () => {
+    expect(paths({ ...sqlite, type: "pg" })).toContain("connection.host");
+  });
+
+  it("rejects connectionOptions, which SQLite has nothing to apply to", () => {
+    expect(paths({ ...sqlite, connectionOptions: { max: 2 } })).toEqual(["connectionOptions"]);
+  });
+
+  it.each(["main", "TEMP", "bad name", "1st"])("rejects %p as an attached schema", (name) => {
+    const result = DatabaseConnectionZod.safeParse({
+      ...sqlite,
+      connection: { filename: "app.db", attach: { [name]: "x.db" } },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error!.issues[0]).toMatchObject({ path: ["connection", "attach", name] });
+    expect(result.error!.issues[0]!.message).toContain("is not a schema name SQLite can attach");
+  });
+
+  // Compile-time: `run` exists on bun:sqlite's Database only, so type-check
+  // fails if onConnect's connection is not narrowed by `type: "sqlite"`.
+  it("types onConnect's connection as a bun:sqlite Database", () => {
+    const config: DatabaseConfig<"sqlite"> = {
+      name: "local",
+      enabled: true,
+      type: "sqlite",
+      connection: { filename: ":memory:" },
+      onConnect: (connection) => {
+        connection.run("SELECT 1");
+      },
+    };
+
+    expect(config.connection).toEqual({ filename: ":memory:" });
   });
 });

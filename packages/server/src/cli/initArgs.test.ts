@@ -16,6 +16,7 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs(["--database", "mysql"]).database).toBe("mysql");
     expect(parseInitArgs(["-d", "mssql"]).database).toBe("mssql");
     expect(parseInitArgs(["--database=pg"]).database).toBe("pg");
+    expect(parseInitArgs(["--database", "sqlite"]).database).toBe("sqlite");
   });
 
   it("skips the install with --no-install", () => {
@@ -30,7 +31,7 @@ describe("parseInitArgs", () => {
 
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
-      "--database must be one of pg, mysql, mssql",
+      "--database must be one of pg, mysql, mssql, sqlite",
     );
   });
 

@@ -2,7 +2,11 @@ import { describe, expect, it } from "bun:test";
 
 import type { EntitiesOfRole } from "../../../databases/high-level-operations";
 
+import { createMockPG } from "../../../__test/common";
+import { analyzeQuery } from "../../../analyzeQuery";
+import { generateSQL } from "../../../databases/engines/postgresql/query";
 import { EntitySource } from "../../../types/resolver";
+import { DatabaseStructureZod } from "../../../types/zod/db";
 import { mergeEntities } from ".";
 
 const buildEntitiesOfRole = (): EntitiesOfRole =>
@@ -102,5 +106,53 @@ describe("mergeEntities resolver name collisions", () => {
         ]),
       ),
     ).not.toThrow();
+  });
+});
+
+describe("mergeEntities self-referential relationships", () => {
+  const users = {
+    schema: "main",
+    name: "users",
+    entityType: "table",
+    columns: [
+      { name: "id", dataType: "int", isNullable: false },
+      { name: "manager_id", dataType: "int", isNullable: true },
+    ],
+    foreignKeys: [
+      { schema: "main", name: "users", columns: [{ source: "manager_id", target: "id" }] },
+    ],
+  };
+
+  const projects = {
+    schema: "main",
+    name: "projects",
+    entityType: "table",
+    columns: [
+      { name: "id", dataType: "int", isNullable: false },
+      { name: "owner_id", dataType: "int", isNullable: false },
+    ],
+    foreignKeys: [
+      { schema: "main", name: "users", columns: [{ source: "owner_id", target: "id" }] },
+    ],
+  };
+
+  // The reverse field is in the schema either way, so it has to resolve whether
+  // or not another table references users too.
+  it.each([
+    ["is referenced by nothing else", [users]],
+    ["is also referenced by another table", [users, projects]],
+  ])("resolves the reverse field of a table that %s", (_what, tables) => {
+    const store = createMockPG(DatabaseStructureZod.parse({ tables, storedProcedures: [] }));
+    const [operation] = analyzeQuery(
+      `{ main_users { main_users_list { id } } }`,
+      store,
+      store.schema,
+    ).operations;
+
+    expect(store.typeDefs).toContain("main_users_list");
+    expect(store.queriesMap["main_users_list"]?.resolverName).toBe("main_users");
+    expect(generateSQL(store, operation!, {}, false, null)).toContain(
+      `FROM "main"."users" t2 WHERE t1."id" = t2."manager_id"`,
+    );
   });
 });

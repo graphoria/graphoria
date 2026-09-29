@@ -44,7 +44,10 @@ export const mergeEntities = (
     resolverRegistry[`${table.resolverName}_aggregate`] = createResolverEntry.table(table);
 
     table.relationshipsReversed.forEach((fk, _, array) => {
-      if (array.filter((f) => f.toInternalName === fk.toInternalName).length > 1) {
+      if (
+        array.filter((f) => f.toInternalName === fk.toInternalName).length > 1 ||
+        fk.fromInternalName === fk.toInternalName
+      ) {
         acc[fk.toResolverName] = table;
         acc[fk.fromResolverName] = entityOfRole.tables.find(
           (t) => t.internalName === fk.fromInternalName,

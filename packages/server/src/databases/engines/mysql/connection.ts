@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 
-import type { BunSQLConnectionOptions } from "../../../config";
+import type { BunSQLConnectionOptions, ServerConnection } from "../../../config";
 import type { VariableDefinition } from "../../../analyzeQuery/types";
 import type { Database } from "../../../types/configuration";
 import type { ProcedureResolver } from "../../../types/db";
@@ -24,12 +24,15 @@ export const poolOptions = (db: Database) => {
     ...(db.connectionOptions as BunSQLConnectionOptions | undefined),
   };
 
+  // Only a "mysql" database is routed here, and its connection is a server's.
+  const connection = db.connection as ServerConnection;
+
   return {
-    host: db.connection.host,
-    port: db.connection.port,
-    username: db.connection.user,
-    password: db.connection.password,
-    database: db.connection.database,
+    host: connection.host,
+    port: connection.port,
+    username: connection.user,
+    password: connection.password,
+    database: connection.database,
     adapter: "mysql" as const,
     max: opts.max,
     idleTimeout: opts.idleTimeout,

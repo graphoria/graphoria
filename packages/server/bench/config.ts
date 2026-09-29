@@ -2,6 +2,9 @@ import type { DatabaseType } from "../src/types/configuration";
 
 import { CONNECTIONS } from "../src/__test/integration/config";
 
+/** The engines the bench runs against: the integration suite's server containers. */
+export type BenchEngine = Exclude<DatabaseType, "sqlite">;
+
 /**
  * The benchmark runs against its own database on the same containers as the
  * integration suite, so `docker compose -f docker-compose.test.yml up` is the
@@ -19,14 +22,14 @@ export const BENCH_SCHEMAS = {
   pg: "bench",
   mysql: BENCH_DATABASE,
   mssql: "bench",
-} as const satisfies Record<DatabaseType, string>;
+} as const satisfies Record<BenchEngine, string>;
 
 /** Root GraphQL field for a bench table, following the default `{schema}_{name}`. */
-export const benchField = (engine: DatabaseType, table: string) =>
+export const benchField = (engine: BenchEngine, table: string) =>
   `${BENCH_SCHEMAS[engine]}_${table}`;
 
 /** Qualified SQL name for a bench table. */
-export const benchTable = (engine: DatabaseType, table: string) =>
+export const benchTable = (engine: BenchEngine, table: string) =>
   `${BENCH_SCHEMAS[engine]}.${table}`;
 
 /**
@@ -36,9 +39,9 @@ export const benchTable = (engine: DatabaseType, table: string) =>
  */
 export const ROW_COUNTS = { users: 1_000, projects: 10_000, tasks: 100_000 } as const;
 
-export const benchConnection = (engine: DatabaseType) => ({
+export const benchConnection = (engine: BenchEngine) => ({
   ...CONNECTIONS[engine],
   database: BENCH_DATABASE,
 });
 
-export const ENGINES = ["pg", "mysql", "mssql"] as const satisfies readonly DatabaseType[];
+export const ENGINES = ["pg", "mysql", "mssql"] as const satisfies readonly BenchEngine[];

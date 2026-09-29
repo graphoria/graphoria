@@ -41,6 +41,17 @@ const typeMapping: Record<DatabaseType, Record<string, string>> = {
     uniqueidentifier: "CHAR(36)",
     tinyint: "TINYINT",
   },
+  sqlite: {
+    varchar: "VARCHAR",
+    int: "INTEGER",
+    smallint: "SMALLINT",
+    nvarchar: "VARCHAR",
+    datetime: "TIMESTAMP",
+    smalldatetime: "TIMESTAMP",
+    image: "BLOB",
+    uniqueidentifier: "UUID",
+    tinyint: "SMALLINT",
+  },
 };
 
 export type GenerateCreateTableSQLParameters = {
@@ -82,7 +93,7 @@ export const generateCreateTableSQL =
     }
 
     // Table creation
-    if (toDb === "pg") {
+    if (toDb === "pg" || toDb === "sqlite") {
       sql += `CREATE TABLE ${tableCreationIfExists ? "IF NOT EXISTS " : ""}${parsed?.nameDottedQuoted} (\n${columnsSQL}\n);`;
     } else if (toDb === "mssql") {
       if (tableCreationIfExists) {
@@ -106,6 +117,7 @@ export type GenerateCreateTableSQL = ReturnType<typeof generateCreateTableSQL>;
 export const generateCreateTableMSSQL = generateCreateTableSQL("mssql");
 export const generateCreateTablePostgreSQL = generateCreateTableSQL("pg");
 export const generateCreateTableMySQL = generateCreateTableSQL("mysql");
+export const generateCreateTableSQLite = generateCreateTableSQL("sqlite");
 
 export const generateCreateTablesSQL = (
   db: Database,

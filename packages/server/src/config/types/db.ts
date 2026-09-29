@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { SQL } from "bun";
+import type { Database as SQLiteDatabase } from "bun:sqlite";
 import type { ConnectionPool } from "mssql";
 
 import { VirtualColumnZod } from "./virtual-columns";
@@ -16,9 +17,17 @@ import { VirtualColumnZod } from "./virtual-columns";
 // Database Type
 // ============================================================================
 
-const DatabaseTypeZod = z.union([z.literal("mssql"), z.literal("pg"), z.literal("mysql")]);
+const DatabaseTypeZod = z.union([
+  z.literal("mssql"),
+  z.literal("pg"),
+  z.literal("mysql"),
+  z.literal("sqlite"),
+]);
 
 export type DatabaseType = z.infer<typeof DatabaseTypeZod>;
+
+/** The engines reached over the network, as opposed to SQLite's files. */
+const ServerDatabaseTypeZod = z.enum(["mssql", "pg", "mysql"]);
 
 // ============================================================================
 // Relationship Join Condition (static-value predicate)
@@ -220,13 +229,15 @@ export type MSSQLConnectionOptions = z.input<typeof MSSQLConnectionOptionsZod>;
 
 /**
  * Maps database type to the corresponding native connection type.
- * SQL for Bun/PostgreSQL/MySQL, ConnectionPool for MSSQL.
+ * SQL for Bun/PostgreSQL/MySQL, ConnectionPool for MSSQL, bun:sqlite's Database for SQLite.
  */
 export type DatabaseConnectionForType<T extends DatabaseType> = T extends "pg" | "mysql"
   ? SQL
   : T extends "mssql"
     ? ConnectionPool
-    : never;
+    : T extends "sqlite"
+      ? SQLiteDatabase
+      : never;
 
 /**
  * Custom repository factory function type.
@@ -255,25 +266,51 @@ export type ConnectionOptionsForType<T extends DatabaseType> = T extends "pg" | 
     ? MSSQLConnectionOptions
     : never;
 
+/**
+ * Maps database type to the shape of its `connection`.
+ */
+export type ConnectionForType<T extends DatabaseType> = T extends "sqlite"
+  ? SQLiteConnection
+  : ServerConnection;
+
 // ============================================================================
 // Database Connection Zod Schema
 // ============================================================================
 
-export const DatabaseConnectionZod = z.strictObject({
+/** Where a PostgreSQL, MySQL or SQL Server database is reached. */
+export const ServerConnectionZod = z.strictObject({
+  host: z.string(),
+  port: z.number(),
+  user: z.string(),
+  password: z.string(),
+  database: z.string(),
+});
+
+export type ServerConnection = z.input<typeof ServerConnectionZod>;
+
+/**
+ * The files a SQLite database lives in. Paths resolve against the working
+ * directory, and a missing file is created.
+ */
+export const SQLiteConnectionZod = z.strictObject({
+  /** The main file, served as schema `main` */
+  filename: z.string().min(1),
+  /** Further files, each attached as the schema its key names */
+  attach: z.record(z.string(), z.string().min(1)).optional(),
+});
+
+export type SQLiteConnection = z.input<typeof SQLiteConnectionZod>;
+
+// Checked in superRefine rather than by the record's key schema: Zod reports a
+// rejected record key as a bare "Invalid key in record", losing the reason.
+const ATTACHABLE_SCHEMA = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SQLITE_OWN_SCHEMAS = new Set(["main", "temp"]);
+
+const databaseFields = {
   /** Unique name for the database connection */
   name: z.string(),
   /** Whether the database is enabled */
   enabled: z.boolean(),
-  /** Database type */
-  type: DatabaseTypeZod,
-  /** Connection configuration */
-  connection: z.strictObject({
-    host: z.string(),
-    port: z.number(),
-    user: z.string(),
-    password: z.string(),
-    database: z.string(),
-  }),
   /** Field naming pattern (default: "{schema}_{name}") */
   fieldNaming: z.string().optional().default("{schema}_{name}"),
   /** Factory function to create custom database repository */
@@ -282,9 +319,47 @@ export const DatabaseConnectionZod = z.strictObject({
   onConnect: z.custom<OnConnectHandler>().optional(),
   /** Schema configuration (virtual columns, relationships, excluded tables) */
   schema: DatabaseSchemaConfigZod.optional(),
-  /** Optional connection pool and transport options */
-  connectionOptions: z.union([BunSQLConnectionOptionsZod, MSSQLConnectionOptionsZod]).optional(),
-});
+};
+
+// Discriminated on `type`, so a connection is checked against its own engine's
+// shape only: an unknown key is reported as that key, not folded into one error
+// per shape.
+export const DatabaseConnectionZod = z
+  .discriminatedUnion("type", [
+    z.strictObject({
+      ...databaseFields,
+      /** Database type */
+      type: ServerDatabaseTypeZod,
+      /** Connection configuration */
+      connection: ServerConnectionZod,
+      /** Optional connection pool and transport options */
+      connectionOptions: z
+        .union([BunSQLConnectionOptionsZod, MSSQLConnectionOptionsZod])
+        .optional(),
+    }),
+    z.strictObject({
+      ...databaseFields,
+      /** Database type */
+      type: z.literal("sqlite"),
+      /** The database files */
+      connection: SQLiteConnectionZod,
+      /** Not accepted: SQLite has no pool or transport to tune */
+      connectionOptions: z.undefined().optional(),
+    }),
+  ])
+  .superRefine((db, ctx) => {
+    if (db.type !== "sqlite") return;
+
+    for (const schema of Object.keys(db.connection.attach ?? {})) {
+      if (!ATTACHABLE_SCHEMA.test(schema) || SQLITE_OWN_SCHEMAS.has(schema.toLowerCase())) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["connection", "attach", schema],
+          message: `"${schema}" is not a schema name SQLite can attach: use letters, digits and _, and not "main" or "temp"`,
+        });
+      }
+    }
+  });
 
 // ============================================================================
 // Database Config
@@ -300,10 +375,12 @@ export type DatabaseConnection = z.input<typeof DatabaseConnectionZod>["connecti
  */
 export type DatabaseConfig<T extends DatabaseType = DatabaseType> = Omit<
   z.input<typeof DatabaseConnectionZod>,
-  "type" | "repository" | "onConnect" | "connectionOptions"
+  "type" | "connection" | "repository" | "onConnect" | "connectionOptions"
 > & {
   /** Database type */
   type: T;
+  /** Connection configuration */
+  connection: ConnectionForType<T>;
   /** Factory function to create custom database repository */
   repository?: CustomRepositoryFactory<T>;
   /** Handler run once at startup against the connected database */

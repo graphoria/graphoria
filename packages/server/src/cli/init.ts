@@ -100,13 +100,26 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       : "Use lowercase letters, digits and _, not starting with a digit, up to 63 characters.",
   );
 
-  const dbPassword = question(ask, say, "Database password", generatePassword(), (answer) =>
-    passwordError(database, answer),
-  );
+  // A SQLite project has no database server: no password, and no port to publish.
+  const dbPassword =
+    database === "sqlite"
+      ? ""
+      : question(ask, say, "Database password", generatePassword(), (answer) =>
+          passwordError(database, answer),
+        );
 
-  const dbPort = Number(
-    question(ask, say, "Database port on this host", String(ENGINES[database].port), portError),
-  );
+  const dbPort =
+    database === "sqlite"
+      ? 0
+      : Number(
+          question(
+            ask,
+            say,
+            "Database port on this host",
+            String(ENGINES[database].port),
+            portError,
+          ),
+        );
 
   const frontend =
     args.frontend ??
@@ -144,20 +157,37 @@ export const sampleQuery = (answers: Pick<InitAnswers, "database" | "dbName">): 
   return `{ ${schema}_authors { name ${schema}_books { title } } }`;
 };
 
-const nextSteps = (answers: InitAnswers, installed: boolean) =>
-  [
-    ...(installed ? [] : ["First run `bun install`: the Dockerfile needs its bun.lock.", ""]),
-    "Run everything in Docker:",
-    "  docker compose up -d --build",
-    answers.frontend
-      ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
-      : "  then open http://localhost:3000/graphiql",
-    "",
-    "Or run Graphoria on the host against the database container:",
-    answers.database === "mssql"
-      ? "  docker compose run --rm db-init"
-      : "  docker compose up -d --wait db",
-    "  bun run dev",
+const nextSteps = (answers: InitAnswers, installed: boolean) => {
+  const open = answers.frontend
+    ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
+    : "  then open http://localhost:3000/graphiql";
+
+  const run =
+    answers.database === "sqlite"
+      ? [
+          ...(installed ? [] : ["First run `bun install`.", ""]),
+          `Run it on this machine; the first boot creates ${answers.dbName}.db and seeds it:`,
+          "  bun run dev",
+          open,
+          "",
+          "Or in Docker, with the database file on a volume:",
+          "  docker compose up -d --build",
+        ]
+      : [
+          ...(installed ? [] : ["First run `bun install`: the Dockerfile needs its bun.lock.", ""]),
+          "Run everything in Docker:",
+          "  docker compose up -d --build",
+          open,
+          "",
+          "Or run Graphoria on the host against the database container:",
+          answers.database === "mssql"
+            ? "  docker compose run --rm db-init"
+            : "  docker compose up -d --wait db",
+          "  bun run dev",
+        ];
+
+  return [
+    ...run,
     ...(answers.frontend
       ? [
           "",
@@ -169,9 +199,10 @@ const nextSteps = (answers: InitAnswers, installed: boolean) =>
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try: ${sampleQuery(answers)}`,
   ].join("\n");
+};
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--frontend] [--no-install]";
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
@@ -195,7 +226,7 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   refuseExisting([...PROJECT_FILES, "bun.lock"]);
   const answers = collectAnswers(args, args.yes ? () => null : prompt, console.log);
   if (answers.frontend) refuseExisting(FRONTEND_FILES);
-  const warning = portWarning(answers.dbPort);
+  const warning = answers.database === "sqlite" ? undefined : portWarning(answers.dbPort);
   if (warning) console.warn(warning);
 
   const name = projectName(dir);
@@ -215,7 +246,8 @@ export const initCommand = async (argv: string[]): Promise<never> => {
     if (written.length > 0) console.error(`Written before the failure: ${written.join(", ")}`);
     process.exit(1);
   }
-  console.log(`\nCreated ${name} (${ENGINES[answers.database].label}): ${written.join(", ")}\n`);
+  const label = answers.database === "sqlite" ? "SQLite" : ENGINES[answers.database].label;
+  console.log(`\nCreated ${name} (${label}): ${written.join(", ")}\n`);
 
   if (args.install) {
     const install = Bun.spawn(["bun", "install"], {

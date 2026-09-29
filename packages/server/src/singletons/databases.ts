@@ -1,18 +1,20 @@
 import { SQL } from "bun";
 
+import type { Database as SQLiteDatabase } from "bun:sqlite";
 import type { ConnectionPool } from "mssql";
 import type { Database } from "../types/configuration.ts";
 
 import { getPool as getPoolMSSQL } from "../databases/engines/mssql/connection.ts";
 import { getPool as getPoolMySQL } from "../databases/engines/mysql/connection.ts";
 import { getPool as getPoolPostgreSQL } from "../databases/engines/postgresql/connection.ts";
+import { getPool as getPoolSQLite } from "../databases/engines/sqlite/connection.ts";
 import { logger } from "../logging";
 
 /**
  * Type for database connections mapping
  * Keys are database names from configuration, values are connection pools
  */
-export type DatabasesConnections = Record<string, SQL | ConnectionPool>;
+export type DatabasesConnections = Record<string, SQL | ConnectionPool | SQLiteDatabase>;
 
 /**
  * Type for custom repository mapping
@@ -68,7 +70,7 @@ export const instantiateDatabasesConnections = async (
   const deadline = clock.now() + retryMs;
 
   for await (const db of databases) {
-    let connection: SQL | ConnectionPool | undefined;
+    let connection: SQL | ConnectionPool | SQLiteDatabase | undefined;
 
     if (db.type === "pg") {
       connection = await connectWithRetry(db.name, () => getPoolPostgreSQL(db), deadline, clock);
@@ -78,6 +80,11 @@ export const instantiateDatabasesConnections = async (
       databasesConnections[db.name] = connection;
     } else if (db.type === "mysql") {
       connection = await connectWithRetry(db.name, () => getPoolMySQL(db), deadline, clock);
+      databasesConnections[db.name] = connection;
+    } else if (db.type === "sqlite") {
+      // Not retried: a file that does not open (a missing directory, permissions,
+      // the version floor) fails the same way on every attempt.
+      connection = await getPoolSQLite(db);
       databasesConnections[db.name] = connection;
     }
 
@@ -94,14 +101,15 @@ export const instantiateDatabasesConnections = async (
   return { databasesConnections, repositoryMap };
 };
 
-export const pingConnection = (connection: SQL | ConnectionPool, type: string) =>
-  type === "mssql"
-    ? (connection as ConnectionPool).query("SELECT 1")
-    : (connection as SQL).unsafe("SELECT 1");
+export const pingConnection = async (connection: DatabasesConnections[string], type: string) => {
+  if (type === "mssql") return (connection as ConnectionPool).query("SELECT 1");
+  if (type === "sqlite") return (connection as SQLiteDatabase).query("SELECT 1").get();
+  return (connection as SQL).unsafe("SELECT 1");
+};
 
 /**
- * Close every open database connection and clear the singleton maps. Bun's `SQL`
- * and mssql's `ConnectionPool` both expose `close()`. Used by
+ * Close every open database connection and clear the singleton maps. Bun's `SQL`,
+ * mssql's `ConnectionPool` and bun:sqlite's `Database` all expose `close()`. Used by
  * `createGraphQLEngine`'s `close()` so an in-process consumer can release
  * connections without a running server.
  */

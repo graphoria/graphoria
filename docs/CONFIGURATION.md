@@ -122,8 +122,8 @@ Each entry in the `databases` array configures a database connection. The `type`
 type DatabaseConfig<T extends DatabaseType = DatabaseType> = {
   name: string; // Unique identifier
   enabled: boolean; // Whether this database is active
-  type: T; // "pg" | "mssql" | "mysql"
-  connection: DatabaseConnection; // Connection details
+  type: T; // "pg" | "mssql" | "mysql" | "sqlite"
+  connection: ConnectionForType<T>; // Connection details
   connectionOptions?: ConnectionOptionsForType<T>; // Pool and transport tuning
   fieldNaming?: string; // Resolver name pattern (default: "{schema}_{name}")
   repository?: CustomRepositoryFactory<T>; // Custom repository factory
@@ -134,8 +134,10 @@ type DatabaseConfig<T extends DatabaseType = DatabaseType> = {
 
 ### DatabaseConnection
 
+The shape depends on `type`. PostgreSQL, MySQL and SQL Server take a server:
+
 ```typescript
-type DatabaseConnection = {
+type ServerConnection = {
   host: string;
   port: number;
   user: string;
@@ -144,9 +146,44 @@ type DatabaseConnection = {
 };
 ```
 
+SQLite takes files; see [SQLite](#sqlite):
+
+```typescript
+type SQLiteConnection = {
+  filename: string; // The main file, served as schema `main`
+  attach?: Record<string, string>; // Further files, each attached as the schema its key names
+};
+```
+
+### SQLite
+
+A `sqlite` database is a file that Graphoria opens with Bun's built-in `bun:sqlite`. There is no server and nothing to run in Docker. Paths resolve against the working directory, and a missing file is created. The main file is schema `main`, so under the default field naming its tables' fields start `main_`. Each `attach` entry adds a schema: `attach: { catalog: "./catalog.db" }` serves `catalog.orders` as `catalog_orders`. `main` and `temp` are SQLite's own names and cannot be attached.
+
+```typescript
+{
+  name: "local",
+  enabled: true,
+  type: "sqlite",
+  connection: { filename: "./app.db", attach: { auth: "./auth.db" } },
+}
+```
+
+What the engine cannot do:
+
+- **No statement timeout.** SQLite runs a statement on the event loop, and Bun offers no way to interrupt one. `QUERY_TIMEOUT_MS` and an operation's `timeout` therefore do not apply, and boot logs a `warn` saying so while `QUERY_TIMEOUT_MS` is on. A slow query holds up every other request on that worker, health probes and shutdown draining included.
+- **One connection per worker, no pool.** `connectionOptions` is rejected. SQLite lets one writer in at a time; a connection waits up to 5 s for another's write lock.
+- **SQLite 3.44 or newer.** Boot fails below it. Bun bundles a newer SQLite on Linux. On macOS, Bun uses the system library: if that library is older, point `Database.setCustomSQLite()` at a newer `libsqlite3` before Graphoria starts.
+- **No stored procedures**, so there are no procedure mutations.
+- **Types come from the declared column type.** A column declared `BOOLEAN` is served as a GraphQL `Boolean`, and a `BLOB` as its hex string. A timestamp is whatever text the column holds, a JSON column is its text, and a column declared with no type is a `String`.
+- **A primary key is non-null only where SQLite keeps it so**: an `INTEGER PRIMARY KEY`, a key of a `WITHOUT ROWID` or `STRICT` table, or a column declared `NOT NULL`. SQLite lets any other key column hold `NULL`, so it is served as nullable.
+- **Virtual tables** (FTS5, R\*Tree) are served as tables; the shadow tables they keep their data in are not.
+- A foreign key that names its parent without a column, on a parent with no primary key, leads nowhere: it serves no relationship, and boot logs a `warn`.
+- **The auth schema must be attached.** `auth.schema` defaults to `auth`: attach a file under that name, or set `auth.schema: "main"`. Boot names the fix when it is missing.
+- `LIKE` ignores ASCII case (as MySQL and SQL Server do under their default collations), and `@uppercase` / `@lowercase` change ASCII letters only.
+
 ### ConnectionOptions
 
-Pool and transport tuning. Optional. The shape depends on `type`: `pg` and `mysql` go through Bun's built-in SQL client, `mssql` through the `mssql` package. All timeouts are in seconds.
+Pool and transport tuning. Optional. The shape depends on `type`: `pg` and `mysql` go through Bun's built-in SQL client, `mssql` through the `mssql` package. `sqlite` takes none. All timeouts are in seconds.
 
 The defaults below are the ones validation fills in, and they apply whether or not you supply `connectionOptions` — with two exceptions on MSSQL; see [When connectionOptions is absent](#when-connectionoptions-is-absent).
 
@@ -207,6 +244,7 @@ A database that cannot be reached at boot — down, still starting, or not sched
 - The window covers every database together, not each one: with several databases, the ones connected first use up part of it.
 - An attempt that starts inside the window runs to its end, so against a host that drops packets the worst case is the window plus one `connectionTimeout` (30 s by default).
 - `DB_CONNECT_RETRY_MS=0` makes a single attempt.
+- A `sqlite` database is opened once, never retried: what keeps a file from opening (a missing directory, permissions, the [version floor](#sqlite)) does not go away by waiting.
 - [`onConnect`](#startup-handler-onconnect) is not retried: it runs once the connection is up, and an error there still aborts boot.
 
 The HTTP server starts only once boot is done, so `/health/live` does not answer while boot waits. On Kubernetes, give the pod a `startupProbe` whose budget covers the window plus one `connectionTimeout`, or the liveness probe kills it mid-wait. A SIGTERM or SIGINT received during the wait exits `0` at once (`createBunServer`, and the `graphoria` CLI's workers). The CLI restarts a worker whose boot failed and gives up after 5 worker crashes within 60 s. With the default window each failure takes 60 s, so a single-worker CLI never reaches that limit and keeps retrying for as long as the database stays down; a window shorter than about 11 s lets it give up.
@@ -217,11 +255,12 @@ The HTTP server starts only once boot is done, so `/health/live` does not answer
 
 Each engine enforces it the only way it can:
 
-| Engine  | Mechanism                                                       | Covers                                                        |
-| ------- | --------------------------------------------------------------- | ------------------------------------------------------------- |
-| `pg`    | `statement_timeout`, set on every connection in the pool        | every statement, generated queries and auth and introspection |
-| `mssql` | `requestTimeout` on the pool, an attention packet when it fires | every request                                                 |
-| `mysql` | a `MAX_EXECUTION_TIME` hint on the generated statement          | generated queries only — see below                            |
+| Engine   | Mechanism                                                       | Covers                                                        |
+| -------- | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| `pg`     | `statement_timeout`, set on every connection in the pool        | every statement, generated queries and auth and introspection |
+| `mssql`  | `requestTimeout` on the pool, an attention packet when it fires | every request                                                 |
+| `mysql`  | a `MAX_EXECUTION_TIME` hint on the generated statement          | generated queries only — see below                            |
+| `sqlite` | none: nothing can interrupt a running statement                 | nothing — see [SQLite](#sqlite)                               |
 
 **MySQL is bounded only where the hint reaches.** Bun's MySQL adapter ignores per-connection runtime settings and offers no hook to run one when a pooled connection opens, so there is no pool-level route on that engine. Auth logins, schema introspection and stored-procedure `CALL`s do not go through query generation and are therefore **not** bounded on MySQL. They are on `pg` and `mssql`.
 
@@ -344,6 +383,7 @@ The `repository` factory receives a typed connection based on the database type:
 
 - `"pg"` / `"mysql"` → `SQL` (Bun native)
 - `"mssql"` → `ConnectionPool` (mssql package)
+- `"sqlite"` → `Database` (`bun:sqlite`)
 
 ```typescript
 databases: [
@@ -370,7 +410,7 @@ databases: [
 
 `onConnect` runs once at boot, after the connection is established and before the
 `repository` factory. It receives the same typed connection as `repository`
-(`SQL` for `pg`/`mysql`, `ConnectionPool` for `mssql`) plus the database config.
+(`SQL` for `pg`/`mysql`, `ConnectionPool` for `mssql`, `Database` from `bun:sqlite` for `sqlite`) plus the database config.
 Use it to run startup SQL such as creating tables. If it throws, the server
 fails to start.
 

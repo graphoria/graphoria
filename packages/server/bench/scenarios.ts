@@ -1,5 +1,5 @@
 import type { IntegrationContext } from "../src/__test/integration/harness";
-import type { DatabaseType } from "../src/types/configuration";
+import type { BenchEngine } from "./config";
 
 import { benchField } from "./config";
 
@@ -29,23 +29,23 @@ export const CACHED_OPERATION_PATH = "/cached-task-page";
  * Int carrying 0/1 — so a boolean filter argument is not portable across the
  * three engines. SQL Server's `bit` does map to `Boolean`.
  */
-const boolArg = (engine: DatabaseType, value: boolean) =>
+const boolArg = (engine: BenchEngine, value: boolean) =>
   engine === "mysql" ? (value ? "1" : "0") : String(value);
 
 /**
  * PostgreSQL routine parameters introspect as String; MySQL and SQL Server
  * carry their declared Int through to the generated field.
  */
-const routineArg = (engine: DatabaseType) => (engine === "pg" ? '"4"' : "4");
+const routineArg = (engine: BenchEngine) => (engine === "pg" ? '"4"' : "4");
 
-export const listQuery = (engine: DatabaseType) =>
+export const listQuery = (engine: BenchEngine) =>
   `query { ${benchField(engine, "tasks")}(limit: 100, orderBy: [{ id: ASC }]) { id title priority completed } }`;
 
 const AGGREGATES =
   "count min { estimate_hours } max { estimate_hours } sum { estimate_hours } avg { estimate_hours }";
 
 /** Every task in the table, grouped by priority — the heaviest shape available. */
-export const aggregateQuery = (engine: DatabaseType) =>
+export const aggregateQuery = (engine: BenchEngine) =>
   `query { ${benchField(engine, "tasks")}_aggregate(groupBy: [priority]) { key { priority } ${AGGREGATES} } }`;
 
 /**
@@ -53,7 +53,7 @@ export const aggregateQuery = (engine: DatabaseType) =>
  * index. The unfiltered aggregate is the worst case and reads as the headline
  * number; this is the shape a filtered dashboard query actually has.
  */
-export const filteredAggregateQuery = (engine: DatabaseType) =>
+export const filteredAggregateQuery = (engine: BenchEngine) =>
   `query { ${benchField(engine, "tasks")}_aggregate(where: { project_id: { lt: 500 } }, groupBy: [priority]) { key { priority } ${AGGREGATES} } }`;
 
 /**
@@ -86,7 +86,7 @@ const gql = async (context: IntegrationContext, scenario: string, query: string)
   assertProductive(scenario, response.data);
 };
 
-export const scenarios = (engine: DatabaseType): Scenario[] => {
+export const scenarios = (engine: BenchEngine): Scenario[] => {
   const tasks = benchField(engine, "tasks");
   const projects = benchField(engine, "projects");
   const routine = benchField(engine, "tasks_by_priority");
