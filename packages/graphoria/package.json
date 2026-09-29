@@ -1,6 +1,6 @@
 {
   "name": "graphoria",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "The Graphoria CLI: bunx graphoria init scaffolds a project",
   "keywords": [
     "bun",
@@ -32,7 +32,7 @@
   ],
   "type": "module",
   "dependencies": {
-    "@graphoria/server": "0.5.1"
+    "@graphoria/server": "0.6.0"
   },
   "engines": {
     "bun": ">=1.3.4"
