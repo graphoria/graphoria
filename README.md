@@ -421,11 +421,11 @@ Before going to production:
 - [ ] Set a strong `ADMIN_SECRET` — it bypasses all RBAC.
 - [ ] Rotate `JWT_SECRET` (or the PASETO keys) — never use the dev default. Each accepts a comma-separated list so a rotation needs no cut-over; see [Rotating secrets](./docs/AUTHENTICATION.md#rotating-secrets).
 - [ ] Put Redis behind authentication — set a password and use `redis://user:pass@host:port` in `REDIS_URL`.
-- [ ] Enable CORS properly — set `CORS_ORIGIN` to your frontend's origin, not `*`.
+- [ ] Restrict CORS if you need to — every response allows any origin (`*`) and no variable narrows it. Replace the headers at your proxy, or set `CORS_ENABLED=false` when the frontend is served from the API's origin; see [CORS](./docs/DEPLOYMENT.md#cors).
 - [ ] Set `RATE_LIMIT_MAX` and `RATE_LIMIT_ANONYMOUS_MAX` — rate limiting ships **off**, and nothing warns you at boot.
 - [ ] Set `MAX_QUERY_COST` — the query cost budget also ships **off** with no boot warning. `100000` is the recommended starting value.
 - [ ] Set `CACHE_STORE=redis` if you run in cluster mode — with the memory store each worker keeps its own rate-limit bucket.
-- [ ] Use a reverse proxy (nginx, Caddy) for TLS termination.
+- [ ] Use a reverse proxy (nginx, Caddy) for TLS termination — see [Deployment](./docs/DEPLOYMENT.md#reverse-proxy-and-tls).
 - [ ] Pin your Graphoria version — `0.1.0`, not `^0.1.0` — until v1.0.
 
 The three limits that ship on — query depth, page size and the statement timeout — need no action. [Resource Limits](./docs/LIMITS.md) has every default, variable and override path.
