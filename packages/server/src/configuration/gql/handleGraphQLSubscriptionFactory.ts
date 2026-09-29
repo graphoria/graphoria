@@ -17,6 +17,15 @@ export const queryEventEmitter = createQueryEventEmitter();
 // Create the strategy registry once at module load
 const strategyRegistry = createSubscriptionStrategyRegistry();
 
+// connection_init carries its headers as plain JSON keys, so the name is
+// matched the way HTTP matches a header: without regard to case.
+const headerValue = (headers: unknown, name: string): string | null => {
+  if (headers === null || typeof headers !== "object") return null;
+  const wanted = name.toLowerCase();
+  const value = Object.entries(headers).find(([key]) => key.toLowerCase() === wanted)?.[1];
+  return typeof value === "string" ? value : null;
+};
+
 /**
  * Handle GraphQL subscription messages
  *
@@ -35,6 +44,7 @@ const handleGraphQLSubscriptionFactory = (
       cleanup?: () => void | Promise<void>;
     }
   >,
+  adminSecretHeader: string,
 ) => {
   return async (ws: ServerWebSocket<unknown>, body: string) => {
     let parsed;
@@ -69,7 +79,7 @@ const handleGraphQLSubscriptionFactory = (
       if (type === "connection_init") {
         const session = await getTokenService().verifyTokenAndGetSession(
           payload?.Authorization,
-          payload?.headers?.["x-admin-secret"],
+          headerValue(payload?.headers, adminSecretHeader),
         );
 
         subscriptionMapping.set(ws, session);
@@ -260,6 +270,7 @@ const handleGraphQLSubscriptionFactory = (
 
 export const websocketHandlerFactory = (
   roles: AnalyzedConfiguration["roles"],
+  adminSecretHeader: string,
 ): {
   handler: WebSocketHandler<unknown>;
   /** Closes every socket still open, e.g. `1001` on shutdown. */
@@ -280,6 +291,7 @@ export const websocketHandlerFactory = (
     roles,
     subscriptionMapping,
     activeSubscriptions,
+    adminSecretHeader,
   );
 
   const handler: WebSocketHandler<unknown> = {

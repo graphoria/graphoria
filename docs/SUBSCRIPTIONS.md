@@ -73,7 +73,7 @@ The handshake follows the standard graphql-ws sequence:
 4. Server emits `{ type: "next", id, payload }` for each event, and `{ type: "complete", id }` when the subscription ends.
 5. Client (or server) sends `{ type: "complete", id }` to terminate a single subscription, or closes the WebSocket to terminate everything.
 
-`payload.Authorization` and `payload.headers["x-admin-secret"]` are inspected during `connection_init`. Clients that omit both are treated as the anonymous role; the subscription's RBAC permissions are evaluated against that role at subscribe time.
+`payload.Authorization` and the admin secret in `payload.headers` are inspected during `connection_init`. The admin secret's key is the header name set by `ADMIN_SECRET_HEADER` (default `x-admin-secret`), matched without regard to case, as an HTTP header is. Clients that omit both are treated as the anonymous role; the subscription's RBAC permissions are evaluated against that role at subscribe time.
 
 ## Pings and keepalives
 

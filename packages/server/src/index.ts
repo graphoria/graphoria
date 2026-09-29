@@ -573,6 +573,7 @@ const createGraphQLServer = async (env: Env) => {
   // Create WebSocket handler
   const { handler: websocketHandler, closeAll: closeWebsockets } = websocketHandlerFactory(
     analyzedConfiguration.roles,
+    env.admin.header,
   );
 
   return {
