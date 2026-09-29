@@ -76,6 +76,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine?.close();
+  // The boot set the process-wide timeout to QUERY_TIMEOUT_MS's default; a later
+  // file's query generator would otherwise emit a timeout hint it does not expect.
+  const { setQueryTimeoutMs } = await import("../../../singletons/queryTimeout");
+  setQueryTimeoutMs(0);
   await rm(dir, { recursive: true, force: true });
 });
 
