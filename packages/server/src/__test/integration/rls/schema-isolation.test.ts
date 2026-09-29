@@ -228,7 +228,9 @@ describe.skipIf(!integrationEnabled)("rls · schema isolation", () => {
           mutationFields(schema).filter((field) => !AUTH_MUTATIONS.includes(field));
 
         expect(nonAuth(asUser)).toEqual([]);
-        expect(nonAuth(asAdmin).length).toBeGreaterThan(0);
+        // SQLite has no stored procedures, so even the unfiltered role has none.
+        if (engine === "sqlite") expect(nonAuth(asAdmin)).toEqual([]);
+        else expect(nonAuth(asAdmin).length).toBeGreaterThan(0);
       });
 
       it("compiles every role's schema as a subset of the unfiltered one", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { ENGINES, fieldName } from "./config";
+import { ENGINES, fieldName, SCHEMAS } from "./config";
 import { integrationEnabled, withServer } from "./harness";
 import { EXPECTED_COUNTS } from "./seed";
 
@@ -15,7 +15,7 @@ describe.skipIf(!integrationEnabled)("integration smoke", () => {
     describe(engine, () => {
       it("seeds the canonical row counts", async () => {
         await withServer({ engine }, async ({ sql }) => {
-          const schema = engine === "mysql" ? "graphoria_app" : "app";
+          const schema = SCHEMAS[engine].app;
           const quote = engine === "mssql" ? (name: string) => `[${name}]` : (name: string) => name;
 
           for (const [table, expected] of Object.entries(EXPECTED_COUNTS)) {

@@ -17,7 +17,7 @@ import { integrationEnabled, startServer } from "../harness";
  *
  * - Every statement leaving the process is captured at the adapter seam, which
  *   is the last place a query exists before the driver writes it to the socket.
- *   This runs on all three engines.
+ *   This runs on every engine.
  * - On PostgreSQL `pg_stat_statements` counts the same statements from inside
  *   the server, so a statement the seam missed — one the driver issued on its
  *   own — would show up as a discrepancy.

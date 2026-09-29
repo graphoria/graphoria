@@ -51,7 +51,7 @@ export const MYSQL_CONNECTION_OPTIONS = { allowPublicKeyRetrieval: true } as con
 export const REDIS_URL = "redis://127.0.0.1:56379";
 
 /** Engines the integration suite runs against. */
-export const ENGINES = ["pg", "mysql", "mssql"] as const;
+export const ENGINES = ["pg", "mysql", "mssql", "sqlite"] as const;
 
 /**
  * The suite only runs when INTEGRATION=1, so the unit suite stays fast and
