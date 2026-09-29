@@ -6,7 +6,7 @@
     "start": "bun index.ts"
   },
   "dependencies": {
-    "@graphoria/server": "0.5.1"
+    "@graphoria/server": "0.6.0"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
