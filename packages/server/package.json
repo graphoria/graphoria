@@ -113,7 +113,7 @@
     }
   },
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "^0.127.0",
+    "@anthropic-ai/sdk": "^0.128.0",
     "openai": "^7.20.0"
   },
   "engines": {
