@@ -446,6 +446,7 @@ The three limits that ship on — query depth, page size and the statement timeo
 | -------------------------------------------------- | --------------------------------------------------------------------- |
 | [Quickstart](./docs/QUICKSTART.md)                 | Zero to a running server in five minutes                              |
 | [Configuration Reference](./docs/CONFIGURATION.md) | Full configuration schema — databases, auth, operations, queues, cron |
+| [Deployment](./docs/DEPLOYMENT.md)                 | From the image to production: proxy, sizing, shutdown, Kubernetes     |
 | [API Reference](./docs/API_REFERENCE.md)           | Complete package exports for server, config, and react                |
 
 **Features**
