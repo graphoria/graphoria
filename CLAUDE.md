@@ -70,7 +70,7 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 | Operation hooks orchestration (init/beforeRequest/afterRequest) | inline in `configuration/rest/handleRESTRequestFactory.ts`                                                                                        |
 | Query parsing                                                   | `analyzeQuery/index.ts` + `analyzers/`                                                                                                            |
 | Database query building (shared)                                | `databases/common.ts` (`buildWhereClauseFp`, `buildOrderByClauseFp`, etc.)                                                                        |
-| Engine-specific code                                            | `databases/engines/{postgresql,mssql,mysql}/`                                                                                                     |
+| Engine-specific code                                            | `databases/engines/{postgresql,mssql,mysql,sqlite}/`                                                                                              |
 | Schema introspection                                            | `databases/engines/*/getStructure.ts`                                                                                                             |
 | Auth tables creation + login                                    | `databases/engines/*/auth.ts`                                                                                                                     |
 | Identifier safety helper                                        | `databases/core/identifier.ts` — `assertSafeIdentifier`                                                                                           |
@@ -139,8 +139,9 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 
 1. New folder `databases/engines/{engine}/` with `connection.ts`, `auth.ts`, `format.ts`, `getStructure.ts`, `getViews.ts`, `query/index.ts`.
 2. Wire it into `databases/core/function-mapping.ts` (the dispatcher all callers go through).
-3. Add type mapping in `configuration/getSchemas/type-definition-generator/`.
+3. SQL type → GraphQL category lives in `databases/sqlTypeUtils.ts` (`categorizeSqlType`); report bare, lower-case type names from introspection (see `engines/sqlite/getStructure.ts`).
 4. Connection handling in `singletons/databases.ts`.
+5. The compiler lists every `Record<DatabaseType, …>`; it does not list the `if` chains in `singletons/databases.ts` (connect, `pingConnection`) or the dialect branches in `common.ts` / `directives.ts`.
 
 ### Add a data-transform directive
 
@@ -184,6 +185,7 @@ Hooks (`init`, `beforeRequest`, `afterRequest`) are wired inline in `configurati
 - **Auth tables are auto-created** on every boot when `auth.enabled`. The `userTableCreation` SQL is idempotent (`IF NOT EXISTS`) but still runs. There's no built-in seed flow — users have to insert manually.
 - **A span is only ever entered when tracing is on.** `withSpan` / `withActiveSpan` enter the `AsyncLocalStorage` in `observability/tracing.ts`; `startSpan` returns `undefined` while off, so every call site is `span?.…`. A span that is entered but never ended is never exported — that is how a websocket upgrade, which answers no request, produces no span.
 - **Create Redis clients with `createRedisClient`** (`utils/redis.ts`), never `new RedisClient`. Bun's client stops retrying after `maxRetries` (~20–30 s of outage) and then fails every command, even after Redis is back, until something calls `connect()`. The helper does that. A deliberate `close()` fires `onclose` too, and a reconnect may already be pending, so close one on purpose with `closeRedisClient`, never a bare `close()`.
+- **SQLite goes through `bun:sqlite`, never `Bun.SQL`'s sqlite adapter.** On Bun 1.4.2 the adapter returns `[]`, silently, for a statement with a `"` inside a string literal, and binds `$n` by position. `bun:sqlite` binds `$n` by name, so the builders' placeholders need no rewrite. Every statement runs on the event loop: there is no timeout, and a slow query stalls the process.
 - **`@cfworker/json-schema` is required even though nothing here imports it.** `@modelcontextprotocol/server` lists it as an _optional_ peer (`peerDependenciesMeta.optional = true`), but its compiled `dist/*.mjs` still does a static `import` of it for JSON-schema validation of tool inputs. When the package is absent from `node_modules`, importing `@graphoria/server` blows up at module-load with `Cannot find module '@cfworker/json-schema'`. Keep it in `dependencies` even if `grep` shows no usage in our `src/`.
 
 ---

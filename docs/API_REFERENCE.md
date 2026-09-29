@@ -241,8 +241,11 @@ Re-exported Zod library for convenience.
 | `BeforeRequestContext`        | `{ input; pathParams?; queryParams?; body? }` — merged input + per-source REST params |
 | `AfterRequestContext`         | `{ output: TOutput }`                                                                 |
 | `GqlQueryResult`              | `{ data: T; errors?: unknown[] }`                                                     |
-| `DatabaseType`                | `"pg" \| "mssql" \| "mysql"`                                                          |
-| `DatabaseConnection`          | `{ host, port, user, password, database }`                                            |
+| `DatabaseType`                | `"pg" \| "mssql" \| "mysql" \| "sqlite"`                                              |
+| `DatabaseConnection`          | `ServerConnection \| SQLiteConnection`                                                |
+| `ServerConnection`            | `{ host, port, user, password, database }` — pg/mysql/mssql connection shape          |
+| `SQLiteConnection`            | `{ filename, attach? }` — SQLite database files                                       |
+| `ConnectionForType`           | Maps a `DatabaseType` to its `connection` shape                                       |
 | `DatabaseConfig`              | Full database config with generics per type                                           |
 | `DatabaseSchemaConfig`        | Schema config: database table overrides, excludedTables                               |
 | `TableSchemaConfig`           | Per-table: virtual columns, relationships, description + columnDescriptions overrides |
@@ -314,6 +317,8 @@ type InferOperationInitData<T> // Extract TInitData from a TypedOperation
 | `OperationRestConfigZod`    | Zod schema for REST config    |
 | `OperationGraphQLConfigZod` | Zod schema for GraphQL config |
 | `OperationCacheConfigZod`   | Zod schema for cache config   |
+| `ServerConnectionZod`       | Schema for ServerConnection   |
+| `SQLiteConnectionZod`       | Schema for SQLiteConnection   |
 
 ---
 

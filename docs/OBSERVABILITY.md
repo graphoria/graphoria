@@ -183,7 +183,7 @@ that makes recording expensive without turning red on a busy CI runner.
 ### Not exported
 
 Deliberately, for now: per-statement database timings and pool utilization (the slow query log
-covers the first, and two of the three engines expose no pool statistics), cache hit ratio, and
+covers the first, and three of the four engines expose no pool statistics), cache hit ratio, and
 queue depth and consumer lag — the last needs RabbitMQ's management API and a Kafka admin client,
 which is new I/O on a timer rather than a counter in the request path.
 

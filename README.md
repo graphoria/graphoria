@@ -72,7 +72,7 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 
 - **Auto-generated GraphQL API** from database schema with zero configuration
 - **Auto-generated REST API** from GraphQL schema for maximum compatibility
-- **Multi-database support** — PostgreSQL, SQL Server (MSSQL), MySQL
+- **Multi-database support** — PostgreSQL, SQL Server (MSSQL), MySQL, SQLite
 - **JWT or PASETO authentication** with argon2id password hashing and role-based access control (RBAC)
 - **Row-level security** — per-role filters with session variable injection
 - **Real-time subscriptions** via WebSocket (`graphql-ws` protocol)
@@ -162,7 +162,6 @@ What's actively being built or on the near-term roadmap:
 | **Configuration stabilization** — single source of truth via Zod, final shape lock-in | In progress |
 | **`graphoria init` CLI** — scaffold a project with one command                        | Planned     |
 | **Official Docker images** — multi-arch, published to GHCR                            | Planned     |
-| **SQLite support** — embedded database for edge and local dev                         | Planned     |
 | **Rate limiting & throttling** — per-role, per-operation                              | Planned     |
 
 Want to influence the roadmap? [Open an issue](https://github.com/graphoria/graphoria/issues) or upvote existing ones.
@@ -170,7 +169,7 @@ Want to influence the roadmap? [Open an issue](https://github.com/graphoria/grap
 ## Prerequisites
 
 - [Bun](https://bun.sh) **1.3.4** or newer
-- A running database — PostgreSQL, MySQL, or SQL Server. The examples use PostgreSQL on `localhost:5432`.
+- A database — PostgreSQL, MySQL or SQL Server running, or nothing at all with SQLite, which Graphoria opens as a file. The examples use PostgreSQL on `localhost:5432`.
 - [Redis](https://redis.io) (or Valkey) — only required if you enable authentication. The default URL is `redis://localhost:6379`.
 
 Don't have Postgres/Redis handy? The [`examples/`](./examples) folder ships a `docker-compose.yml` that starts Postgres, Redis, and RabbitMQ with credentials matching the examples below:
@@ -389,11 +388,12 @@ All paths are configurable via environment variables. Auth: `Authorization: Bear
 
 ## Supported Databases
 
-| Database           | Status       | Features                                   |
-| ------------------ | ------------ | ------------------------------------------ |
-| PostgreSQL         | Full support | Tables, views, relationships, stored procs |
-| SQL Server (MSSQL) | Full support | Tables, views, relationships, stored procs |
-| MySQL              | Full support | Tables, views, relationships               |
+| Database           | Status       | Features                                                                           |
+| ------------------ | ------------ | ---------------------------------------------------------------------------------- |
+| PostgreSQL         | Full support | Tables, views, relationships, stored procs                                         |
+| SQL Server (MSSQL) | Full support | Tables, views, relationships, stored procs                                         |
+| MySQL              | Full support | Tables, views, relationships                                                       |
+| SQLite             | Supported    | Tables, views, relationships; no server ([limits](./docs/CONFIGURATION.md#sqlite)) |
 
 ## Environment Variables
 

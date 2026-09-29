@@ -8,7 +8,7 @@ This page lists every directive, what it compiles to per database engine, and th
 
 ## Data-transformation directives
 
-These directives are applied to a column selector in the `SELECT` clause. They chain left-to-right — `{ name @lowercase @truncate(length: 10) }` lowercases first, then truncates the result. The `dbType` (`pg`, `mysql`, `mssql`) controls the SQL output: where engines disagree on syntax, Graphoria picks the right form for you.
+These directives are applied to a column selector in the `SELECT` clause. They chain left-to-right — `{ name @lowercase @truncate(length: 10) }` lowercases first, then truncates the result. The `dbType` (`pg`, `mysql`, `mssql`, `sqlite`) controls the SQL output: where engines disagree on syntax, Graphoria picks the right form for you.
 
 ### `@uppercase`, `@lowercase`
 
@@ -92,7 +92,7 @@ Compiles to `REPLACE(email, 'find', 'replaceWith')`. Both values are interpolate
 }
 ```
 
-PostgreSQL gets `LPAD(id::TEXT, 8, '0')` / `RPAD(...)`. SQL Server uses a `REPLICATE`-based equivalent because `LPAD` is only available in SQL Server 2022+.
+PostgreSQL gets `LPAD(id::TEXT, 8, '0')` / `RPAD(...)`. SQL Server uses a `REPLICATE`-based equivalent because `LPAD` is only available in SQL Server 2022+. SQLite has neither, so it gets a `ZEROBLOB`-based equivalent that pads and truncates as `LPAD`/`RPAD` do.
 
 ### `@default(value: String = "N/A")`
 
@@ -116,7 +116,7 @@ PostgreSQL gets `LPAD(id::TEXT, 8, '0')` / `RPAD(...)`. SQL Server uses a `REPLI
 }
 ```
 
-PostgreSQL emits `TO_CHAR(created_at, 'YYYY-MM-DD')`. SQL Server emits `FORMAT(created_at, 'YYYY-MM-DD')`. The format string is database-specific — check your engine's documentation. MySQL is not supported by this directive — using it on a MySQL source raises an error; expose a virtual column instead (see [Virtual Columns](./VIRTUAL_COLUMNS.md)).
+PostgreSQL emits `TO_CHAR(created_at, 'YYYY-MM-DD')`. SQL Server emits `FORMAT(created_at, 'YYYY-MM-DD')`. SQLite emits `STRFTIME('%Y-%m-%d', created_at)` and takes a [strftime format](https://sqlite.org/lang_datefunc.html). The format string is database-specific — check your engine's documentation. MySQL is not supported by this directive — using it on a MySQL source raises an error; expose a virtual column instead (see [Virtual Columns](./VIRTUAL_COLUMNS.md)).
 
 ### `@round(decimals: Int = 0)`, `@ceil`, `@floor`, `@abs`
 
@@ -128,7 +128,7 @@ PostgreSQL emits `TO_CHAR(created_at, 'YYYY-MM-DD')`. SQL Server emits `FORMAT(c
 }
 ```
 
-PostgreSQL: `CEIL`. SQL Server: `CEILING`. The other three are spelled the same on every engine.
+PostgreSQL: `CEIL`. MySQL, SQL Server and SQLite: `CEILING`. The other three are spelled the same on every engine.
 
 ### `@multiply(by: Int!)`, `@divide(by: Int!)`
 
@@ -190,14 +190,14 @@ Be careful when mixing data-shape-changing directives (`@truncate`, `@substring`
 
 ## Engine compatibility matrix
 
-| Directive                                                       | PostgreSQL    | MySQL                | SQL Server             |
-| --------------------------------------------------------------- | ------------- | -------------------- | ---------------------- |
-| String case/trim, replace, concat, default, substring, truncate | ✓             | ✓                    | ✓                      |
-| `@pad`                                                          | `LPAD`/`RPAD` | `LPAD`/`RPAD`        | `REPLICATE` workaround |
-| `@dateFormat`                                                   | `TO_CHAR`     | (use virtual column) | `FORMAT`               |
-| `@round`/`@floor`/`@abs`                                        | ✓             | ✓                    | ✓                      |
-| `@ceil`                                                         | `CEIL`        | `CEIL`               | `CEILING`              |
-| `@multiply`/`@divide`                                           | ✓             | ✓                    | ✓                      |
-| `@when`                                                         | ✓             | ✓                    | ✓                      |
+| Directive                                                       | PostgreSQL    | MySQL                | SQL Server             | SQLite                                     |
+| --------------------------------------------------------------- | ------------- | -------------------- | ---------------------- | ------------------------------------------ |
+| String case/trim, replace, concat, default, substring, truncate | ✓             | ✓                    | ✓                      | ✓ (`SUBSTR` for truncate; ASCII-only case) |
+| `@pad`                                                          | `LPAD`/`RPAD` | `LPAD`/`RPAD`        | `REPLICATE` workaround | `ZEROBLOB` workaround                      |
+| `@dateFormat`                                                   | `TO_CHAR`     | (use virtual column) | `FORMAT`               | `STRFTIME`                                 |
+| `@round`/`@floor`/`@abs`                                        | ✓             | ✓                    | ✓                      | ✓                                          |
+| `@ceil`                                                         | `CEIL`        | `CEILING`            | `CEILING`              | `CEILING`                                  |
+| `@multiply`/`@divide`                                           | ✓             | ✓                    | ✓                      | ✓                                          |
+| `@when`                                                         | ✓             | ✓                    | ✓                      | ✓                                          |
 
 If a column-level directive doesn't fit your needs — for example, you want a join, an aggregate, or engine-specific JSON access — define a virtual column in your configuration and select that instead. See [Virtual Columns](./VIRTUAL_COLUMNS.md).
