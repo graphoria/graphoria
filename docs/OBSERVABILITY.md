@@ -59,6 +59,10 @@ Readiness turns back to `200` on the first probe after the dependency answers ag
 ### Kubernetes
 
 ```yaml
+startupProbe:
+  httpGet: { path: /health/live, port: 3000 }
+  periodSeconds: 5
+  failureThreshold: 20
 livenessProbe:
   httpGet: { path: /health/live, port: 3000 }
   periodSeconds: 10
@@ -71,6 +75,12 @@ readinessProbe:
 
 Set `timeoutSeconds` above the 2-second bound on each check. Kubernetes' default of `1` would time
 out a probe that Graphoria was about to answer.
+
+`/health/live` does not answer while boot
+[waits for the database](./CONFIGURATION.md#waiting-for-the-database-at-boot), so without a startup
+probe the liveness probe would restart the pod mid-wait. Its budget, here 20 × 5 s, has to cover
+`DB_CONNECT_RETRY_MS` plus one `connectionTimeout` (60 + 30 s by default). A full manifest is in
+[Deployment](./DEPLOYMENT.md#kubernetes-example).
 
 Every readiness request runs one `SELECT 1` per database and one `PING`, and takes a pooled
 connection to do it, like any query. It is cheap, but it can be triggered without a credential. If
