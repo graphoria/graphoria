@@ -151,11 +151,11 @@ describe("generateSQL dispatcher", () => {
   });
 
   it("throws on unsupported database type", () => {
-    const bogus = { ...dbPostgreSQL, type: "sqlite" } as unknown as Database;
+    const bogus = { ...dbPostgreSQL, type: "oracle" } as unknown as Database;
     const entities = buildEntities({ users: bogus });
 
     expect(() => generateSQL(entities, buildAnalysis(["users"]))).toThrow(
-      "Unsupported database type: sqlite",
+      "Unsupported database type: oracle",
     );
   });
 });

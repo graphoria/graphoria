@@ -109,6 +109,7 @@ describe("cli without env", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("Usage: graphoria");
     expect(result.stdout.toString()).toContain("[--frontend]");
+    expect(result.stdout.toString()).toContain("--database pg|mysql|mssql|sqlite");
     expect(result.stdout.toString()).toMatch(
       /JWT_SECRET\s+.*\(required with auth or the console\)/,
     );

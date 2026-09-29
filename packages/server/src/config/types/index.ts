@@ -116,6 +116,9 @@ export type {
   MSSQLConnectionOptions,
   ConnectionOptionsForType,
   AnyDatabaseConfig,
+  ServerConnection,
+  SQLiteConnection,
+  ConnectionForType,
 } from "./db";
 
 export {
@@ -127,6 +130,8 @@ export {
   BunSQLConnectionOptionsZod,
   MSSQLConnectionOptionsZod,
   DatabaseConnectionZod,
+  ServerConnectionZod,
+  SQLiteConnectionZod,
 } from "./db";
 
 export type { ConfigurationInput, TokenStrategy } from "./configuration";

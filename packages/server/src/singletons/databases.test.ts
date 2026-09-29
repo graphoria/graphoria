@@ -1,3 +1,4 @@
+import { Database as SQLiteDatabase } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 
 import { logger } from "../logging";
@@ -26,7 +27,7 @@ mock.module("../databases/engines/postgresql/connection.ts", () => ({
   },
 }));
 
-const { connectWithRetry, instantiateDatabasesConnections, databasesConnections } =
+const { connectWithRetry, instantiateDatabasesConnections, databasesConnections, pingConnection } =
   await import("./databases");
 
 const baseDb = {
@@ -226,5 +227,46 @@ describe("instantiateDatabasesConnections retry", () => {
     );
     expect(calls).toEqual(["retry_onconnect"]);
     expect(clock.sleeps).toEqual([]);
+  });
+});
+
+describe("instantiateDatabasesConnections sqlite", () => {
+  it("opens the file and hands onConnect a bun:sqlite Database", async () => {
+    let received: unknown;
+    const db = {
+      name: "sqlite_onconnect",
+      enabled: true,
+      type: "sqlite" as const,
+      connection: { filename: ":memory:" },
+      onConnect: (connection: unknown) => {
+        received = connection;
+      },
+    } as never;
+
+    await instantiateDatabasesConnections([db]);
+
+    expect(received).toBeInstanceOf(SQLiteDatabase);
+    expect(await pingConnection(databasesConnections["sqlite_onconnect"]!, "sqlite")).toEqual({
+      "1": 1,
+    });
+
+    (databasesConnections["sqlite_onconnect"] as SQLiteDatabase).close();
+    delete databasesConnections["sqlite_onconnect"];
+  });
+
+  it("fails at once, without retrying, when the file does not open", async () => {
+    const clock = fakeClock();
+    const db = {
+      name: "sqlite_unopenable",
+      enabled: true,
+      type: "sqlite" as const,
+      connection: { filename: "/nonexistent-graphoria-dir/app.db" },
+    } as never;
+
+    await expect(instantiateDatabasesConnections([db], 60000, clock)).rejects.toThrow(
+      "unable to open database file",
+    );
+    expect(clock.sleeps).toEqual([]);
+    expect(databasesConnections["sqlite_unopenable"]).toBeUndefined();
   });
 });

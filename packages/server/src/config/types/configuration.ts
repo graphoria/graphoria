@@ -1,4 +1,5 @@
 import type { SQL } from "bun";
+import type { Database as SQLiteDatabase } from "bun:sqlite";
 import type { ConnectionPool } from "mssql";
 import { z } from "zod";
 import type { ConfigurationZod } from "../../types/zod/configuration";
@@ -9,7 +10,7 @@ import type { TypedOperation } from "./operation";
 /**
  * Union of supported database connection types
  */
-export type DatabaseConnectionInstance = SQL | ConnectionPool;
+export type DatabaseConnectionInstance = SQL | ConnectionPool | SQLiteDatabase;
 
 // ============================================================================
 // Token Strategy

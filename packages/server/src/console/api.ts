@@ -4,8 +4,8 @@ import type { AnalyzedConfiguration } from "../configuration";
 import type { Configuration } from "../types/configuration";
 import type { Env } from "../types/env";
 import type { RateLimiter } from "../utils/rateLimit";
-import type { BunRequest, SQL } from "bun";
-import type { ConnectionPool } from "mssql";
+import type { BunRequest } from "bun";
+import type { DatabasesConnections } from "../singletons/databases";
 
 import { createConsoleSessions } from "./session";
 import { getTags } from "../configuration/rest/generateOpenAPI";
@@ -35,7 +35,7 @@ type ConsoleRouteHandler = (
 
 const PING_TIMEOUT_MS = 2000;
 
-const measureLatency = async (connection: SQL | ConnectionPool, type: string) => {
+const measureLatency = async (connection: DatabasesConnections[string], type: string) => {
   const start = performance.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

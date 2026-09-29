@@ -9,7 +9,7 @@ export type InitArgs = {
   install: boolean;
 };
 
-export const DATABASE_TYPES: readonly DatabaseType[] = ["pg", "mysql", "mssql"];
+export const DATABASE_TYPES: readonly DatabaseType[] = ["pg", "mysql", "mssql", "sqlite"];
 
 export const isDatabaseType = (value: string): value is DatabaseType =>
   (DATABASE_TYPES as readonly string[]).includes(value);

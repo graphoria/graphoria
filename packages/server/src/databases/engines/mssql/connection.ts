@@ -1,7 +1,7 @@
 import { isString } from "es-toolkit";
 import { ConnectionPool, Decimal, Int, NVarChar, Numeric, VarChar } from "mssql";
 
-import type { MSSQLConnectionOptions } from "../../../config";
+import type { MSSQLConnectionOptions, ServerConnection } from "../../../config";
 import type { VariableDefinition } from "../../../analyzeQuery/types";
 import type { Database } from "../../../types/configuration";
 import type { ProcedureResolver } from "../../../types/db";
@@ -21,7 +21,8 @@ import { logger } from "../../../logging";
 // even on an MSSQL database. A strict re-parse of one of those would reject the
 // Bun SQL keys and take the server down at boot.
 export const poolOptions = (db: Database, timeoutMs: number = getQueryTimeoutMs()) => {
-  const ci = db.connection;
+  // Only a "mssql" database is routed here, and its connection is a server's.
+  const ci = db.connection as ServerConnection;
   const raw = db.connectionOptions as MSSQLConnectionOptions | undefined;
 
   const defaults = MSSQLConnectionOptionsZod.parse({});

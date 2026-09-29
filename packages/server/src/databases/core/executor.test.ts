@@ -81,10 +81,10 @@ describe("executeQuery", () => {
   }
 
   it("throws on unsupported database type", async () => {
-    const bogus = { ...dbPostgreSQL, type: "sqlite" } as unknown as Database;
+    const bogus = { ...dbPostgreSQL, type: "oracle" } as unknown as Database;
 
     await expect(executeQuery("select 1", bogus, variableDefs, {})).rejects.toThrow(
-      "Unsupported database type: sqlite",
+      "Unsupported database type: oracle",
     );
   });
 
@@ -134,10 +134,10 @@ describe("executeQueryJSON", () => {
   }
 
   it("throws on unsupported database type", async () => {
-    const bogus = { ...dbPostgreSQL, type: "sqlite" } as unknown as Database;
+    const bogus = { ...dbPostgreSQL, type: "oracle" } as unknown as Database;
 
     await expect(executeQueryJSON("select 1", bogus, variableDefs, {})).rejects.toThrow(
-      "Unsupported database type: sqlite",
+      "Unsupported database type: oracle",
     );
   });
 
@@ -193,10 +193,10 @@ describe("callStoredProcedure", () => {
   }
 
   it("throws on unsupported database type", async () => {
-    const bogus = { ...dbPostgreSQL, type: "sqlite" } as unknown as Database;
+    const bogus = { ...dbPostgreSQL, type: "oracle" } as unknown as Database;
 
     await expect(callStoredProcedure(buildSP(bogus), {})).rejects.toThrow(
-      "Unsupported database type: sqlite",
+      "Unsupported database type: oracle",
     );
   });
 

@@ -1,11 +1,12 @@
 import { SQL } from "bun";
+import { Database as SQLiteDatabase } from "bun:sqlite";
 import { ConnectionPool } from "mssql";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { DatabaseType } from "../../types/configuration";
 
-import { CONNECTIONS, MYSQL_CONNECTION_OPTIONS } from "./config";
+import { CONNECTIONS, MYSQL_CONNECTION_OPTIONS, SQLITE_DIR } from "./config";
 
 /**
  * Applies the canonical schema and its seed rows to a real engine.
@@ -117,10 +118,29 @@ const seedMSSQL = async () => {
   }
 };
 
+const seedSQLite = async () => {
+  await mkdir(SQLITE_DIR, { recursive: true });
+
+  const sqlite = new SQLiteDatabase(CONNECTIONS.sqlite.filename, { create: true });
+
+  try {
+    sqlite
+      .query("ATTACH DATABASE $file AS catalog")
+      .run({ $file: CONNECTIONS.sqlite.attach.catalog });
+
+    for (const statement of await statementsFor("sqlite")) {
+      sqlite.run(statement);
+    }
+  } finally {
+    sqlite.close();
+  }
+};
+
 const SEEDERS: Record<DatabaseType, () => Promise<void>> = {
   pg: seedPostgres,
   mysql: seedMySQL,
   mssql: seedMSSQL,
+  sqlite: seedSQLite,
 };
 
 /** Drops and recreates the canonical schema on `engine`, then seeds it. */

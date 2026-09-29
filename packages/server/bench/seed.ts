@@ -1,7 +1,7 @@
 import { SQL } from "bun";
 import { ConnectionPool } from "mssql";
 
-import type { DatabaseType } from "../src/types/configuration";
+import type { BenchEngine } from "./config";
 
 import { CONNECTIONS, MYSQL_CONNECTION_OPTIONS } from "../src/__test/integration/config";
 import { BENCH_DATABASE, BENCH_SCHEMAS, ROW_COUNTS, benchTable } from "./config";
@@ -22,7 +22,7 @@ import { BENCH_DATABASE, BENCH_SCHEMAS, ROW_COUNTS, benchTable } from "./config"
 /** SQL Server caps a `VALUES` list at 1000 rows; the other two are happy with it. */
 const CHUNK = 1000;
 
-const bool = (engine: DatabaseType, value: boolean) =>
+const bool = (engine: BenchEngine, value: boolean) =>
   engine === "mssql" ? (value ? "1" : "0") : String(value);
 
 /** A fixed instant, so `created_at` and `due_at` never depend on when the seed ran. */
@@ -30,13 +30,13 @@ const EPOCH = Date.UTC(2024, 0, 1);
 const timestamp = (dayOffset: number) =>
   new Date(EPOCH + dayOffset * 86_400_000).toISOString().replace("T", " ").slice(0, 19);
 
-const userRows = (engine: DatabaseType) =>
+const userRows = (engine: BenchEngine) =>
   Array.from({ length: ROW_COUNTS.users }, (_, index) => {
     const id = index + 1;
     return `(${id}, 'user${id}@bench.local', 'User ${id}', ${bool(engine, id % 10 !== 0)}, '${timestamp(id % 365)}')`;
   });
 
-const projectRows = (engine: DatabaseType) =>
+const projectRows = (engine: BenchEngine) =>
   Array.from({ length: ROW_COUNTS.projects }, (_, index) => {
     const id = index + 1;
     const ownerId = (id % ROW_COUNTS.users) + 1;
@@ -44,7 +44,7 @@ const projectRows = (engine: DatabaseType) =>
     return `(${id}, ${ownerId}, 'Project ${id}', ${budget}, ${bool(engine, id % 20 === 0)})`;
   });
 
-const taskRows = (engine: DatabaseType) =>
+const taskRows = (engine: BenchEngine) =>
   Array.from({ length: ROW_COUNTS.tasks }, (_, index) => {
     const id = index + 1;
     // 7919 is coprime with 10000, so each project gets exactly ten tasks while
@@ -61,7 +61,7 @@ type Client = {
   close: () => Promise<unknown>;
 };
 
-const tableDefinitions = (engine: DatabaseType) => {
+const tableDefinitions = (engine: BenchEngine) => {
   const schema = BENCH_SCHEMAS[engine];
   const boolType = engine === "mssql" ? "bit" : "boolean";
   const timestampType = engine === "mssql" ? "datetime2" : "timestamp";
@@ -100,7 +100,7 @@ const tableDefinitions = (engine: DatabaseType) => {
   ];
 };
 
-const indexDefinitions = (engine: DatabaseType) => {
+const indexDefinitions = (engine: BenchEngine) => {
   const schema = BENCH_SCHEMAS[engine];
 
   return [
@@ -116,7 +116,7 @@ const indexDefinitions = (engine: DatabaseType) => {
  * autoanalyze arrives partway through a benchmark and silently changes the plan
  * mid-run. Updating them here is what makes two runs comparable.
  */
-const analyzeStatements = (engine: DatabaseType) => {
+const analyzeStatements = (engine: BenchEngine) => {
   const tables = ["users", "projects", "tasks"].map((table) => benchTable(engine, table));
 
   if (engine === "mysql") return [`ANALYZE TABLE ${tables.join(", ")}`];
@@ -127,7 +127,7 @@ const analyzeStatements = (engine: DatabaseType) => {
 /** Returns the 100 highest-priority tasks. The closest thing Graphoria has to a
  *  write path: it generates no insert/update/delete resolvers, so a stored
  *  routine is what a `Mutation` field actually calls. */
-const routineDefinition = (engine: DatabaseType) => {
+const routineDefinition = (engine: BenchEngine) => {
   const schema = BENCH_SCHEMAS[engine];
 
   if (engine === "pg") {
@@ -197,7 +197,7 @@ const mssqlClient = async (database: string): Promise<Client> => {
  * Drops whatever a previous run left behind and recreates the empty schema.
  * Returns a client already pointed at the bench database.
  */
-const resetSchema = async (engine: DatabaseType): Promise<Client> => {
+const resetSchema = async (engine: BenchEngine): Promise<Client> => {
   if (engine === "mysql") {
     const admin = bunClient("mysql", CONNECTIONS.mysql.database);
     try {
@@ -255,7 +255,7 @@ const insertAll = async (client: Client, table: string, columns: string, rows: s
   }
 };
 
-export const seedBench = async (engine: DatabaseType, log = console.log) => {
+export const seedBench = async (engine: BenchEngine, log = console.log) => {
   const started = Bun.nanoseconds();
   const client = await resetSchema(engine);
 
@@ -300,7 +300,7 @@ export const seedBench = async (engine: DatabaseType, log = console.log) => {
 };
 
 if (import.meta.main) {
-  const engine = (Bun.argv[2] ?? "pg") as DatabaseType;
+  const engine = (Bun.argv[2] ?? "pg") as BenchEngine;
   console.log(`seeding ${engine}…`);
   await seedBench(engine);
 }

@@ -10,11 +10,13 @@ import {
   generateCreateViewsMSSQL,
   generateCreateViewsMySQL,
   generateCreateViewsPostgreSQL,
+  generateCreateViewsSQLite,
 } from "./generateCreateView";
 import {
   generateInsertSQLMSSQL,
   generateInsertSQLMySQL,
   generateInsertSQLPostgreSQL,
+  generateInsertSQLSQLite,
 } from "./generateInsert";
 
 const mapping: Record<
@@ -48,6 +50,13 @@ const mapping: Record<
     generateCreateViewsSQL: generateCreateViewsMySQL,
     generateInsertsSQL: generateInsertSQLMySQL,
   },
+  sqlite: {
+    getTablesFromDB: getDatabaseStructure,
+    getViewsFromDB: getViewsFromDB,
+    generateCreateTablesSQL,
+    generateCreateViewsSQL: generateCreateViewsSQLite,
+    generateInsertsSQL: generateInsertSQLSQLite,
+  },
 };
 
 const convertDatabase = async (
@@ -58,11 +67,11 @@ const convertDatabase = async (
   const databaseFrom = mapping[dbFrom.type];
   const databaseTo = mapping[dbToType];
 
-  const dbTo: Database = {
+  const dbTo = {
     ...dbFrom,
     type: dbToType,
     name: `${dbFrom.name}_converted_to_${dbToType}`,
-  };
+  } as Database;
 
   const fromTable = await databaseFrom.getTablesFromDB(dbFrom);
   // const fromViews = await databaseFrom.getViewsFromDB(ciFrom);

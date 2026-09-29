@@ -14,7 +14,10 @@ export type Versions = { graphoria: string; bun: string };
 
 type Engine = { label: string; user: string; port: number; image: string; data: string };
 
-export const ENGINES: Record<DatabaseType, Engine> = {
+/** The engines reached over the network, as opposed to SQLite's file. */
+type ServerEngine = Exclude<DatabaseType, "sqlite">;
+
+export const ENGINES: Record<ServerEngine, Engine> = {
   pg: {
     label: "PostgreSQL",
     user: "postgres",
@@ -57,7 +60,7 @@ export const FRONTEND_FILES = [
 // The seed's schema, which prefixes its field names under the default
 // `{schema}_{name}` field naming; a MySQL schema is its database.
 export const seedSchema = ({ database, dbName }: Pick<InitAnswers, "database" | "dbName">) =>
-  ({ pg: "public", mysql: dbName, mssql: "dbo" })[database];
+  ({ pg: "public", mysql: dbName, mssql: "dbo", sqlite: "main" })[database];
 
 // Exact versions. A test holds React and Tailwind to packages/playgrounds, which
 // dependabot bumps; urql and gql.tada are bumped here by hand. Runtime
@@ -143,6 +146,24 @@ const MYSQL_CONNECTION_OPTIONS = `      // MySQL 8 authenticates with caching_sh
       connectionOptions: { allowPublicKeyRetrieval: true },
 `;
 
+const SERVER_CONNECTION = `      connection: {
+        host: env("DB_HOST"),
+        port: Number(env("DB_PORT")),
+        user: env("DB_USER"),
+        password: env("DB_PASSWORD"),
+        database: env("DB_NAME"),
+      },
+`;
+
+const SQLITE_CONNECTION = `      connection: { filename: env("DB_FILE") },
+      // The first boot creates the tables: seed.sql runs while the file has none.
+      onConnect: async (db) => {
+        if (!db.query("SELECT 1 FROM sqlite_schema WHERE name = 'authors'").get()) {
+          db.run(await Bun.file(new URL("./seed.sql", import.meta.url)).text());
+        }
+      },
+`;
+
 const anonymousGrant = (values: ProjectValues) => {
   const schema = seedSchema(values);
   return `  // The frontend has no login, so anyone can read these two tables without a
@@ -177,14 +198,7 @@ export default (() => ({
       name: "main",
       type: "${values.database}",
       enabled: true,
-      connection: {
-        host: env("DB_HOST"),
-        port: Number(env("DB_PORT")),
-        user: env("DB_USER"),
-        password: env("DB_PASSWORD"),
-        database: env("DB_NAME"),
-      },
-${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
+${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
   ],
 ${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
@@ -229,9 +243,18 @@ console.log(\`GraphiQL → http://localhost:\${server.port}\${prefixes.graphiql}
 console.log(\`Scalar   → http://localhost:\${server.port}\${prefixes.scalar}\`);
 `;
 
-const dotEnv = (
+const sqliteDotEnv = (
   values: ProjectValues,
-) => `# Secrets and database settings, read by Bun on the host and by Docker Compose.
+) => `# Secrets and the database file, read by Bun on the host and by Docker Compose.
+# Keep this file out of git.
+ADMIN_SECRET=${values.adminSecret}
+JWT_SECRET=${values.jwtSecret}
+DB_FILE=${values.dbName}.db
+`;
+
+const dotEnv = (values: ProjectValues) => {
+  if (values.database === "sqlite") return sqliteDotEnv(values);
+  return `# Secrets and database settings, read by Bun on the host and by Docker Compose.
 # Keep this file out of git.
 ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
@@ -241,6 +264,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 `;
+};
 
 const GITIGNORE = `node_modules
 .env
@@ -250,7 +274,26 @@ const GITIGNORE = `node_modules
 const GITIGNORE_FRONTEND = `${GITIGNORE}.graphoria
 `;
 
-const dockerfile = ({ bun }: Versions) => `# Install stage: bun install and its cache stay here.
+// The database file and the journals SQLite writes beside it.
+const SQLITE_FILES = `*.db
+*.db-*
+`;
+
+const gitignore = ({ database, frontend }: ProjectValues) =>
+  `${frontend ? GITIGNORE_FRONTEND : GITIGNORE}${database === "sqlite" ? SQLITE_FILES : ""}`;
+
+const dockerignore = ({ database }: ProjectValues) =>
+  `${DOCKERIGNORE}${database === "sqlite" ? SQLITE_FILES : ""}`;
+
+// The Compose volume mounts at /app/data, and the runtime user writes the
+// database file there.
+const SQLITE_DATA_DIR = `RUN mkdir -p data && chown bun:bun data
+`;
+
+const dockerfile = (
+  { database }: ProjectValues,
+  { bun }: Versions,
+) => `# Install stage: bun install and its cache stay here.
 FROM oven/bun:${bun}-slim AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
@@ -261,7 +304,7 @@ FROM oven/bun:${bun}-slim
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY . .
-ENV NODE_ENV=production
+${database === "sqlite" ? SQLITE_DATA_DIR : ""}ENV NODE_ENV=production
 USER bun
 EXPOSE 3000
 # The image has no curl, so Bun makes the request.
@@ -360,13 +403,43 @@ const MSSQL_SERVICES = `  db:
         -d \${DB_NAME} -i /seed.sql
 `;
 
-const DB_SERVICES: Record<DatabaseType, string> = {
+const DB_SERVICES: Record<ServerEngine, string> = {
   pg: PG_SERVICE,
   mysql: MYSQL_SERVICE,
   mssql: MSSQL_SERVICES,
 };
 
-const dockerCompose = ({ name, database }: ProjectValues) => {
+const sqliteCompose = ({
+  name,
+  dbName,
+}: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
+#
+#   docker compose up -d --build
+#
+# Then open http://localhost:3000/graphiql. Secrets come from .env. The
+# database file lives in the db-data volume; \`docker compose down -v\` deletes it.
+services:
+  graphoria:
+    build: .
+    # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
+    init: true
+    restart: on-failure
+    env_file: .env
+    environment:
+      # On the volume, not in the image: the file outlives a rebuild.
+      DB_FILE: data/${dbName}.db
+    ports:
+      - "3000:3000"
+    volumes:
+      - db-data:/app/data
+
+volumes:
+  db-data:
+`;
+
+const dockerCompose = (values: ProjectValues) => {
+  if (values.database === "sqlite") return sqliteCompose(values);
+  const { name, database } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -490,7 +563,44 @@ BEGIN
 END;
 `;
 
-const SEEDS: Record<DatabaseType, string> = { pg: PG_SEED, mysql: MYSQL_SEED, mssql: MSSQL_SEED };
+const SQLITE_SEED = `-- graphoria.ts runs this on the first boot, while the database file has no
+-- authors table. Delete the file (\`docker compose down -v\` in Docker) to reset it.
+BEGIN;
+
+CREATE TABLE authors (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL
+);
+
+CREATE TABLE books (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  published_year INTEGER NOT NULL,
+  author_id INTEGER NOT NULL REFERENCES authors (id)
+);
+
+INSERT INTO authors (name) VALUES
+  ('Ursula K. Le Guin'),
+  ('Italo Calvino'),
+  ('Octavia E. Butler');
+
+INSERT INTO books (title, published_year, author_id) VALUES
+  ('A Wizard of Earthsea', 1968, 1),
+  ('The Left Hand of Darkness', 1969, 1),
+  ('Invisible Cities', 1972, 2),
+  ('If on a winter''s night a traveler', 1979, 2),
+  ('Kindred', 1979, 3),
+  ('Parable of the Sower', 1993, 3);
+
+COMMIT;
+`;
+
+const SEEDS: Record<DatabaseType, string> = {
+  pg: PG_SEED,
+  mysql: MYSQL_SEED,
+  mssql: MSSQL_SEED,
+  sqlite: SQLITE_SEED,
+};
 
 const BUNFIG = `# Bun.serve bundles web/ with Tailwind.
 [serve.static]
@@ -619,9 +729,9 @@ export const renderProject = (
   "graphoria.ts": graphoriaConfig(values),
   "index.ts": values.frontend ? INDEX_FRONTEND : INDEX,
   ".env": dotEnv(values),
-  ".gitignore": values.frontend ? GITIGNORE_FRONTEND : GITIGNORE,
-  Dockerfile: dockerfile(versions),
-  ".dockerignore": DOCKERIGNORE,
+  ".gitignore": gitignore(values),
+  Dockerfile: dockerfile(values, versions),
+  ".dockerignore": dockerignore(values),
   "docker-compose.yml": dockerCompose(values),
   "seed.sql": SEEDS[values.database],
   ...(values.frontend && frontendFiles(values)),

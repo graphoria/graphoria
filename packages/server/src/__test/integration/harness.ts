@@ -1,4 +1,5 @@
 import { SQL } from "bun";
+import { Database as SQLiteDatabase } from "bun:sqlite";
 import { ConnectionPool } from "mssql";
 import { generateKeys } from "paseto-ts/v4";
 
@@ -125,12 +126,19 @@ const baseConfig = (engine: DatabaseType): ConfigurationInput => ({
           connection: { ...CONNECTIONS.mysql },
           connectionOptions: MYSQL_CONNECTION_OPTIONS,
         }
-      : {
-          name: "default",
-          enabled: true,
-          type: engine,
-          connection: { ...CONNECTIONS[engine] },
-        },
+      : engine === "sqlite"
+        ? {
+            name: "default",
+            enabled: true,
+            type: engine,
+            connection: { ...CONNECTIONS.sqlite },
+          }
+        : {
+            name: "default",
+            enabled: true,
+            type: engine,
+            connection: { ...CONNECTIONS[engine] },
+          },
   ],
   auth: {
     enabled: false,
@@ -142,6 +150,19 @@ const baseConfig = (engine: DatabaseType): ConfigurationInput => ({
 });
 
 const rawClient = async (engine: DatabaseType) => {
+  if (engine === "sqlite") {
+    const database = new SQLiteDatabase(CONNECTIONS.sqlite.filename);
+    database.run("PRAGMA busy_timeout = 5000");
+    for (const [schema, file] of Object.entries(CONNECTIONS.sqlite.attach)) {
+      database.query(`ATTACH DATABASE $file AS "${schema}"`).run({ $file: file });
+    }
+
+    return {
+      query: async <T>(statement: string) => database.prepare(statement).all() as T[],
+      close: async () => database.close(),
+    };
+  }
+
   if (engine === "mssql") {
     const pool = await new ConnectionPool({
       server: CONNECTIONS.mssql.host,

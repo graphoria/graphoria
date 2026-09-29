@@ -1461,3 +1461,51 @@ describe("filterBasedOnDirective - @when", () => {
     expect(result).toBe(false);
   });
 });
+
+describe("SQLite directive forms", () => {
+  test("@truncate takes SUBSTR, SQLite having no LEFT", () => {
+    expect(
+      DIRECTIVE_HANDLERS.truncate("name", { name: "truncate", arguments: { length: 3 } }, "sqlite"),
+    ).toBe("SUBSTR(name, 1, 3)");
+  });
+
+  test("@pad left builds the run from ZEROBLOB, cuts it to the gap and cuts a longer value", () => {
+    expect(
+      DIRECTIVE_HANDLERS.pad(
+        "id",
+        { name: "pad", arguments: { length: 8, char: "0", side: "left" } },
+        "sqlite",
+      ),
+    ).toBe(
+      "CASE WHEN LENGTH(id) >= 8 THEN SUBSTR(id, 1, 8) ELSE SUBSTR(REPLACE(HEX(ZEROBLOB(8)), '00', '0'), 1, 8 - LENGTH(id)) || id END",
+    );
+  });
+
+  test("@pad right appends the run and keeps the first `length` characters", () => {
+    expect(
+      DIRECTIVE_HANDLERS.pad(
+        "id",
+        { name: "pad", arguments: { length: 8, char: "0", side: "right" } },
+        "sqlite",
+      ),
+    ).toBe("SUBSTR(id || REPLACE(HEX(ZEROBLOB(8)), '00', '0'), 1, 8)");
+  });
+
+  test("@dateFormat takes a strftime format first", () => {
+    expect(
+      DIRECTIVE_HANDLERS.dateFormat(
+        "created_at",
+        { name: "dateFormat", arguments: { format: "%Y-%m-%d" } },
+        "sqlite",
+      ),
+    ).toBe("STRFTIME('%Y-%m-%d', created_at)");
+  });
+
+  test("placeholders keep their $n form", () => {
+    expect(
+      applyDirectives("name", [{ name: "truncate", arguments: { length: "$len" } }], "sqlite", [
+        { name: "len", type: "Int", required: true },
+      ]),
+    ).toBe("SUBSTR(name, 1, $1)");
+  });
+});

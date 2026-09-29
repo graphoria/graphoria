@@ -6,7 +6,7 @@ import type { DatabaseStructure } from "../types/db";
 import { mergeEntities } from "../configuration/getSchemas/mergeEntities";
 import { generateTypeDefs } from "../configuration/getSchemas/type-definition-generator";
 import { buildProcedureResolver, buildTableResolver } from "../databases";
-import { dbMSSQL, dbMySQL, dbPostgreSQL } from "./dbMocks";
+import { dbMSSQL, dbMySQL, dbPostgreSQL, dbSQLite } from "./dbMocks";
 
 export const createMock =
   (db: Database) =>
@@ -33,3 +33,4 @@ export const createMock =
 export const createMockMSSQL = createMock(dbMSSQL);
 export const createMockPG = createMock(dbPostgreSQL);
 export const createMockMySQL = createMock(dbMySQL);
+export const createMockSQLite = createMock(dbSQLite);

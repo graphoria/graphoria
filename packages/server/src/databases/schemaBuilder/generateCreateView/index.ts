@@ -99,3 +99,4 @@ export type GenerateCreateViewsSQL = ReturnType<typeof generateCreateViewsSQL>;
 export const generateCreateViewsMSSQL = generateCreateViewsSQL("mssql");
 export const generateCreateViewsPostgreSQL = generateCreateViewsSQL("pg");
 export const generateCreateViewsMySQL = generateCreateViewsSQL("mysql");
+export const generateCreateViewsSQLite = generateCreateViewsSQL("sqlite");
