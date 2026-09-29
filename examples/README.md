@@ -4,6 +4,7 @@
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`docker-compose-starter/`](./docker-compose-starter/) | The [Quickstart](../docs/QUICKSTART.md) in runnable form: a project built into its own image, next to Postgres. Start here for the Docker recipe.              |
 | [`deploy-caddy/`](./deploy-caddy/)                     | The starter on one host behind Caddy: TLS, only the public API exposed, a body limit. The [deployment guide](../docs/DEPLOYMENT.md)'s proxy section, runnable. |
+| [`deploy-kubernetes/`](./deploy-kubernetes/)           | The starter on a local kind cluster behind the Gateway API (Envoy Gateway). The [deployment guide](../docs/DEPLOYMENT.md)'s Kubernetes manifest, runnable.     |
 | [`taskly/`](./taskly/)                                 | The full feature set: three databases, auth, queues, operations and a frontend.                                                                                |
 | [`docker-compose.yml`](./docker-compose.yml)           | The local stack below: the backing services Graphoria can use, plus Taskly behind a profile.                                                                   |
 

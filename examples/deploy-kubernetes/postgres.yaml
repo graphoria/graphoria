@@ -1,0 +1,33 @@
+# Local only. The guide expects a managed database outside the cluster; this one has no volume, so
+# every start seeds it again from the starter's seed.sql (the `seed` ConfigMap, see the README).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18
+          env:
+            - { name: POSTGRES_PASSWORD, value: postgres }
+            - { name: POSTGRES_DB, value: my_app }
+          volumeMounts:
+            - { name: seed, mountPath: /docker-entrypoint-initdb.d }
+      volumes:
+        - name: seed
+          configMap: { name: seed }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: { app: postgres }
+  ports:
+    - port: 5432

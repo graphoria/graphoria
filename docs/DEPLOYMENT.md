@@ -348,7 +348,9 @@ The core set: a Secret, a Deployment, a Service, a PodDisruptionBudget, and a
 [Gateway API](https://gateway-api.sigs.k8s.io/) `Gateway` and `HTTPRoute` for the edge. The
 database and Redis are outside the cluster (managed services); their hosts go in the Secret, under
 whatever names your `graphoria.ts` reads. The manifest was run on kind (Kubernetes 1.34) with
-[Envoy Gateway](https://gateway.envoyproxy.io/) 1.9 as the Gateway API implementation.
+[Envoy Gateway](https://gateway.envoyproxy.io/) 1.9 as the Gateway API implementation;
+[`examples/deploy-kubernetes/`](../examples/deploy-kubernetes/) runs it there with the starter
+project.
 
 Before applying it:
 
