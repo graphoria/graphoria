@@ -1,0 +1,22 @@
+# base/ holds the deployment guide's manifests unchanged. What differs for this local run is set
+# here: the image built from the starter, and the Secret's values.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - base/graphoria.yaml
+  - base/envoy-gateway.yaml
+  - gateway-class.yaml
+  - postgres.yaml
+images:
+  - name: registry.example.com/my-app
+    newName: graphoria-starter
+    newTag: local
+patches:
+  # The starter has neither auth nor the console, so it needs no JWT_SECRET.
+  - target: { kind: Secret, name: graphoria }
+    patch: |-
+      - op: replace
+        path: /stringData
+        value:
+          ADMIN_SECRET: change-me
+          PG_HOST: postgres

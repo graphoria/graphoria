@@ -1,0 +1,120 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: graphoria
+type: Opaque
+stringData:
+  ADMIN_SECRET: replace-me # openssl rand -hex 32
+  JWT_SECRET: replace-me # needed with auth or the console on
+  PG_HOST: postgres.example.internal # whatever your graphoria.ts reads
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graphoria
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels: { app: graphoria }
+  template:
+    metadata:
+      labels: { app: graphoria }
+    spec:
+      # preStop 5 s + SHUTDOWN_TIMEOUT_MS 8 s + 1 s of teardown, with room to spare.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: graphoria
+          image: registry.example.com/my-app:1.0.0
+          ports:
+            - { name: http, containerPort: 3000 }
+          envFrom:
+            - secretRef: { name: graphoria }
+          env:
+            - { name: RATE_LIMIT_TRUST_PROXY, value: "true" }
+          startupProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 5
+            # 100 s: DB_CONNECT_RETRY_MS (60 s) plus one connectionTimeout (30 s), with margin.
+            failureThreshold: 20
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              # Keeps serving while the endpoint removal reaches the gateway.
+              sleep: { seconds: 5 }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Nothing is written at run time; PRINT_SCHEMAS would need a volume.
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: graphoria
+spec:
+  selector: { app: graphoria }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: graphoria
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app: graphoria }
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: graphoria
+spec:
+  gatewayClassName: eg # your implementation's GatewayClass
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: api.example.com
+      tls:
+        mode: Terminate
+        certificateRefs: [{ name: graphoria-tls }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: graphoria
+spec:
+  parentRefs: [{ name: graphoria }]
+  hostnames: [api.example.com]
+  # Only the public API: /health, /metrics, /_console, /openapi.json and /mcp stay in the cluster.
+  # Two rules, so that a policy can reach the requests without the websocket upgrade.
+  rules:
+    - name: websocket
+      matches:
+        - path: { type: Exact, value: /graphql }
+          method: GET
+      backendRefs: [{ name: graphoria, port: 80 }]
+    - name: api
+      matches:
+        - path: { type: Exact, value: /graphql }
+        - path: { type: PathPrefix, value: /rest }
+      backendRefs: [{ name: graphoria, port: 80 }]

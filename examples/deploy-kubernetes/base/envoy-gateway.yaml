@@ -1,0 +1,46 @@
+# The client address: drop any X-Forwarded-For the client sent, so the one Envoy adds is the
+# leftmost entry.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: graphoria
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: graphoria
+  headers:
+    earlyRequestHeaders:
+      remove: [X-Forwarded-For]
+---
+# Upstream keep-alive below the server's 10 s idle timeout (Envoy's default is 1 hour).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: graphoria
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: graphoria
+  timeout:
+    http:
+      connectionIdleTimeout: 5s
+---
+# A 1 MiB body limit on the api rule only: buffering breaks the websocket upgrade. A policy on a
+# rule replaces the one on its route, so it repeats the keep-alive.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: graphoria-api
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: graphoria
+      sectionName: api
+  timeout:
+    http:
+      connectionIdleTimeout: 5s
+  requestBuffer:
+    limit: 1Mi
