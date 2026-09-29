@@ -159,7 +159,7 @@ export const generateOpenAPI = ({
           description: "API key authentication via custom header",
           type: "apiKey",
           in: "header",
-          name: "x-admin-secret",
+          name: options.admin.header,
         },
       },
     },

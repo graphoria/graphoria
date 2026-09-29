@@ -7,7 +7,7 @@ import { integrationEnabled, startServer } from "./harness";
 
 /**
  * Once ADMIN_SECRET_HEADER is renamed, the admin secret is read under the new
- * name only, on the websocket as over HTTP.
+ * name only, on the websocket as over HTTP, and `/openapi.json` names it.
  *
  * PostgreSQL only: nothing under test here is engine-specific.
  */
@@ -81,5 +81,16 @@ describe.skipIf(!integrationEnabled)("renamed admin-secret header", () => {
       type: "connection_ack",
     });
     expect(records).toEqual([]);
+  });
+
+  it("names the renamed header in /openapi.json", async () => {
+    const response = await Bun.fetch(
+      `http://localhost:${started.context.server.port}/openapi.json`,
+    );
+    const spec = (await response.json()) as {
+      components: { securitySchemes: Record<string, { name?: string }> };
+    };
+
+    expect(spec.components.securitySchemes["Admin Secret"]?.name).toBe(HEADER);
   });
 });

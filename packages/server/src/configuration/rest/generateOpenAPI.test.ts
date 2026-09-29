@@ -10,7 +10,11 @@ const { StoreMSSQL } = await import("../../__test/dataset/store");
 const { generateOpenAPI } = await import("./generateOpenAPI");
 const { OperationsZod } = await import("../../config");
 
-const options = { prefix: "", restApiPrefix: "/rest" } as Env;
+const options = {
+  prefix: "",
+  restApiPrefix: "/rest",
+  admin: { header: "x-admin-secret" },
+} as Env;
 
 const specFor = (query: string) => {
   const schema = getSchema({
@@ -32,6 +36,29 @@ const specFor = (query: string) => {
 };
 
 describe("generateOpenAPI", () => {
+  it("names the admin-secret header the server reads", () => {
+    const schema = getSchema({
+      tables: StoreMSSQL.tables,
+      storedProcedures: [],
+      queues: [],
+      operations: OperationsZod.parse({}),
+      remoteSchemas: [],
+      remoteREST: [],
+    });
+
+    const spec = generateOpenAPI({
+      schema,
+      options: { ...options, admin: { ...options.admin, header: "x-graphoria-key" } },
+    });
+
+    expect(spec.components?.securitySchemes?.["Admin Secret"]).toEqual({
+      description: "API key authentication via custom header",
+      type: "apiKey",
+      in: "header",
+      name: "x-graphoria-key",
+    });
+  });
+
   it("types columns selected under an aggregate's key from the grouped table", () => {
     const data = specFor(`
       query {
