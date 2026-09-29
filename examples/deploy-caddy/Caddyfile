@@ -1,0 +1,19 @@
+{$SITE_ADDRESS:localhost} {
+	# Only the public API: the rest of what Graphoria serves stays on the private network.
+	@api path /graphql /rest /rest/*
+	handle @api {
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy graphoria:3000 {
+			transport http {
+				# Below the server's 10 s idle timeout, so Caddy never reuses a connection the
+				# server is closing.
+				keepalive 5s
+			}
+		}
+	}
+	handle {
+		respond 404
+	}
+}

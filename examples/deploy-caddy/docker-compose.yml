@@ -1,0 +1,65 @@
+# The starter project on one host, behind Caddy: Caddy terminates TLS and passes only the
+# public API through.
+#
+#   docker compose up -d --build --wait
+#
+# Then https://localhost/graphql, on a certificate from Caddy's own local CA. Set SITE_ADDRESS
+# to a domain that points at this host and Caddy gets a public certificate instead.
+# `docker compose down -v` removes everything, the database and the certificates included.
+services:
+  postgres:
+    image: postgres:18
+    shm_size: 128mb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: my_app
+    volumes:
+      - postgres:/var/lib/postgresql
+      - ../docker-compose-starter/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    # Over TCP: while the seed runs, Postgres listens on its unix socket only.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "my_app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  graphoria:
+    build: ../docker-compose-starter
+    restart: unless-stopped
+    environment:
+      ADMIN_SECRET: ${ADMIN_SECRET:-change-me}
+      PG_HOST: postgres
+      # Caddy sets X-Forwarded-For to the address it sees, so the rate limiter and the audit log
+      # get the client's address instead of Caddy's.
+      RATE_LIMIT_TRUST_PROXY: "true"
+    # No published port: only Caddy reaches the app.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # Passed through only when set; the Caddyfile defaults it to localhost.
+      SITE_ADDRESS:
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and the local CA. Keep this volume: without it Caddy asks for new
+      # certificates on every start, and the CA's rate limits apply.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      graphoria:
+        condition: service_healthy
+
+volumes:
+  postgres:
+  caddy_data:
+  caddy_config:

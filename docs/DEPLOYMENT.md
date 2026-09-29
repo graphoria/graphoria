@@ -87,6 +87,7 @@ send them over plain HTTP.
 
 For a VM or a Compose stack, this Caddyfile is the whole proxy. Caddy manages the certificate for
 the site address itself ([automatic HTTPS](https://caddyserver.com/docs/automatic-https)).
+[`examples/deploy-caddy/`](../examples/deploy-caddy/) runs it in front of the starter project.
 
 ```caddyfile
 api.example.com {
