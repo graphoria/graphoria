@@ -1,4 +1,8 @@
+import type { GraphQLSchema } from "graphql";
+import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
 import type { EntitySource } from "../types/resolver";
+
+export type EntitiesWithSchema = MergedEntities & { schema: GraphQLSchema };
 
 export interface AnalysisResult {
   operations: OperationAnalysis[];

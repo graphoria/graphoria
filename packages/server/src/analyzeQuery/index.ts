@@ -1,8 +1,13 @@
 import { parse } from "graphql";
 
-import type { DocumentNode, GraphQLSchema } from "graphql";
+import type { DocumentNode } from "graphql";
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
-import type { AnalysisResult, SelectionAnalysis, VariableDefinition } from "./types";
+import type {
+  AnalysisResult,
+  EntitiesWithSchema,
+  SelectionAnalysis,
+  VariableDefinition,
+} from "./types";
 
 import { analyzeFragment } from "./analyzers/fragmentAnalyzer";
 import { analyzeOperation } from "./analyzers/operationAnalyzer";
@@ -21,10 +26,7 @@ const tagFieldsWithSource = (
 };
 
 // Function to analyze a GraphQL query
-export function analyzeQuery(
-  query: string,
-  entities: MergedEntities & { schema: GraphQLSchema },
-): AnalysisResult {
+export function analyzeQuery(query: string, entities: EntitiesWithSchema): AnalysisResult {
   let ast: DocumentNode | null;
 
   const generatedVariables: VariableDefinition[] = [];
@@ -47,12 +49,7 @@ export function analyzeQuery(
 
   ast.definitions.forEach((def) => {
     if (def.kind === "OperationDefinition") {
-      const operationAnalysis = analyzeOperation(
-        def,
-        entities,
-        entities.schema,
-        generatedVariables,
-      );
+      const operationAnalysis = analyzeOperation(def, entities, generatedVariables);
 
       if (operationAnalysis) {
         // Tag top-level fields with their source
@@ -60,7 +57,7 @@ export function analyzeQuery(
         result.operations.push(operationAnalysis);
       }
     } else if (def.kind === "FragmentDefinition") {
-      const fragmentAnalysis = analyzeFragment(def, entities, entities.schema, generatedVariables);
+      const fragmentAnalysis = analyzeFragment(def, entities, generatedVariables);
 
       result.fragments.push(fragmentAnalysis);
     }
