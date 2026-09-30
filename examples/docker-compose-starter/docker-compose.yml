@@ -24,7 +24,7 @@ services:
 
   graphoria:
     build: .
-    # Bun as PID 1 ignores SIGTERM; the init forwards it, so `stop` is immediate.
+    # Not needed, and harmless: the server handles SIGTERM itself, even as PID 1.
     init: true
     restart: on-failure
     environment:
@@ -34,7 +34,7 @@ services:
       PG_HOST: postgres
     ports:
       - "3000:3000"
-    # Graphoria connects once at boot, with no retry.
+    # Start once Postgres is healthy. Boot would otherwise retry it for up to 60 s.
     depends_on:
       postgres:
         condition: service_healthy

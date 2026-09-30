@@ -1,27 +1,25 @@
-import { GraphQLObjectType, GraphQLSchema } from "graphql";
+import { GraphQLObjectType } from "graphql";
 
 import type { OperationDefinitionNode } from "graphql";
 import type { Maybe } from "graphql/jsutils/Maybe";
-import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
-import type { OperationAnalysis, VariableDefinition } from "../types";
+import type { EntitiesWithSchema, OperationAnalysis, VariableDefinition } from "../types";
 
 import { analyzeSelections } from "./selectionAnalyzer";
 import { analyzeVariables } from "./variableAnalyzer";
 
 export const analyzeOperation = (
   operationDef: OperationDefinitionNode,
-  entities: MergedEntities,
-  gqlSchema: GraphQLSchema,
+  entities: EntitiesWithSchema,
   generatedVariables: VariableDefinition[],
 ): OperationAnalysis | null => {
   let rootType: Maybe<GraphQLObjectType> | undefined;
 
   if (operationDef.operation === "query") {
-    rootType = gqlSchema.getQueryType();
+    rootType = entities.schema.getQueryType();
   } else if (operationDef.operation === "mutation") {
-    rootType = gqlSchema.getMutationType();
+    rootType = entities.schema.getMutationType();
   } else if (operationDef.operation === "subscription") {
-    rootType = gqlSchema.getSubscriptionType();
+    rootType = entities.schema.getSubscriptionType();
   }
 
   if (!rootType) return null;
@@ -34,7 +32,6 @@ export const analyzeOperation = (
     selectionSet.selections,
     rootType,
     entities,
-    gqlSchema,
     declaredVariables,
     generatedVariables,
   );
