@@ -3,6 +3,7 @@ process.env.JWT_SECRET ??= "test-jwt";
 
 import { describe, expect, it } from "bun:test";
 
+import type { RemoteRESTResolved } from "../../remoteREST/types";
 import type { Env } from "../../types/env";
 
 const { getSchema } = await import("../getSchemas");
@@ -140,5 +141,29 @@ describe("generateOpenAPI", () => {
 
     expect(address.address_id.nullable).toBe(false);
     expect(address.line1.nullable).toBe(true);
+  });
+
+  it("adds the paths of the role's remote REST APIs", () => {
+    const payments: RemoteRESTResolved = {
+      config: { name: "payments" },
+      prefix: "payments",
+      baseUrl: "http://payments.test",
+      routes: [],
+      openApiPaths: { "/payments/charges": { get: { responses: {} } } },
+      openApiSchemas: {},
+    };
+
+    const schema = getSchema({
+      tables: StoreMSSQL.tables,
+      storedProcedures: [],
+      queues: [],
+      operations: OperationsZod.parse({}),
+      remoteSchemas: [],
+      remoteREST: [payments],
+    });
+
+    const spec = generateOpenAPI({ schema, options });
+
+    expect(spec.paths?.["/payments/charges"]).toEqual({ get: { responses: {} } });
   });
 });

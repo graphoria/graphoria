@@ -136,7 +136,6 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     version: configuration.version,
     schema: schemas.superadmin,
     options,
-    remoteRESTApis: schemas.superadmin.remoteRESTApis,
     ai: configuration.ai?.enabled ? { path: configuration.ai.endpoint ?? "/ai" } : undefined,
   });
 

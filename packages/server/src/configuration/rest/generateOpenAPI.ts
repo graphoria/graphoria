@@ -4,7 +4,6 @@ import type { GraphQLType } from "graphql";
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { SelectionAnalysis } from "../../analyzeQuery/types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
-import type { RemoteRESTResolved } from "../../remoteREST/types";
 import type { Env } from "../../types/env";
 
 import { getFieldType, unwrapType } from "../../analyzeQuery/typeUtils";
@@ -82,7 +81,6 @@ type GenerateOpenAPIParams = {
   version?: string;
   schema: GetSchemaReturn;
   options: Env;
-  remoteRESTApis?: RemoteRESTResolved[];
   /** When set, adds the admin-only AI agent endpoint to the spec. */
   ai?: { path: string };
 };
@@ -98,7 +96,6 @@ export const generateOpenAPI = ({
   version = "1.0.0",
   schema,
   options,
-  remoteRESTApis = [],
   ai,
 }: GenerateOpenAPIParams): OpenAPIV3_1.Document => {
   // Build remote REST paths and schemas
@@ -106,7 +103,7 @@ export const generateOpenAPI = ({
   const remoteSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {};
   const remoteTags: OpenAPIV3_1.TagObject[] = [];
 
-  for (const rr of remoteRESTApis) {
+  for (const rr of schema.remoteRESTApis) {
     Object.assign(remotePaths, rr.openApiPaths);
     Object.assign(remoteSchemas, rr.openApiSchemas);
     remoteTags.push({
