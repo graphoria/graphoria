@@ -79,7 +79,7 @@ const processSelections = (
 type GenerateOpenAPIParams = {
   title?: string;
   version?: string;
-  schema: GetSchemaReturn;
+  role: GetSchemaReturn;
   options: Env;
   /** When set, adds the admin-only AI agent endpoint to the spec. */
   ai?: { path: string };
@@ -94,7 +94,7 @@ export const getTags = (url: string) => {
 export const generateOpenAPI = ({
   title = "REST API",
   version = "1.0.0",
-  schema,
+  role,
   options,
   ai,
 }: GenerateOpenAPIParams): OpenAPIV3_1.Document => {
@@ -103,7 +103,7 @@ export const generateOpenAPI = ({
   const remoteSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {};
   const remoteTags: OpenAPIV3_1.TagObject[] = [];
 
-  for (const rr of schema.remoteRESTApis) {
+  for (const rr of role.remoteRESTApis) {
     Object.assign(remotePaths, rr.openApiPaths);
     Object.assign(remoteSchemas, rr.openApiSchemas);
     remoteTags.push({
@@ -161,7 +161,7 @@ export const generateOpenAPI = ({
       },
     },
     paths: {
-      ...Object.entries(schema.handlers.rest.operationsEnhanced).reduce<
+      ...Object.entries(role.handlers.rest.operationsEnhanced).reduce<
         Record<string, Record<string, unknown>>
       >((acc, [key, value]) => {
         // Skip if neither queryStructure nor responseSchema is available
@@ -177,8 +177,8 @@ export const generateOpenAPI = ({
               const fields = operation.fields;
               const rootType =
                 (operation.operation === "mutation"
-                  ? schema.schema.getMutationType()
-                  : schema.schema.getQueryType()) ?? undefined;
+                  ? role.schema.getMutationType()
+                  : role.schema.getQueryType()) ?? undefined;
               return {
                 type: "object" as const,
                 properties: fields.reduce<Record<string, unknown>>((acc, field) => {

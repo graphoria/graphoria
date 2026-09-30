@@ -18,7 +18,7 @@ const options = {
 } as Env;
 
 const specFor = (query: string) => {
-  const schema = getSchema({
+  const role = getSchema({
     tables: StoreMSSQL.tables,
     storedProcedures: [],
     queues: [],
@@ -29,7 +29,7 @@ const specFor = (query: string) => {
     remoteREST: [],
   });
 
-  const spec = generateOpenAPI({ schema, options });
+  const spec = generateOpenAPI({ role, options });
 
   // oxlint-disable-next-line typescript/no-explicit-any
   return (spec.paths!["/probe"] as any).get.responses[200].content["application/json"].schema
@@ -38,7 +38,7 @@ const specFor = (query: string) => {
 
 describe("generateOpenAPI", () => {
   it("names the admin-secret header the server reads", () => {
-    const schema = getSchema({
+    const role = getSchema({
       tables: StoreMSSQL.tables,
       storedProcedures: [],
       queues: [],
@@ -48,7 +48,7 @@ describe("generateOpenAPI", () => {
     });
 
     const spec = generateOpenAPI({
-      schema,
+      role,
       options: { ...options, admin: { ...options.admin, header: "x-graphoria-key" } },
     });
 
@@ -153,7 +153,7 @@ describe("generateOpenAPI", () => {
       openApiSchemas: {},
     };
 
-    const schema = getSchema({
+    const role = getSchema({
       tables: StoreMSSQL.tables,
       storedProcedures: [],
       queues: [],
@@ -162,7 +162,7 @@ describe("generateOpenAPI", () => {
       remoteREST: [payments],
     });
 
-    const spec = generateOpenAPI({ schema, options });
+    const spec = generateOpenAPI({ role, options });
 
     expect(spec.paths?.["/payments/charges"]).toEqual({ get: { responses: {} } });
   });

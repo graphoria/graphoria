@@ -134,7 +134,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
   const jsonOpenApi = generateOpenAPI({
     title: configuration.name,
     version: configuration.version,
-    schema: schemas.superadmin,
+    role: schemas.superadmin,
     options,
     ai: configuration.ai?.enabled ? { path: configuration.ai.endpoint ?? "/ai" } : undefined,
   });
