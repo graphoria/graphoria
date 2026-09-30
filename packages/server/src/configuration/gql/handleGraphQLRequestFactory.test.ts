@@ -188,6 +188,16 @@ describe("handleGraphQLRequestFactory.hasErrors", () => {
     expect(factory.hasErrors(deepQuery, { enforceDepthLimit: false }).hasErrors).toBe(false);
     expect(factory.hasErrors(deepQuery).hasErrors).toBe(true);
   });
+
+  it("accepts overlapping selections instead of enforcing field merging", () => {
+    const factory = factoryFn(buildEntities());
+
+    // Same response name, differing arguments: a spec field-merging conflict.
+    // The engine merges results by assignment, so the query is executable.
+    const result = factory.hasErrors("query { users { id } users(limit: 10) { id } }");
+
+    expect(result.hasErrors).toBe(false);
+  });
 });
 
 describe("handleGraphQLRequestFactory.hasErrors — cost limit", () => {

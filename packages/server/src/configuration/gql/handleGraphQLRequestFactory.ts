@@ -1,5 +1,5 @@
 import { isString } from "es-toolkit";
-import { parse, specifiedRules, validate } from "graphql";
+import { OverlappingFieldsCanBeMergedRule, parse, specifiedRules, validate } from "graphql";
 import { LRUCache } from "lru-cache";
 
 import type { BunRequest } from "bun";
@@ -176,6 +176,14 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
 
   const pageLimits = { defaultPageSize: env.defaultPageSize, maxPageSize: env.maxPageSize };
 
+  // Results are merged by assignment (last write wins) and nothing here checks
+  // the spec's field-merging constraints, so the overlap rule only rejects
+  // queries the engine would otherwise execute — while being the one rule whose
+  // cost grows quadratically with wide selection sets.
+  const validationRules = specifiedRules.filter(
+    (rule) => rule !== OverlappingFieldsCanBeMergedRule,
+  );
+
   // undefined = unparseable query (never cached)
   const getCacheEntry = (query: string): CachedQuery | undefined => {
     const hit = queryCache.get(query);
@@ -249,7 +257,8 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       let validationErrors = enforceDepthLimit ? entry?.validationErrors : undefined;
       if (!validationErrors) {
         const maxDepth = enforceDepthLimit ? env.maxQueryDepth : 0;
-        const rules = maxDepth > 0 ? [...specifiedRules, depthLimitRule(maxDepth)] : undefined; // undefined = use default specifiedRules
+        const rules =
+          maxDepth > 0 ? [...validationRules, depthLimitRule(maxDepth)] : validationRules;
 
         validationErrors = validate(entities.schema, document, rules);
         if (entry && enforceDepthLimit) entry.validationErrors = validationErrors;
