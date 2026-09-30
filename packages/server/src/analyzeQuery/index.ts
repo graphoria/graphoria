@@ -23,8 +23,7 @@ const tagFieldsWithSource = (
 // Function to analyze a GraphQL query
 export function analyzeQuery(
   query: string,
-  entities: MergedEntities,
-  gqlSchema: GraphQLSchema,
+  entities: MergedEntities & { schema: GraphQLSchema },
 ): AnalysisResult {
   let ast: DocumentNode | null;
 
@@ -48,7 +47,12 @@ export function analyzeQuery(
 
   ast.definitions.forEach((def) => {
     if (def.kind === "OperationDefinition") {
-      const operationAnalysis = analyzeOperation(def, entities, gqlSchema, generatedVariables);
+      const operationAnalysis = analyzeOperation(
+        def,
+        entities,
+        entities.schema,
+        generatedVariables,
+      );
 
       if (operationAnalysis) {
         // Tag top-level fields with their source
@@ -56,7 +60,7 @@ export function analyzeQuery(
         result.operations.push(operationAnalysis);
       }
     } else if (def.kind === "FragmentDefinition") {
-      const fragmentAnalysis = analyzeFragment(def, entities, gqlSchema, generatedVariables);
+      const fragmentAnalysis = analyzeFragment(def, entities, entities.schema, generatedVariables);
 
       result.fragments.push(fragmentAnalysis);
     }

@@ -28,13 +28,17 @@ const sdl = `
 
 const schema = buildSchema(sdl);
 
-// oxlint-disable-next-line typescript/no-explicit-any
-const entities = { getResolverSource: () => undefined } as any;
-const gqlEntities = { typeDefs: sdl, schema, introspection: introspectionFromSchema(schema) };
+const entities = {
+  getResolverSource: () => undefined,
+  typeDefs: sdl,
+  schema,
+  introspection: introspectionFromSchema(schema),
+  // oxlint-disable-next-line typescript/no-explicit-any
+} as any;
 
 const role = {
   schema,
-  handlers: { gql: handleGraphQLRequestFactory(entities, gqlEntities) },
+  handlers: { gql: handleGraphQLRequestFactory(entities) },
 } as unknown as RoleEntities;
 
 const PAGINATED = "query ($n: Int) { users(limit: $n) { id name posts { id } } }";

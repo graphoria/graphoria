@@ -2,11 +2,10 @@ import { match } from "path-to-regexp";
 
 import type { BunRequest } from "bun";
 import type { MatchFunction } from "path-to-regexp";
-import type { GetGQLEntitiesReturn } from "../../configuration/getSchemas";
+import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { RemoteRESTResolved, RemoteRESTRoute } from "../../remoteREST/types";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
-import type { MergedEntities } from "../getSchemas/mergeEntities";
 import type { HandleGraphQLRequest } from "../gql/handleGraphQLRequestFactory";
 
 import { analyzeQuery } from "../../analyzeQuery";
@@ -30,19 +29,12 @@ type RemoteRouteEntry = {
 };
 
 export const handleRESTRequestFactory = (
-  entities: MergedEntities,
-  gqlEntities: GetGQLEntitiesReturn,
+  entities: SchemaEntities,
   gql: HandleGraphQLRequest,
   auth: Auth | null = null,
   gqlSuperadminHandler: HandleGraphQLRequest | null = null,
 ) => {
-  const { operationsEnhanced } = buildApiRoutes(
-    entities,
-    gqlEntities,
-    gql,
-    auth,
-    gqlSuperadminHandler,
-  );
+  const { operationsEnhanced } = buildApiRoutes(entities, gql, auth, gqlSuperadminHandler);
 
   const routes = Object.values(operationsEnhanced);
 
@@ -145,9 +137,7 @@ export const handleRESTRequestFactory = (
       };
 
       // Only analyze query if route has a query (not a custom handler)
-      const queryAnalysis = route.query
-        ? analyzeQuery(route.query, entities, gqlEntities.schema)
-        : null;
+      const queryAnalysis = route.query ? analyzeQuery(route.query, entities) : null;
 
       const variables =
         (await route.hooks?.beforeRequest?.(

@@ -98,10 +98,11 @@ const buildEntities = ({
     queriesMap: {},
     mutationsMap: {},
     operations: {},
+    typeDefs: sdl,
+    schema,
+    introspection,
     // oxlint-disable-next-line typescript/no-explicit-any
   }) as any;
-
-const gqlEntities = { typeDefs: sdl, schema, introspection };
 
 const fakeReq = {} as unknown as BunRequest;
 
@@ -112,24 +113,24 @@ beforeAll(async () => {
 
 describe("handleGraphQLRequestFactory — pure helpers", () => {
   it("isIntrospectionQuery detects __schema queries", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     expect(factory.isIntrospectionQuery("query { __schema { queryType { name } } }")).toBe(true);
     expect(factory.isIntrospectionQuery("query { users { id } }")).toBe(false);
   });
 
   it("isNoDataQuery detects _no_data sentinel", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     expect(factory.isNoDataQuery("query { _no_data }")).toBe(true);
     expect(factory.isNoDataQuery("query { users { id } }")).toBe(false);
   });
 
-  it("introspectionResult passes through gqlEntities.introspection", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+  it("introspectionResult passes through entities.introspection", () => {
+    const factory = factoryFn(buildEntities());
     expect(factory.introspectionResult).toEqual({ data: introspection });
   });
 
   it("noDataResult returns the no-data sentinel", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     expect(factory.noDataResult).toEqual({
       data: { _no_data: "No data available" },
     });
@@ -138,14 +139,14 @@ describe("handleGraphQLRequestFactory — pure helpers", () => {
 
 describe("handleGraphQLRequestFactory.hasErrors", () => {
   it("returns hasErrors=false for a valid query", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const result = factory.hasErrors("query { users { id name } }");
     expect(result.hasErrors).toBe(false);
     expect(result.validationErrors).toHaveLength(0);
   });
 
   it("returns a validation error for an unknown field", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const result = factory.hasErrors("query { not_a_field }");
     expect(result.hasErrors).toBe(true);
     expect(result.validationErrors.length).toBeGreaterThan(0);
@@ -162,7 +163,7 @@ describe("handleGraphQLRequestFactory.hasErrors", () => {
   `;
 
   it("rejects a query past the default depth limit", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const result = factory.hasErrors(deepQuery);
     expect(result.hasErrors).toBe(true);
     expect(result.validationErrors[0].message).toContain("maximum allowed depth of 8");
@@ -170,20 +171,20 @@ describe("handleGraphQLRequestFactory.hasErrors", () => {
   });
 
   it("accepts the same query when the depth limit is not enforced", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const result = factory.hasErrors(deepQuery, { enforceDepthLimit: false });
     expect(result.hasErrors).toBe(false);
   });
 
   it("still reports non-depth errors when the depth limit is not enforced", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const result = factory.hasErrors("query { not_a_field }", { enforceDepthLimit: false });
     expect(result.hasErrors).toBe(true);
     expect(result.validationErrors[0].message).toContain("not_a_field");
   });
 
   it("does not let an unenforced result serve a later enforced check", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     expect(factory.hasErrors(deepQuery, { enforceDepthLimit: false }).hasErrors).toBe(false);
     expect(factory.hasErrors(deepQuery).hasErrors).toBe(true);
   });
@@ -209,12 +210,12 @@ describe("handleGraphQLRequestFactory.hasErrors — cost limit", () => {
   });
 
   it("passes a query whose variables keep it within budget", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     expect(factory.hasErrors(paginated, { variables: { n: 1 } }).hasErrors).toBe(false);
   });
 
   it("does not serve a cheap verdict to the same text sent with expensive variables", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     expect(factory.hasErrors(paginated, { variables: { n: 1 } }).hasErrors).toBe(false);
 
@@ -224,7 +225,7 @@ describe("handleGraphQLRequestFactory.hasErrors — cost limit", () => {
   });
 
   it("leaves an operator-authored query unbudgeted", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     expect(
       factory.hasErrors(paginated, {
@@ -236,7 +237,7 @@ describe("handleGraphQLRequestFactory.hasErrors — cost limit", () => {
   });
 
   it("reports a schema error rather than an estimate for a query that does not typecheck", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     const result = factory.hasErrors("query { not_a_field }", { variables: {} });
     expect(result.validationErrors[0].message).toContain("not_a_field");
@@ -245,7 +246,7 @@ describe("handleGraphQLRequestFactory.hasErrors — cost limit", () => {
 
 describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
   it("returns empty data when there are no operations", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const empty: AnalysisResult = { operations: [], fragments: [] };
     expect(await factory.handler(empty, {}, fakeReq, undefined)).toEqual({
       data: {},
@@ -253,7 +254,7 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
   });
 
   it("auth_me query returns username/role for authenticated session", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const analysis: AnalysisResult = {
       operations: [
         {
@@ -275,7 +276,7 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
   });
 
   it("auth_me query returns null when no session sub", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const analysis: AnalysisResult = {
       operations: [
         {
@@ -292,7 +293,7 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
   });
 
   it("auth_me query honours field aliases", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const analysis: AnalysisResult = {
       operations: [
         {
@@ -317,7 +318,7 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
     // The factory short-circuits before SQL generation when there are zero
     // table fields, so this exercises the auth-only code path without needing
     // to mock the SQL pipeline.
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const analysis: AnalysisResult = {
       operations: [
         {
@@ -348,7 +349,7 @@ describe("handleGraphQLRequestFactory — query cache", () => {
   };
 
   it("analyzes a repeated query only once across full route sequences", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const query = "query { auth_me { username role } }";
     const spy = spyOn(analyzeQueryModule, "analyzeQuery");
     try {
@@ -362,7 +363,7 @@ describe("handleGraphQLRequestFactory — query cache", () => {
   });
 
   it("returns the cached validation result on repeated hasErrors calls", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const query = "query { users { id } }";
     const first = factory.hasErrors(query);
     const second = factory.hasErrors(query);
@@ -370,12 +371,12 @@ describe("handleGraphQLRequestFactory — query cache", () => {
   });
 
   it("handler returns empty data for an unparseable query string", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     expect(await factory.handler("query {", {}, fakeReq, undefined)).toEqual({ data: {} });
   });
 
   it("hasErrors still throws a syntax error for an unparseable query", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     expect(() => factory.hasErrors("query {")).toThrow("Syntax Error");
   });
 });
@@ -398,7 +399,7 @@ describe("handleGraphQLRequestFactory.handler — mutation dispatch errors", () 
   });
 
   it("QUEUE_PUBLISHER throws when the publisher is not in queuesMap", () => {
-    const factory = factoryFn(buildEntities({ withQueuePublisher: false }), gqlEntities);
+    const factory = factoryFn(buildEntities({ withQueuePublisher: false }));
     const analysis = mutationAnalysis({
       name: "queue_publish",
       source: EntitySource.QUEUE_PUBLISHER,
@@ -410,7 +411,7 @@ describe("handleGraphQLRequestFactory.handler — mutation dispatch errors", () 
   });
 
   it("AUTH auth_login throws when auth.enabled is false", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities, {
+    const factory = factoryFn(buildEntities(), {
       enabled: false,
     } as Auth);
     const analysis = mutationAnalysis({
@@ -424,7 +425,7 @@ describe("handleGraphQLRequestFactory.handler — mutation dispatch errors", () 
   });
 
   it("AUTH auth_login throws when auth is null (default)", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const analysis = mutationAnalysis({
       name: "auth_login",
       source: EntitySource.AUTH,
@@ -436,7 +437,7 @@ describe("handleGraphQLRequestFactory.handler — mutation dispatch errors", () 
   });
 
   it("REMOTE_SCHEMA mutation throws when the entry is missing from remoteMutationsMap", () => {
-    const factory = factoryFn(buildEntities({ withRemoteMutation: false }), gqlEntities);
+    const factory = factoryFn(buildEntities({ withRemoteMutation: false }));
     const analysis = mutationAnalysis({
       name: "remote_mutation_field",
       source: EntitySource.REMOTE_SCHEMA,
@@ -476,7 +477,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
       connections: () => [],
     });
     try {
-      const factory = factoryFn(buildEntities(), gqlEntities);
+      const factory = factoryFn(buildEntities());
       const analysis: AnalysisResult = {
         operations: [
           {
@@ -517,7 +518,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
   it("records an ask with the prompt and the superadmin caller", async () => {
     const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
     try {
-      const factory = factoryFn(buildEntities(), gqlEntities);
+      const factory = factoryFn(buildEntities());
       const result = await factory.handler(
         'query { ask(prompt: "how many users?") }',
         {},
@@ -567,7 +568,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("counts a handled operation by name, type, role and outcome", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler(analysis("Me"), {}, fakeReq, { sub: "alice", role: "user" });
 
@@ -577,7 +578,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("names an anonymous operation by its root fields", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler(analysis(null), {}, fakeReq, { sub: "alice", role: "user" });
 
@@ -585,7 +586,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("counts an operation with no session under the anonymous role", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler(analysis("Me"), {}, fakeReq, undefined);
 
@@ -593,7 +594,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("times every handled operation", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler(analysis("Me"), {}, fakeReq, { sub: "alice", role: "user" });
 
@@ -603,7 +604,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("counts a failed operation as an error and still times it", async () => {
-    const factory = factoryFn(buildEntities({ withQueuePublisher: false }), gqlEntities);
+    const factory = factoryFn(buildEntities({ withQueuePublisher: false }));
     const failing: AnalysisResult = {
       operations: [
         {
@@ -634,7 +635,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("records nothing for a request carrying no operation", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler({ operations: [], fragments: [] }, {}, fakeReq, undefined);
 
@@ -642,7 +643,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("counts a depth rejection", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     factory.hasErrors(`
       query Deep {
@@ -654,7 +655,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("counts an unknown field as a validation rejection", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     factory.hasErrors("query { not_a_field }");
 
@@ -664,7 +665,7 @@ describe("handleGraphQLRequestFactory — metrics", () => {
   });
 
   it("counts nothing for a query that passes validation", () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     factory.hasErrors("query { users { id name } }");
 
@@ -699,7 +700,7 @@ describe("handleGraphQLRequestFactory — tracing", () => {
     spans.find((span) => span.name !== "graphoria.analyze")!;
 
   it("names the operation span for its type and its name", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler(analysis("Me"), {}, fakeReq, { sub: "alice", role: "user" });
 
@@ -712,7 +713,7 @@ describe("handleGraphQLRequestFactory — tracing", () => {
   });
 
   it("names an anonymous operation by its root fields", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler(analysis(null), {}, fakeReq, { sub: "alice", role: "user" });
 
@@ -720,7 +721,7 @@ describe("handleGraphQLRequestFactory — tracing", () => {
   });
 
   it("attributes an operation with no session to the anonymous role", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler(analysis("Me"), {}, fakeReq, undefined);
 
@@ -728,7 +729,7 @@ describe("handleGraphQLRequestFactory — tracing", () => {
   });
 
   it("marks a failing operation errored", async () => {
-    const factory = factoryFn(buildEntities({ withQueuePublisher: false }), gqlEntities);
+    const factory = factoryFn(buildEntities({ withQueuePublisher: false }));
     const failing: AnalysisResult = {
       operations: [
         {
@@ -753,7 +754,7 @@ describe("handleGraphQLRequestFactory — tracing", () => {
   });
 
   it("spans the analysis and reports a miss then a hit on a repeated query", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const query = "query Repeated { auth_me { username role } }";
 
     await factory.handler(query, {}, fakeReq, { sub: "alice", role: "user" });
@@ -770,7 +771,7 @@ describe("handleGraphQLRequestFactory — tracing", () => {
   });
 
   it("puts the analysis and the operation under the request's trace", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
     const parent = { traceId: "a".repeat(32), spanId: "b".repeat(16), sampled: true };
 
     await withActiveSpan(startSpan("POST graphql", { parent }), () =>
@@ -784,7 +785,7 @@ describe("handleGraphQLRequestFactory — tracing", () => {
   });
 
   it("spans the analysis but no operation for a request carrying none", async () => {
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler({ operations: [], fragments: [] }, {}, fakeReq, undefined);
 
@@ -793,7 +794,7 @@ describe("handleGraphQLRequestFactory — tracing", () => {
 
   it("records nothing while tracing is disabled", async () => {
     sink.restore();
-    const factory = factoryFn(buildEntities(), gqlEntities);
+    const factory = factoryFn(buildEntities());
 
     await factory.handler(analysis("Me"), {}, fakeReq, undefined);
 

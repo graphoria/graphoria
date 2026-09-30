@@ -36,7 +36,7 @@ const engines = [
 for (const { name, entities, genSql } of engines) {
   describe(`${name}: identifiers GraphQL cannot spell`, () => {
     const gen = (query: string, variables: Record<string, unknown> = {}) =>
-      genSql(entities, analyzeQuery(query, entities, entities.schema), variables);
+      genSql(entities, analyzeQuery(query, entities), variables);
 
     it("selects the real column and returns it under the sanitised field name", () => {
       const sql = gen(`

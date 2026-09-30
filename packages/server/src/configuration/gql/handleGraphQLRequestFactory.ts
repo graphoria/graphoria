@@ -5,8 +5,7 @@ import { LRUCache } from "lru-cache";
 import type { BunRequest } from "bun";
 import type { DocumentNode, GraphQLError } from "graphql";
 import type { AnalysisResult, SelectionAnalysis } from "../../analyzeQuery/types";
-import type { GetGQLEntitiesReturn } from "../../configuration/getSchemas";
-import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
+import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
 
@@ -29,11 +28,7 @@ import { incMetric, isMetricsEnabled, observeMetric } from "../../observability/
 import { startSpan, withActiveSpan } from "../../observability/tracing";
 
 // Handle GraphQL query
-export const handleGraphQLRequestFactory = (
-  entities: MergedEntities,
-  gqlEntities: GetGQLEntitiesReturn,
-  auth: Auth | null = null,
-) => {
+export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth | null = null) => {
   // Mutation handlers by source type
   const mutationHandlers: Partial<
     Record<
@@ -224,7 +219,7 @@ export const handleGraphQLRequestFactory = (
       return entry ? isNoDataAST(entry.document) : false;
     },
     // Return the introspection result for clients like GraphiQL or Apollo Client
-    introspectionResult: { data: gqlEntities.introspection },
+    introspectionResult: { data: entities.introspection },
     noDataResult: { data: { _no_data: "No data available" } },
     // `enforceDepthLimit: false` and `enforceCostLimit: false` are for
     // operator-authored queries (REST operations), which are config, not
@@ -256,7 +251,7 @@ export const handleGraphQLRequestFactory = (
         const maxDepth = enforceDepthLimit ? env.maxQueryDepth : 0;
         const rules = maxDepth > 0 ? [...specifiedRules, depthLimitRule(maxDepth)] : undefined; // undefined = use default specifiedRules
 
-        validationErrors = validate(gqlEntities.schema, document, rules);
+        validationErrors = validate(entities.schema, document, rules);
         if (entry && enforceDepthLimit) entry.validationErrors = validationErrors;
       }
 
@@ -268,7 +263,7 @@ export const handleGraphQLRequestFactory = (
       if (enforceCostLimit && env.maxQueryCost > 0 && validationErrors.length === 0) {
         const costError = checkQueryCost(
           document,
-          gqlEntities.schema,
+          entities.schema,
           options?.variables ?? {},
           pageLimits,
           env.maxQueryCost,
@@ -326,7 +321,7 @@ export const handleGraphQLRequestFactory = (
         queryAnalysis = entry.analysis;
         analyzeSpan?.setAttribute("graphoria.analysis.cached", true);
       } else {
-        queryAnalysis = isString(query) ? analyzeQuery(query, entities, gqlEntities.schema) : query;
+        queryAnalysis = isString(query) ? analyzeQuery(query, entities) : query;
         if (entry) entry.analysis = queryAnalysis;
         analyzeSpan?.setAttribute("graphoria.analysis.cached", false);
       }

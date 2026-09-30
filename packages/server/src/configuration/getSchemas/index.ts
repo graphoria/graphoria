@@ -24,21 +24,20 @@ export const getGQLEntities = (mergedEntities: MergedEntities, hasAuth: boolean 
 
 export type GetGQLEntitiesReturn = ReturnType<typeof getGQLEntities>;
 
+export type SchemaEntities = MergedEntities & GetGQLEntitiesReturn;
+
 export const getHandlers = (
-  entities: MergedEntities,
-  gqlEntities: GetGQLEntitiesReturn,
+  entities: SchemaEntities,
   auth: Auth | null = null,
   gqlSuperadminHandler: HandleGraphQLRequest | null = null,
 ) => {
-  const gql = handleGraphQLRequestFactory(entities, gqlEntities, auth);
+  const gql = handleGraphQLRequestFactory(entities, auth);
 
   return {
     gql,
-    rest: handleRESTRequestFactory(entities, gqlEntities, gql, auth, gqlSuperadminHandler),
+    rest: handleRESTRequestFactory(entities, gql, auth, gqlSuperadminHandler),
   };
 };
-
-export type GetInformationAndHandlerReturn = Awaited<ReturnType<typeof getHandlers>>;
 
 export const getSchema = (
   entityOfRole: EntitiesOfRole,
@@ -46,14 +45,16 @@ export const getSchema = (
   gqlSuperadminHandler: HandleGraphQLRequest | null = null,
   includeAI: boolean = false,
 ) => {
-  const entities = mergeEntities(entityOfRole, auth?.enabled ?? false, includeAI);
+  const mergedEntities = mergeEntities(entityOfRole, auth?.enabled ?? false, includeAI);
 
-  const gqlEntities = getGQLEntities(entities, auth?.enabled);
+  const entities: SchemaEntities = {
+    ...mergedEntities,
+    ...getGQLEntities(mergedEntities, auth?.enabled),
+  };
 
   return {
     ...entities,
-    ...gqlEntities,
-    handlers: getHandlers(entities, gqlEntities, auth, gqlSuperadminHandler),
+    handlers: getHandlers(entities, auth, gqlSuperadminHandler),
   };
 };
 
@@ -64,13 +65,7 @@ export const getSchemas = (
   auth: Auth,
   gqlSuperadminHandler: HandleGraphQLRequest,
 ) => {
-  const schemas: Record<
-    string,
-    MergedEntities &
-      GetGQLEntitiesReturn & {
-        handlers: GetInformationAndHandlerReturn;
-      }
-  > = {};
+  const schemas: Record<string, GetSchemaReturn> = {};
 
   for (const [role, entitiesOfRole] of Object.entries(tablesAndStoredProceduresForRole)) {
     schemas[role] = getSchema(entitiesOfRole, auth, gqlSuperadminHandler);

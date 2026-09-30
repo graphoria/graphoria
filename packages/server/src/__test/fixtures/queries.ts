@@ -23,7 +23,6 @@ export const prodQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodLimitQuery = analyzeQuery(
@@ -36,7 +35,6 @@ export const prodLimitQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWhereArgumentQuery = analyzeQuery(
@@ -56,7 +54,6 @@ export const prodWhereArgumentQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWhereArgumentNestedQuery = analyzeQuery(
@@ -74,7 +71,6 @@ export const prodWhereArgumentNestedQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWhereArgumentNestedEntitiesQuery = analyzeQuery(
@@ -91,7 +87,6 @@ export const prodWhereArgumentNestedEntitiesQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWhereArgumentDeeplyNestedEntitiesQuery = analyzeQuery(
@@ -108,7 +103,6 @@ export const prodWhereArgumentDeeplyNestedEntitiesQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodGroupByQuery = analyzeQuery(
@@ -135,7 +129,6 @@ export const prodGroupByQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // ============================================================================
@@ -157,7 +150,6 @@ export const ordQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const ordGroupByQuery = analyzeQuery(
@@ -180,7 +172,6 @@ export const ordGroupByQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // Aggregate with a data-transform directive on a `key` field and an `items` field.
@@ -201,7 +192,6 @@ export const ordGroupByDateFormatQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // Aggregate with a directive that works on every engine (used to prove key/items
@@ -222,7 +212,6 @@ export const ordGroupByMultiplyQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // ============================================================================
@@ -245,7 +234,6 @@ export const ordWithSkipTrueDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const ordWithSkipFalseDirectiveQuery = analyzeQuery(
@@ -261,7 +249,6 @@ export const ordWithSkipFalseDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // Include directive: if true, field is included
@@ -278,7 +265,6 @@ export const ordWithIncludeTrueDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const ordWithIncludeFalseDirectiveQuery = analyzeQuery(
@@ -294,7 +280,6 @@ export const ordWithIncludeFalseDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // Variable-based directives for dynamic query behavior
@@ -311,7 +296,6 @@ export const ordDirectiveOptionalQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const ordDirectiveRequiredQuery = analyzeQuery(
@@ -327,7 +311,6 @@ export const ordDirectiveRequiredQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // ============================================================================
@@ -348,7 +331,6 @@ export const ordWithWhenAndDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // @when(or:) with variables - any true should include the field
@@ -365,7 +347,6 @@ export const ordWithWhenOrDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 // ============================================================================
@@ -383,7 +364,6 @@ export const prodWithUppercaseDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithLowercaseDirectiveQuery = analyzeQuery(
@@ -397,7 +377,6 @@ export const prodWithLowercaseDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithTruncateDirectiveQuery = analyzeQuery(
@@ -411,7 +390,6 @@ export const prodWithTruncateDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithDefaultDirectiveQuery = analyzeQuery(
@@ -425,7 +403,6 @@ export const prodWithDefaultDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithTrimDirectiveQuery = analyzeQuery(
@@ -439,7 +416,6 @@ export const prodWithTrimDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithSubstringDirectiveQuery = analyzeQuery(
@@ -452,7 +428,6 @@ export const prodWithSubstringDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithReplaceDirectiveQuery = analyzeQuery(
@@ -466,7 +441,6 @@ export const prodWithReplaceDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithConcatDirectiveQuery = analyzeQuery(
@@ -479,7 +453,6 @@ export const prodWithConcatDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithPadDirectiveQuery = analyzeQuery(
@@ -492,7 +465,6 @@ export const prodWithPadDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithRoundDirectiveQuery = analyzeQuery(
@@ -505,7 +477,6 @@ export const prodWithRoundDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithCeilDirectiveQuery = analyzeQuery(
@@ -518,7 +489,6 @@ export const prodWithCeilDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithFloorDirectiveQuery = analyzeQuery(
@@ -531,7 +501,6 @@ export const prodWithFloorDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithAbsDirectiveQuery = analyzeQuery(
@@ -544,7 +513,6 @@ export const prodWithAbsDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithMultiplyDirectiveQuery = analyzeQuery(
@@ -557,7 +525,6 @@ export const prodWithMultiplyDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithDivideDirectiveQuery = analyzeQuery(
@@ -570,7 +537,6 @@ export const prodWithDivideDirectiveQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithChainedDirectivesQuery = analyzeQuery(
@@ -584,7 +550,6 @@ export const prodWithChainedDirectivesQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWithMathChainDirectivesQuery = analyzeQuery(
@@ -597,7 +562,6 @@ export const prodWithMathChainDirectivesQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWhereArgumentVariableQuery = analyzeQuery(
@@ -617,7 +581,6 @@ export const prodWhereArgumentVariableQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodWhereArgumentVariableAndStaticQuery = analyzeQuery(
@@ -637,7 +600,6 @@ export const prodWhereArgumentVariableAndStaticQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodReservedWordAliasQuery = analyzeQuery(
@@ -650,7 +612,6 @@ export const prodReservedWordAliasQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
 
 export const prodReservedWordColumnQuery = analyzeQuery(
@@ -663,5 +624,4 @@ export const prodReservedWordColumnQuery = analyzeQuery(
     }
   `,
   StoreMSSQL,
-  StoreMSSQL.schema,
 );
