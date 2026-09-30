@@ -404,3 +404,34 @@ describe("handleRESTRequestFactory statement timeout", () => {
     expect(seen).toEqual([1_500]);
   });
 });
+
+describe("handleRESTRequestFactory query analysis", () => {
+  it("hands every request the analysis built with the routes", async () => {
+    const analyses: unknown[] = [];
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_analysis", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        // oxlint-disable-next-line typescript/no-explicit-any
+        operatorQuery: async (...args: any[]) => {
+          analyses.push(args[0]);
+          return { data: { ping: true } };
+        },
+      },
+    );
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    const built = factory.operationsEnhanced.op_analysis.queryStructure;
+
+    expect(built).not.toBeNull();
+    expect(analyses).toHaveLength(2);
+    expect(analyses[0]).toBe(built);
+    expect(analyses[1]).toBe(built);
+  });
+});

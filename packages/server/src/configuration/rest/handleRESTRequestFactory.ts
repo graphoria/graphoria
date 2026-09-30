@@ -8,7 +8,6 @@ import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
 import type { HandleGraphQLRequest } from "../gql/handleGraphQLRequestFactory";
 
-import { analyzeQuery } from "../../analyzeQuery";
 import { checkUserCredentials } from "../../databases";
 import { proxyRemoteRESTRequest } from "../../remoteREST/proxy";
 import { actorFromSession, audit } from "../../logging/audit";
@@ -136,8 +135,7 @@ export const handleRESTRequestFactory = (
         ...bodyVariables,
       };
 
-      // Only analyze query if route has a query (not a custom handler)
-      const queryAnalysis = route.query ? analyzeQuery(route.query, entities) : null;
+      const queryAnalysis = route.queryStructure;
 
       const variables =
         (await route.hooks?.beforeRequest?.(
