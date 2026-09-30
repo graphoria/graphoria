@@ -2,7 +2,7 @@ import { createHandlers } from "@graphoria/server";
 import { serve } from "bun";
 import fe from "./fe/index.html";
 
-const { serverHandlers, prefixes, logger } = await createHandlers();
+const { serverHandlers, prefixes, logger, handleSignals } = await createHandlers();
 
 const server = serve({
   ...serverHandlers,
@@ -18,6 +18,8 @@ const server = serve({
     console: true,
   },
 });
+// SIGTERM / SIGINT: finish in-flight requests, close connections, exit.
+handleSignals(server);
 
 const log = logger("taskly");
 

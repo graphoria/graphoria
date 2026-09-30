@@ -100,7 +100,8 @@ services:
   taskly:
     profiles: [taskly]
     build: ./taskly
-    # Bun as PID 1 ignores SIGTERM; the init forwards it, so `stop` is immediate.
+    # index.ts drains on SIGTERM once the server is up. During boot, Bun as PID 1
+    # would ignore it; the init forwards it, so `stop` is immediate.
     init: true
     restart: on-failure
     env_file:
@@ -117,7 +118,8 @@ services:
       PRINT_SCHEMAS: "false"
     ports:
       - "3000:3000"
-    # Graphoria connects once at boot, with no retry.
+    # Start once the services are ready. Boot would otherwise retry the databases
+    # for up to 60 s.
     depends_on:
       postgres:
         condition: service_healthy
