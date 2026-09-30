@@ -5,7 +5,7 @@ import { StoreSQLite } from "../../../../__test/dataset/store";
 import { generateSQL } from ".";
 
 const sql = (query: string, hash = false) => {
-  const [operation] = analyzeQuery(query, StoreSQLite, StoreSQLite.schema).operations;
+  const [operation] = analyzeQuery(query, StoreSQLite).operations;
   return generateSQL(StoreSQLite, operation!, {}, hash, null);
 };
 

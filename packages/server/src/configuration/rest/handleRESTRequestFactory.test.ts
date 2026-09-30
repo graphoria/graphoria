@@ -34,21 +34,6 @@ const stubGqlWithData = (data: any) =>
     hasErrors: () => ({ hasErrors: false, errors: [] }),
   }) as const;
 
-const stubGqlEntities = () =>
-  ({
-    typeDefs: "",
-    schema: null,
-    introspection: null,
-  }) as const;
-
-// Query operations run through `analyzeQuery`, which dereferences the schema.
-const stubGqlEntitiesWithSchema = () =>
-  ({
-    typeDefs: "",
-    schema: buildSchema("type Query { ping: Boolean }"),
-    introspection: null,
-  }) as const;
-
 const stubEntities = (
   operationKey: string,
   operation: {
@@ -71,6 +56,10 @@ const stubEntities = (
     remoteRESTApis: [],
     queriesMap: {},
     getResolverSource: () => undefined,
+    typeDefs: "",
+    // Query operations run through `analyzeQuery`, which dereferences the schema.
+    schema: buildSchema("type Query { ping: Boolean }"),
+    introspection: null,
   }) as const;
 
 const fakeReq = (method = "GET"): BunRequest => ({ method }) as unknown as BunRequest;
@@ -103,7 +92,6 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
           },
         },
       }),
-      stubGqlEntities(),
       stubGql(),
     );
 
@@ -129,7 +117,6 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
           },
         },
       }),
-      stubGqlEntities(),
       stubGql(),
     );
 
@@ -155,7 +142,6 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
           },
         },
       }),
-      stubGqlEntities(),
       stubGql(),
     );
 
@@ -174,7 +160,6 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
           return { ok: true };
         },
       }),
-      stubGqlEntities(),
       stubGql(),
     );
 
@@ -188,7 +173,6 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
       stubEntities("op_e", {
         handler: () => ({ raw: "handler-output" }),
       }),
-      stubGqlEntities(),
       stubGql(),
     );
 
@@ -200,7 +184,6 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
   it("returns 404 when no route matches the path", async () => {
     const factory = handleRESTRequestFactory(
       stubEntities("op_f", { handler: () => ({}) }),
-      stubGqlEntities(),
       stubGql(),
     );
 
@@ -236,7 +219,6 @@ describe("handleRESTRequestFactory beforeRequest REST parameter sources", () => 
           },
         },
       }),
-      stubGqlEntities(),
       stubGql(),
     );
 
@@ -271,7 +253,6 @@ describe("handleRESTRequestFactory beforeRequest REST parameter sources", () => 
           },
         },
       }),
-      stubGqlEntities(),
       stubGql(),
     );
 
@@ -298,7 +279,6 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
           },
         },
       }),
-      stubGqlEntitiesWithSchema(),
       stubGqlWithData({ ping: true }),
     );
 
@@ -316,7 +296,6 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
         query: "query { ping }",
         rest: { path: "/q", method: "GET" },
       }),
-      stubGqlEntitiesWithSchema(),
       stubGqlWithData({ ping: true }),
     );
 
@@ -342,7 +321,6 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
           },
         },
       }),
-      stubGqlEntitiesWithSchema(),
       stubGqlWithData({ ping: true }),
     );
 
@@ -382,7 +360,6 @@ describe("handleRESTRequestFactory statement timeout", () => {
         timeout: 60_000,
         rest: { path: "/q", method: "GET" },
       }),
-      stubGqlEntitiesWithSchema(),
       recordingGql(seen),
     );
 
@@ -401,7 +378,6 @@ describe("handleRESTRequestFactory statement timeout", () => {
         query: "query { ping }",
         rest: { path: "/q", method: "GET" },
       }),
-      stubGqlEntitiesWithSchema(),
       recordingGql(seen),
     );
 
@@ -420,12 +396,88 @@ describe("handleRESTRequestFactory statement timeout", () => {
         cache: { ttl: 10_000, max: 10 },
         rest: { path: "/q", method: "GET" },
       }),
-      stubGqlEntitiesWithSchema(),
       recordingGql(seen),
     );
 
     await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
 
     expect(seen).toEqual([1_500]);
+  });
+});
+
+describe("handleRESTRequestFactory query analysis", () => {
+  it("hands every request the analysis built with the routes", async () => {
+    const analyses: unknown[] = [];
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_analysis", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        // oxlint-disable-next-line typescript/no-explicit-any
+        operatorQuery: async (...args: any[]) => {
+          analyses.push(args[0]);
+          return { data: { ping: true } };
+        },
+      },
+    );
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    const built = factory.operationsEnhanced.op_analysis.queryStructure;
+
+    expect(built).not.toBeNull();
+    expect(analyses).toHaveLength(2);
+    expect(analyses[0]).toBe(built);
+    expect(analyses[1]).toBe(built);
+  });
+});
+
+describe("handleRESTRequestFactory route lookup", () => {
+  const multiOpEntities = (operations: Record<string, Record<string, unknown>>) =>
+    ({
+      operations,
+      remoteRESTApis: [],
+      queriesMap: {},
+      getResolverSource: () => undefined,
+      typeDefs: "",
+      schema: buildSchema("type Query { ping: Boolean }"),
+      introspection: null,
+    }) as const;
+
+  it("answers a static path directly and a param path through the regex scan", async () => {
+    const factory = handleRESTRequestFactory(
+      multiOpEntities({
+        op_list: { query: "query { ping }", rest: { path: "/users", method: "GET" } },
+        op_detail: { query: "query { ping }", rest: { path: "/users/:id", method: "GET" } },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const list = await (
+      await factory.handler(new URL("http://x/users"), "/users", "GET", fakeReq("GET"))
+    ).json();
+    const detail = await (
+      await factory.handler(new URL("http://x/users/42"), "/users/42", "GET", fakeReq("GET"))
+    ).json();
+
+    expect(list).toEqual({ data: { ping: true } });
+    expect(detail).toEqual({ data: { ping: true } });
+  });
+
+  it("does not answer a static path with a different method", async () => {
+    const factory = handleRESTRequestFactory(
+      multiOpEntities({
+        op_get: { query: "query { ping }", rest: { path: "/users", method: "GET" } },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const res = await factory.handler(new URL("http://x/users"), "/users", "POST", fakeReq("POST"));
+
+    expect(res.status).toBe(404);
   });
 });

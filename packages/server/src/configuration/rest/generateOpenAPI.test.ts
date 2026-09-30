@@ -3,6 +3,7 @@ process.env.JWT_SECRET ??= "test-jwt";
 
 import { describe, expect, it } from "bun:test";
 
+import type { RemoteRESTResolved } from "../../remoteREST/types";
 import type { Env } from "../../types/env";
 
 const { getSchema } = await import("../getSchemas");
@@ -17,7 +18,7 @@ const options = {
 } as Env;
 
 const specFor = (query: string) => {
-  const schema = getSchema({
+  const role = getSchema({
     tables: StoreMSSQL.tables,
     storedProcedures: [],
     queues: [],
@@ -28,7 +29,7 @@ const specFor = (query: string) => {
     remoteREST: [],
   });
 
-  const spec = generateOpenAPI({ schema, options });
+  const spec = generateOpenAPI({ role, options });
 
   // oxlint-disable-next-line typescript/no-explicit-any
   return (spec.paths!["/probe"] as any).get.responses[200].content["application/json"].schema
@@ -37,7 +38,7 @@ const specFor = (query: string) => {
 
 describe("generateOpenAPI", () => {
   it("names the admin-secret header the server reads", () => {
-    const schema = getSchema({
+    const role = getSchema({
       tables: StoreMSSQL.tables,
       storedProcedures: [],
       queues: [],
@@ -47,7 +48,7 @@ describe("generateOpenAPI", () => {
     });
 
     const spec = generateOpenAPI({
-      schema,
+      role,
       options: { ...options, admin: { ...options.admin, header: "x-graphoria-key" } },
     });
 
@@ -140,5 +141,29 @@ describe("generateOpenAPI", () => {
 
     expect(address.address_id.nullable).toBe(false);
     expect(address.line1.nullable).toBe(true);
+  });
+
+  it("adds the paths of the role's remote REST APIs", () => {
+    const payments: RemoteRESTResolved = {
+      config: { name: "payments" },
+      prefix: "payments",
+      baseUrl: "http://payments.test",
+      routes: [],
+      openApiPaths: { "/payments/charges": { get: { responses: {} } } },
+      openApiSchemas: {},
+    };
+
+    const role = getSchema({
+      tables: StoreMSSQL.tables,
+      storedProcedures: [],
+      queues: [],
+      operations: OperationsZod.parse({}),
+      remoteSchemas: [],
+      remoteREST: [payments],
+    });
+
+    const spec = generateOpenAPI({ role, options });
+
+    expect(spec.paths?.["/payments/charges"]).toEqual({ get: { responses: {} } });
   });
 });

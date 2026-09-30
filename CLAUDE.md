@@ -125,7 +125,7 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 
 **Patterns**:
 
-- **Factories** with closed-over deps. Most handlers are produced by a `xFactory(entities, gqlEntities, auth?)` call during config analysis — the closure is the request-time handler.
+- **Factories** with closed-over deps. Most handlers are produced by a `xFactory(entities, auth?)` call during config analysis — the closure is the request-time handler. `entities` is a `SchemaEntities` (`configuration/getSchemas`): the role's merged entities plus the `schema` built from them.
 - **Singletons** for cross-cutting state. Each `singletons/*.ts` exposes get/set; the `instantiate*` functions populate them at boot.
 - **Per-role schema entities**. RBAC is enforced by _building a different `MergedEntities` per role_ — query handlers don't re-check permissions, the schema they receive simply lacks anything the role can't see.
 - **Token strategies** dispatched in `authentication/index.ts`. Selected via `tokenStrategy` config field (`"jwt"` default, `"paseto_local"`, `"paseto_public"`); each strategy validates its own required env vars.

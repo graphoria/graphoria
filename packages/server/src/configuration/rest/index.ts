@@ -4,9 +4,8 @@ import z from "zod";
 import type { LRUCache } from "lru-cache";
 import type { MatchFunction } from "path-to-regexp";
 import type { AnalysisResult } from "../../analyzeQuery/types";
-import type { GetGQLEntitiesReturn } from "../../configuration/getSchemas";
+import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { Auth, Operations } from "../../types/configuration";
-import type { MergedEntities } from "../getSchemas/mergeEntities";
 import type { HandleGraphQLRequest } from "../gql/handleGraphQLRequestFactory";
 
 import { analyzeQuery } from "../../analyzeQuery";
@@ -28,8 +27,7 @@ export type OperationsEnhanced = {
 };
 
 export const buildApiRoutes = (
-  entities: MergedEntities,
-  gqlEntities: GetGQLEntitiesReturn,
+  entities: SchemaEntities,
   gql: HandleGraphQLRequest,
   auth: Auth | null = null,
   gqlSuperadminHandler: HandleGraphQLRequest | null = null,
@@ -64,7 +62,7 @@ export const buildApiRoutes = (
 
       hasError = validationErrors.hasErrors;
 
-      queryStructure = analyzeQuery(routeConfig.query, entities, gqlEntities.schema);
+      queryStructure = analyzeQuery(routeConfig.query, entities);
     }
 
     const testPath = match(routeConfig.rest!.path);
