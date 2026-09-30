@@ -4,6 +4,8 @@ process.env.JWT_SECRET ??= "test-jwt";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { buildSchema, introspectionFromSchema } from "graphql";
 
+import type { SchemaEntities } from "../../configuration/getSchemas";
+import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
 import type { RoleEntities } from "./core";
 
 const { env } = await import("../../singletons/env");
@@ -28,13 +30,12 @@ const sdl = `
 
 const schema = buildSchema(sdl);
 
-const entities = {
-  getResolverSource: () => undefined,
+const entities: SchemaEntities = {
+  ...({ getResolverSource: () => undefined } as Partial<MergedEntities> as MergedEntities),
   typeDefs: sdl,
   schema,
   introspection: introspectionFromSchema(schema),
-  // oxlint-disable-next-line typescript/no-explicit-any
-} as any;
+};
 
 const role = {
   schema,
