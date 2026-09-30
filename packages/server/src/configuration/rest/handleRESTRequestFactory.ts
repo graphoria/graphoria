@@ -37,6 +37,21 @@ export const handleRESTRequestFactory = (
 
   const routes = Object.values(operationsEnhanced);
 
+  // Static paths answer with one map lookup; paths with params or regex syntax
+  // keep the path-to-regexp scan. The charset stays conservative so a path
+  // path-to-regexp would treat specially never reaches the map.
+  const staticRoutes = new Map<string, (typeof routes)[number]>();
+  const dynamicRoutes: (typeof routes)[number][] = [];
+  for (const route of routes) {
+    const path = route.rest!.path;
+    if (/^[/a-zA-Z0-9_-]+$/.test(path)) {
+      const key = `${route.rest!.method}:${path}`;
+      if (!staticRoutes.has(key)) staticRoutes.set(key, route);
+    } else {
+      dynamicRoutes.push(route);
+    }
+  }
+
   const remoteRoutes: RemoteRouteEntry[] = [];
   for (const rr of entities.remoteRESTApis) {
     for (const route of rr.routes) {
@@ -66,17 +81,19 @@ export const handleRESTRequestFactory = (
 
       let pathParameters: Record<string, string | string[]> = {};
 
-      const route = routes.find((a) => {
-        const pathFound = a.testPath(pathname);
+      const route =
+        staticRoutes.get(`${method}:${pathname}`) ??
+        dynamicRoutes.find((a) => {
+          const pathFound = a.testPath(pathname);
 
-        if (pathFound && a.rest!.method === method) {
-          pathParameters = pathFound.params as Record<string, string>;
+          if (pathFound && a.rest!.method === method) {
+            pathParameters = pathFound.params as Record<string, string>;
 
-          return true;
-        }
+            return true;
+          }
 
-        return false;
-      });
+          return false;
+        });
 
       if (!route) {
         // Try remote REST routes

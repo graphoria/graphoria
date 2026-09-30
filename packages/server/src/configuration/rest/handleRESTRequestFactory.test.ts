@@ -435,3 +435,49 @@ describe("handleRESTRequestFactory query analysis", () => {
     expect(analyses[1]).toBe(built);
   });
 });
+
+describe("handleRESTRequestFactory route lookup", () => {
+  const multiOpEntities = (operations: Record<string, Record<string, unknown>>) =>
+    ({
+      operations,
+      remoteRESTApis: [],
+      queriesMap: {},
+      getResolverSource: () => undefined,
+      typeDefs: "",
+      schema: buildSchema("type Query { ping: Boolean }"),
+      introspection: null,
+    }) as const;
+
+  it("answers a static path directly and a param path through the regex scan", async () => {
+    const factory = handleRESTRequestFactory(
+      multiOpEntities({
+        op_list: { query: "query { ping }", rest: { path: "/users", method: "GET" } },
+        op_detail: { query: "query { ping }", rest: { path: "/users/:id", method: "GET" } },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const list = await (
+      await factory.handler(new URL("http://x/users"), "/users", "GET", fakeReq("GET"))
+    ).json();
+    const detail = await (
+      await factory.handler(new URL("http://x/users/42"), "/users/42", "GET", fakeReq("GET"))
+    ).json();
+
+    expect(list).toEqual({ data: { ping: true } });
+    expect(detail).toEqual({ data: { ping: true } });
+  });
+
+  it("does not answer a static path with a different method", async () => {
+    const factory = handleRESTRequestFactory(
+      multiOpEntities({
+        op_get: { query: "query { ping }", rest: { path: "/users", method: "GET" } },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const res = await factory.handler(new URL("http://x/users"), "/users", "POST", fakeReq("POST"));
+
+    expect(res.status).toBe(404);
+  });
+});
