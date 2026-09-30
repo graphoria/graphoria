@@ -16,15 +16,15 @@
   "dependencies": {
     "@graphiql/plugin-explorer": "5.1.5",
     "@graphiql/toolkit": "0.12.1",
-    "@scalar/api-reference": "^1.69.2",
+    "@scalar/api-reference": "^1.72.1",
     "graphiql": "5.4.0",
     "graphql": "17.0.2",
-    "graphql-ws": "^6.2.2",
+    "graphql-ws": "^6.3.0",
     "monaco-editor": "0.52.2",
     "monaco-graphql": "1.9.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "wouter": "3.11.0"
+    "wouter": "3.11.1"
   },
   "devDependencies": {
     "@types/react": "19.3.0",
