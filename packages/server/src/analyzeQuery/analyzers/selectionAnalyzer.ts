@@ -1,8 +1,7 @@
-import { GraphQLNonNull, GraphQLObjectType, GraphQLSchema } from "graphql";
+import { GraphQLNonNull, GraphQLObjectType } from "graphql";
 
 import type { FieldNode, SelectionNode } from "graphql";
-import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
-import type { SelectionAnalysis, VariableDefinition } from "../types";
+import type { EntitiesWithSchema, SelectionAnalysis, VariableDefinition } from "../types";
 
 import { analyzeDirectives } from "../directiveUtils";
 import { getFieldType, unwrapType } from "../typeUtils";
@@ -11,8 +10,7 @@ import { extractArgumentValue } from "../valueExtractors";
 export const analyzeSelections = (
   selections: readonly SelectionNode[],
   parentType: GraphQLObjectType,
-  entities: MergedEntities,
-  gqlSchema: GraphQLSchema,
+  entities: EntitiesWithSchema,
   declaredVariables: VariableDefinition[],
   generatedVariables: VariableDefinition[],
 ): SelectionAnalysis[] =>
@@ -94,7 +92,6 @@ export const analyzeSelections = (
                 field.selectionSet.selections,
                 fieldObjType,
                 entities,
-                gqlSchema,
                 declaredVariables,
                 generatedVariables,
               ),
@@ -113,7 +110,7 @@ export const analyzeSelections = (
       } else if (selection.kind === "InlineFragment") {
         const typeCondition =
           selection.typeCondition &&
-          (gqlSchema.getType(selection.typeCondition.name.value) as GraphQLObjectType);
+          (entities.schema.getType(selection.typeCondition.name.value) as GraphQLObjectType);
 
         return {
           name: `... on ${selection.typeCondition?.name.value}`,
@@ -127,7 +124,6 @@ export const analyzeSelections = (
                   selection.selectionSet.selections,
                   typeCondition,
                   entities,
-                  gqlSchema,
                   declaredVariables,
                   generatedVariables,
                 )

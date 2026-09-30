@@ -143,7 +143,7 @@ const handleGraphQLSubscriptionFactory = (
         }
 
         // Analyze the query
-        const analysis = analyzeQuery(query, schemaEntity, schemaEntity.schema);
+        const analysis = analyzeQuery(query, schemaEntity);
 
         const operation = analysis.operations[0];
         const field = operation.fields[0];

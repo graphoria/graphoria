@@ -14,7 +14,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -36,7 +36,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -61,7 +61,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -91,7 +91,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -119,7 +119,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -141,7 +141,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -163,7 +163,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -197,7 +197,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -221,7 +221,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -248,7 +248,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     expect(result.operations[0].variables).toEqual([
       {
@@ -281,7 +281,7 @@ describe("Static Value Extraction", () => {
       }
     `;
 
-    const result = analyzeQuery(query, StoreMSSQL, StoreMSSQL.schema);
+    const result = analyzeQuery(query, StoreMSSQL);
 
     // Should have declared variables first, then generated static variables
     expect(result.operations[0].variables).toEqual([

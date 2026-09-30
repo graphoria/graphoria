@@ -1,6 +1,7 @@
 import { buildSchema, introspectionFromSchema } from "graphql";
 
-import type { GraphQLSchema } from "graphql";
+import type { IntrospectionQuery } from "graphql";
+import type { EntitiesWithSchema } from "../../analyzeQuery/types";
 import type { EntitiesOfRole } from "../../databases/high-level-operations";
 import type { Auth } from "../../types/configuration";
 import type { HandleGraphQLRequest } from "../gql/handleGraphQLRequestFactory";
@@ -11,34 +12,17 @@ import { handleRESTRequestFactory } from "../rest/handleRESTRequestFactory";
 import { mergeEntities } from "./mergeEntities";
 import { generateTypeDefs } from "./type-definition-generator";
 
-export const getIntrospectionResult = (schema: GraphQLSchema) => introspectionFromSchema(schema);
+export type SchemaEntities = EntitiesWithSchema & {
+  typeDefs: string;
+  introspection: IntrospectionQuery;
+};
 
-export const getGQLEntities = (mergedEntities: MergedEntities, hasAuth: boolean = false) => {
+const getGQLEntities = (mergedEntities: MergedEntities, hasAuth: boolean = false) => {
   const typeDefs = generateTypeDefs(mergedEntities, hasAuth);
-
   const schema = buildSchema(typeDefs);
-  const introspection = getIntrospectionResult(schema);
 
-  return { typeDefs, schema, introspection };
+  return { typeDefs, schema, introspection: introspectionFromSchema(schema) };
 };
-
-export type GetGQLEntitiesReturn = ReturnType<typeof getGQLEntities>;
-
-export const getHandlers = (
-  entities: MergedEntities,
-  gqlEntities: GetGQLEntitiesReturn,
-  auth: Auth | null = null,
-  gqlSuperadminHandler: HandleGraphQLRequest | null = null,
-) => {
-  const gql = handleGraphQLRequestFactory(entities, gqlEntities, auth);
-
-  return {
-    gql,
-    rest: handleRESTRequestFactory(entities, gqlEntities, gql, auth, gqlSuperadminHandler),
-  };
-};
-
-export type GetInformationAndHandlerReturn = Awaited<ReturnType<typeof getHandlers>>;
 
 export const getSchema = (
   entityOfRole: EntitiesOfRole,
@@ -46,14 +30,21 @@ export const getSchema = (
   gqlSuperadminHandler: HandleGraphQLRequest | null = null,
   includeAI: boolean = false,
 ) => {
-  const entities = mergeEntities(entityOfRole, auth?.enabled ?? false, includeAI);
+  const mergedEntities = mergeEntities(entityOfRole, auth?.enabled ?? false, includeAI);
 
-  const gqlEntities = getGQLEntities(entities, auth?.enabled);
+  const entities: SchemaEntities = {
+    ...mergedEntities,
+    ...getGQLEntities(mergedEntities, auth?.enabled),
+  };
+
+  const gql = handleGraphQLRequestFactory(entities, auth);
 
   return {
     ...entities,
-    ...gqlEntities,
-    handlers: getHandlers(entities, gqlEntities, auth, gqlSuperadminHandler),
+    handlers: {
+      gql,
+      rest: handleRESTRequestFactory(entities, gql, auth, gqlSuperadminHandler),
+    },
   };
 };
 
@@ -64,13 +55,7 @@ export const getSchemas = (
   auth: Auth,
   gqlSuperadminHandler: HandleGraphQLRequest,
 ) => {
-  const schemas: Record<
-    string,
-    MergedEntities &
-      GetGQLEntitiesReturn & {
-        handlers: GetInformationAndHandlerReturn;
-      }
-  > = {};
+  const schemas: Record<string, GetSchemaReturn> = {};
 
   for (const [role, entitiesOfRole] of Object.entries(tablesAndStoredProceduresForRole)) {
     schemas[role] = getSchema(entitiesOfRole, auth, gqlSuperadminHandler);
@@ -78,5 +63,3 @@ export const getSchemas = (
 
   return schemas;
 };
-
-export type GetSchemasReturn = Awaited<ReturnType<typeof getSchemas>>;

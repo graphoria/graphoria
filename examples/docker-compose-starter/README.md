@@ -51,9 +51,9 @@ Copy `Dockerfile`, `.dockerignore` and `docker-compose.yml`. They rely on the fo
 - `bun.lock` is committed, and `@graphoria/server` is in `dependencies`: the image runs `bun install --frozen-lockfile --production`.
 - `.dockerignore` keeps `node_modules` and every `.env*` file out of the image. Bun loads `.env` from its working directory, so a baked-in one would carry secrets in a layer. Secrets come from the environment.
 - `index.ts` passes no `port`. The server listens on `PORT` (default `3000`), and the healthcheck probes `PORT` and `PREFIX`.
-- Compose runs the app with `init: true` (`docker run --init` outside Compose). Bun running as PID 1 ignores `SIGTERM`, so without an init `docker stop` waits 10 seconds and then kills it.
+- `index.ts` starts the server with `createBunServer`, which handles `SIGTERM` itself, also as the container's PID 1: `docker stop` lets in-flight requests finish and the app exits `0`. No init is needed; `init: true` in Compose is harmless.
 - The image runs as the non-root `bun` user, which cannot write under `/app`. Keep `PRINT_SCHEMAS` off, or point `SCHEMAS_OUTPUT_DIR` at a writable volume.
-- Graphoria connects to its databases once at boot, with no retry. Keep a healthcheck on each database and `condition: service_healthy` on the app.
+- Boot retries a database it cannot reach for up to `DB_CONNECT_RETRY_MS` (60 s by default), then exits `1`. A healthcheck on each database and `condition: service_healthy` on the app start the app once the database is ready.
 - Hosts come from the environment (`PG_HOST`), so the same `graphoria.ts` runs on the host (`localhost`) and in Compose (`postgres`).
 
 Both stages are `oven/bun:<version>-slim`: Debian slim with Bun and no compiler. Keep the Bun version the same in both `FROM` lines. The `-distroless` variant lacks `libgcc_s`, which prebuilt native modules link against: `oxfmt` (a dependency of `@graphoria/server`, used when `PRINT_SCHEMAS` is on) and Tailwind's Bun plugin fail to load there.

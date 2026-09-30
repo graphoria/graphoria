@@ -143,11 +143,7 @@ describe("mergeEntities self-referential relationships", () => {
     ["is also referenced by another table", [users, projects]],
   ])("resolves the reverse field of a table that %s", (_what, tables) => {
     const store = createMockPG(DatabaseStructureZod.parse({ tables, storedProcedures: [] }));
-    const [operation] = analyzeQuery(
-      `{ main_users { main_users_list { id } } }`,
-      store,
-      store.schema,
-    ).operations;
+    const [operation] = analyzeQuery(`{ main_users { main_users_list { id } } }`, store).operations;
 
     expect(store.typeDefs).toContain("main_users_list");
     expect(store.queriesMap["main_users_list"]?.resolverName).toBe("main_users");
