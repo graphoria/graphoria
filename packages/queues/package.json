@@ -1,0 +1,64 @@
+{
+  "name": "@graphoria/queues",
+  "version": "0.6.0",
+  "description": "RabbitMQ and Kafka adapter runtimes for Graphoria",
+  "keywords": [
+    "amqp",
+    "graphoria",
+    "kafka",
+    "queue",
+    "rabbitmq"
+  ],
+  "homepage": "https://github.com/graphoria/graphoria#readme",
+  "bugs": {
+    "url": "https://github.com/graphoria/graphoria/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Alex Ferreli <ferreli.ale@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/graphoria/graphoria.git",
+    "directory": "packages/queues"
+  },
+  "files": [
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "type": "module",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "bun": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "type-check": "tsc --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
+  },
+  "dependencies": {
+    "amqplib": "2.0.1",
+    "kafkajs": "2.2.4",
+    "nanoid": "6.0.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "@graphoria/server": "0.6.0"
+  },
+  "engines": {
+    "bun": ">=1.3.4"
+  }
+}

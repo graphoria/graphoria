@@ -39,6 +39,11 @@ jobs:
       - name: Type check
         run: bun run type-check
 
+      # Every package's dist, the server first: the queues build reads the
+      # server's types, so a wrong order fails here instead of at publish.
+      - name: Build
+        run: bun run build
+
       # cli.test.ts boots a real server, which reads the gitignored playground
       # HTML at boot; see the same step in the integration job.
       - name: Build playgrounds

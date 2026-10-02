@@ -53,6 +53,16 @@ import { createShutdown, createSignalHandler, exitOnSignalDuringBoot } from "./s
 // Re-export for consumers
 export { configureLogging };
 
+export type {
+  QueueAdapter,
+  QueueAdapterType,
+  QueuePublisher,
+  QueueRuntimeContext,
+} from "./queues/adapter";
+export type { KafkaConfig, QueueConfig, RabbitMQConfig } from "./types/zod/queue";
+export type { QueueConnectionStatus, QueueManager } from "./singletons/queues";
+export { setQueueAdapter } from "./singletons/queues";
+
 type RouteHandler =
   | Response
   | ((req: BunRequest, server: Bun.Server<unknown>) => Response | Promise<Response | undefined>);

@@ -482,7 +482,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
 
   it("records a queue publish with the caller and publisher but not the payload", async () => {
     setQueueManager({
-      publisherMap: () => ({ queue_publish_resolver: {} }),
+      publisherMap: () => ({ queue_publish_resolver: { name: "queue_publish_resolver" } }),
       sendMessage: async () => true,
       connections: () => [],
     });
