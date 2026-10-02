@@ -428,3 +428,22 @@ describe("EnvZod AI_SECRET_ROLE / AI_MCP_SECRET_ROLE", () => {
     expect(env.ai.mcp.secretRole).toBe("reporter");
   });
 });
+
+describe("EnvZod AI_TIMEOUT_MS", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("bounds every LLM call by default", () => {
+    expect(EnvZod.parse(baseEnv).ai.timeoutMs).toBe(60000);
+  });
+
+  it("keeps 0 as the explicit opt-out", () => {
+    expect(EnvZod.parse({ ...baseEnv, AI_TIMEOUT_MS: "0" }).ai.timeoutMs).toBe(0);
+  });
+
+  it("rejects a negative timeout", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, AI_TIMEOUT_MS: "-1" })).toThrow();
+  });
+});

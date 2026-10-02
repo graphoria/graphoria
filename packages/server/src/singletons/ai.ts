@@ -60,12 +60,12 @@ export type AgentCaller = { role: RoleEntities; session?: SessionContext; req?: 
 
 export type Agent = (prompt: string, caller: AgentCaller) => Promise<string>;
 
-type AgentSettings = { systemPrompt: string; wrap: (prompt: string) => string };
+type AgentSettings = { systemPrompt: string; wrap: (prompt: string) => string; timeoutMs: number };
 
 let settings: AgentSettings | null = null;
 
 /**
- * Store the agent's prompts. Called at boot when the agent is on.
+ * Store the agent's prompts and its LLM call timeout. Called at boot when the agent is on.
  *
  * Precedence for systemPrompt / promptTemplate:
  *   1. Env-var override (`AI_SYSTEM_PROMPT` / `AI_PROMPT_TEMPLATE`)
@@ -74,13 +74,14 @@ let settings: AgentSettings | null = null;
  */
 export const instantiateAI = (
   aiConfig: AIConfig,
-  envOverrides?: { systemPrompt?: string; promptTemplate?: string },
+  envOverrides?: { systemPrompt?: string; promptTemplate?: string; timeoutMs?: number },
 ): void => {
   const template = envOverrides?.promptTemplate ?? DEFAULT_AI_PROMPT_TEMPLATE;
 
   settings = {
     systemPrompt: envOverrides?.systemPrompt ?? aiConfig.systemPrompt ?? DEFAULT_AI_SYSTEM_PROMPT,
     wrap: (prompt: string) => template.replaceAll("{prompt}", prompt),
+    timeoutMs: envOverrides?.timeoutMs ?? 0,
   };
 };
 
@@ -92,10 +93,10 @@ export const getAgent = (): Agent => {
   if (!settings) {
     throw new Error("AI agent is not enabled. Set `ai.enabled = true` in your configuration.");
   }
-  const { systemPrompt, wrap } = settings;
+  const { systemPrompt, wrap, timeoutMs } = settings;
 
   return (prompt, { role, session, req }) =>
-    ask(prompt, buildAgentTools(role, { session, req }), systemPrompt, wrap);
+    ask(prompt, buildAgentTools(role, { session, req }), systemPrompt, wrap, timeoutMs);
 };
 
 /** Test-only reset. */

@@ -79,6 +79,23 @@ describe("AI singleton", () => {
     expect(calls[0]![2]).toBe(req);
     expect(calls[0]![3]).toBe(session);
   });
+
+  it("bounds each LLM call by the timeout it was instantiated with", async () => {
+    // Fails at once rather than hanging when no timeout reaches the provider:
+    // a promise nothing settles stalls the runner past its own test timeout.
+    setProvider({
+      chat: (_messages, _tools, signal) =>
+        new Promise((_, reject) => {
+          if (!signal) return reject(new Error("no timeout reached the provider"));
+          signal.addEventListener("abort", () => reject(signal.reason));
+        }),
+    });
+    instantiateAI({ enabled: true, endpoint: "/ai", mcp: { enabled: false } }, { timeoutMs: 20 });
+
+    await expect(getAgent()("q", { role: buildRole() })).rejects.toThrow(
+      "LLM call timed out after 20 ms",
+    );
+  });
 });
 
 describe("resolveAISurfaces", () => {

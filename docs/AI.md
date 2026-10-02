@@ -48,6 +48,7 @@ The provider, model, and credentials come from **environment variables**, not th
 | `AI_GRAPHQL_ENABLED` | `true`                   | `false` leaves the GraphQL `ask` field out of every schema                                                                                                                         |
 | `AI_REST_ENABLED`    | `true`                   | `false` leaves the REST route unmounted                                                                                                                                            |
 | `AI_SECRET_ROLE`     | `SUPERADMIN_ROLE`        | The role `AI_SECRET` reads as; must be granted `ai` (checked at boot). Its session is `sub: "ai"` with no claims, so a `$session` row filter on that role matches nothing or fails |
+| `AI_TIMEOUT_MS`      | `60000`                  | Bound on each LLM call; `0` disables it (boot logs a warning)                                                                                                                      |
 
 The `openai` and `@anthropic-ai/sdk` packages are **optional dependencies** — they load lazily only when their provider is selected. With the default Ollama provider, neither is needed.
 
@@ -101,6 +102,7 @@ The agent reads through the caller's role, so a prompt cannot reach a table, col
 - **No `ask` inside a tool.** A tool query that selects `ask` is refused, so the agent cannot start itself again.
 - **An inline prompt starting with `$` is read as a variable.** `ask(prompt: "$total")` fails with `Variable total not found`; pass such a prompt as a variable.
 - **Iteration cap.** The tool-calling loop is bounded (10 iterations); a question that can't be answered within that budget errors rather than looping forever.
+- **Each LLM call is bounded.** `AI_TIMEOUT_MS` (default 60 s) per call, up to 10 calls per question.
 - **Prompts are audit-logged.** Every invocation writes an `ai.ask` record carrying the prompt verbatim — see [Audit log](../README.md#audit-log). Do not put secrets in a prompt.
 
 ## Customizing the prompt

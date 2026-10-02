@@ -89,6 +89,7 @@ export const EnvZod = z
     AI_MCP_DISABLED_PROMPTS: z.string().default(""),
     AI_SYSTEM_PROMPT: z.string().optional(),
     AI_PROMPT_TEMPLATE: z.string().optional(),
+    AI_TIMEOUT_MS: z.coerce.number().int().min(0).default(60000),
   })
   .transform((env) => ({
     port: env.PORT,
@@ -199,6 +200,7 @@ export const EnvZod = z
       },
       systemPrompt: env.AI_SYSTEM_PROMPT,
       promptTemplate: env.AI_PROMPT_TEMPLATE,
+      timeoutMs: env.AI_TIMEOUT_MS,
     },
   }));
 

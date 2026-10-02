@@ -83,6 +83,7 @@ describe.skipIf(!integrationEnabled)("scoped admin credentials", () => {
           },
           systemPrompt: undefined,
           promptTemplate: undefined,
+          timeoutMs: 60000,
         },
       },
     });

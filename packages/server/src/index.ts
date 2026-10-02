@@ -102,8 +102,8 @@ const generatePrefixes = (options: Env) => ({
 
 /**
  * Boot the request-independent core: load + validate configuration, connect
- * databases, select the token service, and build the per-role schemas. Shared
- * by {@link createGraphQLServer} (which adds routes) and
+ * databases, select the token service, build the per-role schemas, and resolve
+ * the AI surfaces. Shared by {@link createGraphQLServer} (which adds routes) and
  * {@link createGraphQLEngine} (which adds in-process execution).
  */
 const bootAnalyzedConfiguration = async (env: Env) => {
@@ -186,7 +186,29 @@ const bootAnalyzedConfiguration = async (env: Env) => {
   // Analyze configuration
   const analyzedConfiguration = await analyzeConfiguration(projectConfiguration, env);
 
-  return { projectConfiguration, analyzedConfiguration };
+  return {
+    projectConfiguration,
+    analyzedConfiguration,
+    aiSurfaces: resolveAISurfaces(env, projectConfiguration.ai),
+  };
+};
+
+/**
+ * The agent's prompts and LLM call timeout. Its tools are built per call, for
+ * the caller's role. Both boots call it, the engine's included: its schemas
+ * carry `ask` too.
+ */
+const startAgent = (env: Env, ai: Configuration["ai"]) => {
+  instantiateAI(ai, {
+    systemPrompt: env.ai?.systemPrompt,
+    promptTemplate: env.ai?.promptTemplate,
+    timeoutMs: env.ai?.timeoutMs,
+  });
+  if (env.ai?.timeoutMs === 0) {
+    logger("graphoria").warn(
+      "AI_TIMEOUT_MS=0 disables the LLM call timeout; a stalled provider holds the request indefinitely",
+    );
+  }
 };
 
 /**
@@ -226,7 +248,11 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
     ...options,
   };
 
-  const { analyzedConfiguration } = await bootAnalyzedConfiguration(optionsWithDefaults);
+  const { projectConfiguration, analyzedConfiguration, aiSurfaces } =
+    await bootAnalyzedConfiguration(optionsWithDefaults);
+
+  // No route here takes a scoped credential, so no role check comes first.
+  if (aiSurfaces.agent) startAgent(optionsWithDefaults, projectConfiguration.ai);
 
   return {
     execute: buildExecute(analyzedConfiguration.roles, env.superadmin.role),
@@ -257,9 +283,9 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
  *   named-logger factory.
  */
 const createGraphQLServer = async (env: Env) => {
-  const { projectConfiguration, analyzedConfiguration } = await bootAnalyzedConfiguration(env);
+  const { projectConfiguration, analyzedConfiguration, aiSurfaces } =
+    await bootAnalyzedConfiguration(env);
 
-  const aiSurfaces = resolveAISurfaces(env, projectConfiguration.ai);
   assertScopedRoles(env, analyzedConfiguration.roles, aiSurfaces);
 
   // Initialize queues
@@ -270,13 +296,8 @@ const createGraphQLServer = async (env: Env) => {
     analyzedConfiguration.roles[env.superadmin.role].handlers.gql.handler,
   );
 
-  // The agent's prompts. Its tools are built per call, for the caller's role.
-  if (aiSurfaces.agent) {
-    instantiateAI(projectConfiguration.ai, {
-      systemPrompt: env.ai?.systemPrompt,
-      promptTemplate: env.ai?.promptTemplate,
-    });
-  }
+  // After the role check, so a boot it refuses leaves no agent behind.
+  if (aiSurfaces.agent) startAgent(env, projectConfiguration.ai);
 
   // Write schema in development
   if (env.schemas.print) {

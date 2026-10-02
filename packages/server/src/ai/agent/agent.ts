@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Message, Tool, ToolDefinition } from "./types";
+import type { ChatResult, Message, Provider, Tool, ToolDefinition } from "./types";
 import { getProvider } from "./providers";
 import { logger } from "../../logging";
 
@@ -78,6 +78,26 @@ function toToolDefinition(tool: Tool): ToolDefinition {
   };
 }
 
+/** One provider call, abandoned once `timeoutMs` passes. `0` waits as long as the provider takes. */
+async function chatWithin(
+  provider: Provider,
+  messages: Message[],
+  tools: ToolDefinition[],
+  timeoutMs: number,
+): Promise<ChatResult> {
+  if (timeoutMs <= 0) return provider.chat(messages, tools);
+
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    return await provider.chat(messages, tools, signal);
+  } catch (err) {
+    // The SDKs wrap an abort in error types of their own; the signal is the one
+    // witness every provider shares.
+    if (signal.aborted) throw new Error(`LLM call timed out after ${timeoutMs} ms`, { cause: err });
+    throw err;
+  }
+}
+
 // ---- Core agent loop ----
 
 /**
@@ -97,6 +117,7 @@ export async function ask(
   tools: Tool[],
   systemPrompt: string,
   wrap: (content: string) => string,
+  timeoutMs = 0,
 ): Promise<string> {
   const messages: Message[] = [
     { role: "system", content: systemPrompt },
@@ -110,7 +131,7 @@ export async function ask(
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     log.debug({ iteration: i + 1 }, "agent iteration");
 
-    const { content, toolCalls } = await provider.chat(messages, toolDefs);
+    const { content, toolCalls } = await chatWithin(provider, messages, toolDefs, timeoutMs);
 
     // If the model returned tool calls, execute them and feed results back
     if (toolCalls.length > 0) {

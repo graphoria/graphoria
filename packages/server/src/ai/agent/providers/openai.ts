@@ -74,13 +74,20 @@ export function makeOpenAICompatible(cfg: OpenAICompatConfig): Provider {
   const temperature = cfg.temperature ?? 0;
 
   return {
-    async chat(messages: Message[], tools: ToolDefinition[]): Promise<ChatResult> {
-      const res = await client.chat.completions.create({
-        model: cfg.model,
-        messages: toOpenAIMessages(messages),
-        tools: toOpenAITools(tools),
-        temperature,
-      });
+    async chat(
+      messages: Message[],
+      tools: ToolDefinition[],
+      signal?: AbortSignal,
+    ): Promise<ChatResult> {
+      const res = await client.chat.completions.create(
+        {
+          model: cfg.model,
+          messages: toOpenAIMessages(messages),
+          tools: toOpenAITools(tools),
+          temperature,
+        },
+        { signal },
+      );
 
       const msg = res.choices[0]?.message;
       const toolCalls = (msg?.tool_calls ?? []).flatMap((tc) =>

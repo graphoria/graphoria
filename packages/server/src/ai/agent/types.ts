@@ -61,5 +61,6 @@ export interface ChatResult {
  * history is passed on every call.
  */
 export interface Provider {
-  chat(messages: Message[], tools: ToolDefinition[]): Promise<ChatResult>;
+  /** `signal` aborts the HTTP call; the agent sets it from AI_TIMEOUT_MS. */
+  chat(messages: Message[], tools: ToolDefinition[], signal?: AbortSignal): Promise<ChatResult>;
 }
