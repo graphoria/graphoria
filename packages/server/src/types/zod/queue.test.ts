@@ -53,3 +53,61 @@ describe("KafkaConnectionZod sasl.mechanism", () => {
     expect(() => parseSasl({ username: "u", password: "p", mechanism: "gssapi" })).toThrow();
   });
 });
+
+describe("subscriber exclusive", () => {
+  const parse = (subscriber: Record<string, unknown>) => {
+    const parsed = QueueConfigZod.parse({
+      type: "rabbitmq",
+      name: "events",
+      connection: { hostname: "x", port: 5672 },
+      subscribers: { s1: subscriber },
+    });
+    if (parsed.type !== "rabbitmq") throw new Error("expected rabbitmq config");
+    return parsed.queues[0]!.queueOptions;
+  };
+
+  it("carries an explicit exclusive through the transform", () => {
+    expect(parse({ topic: "t", exclusive: true })?.exclusive).toBe(true);
+  });
+
+  it("leaves exclusive undefined when omitted", () => {
+    expect(parse({ topic: "t" })?.exclusive).toBeUndefined();
+  });
+});
+
+describe("exchanges", () => {
+  it("declares the topic only subscribers use, with its own settings", () => {
+    const parsed = QueueConfigZod.parse({
+      type: "rabbitmq",
+      name: "events",
+      connection: { hostname: "x", port: 5672 },
+      publishers: { placed: { topic: "orders" } },
+      subscribers: { restock: { topic: "inventory" } },
+      topics: { orders: {}, inventory: { type: "fanout" } },
+    });
+
+    expect(
+      parsed.exchanges.map(({ name, type, publishers }) => ({
+        name,
+        type,
+        publishers: publishers.map((publisher) => publisher.name),
+      })),
+    ).toEqual([
+      { name: "orders", type: "topic", publishers: ["placed"] },
+      { name: "inventory", type: "fanout", publishers: [] },
+    ]);
+  });
+
+  it("declares a topic both sides use once", () => {
+    const parsed = QueueConfigZod.parse({
+      type: "rabbitmq",
+      name: "events",
+      connection: { hostname: "x", port: 5672 },
+      publishers: { placed: { topic: "orders" } },
+      subscribers: { audit: { topic: "orders" } },
+      topics: { orders: {} },
+    });
+
+    expect(parsed.exchanges.map((exchange) => exchange.name)).toEqual(["orders"]);
+  });
+});

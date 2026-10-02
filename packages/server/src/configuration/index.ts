@@ -89,10 +89,13 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     Object.entries(configuration.operations).filter(([, operationConfig]) => operationConfig.rest),
   );
 
+  // A disabled queue neither connects nor serves fields; permissions may still name it.
+  const enabledQueues = configuration.queues.filter((queue) => queue.enabled);
+
   const sourcesByPermission = sourcesForEachRole(
     tables,
     storedProcedures,
-    configuration.queues,
+    enabledQueues,
     operationsWithRestEndpoints,
     {
       [options.anonymousRole]: {
@@ -154,7 +157,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     databases: enabledDatabases,
     roles: schemas,
     openapi: jsonOpenApi,
-    queues: configuration.queues,
+    queues: enabledQueues,
     auth: configuration.auth,
   };
 };

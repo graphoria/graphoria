@@ -65,3 +65,19 @@ describe("operation() input", () => {
     expect(OperationZod.safeParse(op).success).toBe(false);
   });
 });
+
+describe("operation() handler options", () => {
+  // Type-checked too: the @ts-expect-error fails the build if `queues` goes
+  // untyped again, which let the call below compile and then throw.
+  it("hands the handler the queue manager, which publishes through sendMessage", () => {
+    operation({
+      handler: async ({ queues }) => {
+        // @ts-expect-error a publisher is a key of publisherMap(), not a method
+        queues.events_orderCreated({ id: 1 });
+        return queues.sendMessage("events_orderCreated", { id: 1 });
+      },
+    });
+
+    expect(true).toBe(true);
+  });
+});

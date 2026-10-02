@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { QueueManager } from "./queue";
+
 /**
  * Default input type when no schema is provided
  */
@@ -189,8 +191,7 @@ export type OperationOptions<TRepository = unknown> = {
   ) => Promise<GqlQueryResult<TReturn>>;
   // oxlint-disable-next-line typescript/no-explicit-any
   databases: any;
-  // oxlint-disable-next-line typescript/no-explicit-any
-  queues: any;
+  queues: QueueManager;
   /**
    * Custom repositories keyed by database name (`repository[dbName]`).
    * `TRepository` is that whole map — e.g. `{ main: MainRepo }`.

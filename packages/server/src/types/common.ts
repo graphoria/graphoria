@@ -37,7 +37,7 @@ export type CallbackOptions<TReqOptional extends boolean = false, TRepository = 
   /**
    * Queue manager for managing queues
    */
-  queues: QueueManager | undefined;
+  queues: QueueManager;
   /**
    * Custom database repository created from repository factory functions.
    * Keys are database names, values are the result of the repository factory.

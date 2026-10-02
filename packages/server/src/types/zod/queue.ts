@@ -53,7 +53,7 @@ const transformQueueConfig = <T extends z.infer<typeof BaseQueueConfigZod>>(
     queue?: string;
     groupId?: string;
     bindings: Array<{ exchange: string; pattern: string }>;
-    queueOptions?: { durable?: boolean; autoDelete?: boolean };
+    queueOptions?: { durable?: boolean; autoDelete?: boolean; exclusive?: boolean };
     handler?: SubscriberHandler;
   }>;
 } => {
@@ -67,6 +67,12 @@ const transformQueueConfig = <T extends z.infer<typeof BaseQueueConfigZod>>(
     const existing = topicPublishers.get(pub.topic) || [];
     existing.push({ key, config: pub });
     topicPublishers.set(pub.topic, existing);
+  });
+
+  // A subscriber's queue binds to its topic's exchange, so a topic only
+  // subscribers use is declared too.
+  Object.values(config.subscribers).forEach((sub) => {
+    if (!topicPublishers.has(sub.topic)) topicPublishers.set(sub.topic, []);
   });
 
   // Create exchanges from topics
@@ -99,6 +105,7 @@ const transformQueueConfig = <T extends z.infer<typeof BaseQueueConfigZod>>(
     queueOptions: {
       durable: sub.durable,
       autoDelete: sub.autoDelete,
+      exclusive: sub.exclusive,
     },
     handler: sub.handler,
   }));

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { QueueManager } from "./queue";
+
 /**
  * Default variables type
  */
@@ -30,7 +32,7 @@ export type CronTickCallback<TVariables = Record<string, unknown>> = (
       req?: unknown,
     ) => Promise<{ data: TReturn; errors?: unknown[] }>;
     databases: unknown;
-    queues: unknown;
+    queues: QueueManager;
     repository: Record<string, unknown>;
   },
   context: TickContext<TVariables>,

@@ -19,7 +19,8 @@ const buildCompositeKey = (context: SubscriptionContext): string => {
  *
  * Queue subscriptions are push-based, unlike database subscriptions:
  * - No polling needed - messages are pushed via the queue consumer
- * - The queue consumer (kafka.ts/rabbitmq.ts) already calls queryEventEmitter.sendDataUpdate()
+ * - The queue consumer (@graphoria/queues) already reaches queryEventEmitter.sendDataUpdate()
+ *   through the runtime context's emitSubscriptionEvent
  * - This strategy manages connection registration with the event emitter
  */
 export const createQueueSubscriptionStrategy = (): SubscriptionStrategy => ({
@@ -35,9 +36,9 @@ export const createQueueSubscriptionStrategy = (): SubscriptionStrategy => ({
     // The field key is what queue consumers broadcast on (e.g. "conn_queueName")
     const fieldKey = field.name;
 
-    // Check if connection already exists - join existing subscription group
+    // Join an existing group. A message is an event, not a state: unlike a
+    // table subscription, the joining client gets no replay of the last one.
     if (eventEmitter.hasConnection(subscriptionKey)) {
-      eventEmitter.sendDataByQueryNameToSingleClient(subscriptionKey, ws, subscriptionId);
       eventEmitter.addConnection(subscriptionKey, subscriptionId, ws);
       return { alreadyExists: true };
     }
