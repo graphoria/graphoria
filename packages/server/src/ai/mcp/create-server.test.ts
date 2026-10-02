@@ -234,6 +234,27 @@ describe("createMcpServer", () => {
     });
   });
 
+  describe("query_data", () => {
+    it("selects every column the role reads when it names none", async () => {
+      const role = buildRole();
+      const queries: unknown[] = [];
+      role.handlers.gql.handler = (async (query: string) => {
+        queries.push(query);
+        return { data: {} };
+      }) as typeof role.handlers.gql.handler;
+      const table = role.tables.find((t) => t.resolverName === "dbo_products")!;
+      const fields = table.columns.map(columnFieldName).join(" ");
+
+      await callTool(serverFor(undefined, role), "query_data", {
+        entity: "dbo_products",
+        operation: "list",
+        limit: 1,
+      });
+
+      expect(queries).toEqual([`query { dbo_products(limit: 1) { ${fields} } }`]);
+    });
+  });
+
   describe("list_entities", () => {
     it("lists tables", async () => {
       const server = serverFor();

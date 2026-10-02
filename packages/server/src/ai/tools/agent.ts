@@ -9,6 +9,7 @@ import {
   executeGraphqlCore,
   listEntitiesCore,
   makeValidateQuery,
+  tableFieldNames,
 } from "./core";
 import { buildStructuredQuery, queryDataSchema } from "./query-data";
 import type { StructuredQueryInput } from "./query-data";
@@ -64,7 +65,8 @@ export const buildAgentTools = (role: RoleEntities, caller: ToolCaller): Tool[] 
         "Query data using structured JSON instead of raw GraphQL. PREFERRED over graphql_execute for list and aggregate queries — simpler, less error-prone. The server builds the query internally from your JSON input.",
       schema: queryDataSchema,
       execute: async (args) => {
-        const query = buildStructuredQuery(args as StructuredQueryInput);
+        const input = args as StructuredQueryInput;
+        const query = buildStructuredQuery(input, tableFieldNames(role, input.entity));
         const outcome = await executeGraphqlCore(role, validateQuery, { query }, caller);
         switch (outcome.kind) {
           case "non_query":

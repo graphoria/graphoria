@@ -14,18 +14,29 @@ function stripNulls(args: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** Minimal view of a Zod 4 internal def for schema introspection. */
-type ZodDef = { type: string; innerType?: ZodLike; shape?: Record<string, ZodLike> };
+type ZodDef = {
+  type: string;
+  innerType?: ZodLike;
+  shape?: Record<string, ZodLike>;
+  in?: ZodLike;
+  out?: ZodLike;
+};
 type ZodLike = { def?: ZodDef };
 
-/** Unwrap optional/default/nullable to the base Zod type. */
+/** Unwrap optional/default/nullable, and a pipe, to the base Zod type. */
 function baseType(field: ZodLike): ZodLike {
   let cur = field;
-  while (
-    cur.def &&
-    ["optional", "default", "nullable"].includes(cur.def.type) &&
-    cur.def.innerType
-  ) {
-    cur = cur.def.innerType;
+  while (cur.def) {
+    const { type, innerType, in: input, out } = cur.def;
+    if (["optional", "default", "nullable"].includes(type) && innerType) {
+      cur = innerType;
+    } else if (type === "pipe" && input && out) {
+      // A preprocess accepts anything and validates on its output side; any
+      // other pipe takes what its input side takes.
+      cur = input.def?.type === "transform" ? out : input;
+    } else {
+      break;
+    }
   }
   return cur;
 }

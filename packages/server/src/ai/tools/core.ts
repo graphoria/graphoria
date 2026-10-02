@@ -481,6 +481,10 @@ export const listEntitiesCore = (
   return items;
 };
 
+/** The fields a `query_data` list selects when it names none: every column the role reads. */
+export const tableFieldNames = (role: RoleEntities, entity: string): string[] =>
+  role.tables.find((t) => t.resolverName === entity)?.columns.map(columnFieldName) ?? [];
+
 // ---- describe_entity ----
 
 /**

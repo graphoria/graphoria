@@ -5,6 +5,7 @@ import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/s
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
 import type { ToolCaller } from "../tools/core";
+import type { StructuredQueryInput } from "../tools/query-data";
 
 import { GRAPHORIA_MCP_INSTRUCTIONS } from "./instructions";
 import {
@@ -14,6 +15,7 @@ import {
   listEntitiesCore,
   makeValidateQuery,
   synthesizeRequest,
+  tableFieldNames,
 } from "../tools/core";
 import { logger } from "../../logging";
 import { buildStructuredQuery, queryDataSchema } from "../tools/query-data";
@@ -112,7 +114,8 @@ export const createMcpServer = (
     },
     async (args): Promise<CallToolResult> => {
       try {
-        const query = buildStructuredQuery(args as Parameters<typeof buildStructuredQuery>[0]);
+        const input = args as StructuredQueryInput;
+        const query = buildStructuredQuery(input, tableFieldNames(role, input.entity));
         const outcome = await executeGraphqlCore(role, validateQuery, { query }, caller);
         switch (outcome.kind) {
           case "non_query":
