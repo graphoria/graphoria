@@ -21,11 +21,13 @@ export default (() => ({
   databases: [/* … */],
   ai: {
     enabled: true,
-    // endpoint: "/ai",          // REST path (default "/ai")
+    // endpoint: "/ai",          // REST path under REST_API_PREFIX (default /rest/ai)
     // systemPrompt: "…",        // override the built-in prompt
   },
 })) satisfies ConfigurationFn;
 ```
+
+`AI_ENABLED` overrides `ai.enabled` when set; the override is logged at boot.
 
 ## Choosing an LLM provider
 
@@ -42,6 +44,9 @@ The provider, model, and credentials come from **environment variables**, not th
 | `OLLAMA_HOST`        | `http://localhost:11434` | Ollama server URL                                               |
 | `AI_SYSTEM_PROMPT`   | —                        | Overrides the built-in system prompt sent to the LLM            |
 | `AI_PROMPT_TEMPLATE` | —                        | Overrides the user-message wrapper (use `{prompt}` placeholder) |
+| `AI_ENABLED`         | (config field)           | Turns the agent on or off over `ai.enabled`                     |
+| `AI_GRAPHQL_ENABLED` | `true`                   | `false` leaves the GraphQL `ask` field out of every schema      |
+| `AI_REST_ENABLED`    | `true`                   | `false` leaves the REST route unmounted                         |
 
 The `openai` and `@anthropic-ai/sdk` packages are **optional dependencies** — they load lazily only when their provider is selected. With the default Ollama provider, neither is needed.
 
@@ -53,18 +58,18 @@ Without a credential the REST route returns `404`; without the admin secret or a
 
 ### REST
 
-| Verb | Path  | Body                                          | Response            |
-| ---- | ----- | --------------------------------------------- | ------------------- |
-| POST | `/ai` | `{ "prompt": "how many orders per status?" }` | `{ "answer": "…" }` |
+| Verb | Path       | Body                                          | Response            |
+| ---- | ---------- | --------------------------------------------- | ------------------- |
+| POST | `/rest/ai` | `{ "prompt": "how many orders per status?" }` | `{ "answer": "…" }` |
 
 ```bash
-curl -X POST http://localhost:3000/ai \
+curl -X POST http://localhost:3000/rest/ai \
   -H "x-admin-secret: $ADMIN_SECRET" \
   -H "content-type: application/json" \
   -d '{"prompt":"how many orders per status?"}'
 ```
 
-The path is configurable via `ai.endpoint`. The full URL is `${PREFIX}${endpoint}`. Setting `AI_REST_ENABLED=false` leaves the route unmounted, so the agent is reachable through the GraphQL `ask` field only.
+The path is configurable via `ai.endpoint`, under the REST prefix: the full URL is `${PREFIX}${REST_API_PREFIX}${endpoint}` (default `/rest/ai`). Setting `AI_REST_ENABLED=false` leaves the route unmounted, so the agent is reachable through the GraphQL `ask` field only. `AI_GRAPHQL_ENABLED=false` leaves the `ask` field out of every schema, so the agent is reachable over REST only.
 
 ### GraphQL
 

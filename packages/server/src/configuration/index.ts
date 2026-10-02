@@ -22,6 +22,7 @@ import {
 import { collectCrossReferenceErrors } from "./crossReferences";
 import { getSchema, getSchemas } from "./getSchemas";
 import { generateOpenAPI } from "./rest/generateOpenAPI";
+import { resolveAISurfaces } from "../singletons/ai";
 
 export const loadConfiguration = async (config: string): Promise<Configuration> => {
   try {
@@ -122,12 +123,9 @@ export const analyzeConfiguration = async (configuration: Configuration, options
 
   const { superadmin, ...others } = sourcesByPermission;
 
-  const superadminSchema = getSchema(
-    superadmin,
-    configuration.auth,
-    null,
-    configuration.ai?.enabled ?? false,
-  );
+  const aiSurfaces = resolveAISurfaces(options, configuration.ai);
+
+  const superadminSchema = getSchema(superadmin, configuration.auth, null, aiSurfaces.ask);
 
   const schemas: Record<string, GetSchemaReturn> = {
     superadmin: superadminSchema,
@@ -139,7 +137,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     version: configuration.version,
     role: schemas.superadmin,
     options,
-    ai: configuration.ai?.enabled ? { path: configuration.ai.endpoint ?? "/ai" } : undefined,
+    ai: aiSurfaces.rest ? { path: configuration.ai.endpoint } : undefined,
   });
 
   log.info(

@@ -17,7 +17,7 @@ import { consoleRoutesFactory } from "./console/api";
 import { createAuthTables, verifyAuthTablesExist } from "./databases";
 import { createMCPRoutes } from "./ai";
 import { createCapabilityAuthorizer } from "./authentication/capabilities";
-import { getAgent, instantiateAI } from "./singletons/ai";
+import { getAgent, instantiateAI, resolveAISurfaces } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
 import { getCronJobs, instantiateCronJobs } from "./singletons/cron";
 import {
@@ -163,6 +163,21 @@ const bootAnalyzedConfiguration = async (env: Env) => {
       "auth strategy override",
     );
   }
+  if (env.ai?.enabled !== undefined && env.ai.enabled !== projectConfiguration.ai.enabled) {
+    logger("graphoria").info(
+      { aiEnabled: env.ai.enabled, configAiEnabled: projectConfiguration.ai.enabled },
+      "ai override",
+    );
+  }
+  if (
+    env.ai?.mcp?.enabled !== undefined &&
+    env.ai.mcp.enabled !== projectConfiguration.ai.mcp.enabled
+  ) {
+    logger("graphoria").info(
+      { mcpEnabled: env.ai.mcp.enabled, configMcpEnabled: projectConfiguration.ai.mcp.enabled },
+      "mcp override",
+    );
+  }
   // Only auth (login, refresh) and the console (its session cookie) sign tokens;
   // with both off, a missing key just means bearer tokens are ignored.
   const keyRequired = Boolean(projectConfiguration.auth?.enabled) || env.console.enabled;
@@ -244,6 +259,8 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
 const createGraphQLServer = async (env: Env) => {
   const { projectConfiguration, analyzedConfiguration } = await bootAnalyzedConfiguration(env);
 
+  const aiSurfaces = resolveAISurfaces(env, projectConfiguration.ai);
+
   // Initialize queues
   await instantiateQueues(analyzedConfiguration.queues);
 
@@ -253,7 +270,7 @@ const createGraphQLServer = async (env: Env) => {
   );
 
   // Initialize the AI agent (admin-only), bound to the superadmin schema
-  if (projectConfiguration.ai?.enabled) {
+  if (aiSurfaces.agent) {
     instantiateAI(projectConfiguration.ai, analyzedConfiguration.roles[env.superadmin.role], {
       systemPrompt: env.ai?.systemPrompt,
       promptTemplate: env.ai?.promptTemplate,
@@ -501,58 +518,56 @@ const createGraphQLServer = async (env: Env) => {
     ),
   };
 
-  const aiEnabled = projectConfiguration.ai?.enabled ?? false;
+  // AI agent endpoint (admin-secret only), under the REST prefix like the rest of REST
+  if (aiSurfaces.rest) {
+    const aiPath = `${prefixes.rest}${projectConfiguration.ai.endpoint}`;
+    routes[aiPath] = {
+      ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
+      POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
+        try {
+          const { role, session, scope, limit } = await getRoleHandlers(req, server, "ai");
+          if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+          if (role !== env.superadmin.role) return new S404({ error: "Not Found" });
 
-  // AI agent endpoint (admin-secret only)
-  if (aiEnabled) {
-    const mcpEnabled = env.ai?.mcp?.enabled ?? projectConfiguration.ai?.mcp?.enabled ?? false;
-
-    if (mcpEnabled) {
-      const mcpPath = `${env.prefix}${env.ai?.mcp?.endpoint ?? projectConfiguration.ai?.endpoint ?? "/ai"}`;
-      const mcpRoutes = createMCPRoutes(analyzedConfiguration, {
-        ...(env.ai?.mcp ?? {}),
-        name: projectConfiguration.name,
-        version: projectConfiguration.version,
-        maxQueryDepth: env.ai?.mcp?.maxQueryDepth ?? env.maxQueryDepth,
-        authorize: authorizeCapability,
-        adminSecretHeader: env.admin.header,
-      });
-
-      routes[mcpPath] = Object.fromEntries(
-        Object.entries(mcpRoutes).map(([method, handler]) => [method, withRateLimit(handler)]),
-      );
-    }
-
-    if (env.ai?.restEnabled) {
-      const aiPath = `${env.prefix}/rest${projectConfiguration.ai.endpoint ?? "/ai"}`;
-      routes[aiPath] = {
-        ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-        POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
-          try {
-            const { role, session, scope, limit } = await getRoleHandlers(req, server, "ai");
-            if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
-            if (role !== env.superadmin.role) return new S404({ error: "Not Found" });
-
-            const { prompt } = await req.json();
-            if (typeof prompt !== "string" || prompt.length === 0)
-              return new S400({
-                errors: [{ message: "`prompt` (string) is required" }],
-              });
-
-            audit().emit({
-              action: "ai.ask",
-              actor: { ...actorFromSession(session), ...(scope ? { scope } : {}) },
-              target: { kind: "ai", via: "rest" },
-              prompt,
+          const { prompt } = await req.json();
+          if (typeof prompt !== "string" || prompt.length === 0)
+            return new S400({
+              errors: [{ message: "`prompt` (string) is required" }],
             });
 
-            return new S200({ answer: await getAgent()(prompt) });
-          } catch (error) {
-            return new S400({ errors: [{ message: (error as Error)?.message }] });
-          }
-        },
-      };
-    }
+          audit().emit({
+            action: "ai.ask",
+            actor: { ...actorFromSession(session), ...(scope ? { scope } : {}) },
+            target: { kind: "ai", via: "rest" },
+            prompt,
+          });
+
+          return new S200({ answer: await getAgent()(prompt) });
+        } catch (error) {
+          return new S400({ errors: [{ message: (error as Error)?.message }] });
+        }
+      },
+    };
+  }
+
+  // MCP calls no LLM, so it does not wait on the agent being enabled.
+  if (aiSurfaces.mcp) {
+    const mcpPath = `${env.prefix}${env.ai?.mcp?.endpoint ?? "/mcp"}`;
+    const mcpRoutes = createMCPRoutes(analyzedConfiguration, {
+      name: projectConfiguration.name,
+      version: projectConfiguration.version,
+      maxQueryDepth: env.ai?.mcp?.maxQueryDepth ?? env.maxQueryDepth,
+      disabledTools: env.ai?.mcp?.disabledTools,
+      disabledResources: env.ai?.mcp?.disabledResources,
+      disabledPrompts: env.ai?.mcp?.disabledPrompts,
+      requireAdminSecret: env.ai?.mcp?.requireAdminSecret,
+      authorize: authorizeCapability,
+      adminSecretHeader: env.admin.header,
+    });
+
+    routes[mcpPath] = Object.fromEntries(
+      Object.entries(mcpRoutes).map(([method, handler]) => [method, withRateLimit(handler)]),
+    );
   }
 
   // REST API endpoint

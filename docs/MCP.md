@@ -31,7 +31,7 @@ Equivalently, without touching the configuration:
 AI_MCP_ENABLED=true bun run start
 ```
 
-The env variable wins over the config field; an override is logged at boot.
+The env variable wins over the config field; an override is logged at boot. MCP needs no `ai.enabled`: it calls no LLM, so it mounts on its own flag.
 
 ## Endpoint
 

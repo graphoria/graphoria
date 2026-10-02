@@ -1,4 +1,5 @@
 import { buildAgentTools, createAgent, type RoleEntities } from "../ai";
+import type { Env } from "../types/env";
 import type { AIConfig } from "../types/zod/ai";
 
 /**
@@ -88,4 +89,21 @@ export const getAgent = (): ((prompt: string) => Promise<string>) => {
 /** Test-only reset. */
 export const resetAI = (): void => {
   agent = null;
+};
+
+export type AISurfaces = { agent: boolean; ask: boolean; rest: boolean; mcp: boolean };
+
+/**
+ * What this boot mounts. Each env var wins over its config field when set. MCP
+ * stands apart from the agent: it calls no LLM, so it needs no `ai.enabled`.
+ */
+export const resolveAISurfaces = (env: Env, ai: AIConfig | undefined): AISurfaces => {
+  const agent = env.ai?.enabled ?? ai?.enabled ?? false;
+
+  return {
+    agent,
+    ask: agent && (env.ai?.graphqlEnabled ?? true),
+    rest: agent && (env.ai?.restEnabled ?? true),
+    mcp: env.ai?.mcp?.enabled ?? ai?.mcp?.enabled ?? false,
+  };
 };

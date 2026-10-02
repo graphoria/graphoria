@@ -25,7 +25,7 @@ export const AIZod = z.strictObject({
   enabled: z.boolean().default(false),
   /** Overrides the built-in system prompt sent to the LLM. */
   systemPrompt: z.string().optional(),
-  /** REST endpoint path for the agent (default: "/ai"). */
+  /** REST path for the agent, under REST_API_PREFIX (default: "/ai", so /rest/ai). */
   endpoint: z.string().default("/ai"),
   /** Model Context Protocol (MCP) server. Off by default. See MCP.md. */
   mcp: MCPZod.optional().default({ enabled: false }),

@@ -20,8 +20,6 @@ export type CreateMcpServerOptions = {
   name?: string;
   version?: string;
   maxQueryDepth?: number;
-  graphqlEnabled?: boolean;
-  restEnabled?: boolean;
   disabledTools?: string[];
   disabledResources?: string[];
   disabledPrompts?: string[];
@@ -46,16 +44,12 @@ export const createMcpServer = (
     name = "graphoria-mcp-server",
     version = "1.0.0",
     maxQueryDepth,
-    graphqlEnabled,
-    restEnabled,
     disabledTools = [],
     disabledResources = [],
     disabledPrompts = [],
   } = options;
 
   const disabledToolSet = new Set(disabledTools);
-  if (graphqlEnabled === false) disabledToolSet.add("graphql_execute");
-  if (restEnabled === false) disabledToolSet.add("rest_execute");
   const disabledResourceSet = new Set(disabledResources);
   const disabledPromptSet = new Set(disabledPrompts);
 

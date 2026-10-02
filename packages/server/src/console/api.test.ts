@@ -428,6 +428,36 @@ describe("consoleRoutesFactory", () => {
     });
   });
 
+  it("reports MCP on when AI_MCP_ENABLED turns it on over the config", async () => {
+    const routes = consoleRoutesFactory({
+      env: { ...fakeEnv, ai: { ...fakeEnv.ai, mcp: { ...fakeEnv.ai.mcp, enabled: true } } },
+      consolePath: "/_console",
+      prefixes,
+      projectConfiguration: fakeProjectConfiguration,
+      analyzedConfiguration: fakeAnalyzedConfiguration,
+      tokenService,
+    });
+
+    const res = await routes["/_console/api/config"].GET(req());
+
+    expect((await res.json()).features).toEqual({ auth: true, ai: false, mcp: true, cors: true });
+  });
+
+  it("reports the agent on when AI_ENABLED turns it on over the config", async () => {
+    const routes = consoleRoutesFactory({
+      env: { ...fakeEnv, ai: { ...fakeEnv.ai, enabled: true } },
+      consolePath: "/_console",
+      prefixes,
+      projectConfiguration: fakeProjectConfiguration,
+      analyzedConfiguration: fakeAnalyzedConfiguration,
+      tokenService,
+    });
+
+    const res = await routes["/_console/api/config"].GET(req());
+
+    expect((await res.json()).features).toEqual({ auth: true, ai: true, mcp: false, cors: true });
+  });
+
   it("publishes a message via POST /queues/publish", async () => {
     const sent: unknown[] = [];
     setQueueManager({

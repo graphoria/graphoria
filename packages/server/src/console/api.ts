@@ -10,6 +10,7 @@ import type { DatabasesConnections } from "../singletons/databases";
 import { createConsoleSessions } from "./session";
 import { getTags } from "../configuration/rest/generateOpenAPI";
 import { audit } from "../logging/audit";
+import { resolveAISurfaces } from "../singletons/ai";
 import { getCronJobs } from "../singletons/cron";
 import { databasesConnections, pingConnection } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
@@ -63,6 +64,7 @@ export const consoleRoutesFactory = ({
   rateLimiter,
 }: ConsoleRoutesFactoryOptions): Record<string, Record<string, ConsoleRouteHandler>> => {
   const sessions = createConsoleSessions({ env, consolePath, tokenService });
+  const aiSurfaces = resolveAISurfaces(env, projectConfiguration.ai);
 
   const clientAddress = (req: BunRequest, server?: Bun.Server<unknown>) =>
     resolveClientAddress(req, server, env.rateLimit.trustProxy);
@@ -299,8 +301,8 @@ export const consoleRoutesFactory = ({
         prefixes,
         features: {
           auth: projectConfiguration.auth?.enabled ?? false,
-          ai: projectConfiguration.ai?.enabled ?? false,
-          mcp: projectConfiguration.ai?.mcp?.enabled ?? false,
+          ai: aiSurfaces.agent,
+          mcp: aiSurfaces.mcp,
           cors: env.enableCors,
         },
         session: { scope },
