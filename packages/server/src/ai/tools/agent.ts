@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { RoleEntities } from "./core";
+import type { RoleEntities, ToolCaller } from "./core";
 import type { Tool } from "../agent/types";
 
 import {
@@ -14,15 +14,16 @@ import { buildStructuredQuery, queryDataSchema } from "./query-data";
 import type { StructuredQueryInput } from "./query-data";
 
 /**
- * Build the agent's tool set against a compiled role schema. The agent reaches
- * the database ONLY through these tools, so it inherits that role's visibility.
- * `graphql_execute` must keep its name — the agent loop's anti-hallucination
- * guard recognises it as a data-access tool.
+ * Build the agent's tool set for one caller: its role's schema, its session and
+ * its request. The agent reaches the database ONLY through these tools, so it
+ * reads exactly what the caller's own queries would. `graphql_execute` must
+ * keep its name — the agent loop's anti-hallucination guard recognises it as a
+ * data-access tool.
  */
 /** Preserve per-tool schema inference, then widen to the heterogeneous `Tool`. */
 const tool = <T extends z.ZodTypeAny>(t: Tool<T>): Tool => t as unknown as Tool;
 
-export const buildAgentTools = (role: RoleEntities): Tool[] => {
+export const buildAgentTools = (role: RoleEntities, caller: ToolCaller = {}): Tool[] => {
   const validateQuery = makeValidateQuery(role);
 
   return [
@@ -64,9 +65,7 @@ export const buildAgentTools = (role: RoleEntities): Tool[] => {
       schema: queryDataSchema,
       execute: async (args) => {
         const query = buildStructuredQuery(args as StructuredQueryInput);
-        const outcome = await executeGraphqlCore(role, validateQuery, {
-          query,
-        });
+        const outcome = await executeGraphqlCore(role, validateQuery, { query }, caller);
         switch (outcome.kind) {
           case "non_query":
             return { error: "Internal: built query is not a query." };
@@ -88,10 +87,7 @@ export const buildAgentTools = (role: RoleEntities): Tool[] => {
         variables: z.record(z.string(), z.unknown()).optional(),
       }),
       execute: async ({ query, variables }) => {
-        const outcome = await executeGraphqlCore(role, validateQuery, {
-          query,
-          variables,
-        });
+        const outcome = await executeGraphqlCore(role, validateQuery, { query, variables }, caller);
         switch (outcome.kind) {
           case "non_query":
             return {

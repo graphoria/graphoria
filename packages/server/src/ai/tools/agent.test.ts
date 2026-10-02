@@ -3,11 +3,13 @@ process.env.JWT_SECRET ??= "test-jwt";
 
 import { describe, expect, it } from "bun:test";
 
+import type { BunRequest } from "bun";
 import type { EntityListItem } from "./core";
 
 const { getSchema } = await import("../../configuration/getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
 const { buildAgentTools } = await import("./agent");
+const { columnFieldName } = await import("../../databases/transformers/graphqlName");
 
 const buildRole = (includeAI = false) =>
   getSchema(
@@ -84,5 +86,42 @@ describe("buildAgentTools", () => {
     })) as { data: null; errors: unknown[] };
     expect(result.data).toBeNull();
     expect(result.errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildAgentTools — the caller", () => {
+  it("runs graphql_execute and query_data as the caller", async () => {
+    const role = buildRole();
+    const calls: unknown[][] = [];
+    const recorded = {
+      ...role,
+      handlers: {
+        ...role.handlers,
+        gql: {
+          ...role.handlers.gql,
+          handler: async (...args: unknown[]) => {
+            calls.push(args);
+            return { data: {} };
+          },
+        },
+      },
+    };
+    const session = { sub: "ana@acme.test", role: "user" };
+    const req = new Request("http://graphoria.test/rest/ai") as unknown as BunRequest;
+    const table = role.tables[0]!;
+    const field = columnFieldName(table.columns[0]!);
+    const tools = buildAgentTools(recorded, { session, req });
+
+    await tools
+      .find((t) => t.name === "graphql_execute")!
+      .execute({ query: `{ ${table.resolverName}(limit: 1) { ${field} } }` });
+    await tools
+      .find((t) => t.name === "query_data")!
+      .execute({ entity: table.resolverName, operation: "list", columns: [field], limit: 1 });
+
+    expect(calls.map((call) => [call[2], call[3]])).toEqual([
+      [req, session],
+      [req, session],
+    ]);
   });
 });

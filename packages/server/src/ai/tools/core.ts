@@ -13,7 +13,8 @@ import {
 
 import type { BunRequest } from "bun";
 import type { GraphQLNamedType, GraphQLSchema } from "graphql";
-import type { GetSchemaReturn } from "../../configuration/getSchemas";
+import type { SchemaEntities } from "../../configuration/getSchemas";
+import type { SessionContext } from "../../utils/sessionVariables";
 
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule } from "../../analyzeQuery/depthLimit";
@@ -21,10 +22,31 @@ import { categorizeSqlType, isNumericType, SqlTypeCategory } from "../../databas
 import { env } from "../../singletons/env";
 
 /**
- * A per-role compiled schema bundle (tables, operations, handlers, …).
- * Shared by the MCP server and the AI agent — both query the same surface.
+ * The two GraphQL entry points a tool calls, spelled out rather than taken from
+ * the factory's return type: the GraphQL factory hands its own role to the
+ * agent while that type is still being inferred.
  */
-export type RoleEntities = GetSchemaReturn;
+export type RoleGraphQL = {
+  hasErrors: (
+    query: string,
+    options?: { variables?: Record<string, unknown> },
+  ) => { hasErrors: boolean; validationErrors: readonly ValidationError[] };
+  handler: (
+    query: string,
+    variables?: Record<string, unknown>,
+    req?: BunRequest,
+    session?: SessionContext,
+  ) => Promise<unknown>;
+};
+
+/**
+ * The caller's compiled role: its entities and its GraphQL handler. Shared by
+ * the MCP server and the AI agent, which both read through it.
+ */
+export type RoleEntities = SchemaEntities & { handlers: { gql: RoleGraphQL } };
+
+/** Who a tool call runs for. `req` is the caller's own request: remote `forwardHeaders` read it. */
+export type ToolCaller = { session?: SessionContext; req?: BunRequest };
 
 export const ENTITY_KINDS = [
   "table",
@@ -258,7 +280,8 @@ export type GraphqlExecOutcome =
   | { kind: "error"; message: string };
 
 /**
- * Validate and execute a read-only GraphQL query against a role's handler.
+ * Validate and execute a read-only GraphQL query as the caller: its session
+ * reaches the role's row filters, its request reaches remote `forwardHeaders`.
  * Mutations/subscriptions are rejected. Returns a discriminated outcome so
  * callers (MCP, AI agent) shape their own responses.
  */
@@ -266,6 +289,7 @@ export const executeGraphqlCore = async (
   role: RoleEntities,
   validateQuery: ValidateQueryFn,
   { query, variables }: { query: string; variables?: Record<string, unknown> },
+  { session, req }: ToolCaller = {},
 ): Promise<GraphqlExecOutcome> => {
   try {
     if (containsNonQueryOperation(query)) return { kind: "non_query" };
@@ -281,10 +305,8 @@ export const executeGraphqlCore = async (
       };
     }
 
-    const req = synthesizeRequest("http://graphoria.local/graphql", {
-      method: "POST",
-    });
-    const result = await role.handlers.gql.handler(query, variables ?? {}, req);
+    const request = req ?? synthesizeRequest("http://graphoria.local/graphql", { method: "POST" });
+    const result = await role.handlers.gql.handler(query, variables ?? {}, request, session);
     return { kind: "ok", result };
   } catch (error) {
     return {

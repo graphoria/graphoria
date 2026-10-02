@@ -4,6 +4,7 @@ process.env.JWT_SECRET ??= "test-jwt";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { buildSchema, introspectionFromSchema } from "graphql";
 
+import type { BunRequest } from "bun";
 import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
 import type { RoleEntities } from "./core";
@@ -99,5 +100,51 @@ describe("makeValidateQuery — cost limit", () => {
     });
 
     expect(outcome.kind).toBe("validation");
+  });
+});
+
+describe("executeGraphqlCore — the caller", () => {
+  const recording = () => {
+    const calls: unknown[][] = [];
+    const role = {
+      schema,
+      handlers: {
+        gql: {
+          hasErrors: () => ({ hasErrors: false, validationErrors: [] }),
+          handler: async (...args: unknown[]) => {
+            calls.push(args);
+            return { data: {} };
+          },
+        },
+      },
+    } as unknown as RoleEntities;
+    return { calls, role };
+  };
+
+  it("runs the query with the caller's session and request", async () => {
+    const { calls, role: recorded } = recording();
+    const session = { sub: "ana@acme.test", role: "user", claims: { userId: 1 } };
+    const req = new Request("http://graphoria.test/graphql", {
+      headers: { authorization: "Bearer token" },
+    }) as unknown as BunRequest;
+
+    await executeGraphqlCore(
+      recorded,
+      makeValidateQuery(recorded),
+      { query: "{ users { id } }" },
+      { session, req },
+    );
+
+    expect(calls[0]![2]).toBe(req);
+    expect(calls[0]![3]).toBe(session);
+  });
+
+  it("stands in a request when the caller brings none", async () => {
+    const { calls, role: recorded } = recording();
+
+    await executeGraphqlCore(recorded, makeValidateQuery(recorded), { query: "{ users { id } }" });
+
+    expect(calls[0]![2]).toBeInstanceOf(Request);
+    expect(calls[0]![3]).toBeUndefined();
   });
 });
