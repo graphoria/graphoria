@@ -50,6 +50,18 @@ export const MYSQL_CONNECTION_OPTIONS = { allowPublicKeyRetrieval: true } as con
 
 export const REDIS_URL = "redis://127.0.0.1:56379";
 
+/** The server speaks AMQP to `port`; the suite reads queue state from `managementUrl`. */
+export const RABBITMQ = {
+  host: "127.0.0.1",
+  port: 55672,
+  managementUrl: "http://127.0.0.1:55673",
+  username: "graphoria",
+  password: "graphoria_test",
+} as const;
+
+/** The broker advertises this same address, and clients reconnect to it. */
+export const KAFKA_BROKER = "localhost:59092";
+
 /** Engines the integration suite runs against. */
 export const ENGINES = ["pg", "mysql", "mssql", "sqlite"] as const;
 
