@@ -54,3 +54,7 @@ export const createCapabilityAuthorizer = (
     return null;
   };
 };
+
+/** The role a scoped credential reads as, on its own route only. */
+export const scopedCredentialRole = (env: Env, capability: Capability): string =>
+  capability === "ai" ? env.superadmin.role : env.anonymousRole;

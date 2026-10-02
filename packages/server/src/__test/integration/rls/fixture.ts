@@ -1,8 +1,10 @@
+import { RedisClient } from "bun";
+
 import type { ConfigurationInput } from "../../../config";
 import type { DatabaseType } from "../../../types/configuration";
 import type { IntegrationContext, StartedServer, WithServerOptions } from "../harness";
 
-import { fieldName } from "../config";
+import { REDIS_URL, fieldName } from "../config";
 import { startServer } from "../harness";
 
 /**
@@ -370,4 +372,18 @@ export const startRlsServer = async (
     context: { ...started.context, tokenFor },
     stop: started.stop,
   };
+};
+
+/**
+ * Empties the test Redis. Its cache store keys entries on
+ * `cache:{operation}:{hash}`, and the hash covers only pathname, method,
+ * variables, sub and role — nothing that names the engine or the run. An entry
+ * left by the previous engine, or by the previous run, would therefore answer
+ * the next one, and a cache assertion would be measuring the wrong server. Call
+ * it before the server that will write the entries comes up.
+ */
+export const flushRedis = async (): Promise<void> => {
+  const redis = new RedisClient(REDIS_URL);
+  await redis.send("FLUSHDB", []);
+  redis.close();
 };

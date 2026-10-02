@@ -94,10 +94,12 @@ describe("makeValidateQuery — cost limit", () => {
   it("budgets a tool call against the variables it was handed", async () => {
     const validateQuery = makeValidateQuery(role);
 
-    const outcome = await executeGraphqlCore(role, validateQuery, {
-      query: PAGINATED,
-      variables: { n: 1000 },
-    });
+    const outcome = await executeGraphqlCore(
+      role,
+      validateQuery,
+      { query: PAGINATED, variables: { n: 1000 } },
+      {},
+    );
 
     expect(outcome.kind).toBe("validation");
   });
@@ -142,7 +144,12 @@ describe("executeGraphqlCore — the caller", () => {
   it("stands in a request when the caller brings none", async () => {
     const { calls, role: recorded } = recording();
 
-    await executeGraphqlCore(recorded, makeValidateQuery(recorded), { query: "{ users { id } }" });
+    await executeGraphqlCore(
+      recorded,
+      makeValidateQuery(recorded),
+      { query: "{ users { id } }" },
+      {},
+    );
 
     expect(calls[0]![2]).toBeInstanceOf(Request);
     expect(calls[0]![3]).toBeUndefined();
@@ -186,7 +193,7 @@ describe("executeGraphqlCore — the agent's own field", () => {
   ])("refuses %s without running it", async (query) => {
     const { queries, role } = recording();
 
-    const outcome = await executeGraphqlCore(role, makeValidateQuery(role), { query });
+    const outcome = await executeGraphqlCore(role, makeValidateQuery(role), { query }, {});
 
     expect(outcome).toEqual({
       kind: "error",
@@ -198,9 +205,12 @@ describe("executeGraphqlCore — the agent's own field", () => {
   it("runs a query selecting a column named ask", async () => {
     const { queries, role } = recording();
 
-    const outcome = await executeGraphqlCore(role, makeValidateQuery(role), {
-      query: "{ notes { ask } }",
-    });
+    const outcome = await executeGraphqlCore(
+      role,
+      makeValidateQuery(role),
+      { query: "{ notes { ask } }" },
+      {},
+    );
 
     expect(outcome.kind).toBe("ok");
     expect(queries).toHaveLength(1);

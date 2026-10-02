@@ -16,7 +16,7 @@ import { websocketHandlerFactory } from "./configuration/gql/handleGraphQLSubscr
 import { consoleRoutesFactory } from "./console/api";
 import { createAuthTables, verifyAuthTablesExist } from "./databases";
 import { createMCPRoutes } from "./ai";
-import { createCapabilityAuthorizer } from "./authentication/capabilities";
+import { createCapabilityAuthorizer, scopedCredentialRole } from "./authentication/capabilities";
 import { getAgent, instantiateAI, resolveAISurfaces } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
 import { getCronJobs, instantiateCronJobs } from "./singletons/cron";
@@ -316,8 +316,9 @@ const createGraphQLServer = async (env: Env) => {
   const authorizeCapability = createCapabilityAuthorizer(env);
 
   // Helper to get role-based handlers. A route that names a capability also
-  // accepts that capability's scoped credential in the admin-secret header;
-  // it stands in for the superadmin role on that route and nowhere else.
+  // accepts that capability's scoped credential in the admin-secret header; it
+  // stands in for the role `scopedCredentialRole` names, on that route and
+  // nowhere else.
   const getRoleHandlers = async (
     req: Request,
     server?: Bun.Server<unknown>,
@@ -327,8 +328,12 @@ const createGraphQLServer = async (env: Env) => {
     const grant = capability ? authorizeCapability(adminSecretHeader, capability) : null;
 
     const session: SessionContext =
-      grant && !grant.superset
-        ? { sub: capability, role: env.superadmin.role, authMethod: "admin_secret" }
+      capability && grant && !grant.superset
+        ? {
+            sub: capability,
+            role: scopedCredentialRole(env, capability),
+            authMethod: "admin_secret",
+          }
         : await getTokenService().verifyTokenAndGetSession(
             req.headers.get(env.authorizationHeader),
             adminSecretHeader,
@@ -366,7 +371,7 @@ const createGraphQLServer = async (env: Env) => {
 
   /**
    * For the entry points that have no session to key on: the websocket upgrade
-   * (the token arrives in `connection_init`, after the upgrade) and MCP. They
+   * (the token arrives in `connection_init`, after the upgrade) and MCP's 405 answers. They
    * are keyed by address against the anonymous ceiling.
    */
   const withRateLimit =
@@ -554,7 +559,8 @@ const createGraphQLServer = async (env: Env) => {
     };
   }
 
-  // MCP calls no LLM, so it does not wait on the agent being enabled.
+  // MCP calls no LLM, so it does not wait on the agent being enabled. A POST runs
+  // as its caller, resolved like /graphql.
   if (aiSurfaces.mcp) {
     const mcpPath = `${env.prefix}${env.ai?.mcp?.endpoint ?? "/mcp"}`;
     const mcpRoutes = createMCPRoutes(analyzedConfiguration, {
@@ -565,13 +571,17 @@ const createGraphQLServer = async (env: Env) => {
       disabledResources: env.ai?.mcp?.disabledResources,
       disabledPrompts: env.ai?.mcp?.disabledPrompts,
       requireAdminSecret: env.ai?.mcp?.requireAdminSecret,
-      authorize: authorizeCapability,
-      adminSecretHeader: env.admin.header,
+      resolveCaller: (req, server) => getRoleHandlers(req, server, "mcp"),
+      openapiFor: analyzedConfiguration.openapiFor,
     });
 
-    routes[mcpPath] = Object.fromEntries(
-      Object.entries(mcpRoutes).map(([method, handler]) => [method, withRateLimit(handler)]),
-    );
+    // POST spends the caller's own bucket inside resolveCaller; GET and DELETE
+    // answer 405 without resolving one, so they stay keyed by address.
+    routes[mcpPath] = {
+      POST: mcpRoutes.POST,
+      GET: withRateLimit(mcpRoutes.GET),
+      DELETE: withRateLimit(mcpRoutes.DELETE),
+    };
   }
 
   // REST API endpoint

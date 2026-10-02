@@ -3,16 +3,30 @@ process.env.JWT_SECRET ??= "test-jwt";
 
 import { describe, expect, it } from "bun:test";
 
+import type { BunRequest } from "bun";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import type { AnalyzedConfiguration } from "../../configuration";
+import type { OpenAPIV3_1 } from "openapi-types";
+import type { GetSchemaReturn } from "../../configuration/getSchemas";
+import type { Auth } from "../../types/configuration";
+import type { ToolCaller } from "../tools/core";
+import type { CreateMcpServerOptions } from "./create-server";
 
+const { env } = await import("../../singletons/env");
+const { createJWTService } = await import("../../authentication/jwt");
 const { getSchema } = await import("../../configuration/getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
+const { columnFieldName } = await import("../../databases/transformers/graphqlName");
 const { createMcpServer } = await import("./create-server");
 const { GRAPHORIA_MCP_INSTRUCTIONS } = await import("./instructions");
 
-const buildAnalyzedConfig = (): AnalyzedConfiguration => {
-  const role = getSchema({
+const OPENAPI: OpenAPIV3_1.Document = {
+  openapi: "3.1.0",
+  info: { title: "test", version: "1.0.0" },
+  paths: {},
+};
+
+const buildRole = () =>
+  getSchema({
     tables: StoreMSSQL.tables,
     storedProcedures: StoreMSSQL.storedProcedures,
     queues: [],
@@ -20,18 +34,12 @@ const buildAnalyzedConfig = (): AnalyzedConfiguration => {
     remoteSchemas: [],
     remoteREST: [],
   });
-  return {
-    databases: [],
-    roles: { anonymous: role },
-    openapi: {
-      openapi: "3.1.0",
-      info: { title: "test", version: "1.0.0" },
-      paths: {},
-    },
-    queues: [],
-    auth: { enabled: false },
-  } as unknown as AnalyzedConfiguration;
-};
+
+const serverFor = (
+  options?: CreateMcpServerOptions,
+  role: GetSchemaReturn = buildRole(),
+  caller: ToolCaller = {},
+) => createMcpServer(role, caller, OPENAPI, options);
 
 type PromptMessage = {
   role: "user" | "assistant";
@@ -101,8 +109,8 @@ const textOf = (result: CallToolResult): string => {
 };
 
 describe("createMcpServer", () => {
-  it("registers exactly 5 tools, 3 resources, and 1 prompt", () => {
-    const server = createMcpServer(buildAnalyzedConfig());
+  it("registers exactly 6 tools, 3 resources, and 1 prompt", () => {
+    const server = serverFor();
     const internal = server as unknown as Internal;
     expect(Object.keys(internal._registeredTools).sort()).toEqual([
       "describe_entity",
@@ -121,7 +129,7 @@ describe("createMcpServer", () => {
   });
 
   it("disabledTools omits listed tools by name", () => {
-    const server = createMcpServer(buildAnalyzedConfig(), {
+    const server = serverFor({
       disabledTools: ["rest_execute", "graphql_execute"],
     });
     const internal = server as unknown as Internal;
@@ -134,7 +142,7 @@ describe("createMcpServer", () => {
   });
 
   it("disabledResources omits by URI or name", () => {
-    const server = createMcpServer(buildAnalyzedConfig(), {
+    const server = serverFor({
       disabledResources: ["graphql://introspection", "openapi-spec"],
     });
     const internal = server as unknown as Internal;
@@ -142,7 +150,7 @@ describe("createMcpServer", () => {
   });
 
   it("uses provided name and version on the server impl", () => {
-    const server = createMcpServer(buildAnalyzedConfig(), {
+    const server = serverFor({
       name: "my-app",
       version: "9.9.9",
     });
@@ -157,14 +165,14 @@ describe("createMcpServer", () => {
     for (const marker of ["_aggregate", "groupBy", "count", "where", "ASC_NULLS_FIRST"]) {
       expect(GRAPHORIA_MCP_INSTRUCTIONS).toContain(marker);
     }
-    const server = createMcpServer(buildAnalyzedConfig());
+    const server = serverFor();
     const instructions = (server as unknown as { server: { _instructions?: string } }).server
       ._instructions;
     expect(instructions).toBe(GRAPHORIA_MCP_INSTRUCTIONS);
   });
 
   it("maxQueryDepth rejects queries that exceed the limit", async () => {
-    const server = createMcpServer(buildAnalyzedConfig(), {
+    const server = serverFor({
       maxQueryDepth: 1,
     });
     const result = await callTool(server, "graphql_validate", {
@@ -175,21 +183,9 @@ describe("createMcpServer", () => {
     expect(JSON.stringify(parsed.errors)).toMatch(/depth/i);
   });
 
-  it("throws when the anonymous role is missing", () => {
-    expect(() =>
-      createMcpServer({
-        databases: [],
-        roles: {},
-        openapi: {},
-        queues: [],
-        auth: { enabled: false },
-      } as unknown as AnalyzedConfiguration),
-    ).toThrow(/anonymous/);
-  });
-
   describe("graphql_validate", () => {
     it("flags unknown fields", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "graphql_validate", {
         query: "{ does_not_exist { id } }",
       });
@@ -199,7 +195,7 @@ describe("createMcpServer", () => {
     });
 
     it("accepts a valid query", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "graphql_validate", {
         query: "{ dbo_products { product_id } }",
       });
@@ -211,7 +207,7 @@ describe("createMcpServer", () => {
 
   describe("graphql_execute", () => {
     it("rejects mutations", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "graphql_execute", {
         query: 'mutation { auth_login(username: "x", password: "y") { access_token } }',
       });
@@ -220,7 +216,7 @@ describe("createMcpServer", () => {
     });
 
     it("rejects subscriptions", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "graphql_execute", {
         query: "subscription { dbo_products { product_id } }",
       });
@@ -228,7 +224,7 @@ describe("createMcpServer", () => {
     });
 
     it("returns validation errors for invalid query without throwing", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "graphql_execute", {
         query: "{ does_not_exist { id } }",
       });
@@ -240,7 +236,7 @@ describe("createMcpServer", () => {
 
   describe("list_entities", () => {
     it("lists tables", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "list_entities", {
         kind: "table",
       });
@@ -253,7 +249,7 @@ describe("createMcpServer", () => {
     });
 
     it("filters by case-insensitive search term", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "list_entities", {
         search: "PRODUCT",
       });
@@ -264,20 +260,20 @@ describe("createMcpServer", () => {
     });
 
     it("rejects calls with neither kind nor search", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "list_entities", {});
       expect(result.isError).toBe(true);
       expect(textOf(result)).toMatch(/kind.*search|search.*kind/);
     });
 
     it("matches search against tableDescription when the name doesn't contain the term", async () => {
-      const cfg = buildAnalyzedConfig();
-      const cryptic = cfg.roles.anonymous.tables.find((t) => t.resolverName === "dbo_products");
+      const role = buildRole();
+      const cryptic = role.tables.find((t) => t.resolverName === "dbo_products");
       if (!cryptic) throw new Error("fixture missing dbo_products");
       cryptic.tableDescription =
         "Master inventory of widgets, gadgets, and other sellable merchandise.";
 
-      const server = createMcpServer(cfg);
+      const server = serverFor(undefined, role);
       const result = await callTool(server, "list_entities", {
         search: "merchandise",
       });
@@ -286,12 +282,12 @@ describe("createMcpServer", () => {
     });
 
     it("surfaces tableDescription on table entries", async () => {
-      const cfg = buildAnalyzedConfig();
-      const target = cfg.roles.anonymous.tables.find((t) => t.resolverName === "dbo_products");
+      const role = buildRole();
+      const target = role.tables.find((t) => t.resolverName === "dbo_products");
       if (!target) throw new Error("fixture missing dbo_products");
       target.tableDescription = "Catalog of sellable products.";
 
-      const server = createMcpServer(cfg);
+      const server = serverFor(undefined, role);
       const result = await callTool(server, "list_entities", { kind: "table" });
       const parsed = JSON.parse(textOf(result)) as Array<{
         name: string;
@@ -306,7 +302,7 @@ describe("createMcpServer", () => {
 
   describe("describe_entity", () => {
     it("returns columns + relationships for a table and infers kind", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "describe_entity", {
         name: "dbo_products",
       });
@@ -321,7 +317,7 @@ describe("createMcpServer", () => {
     });
 
     it("returns an error for an unknown entity", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "describe_entity", {
         name: "no_such_entity",
       });
@@ -329,7 +325,7 @@ describe("createMcpServer", () => {
     });
 
     it("emits table-specific example queries that validate against the schema", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callTool(server, "describe_entity", {
         name: "dbo_products",
       });
@@ -358,7 +354,7 @@ describe("createMcpServer", () => {
 
   describe("resources", () => {
     it("graphql://schema returns SDL", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const res = await readResource(server, "graphql://schema");
       const text = res.contents[0].text;
       expect(text).toContain("type Query");
@@ -366,14 +362,14 @@ describe("createMcpServer", () => {
     });
 
     it("graphql://introspection returns parseable JSON with __schema", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const res = await readResource(server, "graphql://introspection");
       const parsed = JSON.parse(res.contents[0].text);
       expect(parsed.__schema).toBeDefined();
     });
 
     it("openapi://spec returns parseable JSON", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const res = await readResource(server, "openapi://spec");
       const parsed = JSON.parse(res.contents[0].text);
       expect(parsed.openapi).toBe("3.1.0");
@@ -382,7 +378,7 @@ describe("createMcpServer", () => {
 
   describe("db_query prompt", () => {
     it("embeds the user's question and the aggregate workflow", async () => {
-      const server = createMcpServer(buildAnalyzedConfig());
+      const server = serverFor();
       const result = await callPrompt(server, "db_query", {
         question: "how many products are there?",
       });
@@ -398,11 +394,95 @@ describe("createMcpServer", () => {
     });
 
     it("disabledPrompts omits db_query", () => {
-      const server = createMcpServer(buildAnalyzedConfig(), {
+      const server = serverFor({
         disabledPrompts: ["db_query"],
       });
       const internal = server as unknown as Internal;
       expect(Object.keys(internal._registeredPrompts)).toEqual([]);
+    });
+  });
+
+  describe("the caller", () => {
+    it("runs graphql_execute with the caller's session and request", async () => {
+      const role = buildRole();
+      const calls: unknown[][] = [];
+      role.handlers.gql.handler = (async (...args: unknown[]) => {
+        calls.push(args);
+        return { data: {} };
+      }) as typeof role.handlers.gql.handler;
+      const table = role.tables.find((t) => t.resolverName === "dbo_products")!;
+      const caller = {
+        session: { sub: "ana", role: "user" },
+        req: new Request("http://localhost/mcp") as unknown as BunRequest,
+      };
+
+      await callTool(serverFor(undefined, role, caller), "graphql_execute", {
+        query: `{ dbo_products(limit: 1) { ${columnFieldName(table.columns[0]!)} } }`,
+      });
+
+      expect(calls[0]![2]).toBe(caller.req);
+      expect(calls[0]![3]).toBe(caller.session);
+    });
+
+    it("runs rest_execute with the caller's session", async () => {
+      const role = buildRole();
+      const sessions: unknown[] = [];
+      role.handlers.rest.handler = (async (...args: unknown[]) => {
+        sessions.push(args[4]);
+        return new Response("{}", { headers: { "content-type": "application/json" } });
+      }) as typeof role.handlers.rest.handler;
+      const caller = { session: { sub: "ana", role: "user" } };
+
+      await callTool(serverFor(undefined, role, caller), "rest_execute", {
+        method: "GET",
+        path: "/anything",
+      });
+
+      expect(sessions).toEqual([caller.session]);
+    });
+
+    it("answers rest_execute as the caller whatever credentials the tool sends", async () => {
+      const role = getSchema(
+        {
+          tables: StoreMSSQL.tables,
+          storedProcedures: [],
+          queues: [],
+          operations: {},
+          remoteSchemas: [],
+          remoteREST: [],
+        },
+        { enabled: true } as Auth,
+      );
+      const issuer = createJWTService(env, {
+        saveJti: async () => {},
+        isTokenUsed: async () => false,
+        revoke: async () => {},
+        isRevoked: async () => false,
+        close: () => {},
+      });
+      const editorToken = await issuer.createToken({ sub: "boss@acme.test", role: "editor" });
+      const caller = { session: { sub: "ana@acme.test", role: "user" } };
+
+      const result = await callTool(serverFor(undefined, role, caller), "rest_execute", {
+        method: "GET",
+        path: "/auth/me",
+        headers: {
+          authorization: `Bearer ${editorToken}`,
+          [env.admin.header]: env.admin.secrets[0]!,
+          cookie: "refresh_token=someone-else",
+        },
+      });
+
+      expect(JSON.parse(textOf(result))).toMatchObject({
+        status: 200,
+        body: { data: { username: "ana@acme.test", role: "user" } },
+      });
+    });
+
+    it("openapi://spec serves the document it was handed", async () => {
+      const res = await readResource(serverFor(), "openapi://spec");
+
+      expect(JSON.parse(res.contents[0].text)).toEqual(OPENAPI);
     });
   });
 });

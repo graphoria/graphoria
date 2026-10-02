@@ -1,4 +1,4 @@
-export const GRAPHORIA_MCP_INSTRUCTIONS = `Graphoria MCP server. Anonymous-role-only GraphQL+REST APIs auto-generated from a database schema. Mutations and subscriptions are rejected by graphql_execute.
+export const GRAPHORIA_MCP_INSTRUCTIONS = `Graphoria MCP server. GraphQL+REST APIs auto-generated from a database schema, as the caller's role sees them. Mutations and subscriptions are rejected by graphql_execute.
 
 Discovery workflow:
   1. list_entities             (REQUIRES kind or search — see below; never call with no args)

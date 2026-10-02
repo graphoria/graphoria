@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { Env } from "../types/env";
 
-import { createCapabilityAuthorizer } from "./capabilities";
+import { createCapabilityAuthorizer, scopedCredentialRole } from "./capabilities";
 
 const env = {
   admin: { secrets: ["admin-new", "admin-old"], header: "x-admin-secret" },
@@ -93,5 +93,25 @@ describe("createCapabilityAuthorizer", () => {
     );
     expect(authorize("", "console:read")).toBeNull();
     expect(authorize("", "mcp")).toBeNull();
+  });
+});
+
+describe("scopedCredentialRole", () => {
+  const renamed = {
+    superadmin: { role: "root" },
+    anonymousRole: "guest",
+    ai: { mcp: {} },
+  } as unknown as Env;
+
+  it("reads the agent credential as the superadmin role", () => {
+    expect(scopedCredentialRole(renamed, "ai")).toBe("root");
+  });
+
+  it("reads the MCP credential as the anonymous role", () => {
+    expect(scopedCredentialRole(renamed, "mcp")).toBe("guest");
+  });
+
+  it("reads any other capability as the anonymous role", () => {
+    expect(scopedCredentialRole(renamed, "metrics")).toBe("guest");
   });
 });

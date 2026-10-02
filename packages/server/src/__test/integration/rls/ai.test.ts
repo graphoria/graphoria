@@ -6,7 +6,8 @@ import type { StartedRls } from "./fixture";
 
 import { ENGINES, fieldName } from "../config";
 import { integrationEnabled } from "../harness";
-import { startRlsServer } from "./fixture";
+import { callMcpTool } from "../mcp";
+import { flushRedis, startRlsServer } from "./fixture";
 
 /**
  * The AI agent reads what its caller reads. A scripted provider stands in for
@@ -56,7 +57,13 @@ describe.skipIf(!integrationEnabled)("rls · AI agent and MCP", () => {
       const tasks = fieldName(engine, "app", "tasks");
 
       beforeAll(async () => {
-        started = await startRlsServer(engine, { config: { ai: { enabled: true } } });
+        await flushRedis();
+
+        const { env } = await import("../../../singletons/env");
+        started = await startRlsServer(engine, {
+          config: { ai: { enabled: true, mcp: { enabled: true } } },
+          env: { ai: { ...env.ai, mcp: { ...env.ai.mcp, requireAdminSecret: true } } },
+        });
         ({ setProvider } = await import("../../../ai/agent/providers"));
         setProvider(echoProvider(tasks));
       });
@@ -118,6 +125,59 @@ describe.skipIf(!integrationEnabled)("rls · AI agent and MCP", () => {
 
         it("keeps an anonymous caller away from the route", async () => {
           expect((await askRest({})).status).toBe(404);
+        });
+      });
+
+      describe("mcp", () => {
+        const mcp = (
+          name: string,
+          args: Record<string, unknown>,
+          headers: Record<string, string>,
+        ) =>
+          callMcpTool(`http://localhost:${started.context.server.port}/mcp`, name, args, headers);
+
+        const tasksQuery = () => ({ query: `{ ${tasks}(orderBy: [{ id: ASC }]) { id } }` });
+
+        it("refuses a caller with no credential while the gate is on", async () => {
+          expect((await mcp("list_entities", { kind: "table" }, {})).status).toBe(401);
+        });
+
+        it("runs graphql_execute as ana", async () => {
+          const call = await mcp("graphql_execute", tasksQuery(), await bearer("ana"));
+
+          expect(call.status).toBe(200);
+          expect(taskIds(JSON.stringify(call.result), tasks)).toEqual(ANA_TASKS);
+        });
+
+        it("runs query_data as ana", async () => {
+          const call = await mcp(
+            "query_data",
+            { entity: tasks, operation: "list", columns: ["id"] },
+            await bearer("ana"),
+          );
+
+          expect(taskIds(JSON.stringify(call.result), tasks).sort((a, b) => a - b)).toEqual(
+            ANA_TASKS,
+          );
+        });
+
+        it("runs rest_execute as ana", async () => {
+          const call = await mcp(
+            "rest_execute",
+            { method: "GET", path: "/cached-tasks" },
+            await bearer("ana"),
+          );
+          const { body } = call.result as { body: unknown };
+
+          expect(taskIds(JSON.stringify(body), tasks).sort((a, b) => a - b)).toEqual(ANA_TASKS);
+        });
+
+        it("shows the admin secret every tenant", async () => {
+          const call = await mcp("graphql_execute", tasksQuery(), admin());
+
+          expect(taskIds(JSON.stringify(call.result), tasks)).toEqual(
+            expect.arrayContaining([...ANA_TASKS, ...UMBRELLA_TASKS]),
+          );
         });
       });
     });

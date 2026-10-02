@@ -316,7 +316,7 @@ export const executeGraphqlCore = async (
   role: RoleEntities,
   validateQuery: ValidateQueryFn,
   { query, variables }: { query: string; variables?: Record<string, unknown> },
-  { session, req }: ToolCaller = {},
+  { session, req }: ToolCaller,
 ): Promise<GraphqlExecOutcome> => {
   try {
     if (containsNonQueryOperation(query)) return { kind: "non_query" };

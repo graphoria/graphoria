@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { Configuration } from "../types/configuration";
 import type { Env } from "../types/env";
+import type { OpenAPIV3_1 } from "openapi-types";
 
 import { logger } from "../logging";
 import type { GetSchemaReturn } from "./getSchemas";
@@ -134,13 +135,25 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     ...getSchemas(others, configuration.auth, superadminSchema.handlers.gql, aiSurfaces.ask),
   };
 
-  const jsonOpenApi = generateOpenAPI({
-    title: configuration.name,
-    version: configuration.version,
-    role: schemas.superadmin,
-    options,
-    ai: aiSurfaces.rest ? { path: configuration.ai.endpoint } : undefined,
-  });
+  // One document per role, built on first use: MCP shows each caller its own.
+  const openapiByRole = new Map<string, OpenAPIV3_1.Document>();
+  const openapiFor = (role: string): OpenAPIV3_1.Document => {
+    const cached = openapiByRole.get(role);
+    if (cached) return cached;
+
+    const document = generateOpenAPI({
+      title: configuration.name,
+      version: configuration.version,
+      role: schemas[role],
+      options,
+      ai:
+        aiSurfaces.rest && schemas[role].entityOfRole.ai
+          ? { path: configuration.ai.endpoint }
+          : undefined,
+    });
+    openapiByRole.set(role, document);
+    return document;
+  };
 
   log.info(
     {
@@ -156,7 +169,8 @@ export const analyzeConfiguration = async (configuration: Configuration, options
   return {
     databases: enabledDatabases,
     roles: schemas,
-    openapi: jsonOpenApi,
+    openapi: openapiFor("superadmin"),
+    openapiFor,
     queues: enabledQueues,
     auth: configuration.auth,
   };

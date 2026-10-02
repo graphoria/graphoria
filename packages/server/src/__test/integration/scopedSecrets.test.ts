@@ -260,7 +260,7 @@ describe.skipIf(!integrationEnabled)("scoped admin credentials", () => {
         {
           action: "admin_secret.used",
           actor: { type: "admin_secret", scope: "mcp", ip: expect.any(String) },
-          target: { kind: "mcp" },
+          target: { kind: "endpoint", method: "POST", path: "/mcp" },
         },
       ]);
     });
