@@ -92,6 +92,7 @@ A role without the remote name in its `remoteREST` list cannot reach those route
 
 - **Prefix collisions**: if two remotes share a `prefix`, the second one wins for routes that overlap. Always assign a unique prefix per remote.
 - **Local routes win**: define an operation with `rest: { path: "/petstore/health" }` and Graphoria will serve it locally even though `petstore` is mounted at the same path. This is how you can override or enrich a single upstream endpoint.
+- **No upstream addresses in the merged spec**: clients call the proxy, so an operation's own `servers` and a response link's `server` are dropped when the upstream's operations are merged into `/openapi.json` (and into what the MCP tools describe).
 - **OpenAPI variants**: Graphoria expects OpenAPI 3.0 or 3.1. Swagger 2.0 specs need to be converted first (e.g. with `swagger2openapi`).
 - **Auth forwarding**: the `Authorization` header is forwarded _only_ if you list it in `forwardHeaders`. Most internal upstreams trust the header as long as it matches their JWT issuer, so you typically want this on.
 - **Timeouts**: `timeout` is enforced via `AbortController`. A timed-out upstream call returns `504 Gateway Timeout` to the client.

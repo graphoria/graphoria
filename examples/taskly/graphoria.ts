@@ -403,7 +403,7 @@ export default {
   ],
 
   ai: {
-    enabled: true, // POST /ai + GraphQL `ask` (admin-secret only)
+    enabled: true, // POST /rest/ai + GraphQL `ask`, for the roles granted `ai`
     mcp: { enabled: true }, // POST /mcp
   },
 } as ConfigurationInput;

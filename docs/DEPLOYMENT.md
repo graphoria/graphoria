@@ -130,7 +130,7 @@ front of the starter:
 
   With `PREFIX` set, prefix the matched paths. The [AI agent](./AI.md), when it is on, is not kept
   off: it answers at `/rest/ai` and as the GraphQL `ask` field, on the public route like the rest of
-  the API, and only to the admin secret or `AI_SECRET`.
+  the API, and only to the roles granted `ai`, the admin secret or `AI_SECRET`.
 
 - **A body limit.** Graphoria sets none of its own, so Bun's default of 128 MiB applies. With
   `max_size 1MB` Caddy answers `413` above one megabyte; size it to your largest mutation.

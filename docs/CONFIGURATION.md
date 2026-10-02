@@ -617,9 +617,9 @@ Off by default. Nothing is limited until you set a ceiling, and no warning fires
 | `RATE_LIMIT_WINDOW_MS`     | `number`  | `60000` | Window length in milliseconds                               |
 | `RATE_LIMIT_TRUST_PROXY`   | `boolean` | `false` | Read the client address from `X-Forwarded-For`              |
 
-A caller gets one token bucket across every endpoint — `/graphql` (queries and the websocket upgrade alike), `/rest/*`, `/ai`, `/mcp` and the console login — because what exhausts a server is total request volume, not volume on one route. An idle bucket refills to `max`, so a caller may burst `max` and then sustain `max` per window. Over budget is `429` with `Retry-After` in seconds.
+A caller gets one token bucket across every endpoint — `/graphql` (queries and the websocket upgrade alike), `/rest/*` (the agent's `/rest/ai` included), `/mcp` and the console login — because what exhausts a server is total request volume, not volume on one route. An idle bucket refills to `max`, so a caller may burst `max` and then sustain `max` per window. Over budget is `429` with `Retry-After` in seconds.
 
-Callers are identified by authenticated subject where there is one, and by client address otherwise. **Neither the admin secret nor the superadmin role is exempt** — set `RATE_LIMIT_MAX` above what your own tooling needs. The console polls status every five seconds.
+Callers are identified by authenticated subject where there is one, and by client address otherwise. The admin secret is one subject, shared by everyone who presents it, and so is each AI credential on its own route: every holder of `AI_SECRET` shares one bucket under the ceiling of `AI_SECRET_ROLE`, every holder of `AI_MCP_SECRET` one under the ceiling of `AI_MCP_SECRET_ROLE`. **Neither the admin secret nor the superadmin role is exempt** — set `RATE_LIMIT_MAX` above what your own tooling needs. The console polls status every five seconds.
 
 A role may carry its own ceiling, which beats both env values:
 

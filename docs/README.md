@@ -42,10 +42,10 @@ Reference guides for configuring and running Graphoria. New here? Start with the
 
 ## AI
 
-| Guide                  | Description                                                       |
-| ---------------------- | ----------------------------------------------------------------- |
-| [AI Agent](./AI.md)    | Admin-only natural-language → database Q&A over GraphQL and REST  |
-| [MCP Server](./MCP.md) | Model Context Protocol endpoint exposing read-only database tools |
+| Guide                  | Description                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| [AI Agent](./AI.md)    | Natural-language → database Q&A as the caller's role, over GraphQL and REST             |
+| [MCP Server](./MCP.md) | Model Context Protocol endpoint exposing the caller's GraphQL and REST surface as tools |
 
 ## Frontend
 

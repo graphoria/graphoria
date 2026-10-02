@@ -34,7 +34,7 @@ Three secrets open the console, and the session carries the scope of whichever o
 | `CONSOLE_WRITE_SECRET` | `write`       | Read every page, publish to queues, and trigger, pause or resume cron jobs.                                                            |
 | `ADMIN_SECRET`         | `write`       | The same — it is the superset — and the server logs a warning each time it is used here, because a console credential would have done. |
 
-Each is a comma-separated list, rotated like `ADMIN_SECRET` (see [Rotating secrets](./AUTHENTICATION.md#rotating-secrets)), and both console credentials are unset by default. Neither opens anything outside `{CONSOLE_ENDPOINT}/api/*`: sent in the admin-secret header to `/graphql`, `/rest/*`, `/ai` or `/mcp` it resolves to the anonymous role.
+Each is a comma-separated list, rotated like `ADMIN_SECRET` (see [Rotating secrets](./AUTHENTICATION.md#rotating-secrets)), and both console credentials are unset by default. Neither opens anything outside `{CONSOLE_ENDPOINT}/api/*`: sent in the admin-secret header to `/graphql`, `/rest/*` (the agent's `/rest/ai` included) or `/mcp` it resolves to the anonymous role.
 
 A `read` session that calls `POST /api/queues/publish` or `POST /api/cron` gets `403` with `Console session is read-only`, and nothing is published or audited. The UI hides the publish form and the cron actions for such a session and marks it read-only in the sidebar.
 

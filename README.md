@@ -83,7 +83,7 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 - **Remote REST APIs** — proxy external OpenAPI services under `/rest`
 - **Virtual columns** — computed columns powered by SQL expressions or functions
 - **GraphQL directives** — `@where`, `@truncate`, `@replace`, `@concat`, and more for data transformation
-- **AI agent** — admin-only natural-language → database Q&A, exposed as GraphQL `ask` query and REST endpoint
+- **AI agent** — natural-language → database Q&A for the roles you grant it, reading only what the caller's role reads; GraphQL `ask` query and REST endpoint
 - **MCP server** — Model Context Protocol server so AI editors can explore your schema as tools
 - **Admin console** — web UI at `/_console` for tables, roles, permissions, API docs, and runtime status
 - **LRU cache** with queue-driven invalidation
@@ -254,17 +254,17 @@ configureLogging({ level: "trace" });
 
 Every privileged action is written as one structured record through a pino child logger tagged `component: "audit"`. The records go wherever the rest of the log goes, but they are emitted at `info` regardless of `LOG_LEVEL`, so a deployment that runs at `warn` still gets them. To route them to their own sink, filter on `component` in a transport of your own (see [Logging](#logging) for injecting one).
 
-| Action                                | Actor                                                       | Target                                            | When                                                                               |
-| ------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `admin_secret.used`                   | `admin_secret`, address, and at `/ai` or `/mcp` the `scope` | the endpoint (method, path), `websocket` or `mcp` | Any request that presented the admin secret or a scoped credential                 |
-| `auth.login`                          | `credentials`, username                                     | `auth`, with `via` and (on success) the role      | `auth_login` over GraphQL or REST; `outcome` is `success` or `failure`             |
-| `auth.logout`                         | the session                                                 | `auth`, with the JTIs it revoked                  | `auth_logout`, when it revoked at least one token                                  |
-| `queue.publish`                       | the session                                                 | the publisher                                     | A queue publisher mutation                                                         |
-| `ai.ask`                              | the session                                                 | `ai`, with `via`                                  | The agent over REST or the GraphQL `ask` field. **The record carries the prompt.** |
-| `console.login`                       | `admin_secret`, address, and on success the `scope`         | `console`                                         | Console login, success or failure                                                  |
-| `console.logout`                      | `console`, address                                          | `console`                                         | Console logout that revoked a live session                                         |
-| `console.queue.publish`               | `console`, address                                          | the publisher and routing key                     | A publish from the console                                                         |
-| `console.cron.{trigger,pause,resume}` | `console`, address                                          | the job                                           | Cron control from the console                                                      |
+| Action                                | Actor                                                            | Target                                       | When                                                                                                                                                                                               |
+| ------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admin_secret.used`                   | `admin_secret`, address, and at `/rest/ai` or `/mcp` the `scope` | the endpoint (method, path) or `websocket`   | A `/graphql`, `/rest/*` or `POST /mcp` request or a websocket `connection_init` that presented the admin secret, and `AI_SECRET` / `AI_MCP_SECRET` on their own routes; `GET /metrics` writes none |
+| `auth.login`                          | `credentials`, username                                          | `auth`, with `via` and (on success) the role | `auth_login` over GraphQL or REST; `outcome` is `success` or `failure`                                                                                                                             |
+| `auth.logout`                         | the session                                                      | `auth`, with the JTIs it revoked             | `auth_logout`, when it revoked at least one token                                                                                                                                                  |
+| `queue.publish`                       | the session                                                      | the publisher                                | A queue publisher mutation                                                                                                                                                                         |
+| `ai.ask`                              | the session                                                      | `ai`, with `via`                             | The agent over REST or the GraphQL `ask` field. **The record carries the prompt.**                                                                                                                 |
+| `console.login`                       | `admin_secret`, address, and on success the `scope`              | `console`                                    | Console login, success or failure                                                                                                                                                                  |
+| `console.logout`                      | `console`, address                                               | `console`                                    | Console logout that revoked a live session                                                                                                                                                         |
+| `console.queue.publish`               | `console`, address                                               | the publisher and routing key                | A publish from the console                                                                                                                                                                         |
+| `console.cron.{trigger,pause,resume}` | `console`, address                                               | the job                                      | Cron control from the console                                                                                                                                                                      |
 
 A record is `{ action, actor: { type, sub?, role?, ip? }, target: { kind, … }, outcome?, time, … }`. Before it is written, any key named `password`, `secret`, `secrets`, `token`, `access_token`, `refresh_token`, `authorization` or `cookie` is replaced with `[REDACTED]`, at any depth. A queue message body is never recorded, only the publisher and key. The AI prompt is recorded verbatim, so a prompt that quotes sensitive data lands in the log.
 
@@ -371,18 +371,18 @@ Generated GraphQL fields follow the `{schema}_{name}` pattern by default — e.g
 
 ## API Endpoints
 
-| Verb     | Path            | Description                                                                                     |
-| -------- | --------------- | ----------------------------------------------------------------------------------------------- |
-| GET/POST | `/graphql`      | GraphQL over HTTP, POST only. GET is the WebSocket upgrade (graphql-ws); a plain GET is `404`.  |
-| GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies).                                                    |
-| GET      | `/graphiql`     | Bundled GraphiQL playground.                                                                    |
-| GET      | `/scalar`       | Bundled Scalar API docs.                                                                        |
-| GET      | `/openapi.json` | Unified OpenAPI spec (operations + remote-REST).                                                |
-| POST     | `/mcp`          | Model Context Protocol server (anonymous, opt-in; gate with `ADMIN_SECRET` or `AI_MCP_SECRET`). |
-| POST     | `/ai`           | AI agent — NL → database Q&A (`ADMIN_SECRET` or `AI_SECRET`, opt-in).                           |
-| GET      | `/_console`     | Admin console UI + status APIs (session from `ADMIN_SECRET` or a console credential, opt-in).   |
-| GET      | `/health/live`  | Liveness probe — `200` while the process serves HTTP. No auth.                                  |
-| GET      | `/health/ready` | Readiness probe — `503` while a database, Redis or a broker is unreachable. No auth.            |
+| Verb     | Path            | Description                                                                                                                  |
+| -------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| GET/POST | `/graphql`      | GraphQL over HTTP, POST only. GET is the WebSocket upgrade (graphql-ws); a plain GET is `404`.                               |
+| GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies).                                                                                 |
+| GET      | `/graphiql`     | Bundled GraphiQL playground.                                                                                                 |
+| GET      | `/scalar`       | Bundled Scalar API docs.                                                                                                     |
+| GET      | `/openapi.json` | Unified OpenAPI spec (operations + remote-REST).                                                                             |
+| POST     | `/mcp`          | Model Context Protocol server (opt-in; tools run as the caller's role; `AI_MCP_REQUIRE_ADMIN_SECRET` requires a credential). |
+| POST     | `/rest/ai`      | AI agent — NL → database Q&A for the roles granted `ai` (opt-in).                                                            |
+| GET      | `/_console`     | Admin console UI + status APIs (session from `ADMIN_SECRET` or a console credential, opt-in).                                |
+| GET      | `/health/live`  | Liveness probe — `200` while the process serves HTTP. No auth.                                                               |
+| GET      | `/health/ready` | Readiness probe — `503` while a database, Redis or a broker is unreachable. No auth.                                         |
 
 All paths are configurable via environment variables. Auth: `Authorization: Bearer <token>`. Admin: `x-admin-secret` header carrying `ADMIN_SECRET` or a [scoped credential](./docs/SECURITY_MODEL.md#scoped-credentials).
 
@@ -452,25 +452,25 @@ The three limits that ship on — query depth, page size and the statement timeo
 
 **Features**
 
-| Guide                                                 | Description                                                           |
-| ----------------------------------------------------- | --------------------------------------------------------------------- |
-| [Authentication](./docs/AUTHENTICATION.md)            | JWT and PASETO strategies, argon2id passwords, refresh-token rotation |
-| [Permissions & Access Control](./docs/PERMISSIONS.md) | RBAC, row-level filtering, session variables, ordering                |
-| [Resource Limits](./docs/LIMITS.md)                   | Depth, page size, timeouts, rate limiting and the query cost budget   |
-| [Operations](./docs/OPERATIONS.md)                    | Custom query and handler operations, hooks, caching                   |
-| [Cron Jobs](./docs/CRON.md)                           | Scheduled background work with cron expressions and ISO datetimes     |
-| [Queues](./docs/QUEUES.md)                            | RabbitMQ and Kafka publishers, subscribers, cache invalidation        |
-| [Subscriptions](./docs/SUBSCRIPTIONS.md)              | GraphQL subscriptions over WebSockets                                 |
-| [GraphQL Directives](./docs/DIRECTIVES.md)            | Built-in data-transformation and `@when` control-flow directives      |
-| [Virtual Columns](./docs/VIRTUAL_COLUMNS.md)          | Computed columns powered by SQL expressions or functions              |
-| [Performance](./docs/PERFORMANCE.md)                  | Query strategy, caching behaviour, measured numbers and the gate      |
-| [Observability](./docs/OBSERVABILITY.md)              | Health endpoints, slow query log, Prometheus metrics, OTLP tracing    |
-| [Remote GraphQL Schemas](./docs/REMOTE_SCHEMAS.md)    | Stitch external GraphQL APIs into the unified schema                  |
-| [Remote REST APIs](./docs/REMOTE_REST.md)             | Proxy external OpenAPI services under `/rest`                         |
-| [AI Agent](./docs/AI.md)                              | Admin-only natural-language → database Q&A over GraphQL and REST      |
-| [MCP Server](./docs/MCP.md)                           | Model Context Protocol server — schema as tools for AI editors        |
-| [Admin Console](./docs/CONSOLE.md)                    | Web UI for tables, roles, permissions, API docs, and runtime status   |
-| [React SDK](./docs/REACT.md)                          | `@graphoria/react` hooks, providers, and recipes for Apollo and urql  |
+| Guide                                                 | Description                                                                 |
+| ----------------------------------------------------- | --------------------------------------------------------------------------- |
+| [Authentication](./docs/AUTHENTICATION.md)            | JWT and PASETO strategies, argon2id passwords, refresh-token rotation       |
+| [Permissions & Access Control](./docs/PERMISSIONS.md) | RBAC, row-level filtering, session variables, ordering                      |
+| [Resource Limits](./docs/LIMITS.md)                   | Depth, page size, timeouts, rate limiting and the query cost budget         |
+| [Operations](./docs/OPERATIONS.md)                    | Custom query and handler operations, hooks, caching                         |
+| [Cron Jobs](./docs/CRON.md)                           | Scheduled background work with cron expressions and ISO datetimes           |
+| [Queues](./docs/QUEUES.md)                            | RabbitMQ and Kafka publishers, subscribers, cache invalidation              |
+| [Subscriptions](./docs/SUBSCRIPTIONS.md)              | GraphQL subscriptions over WebSockets                                       |
+| [GraphQL Directives](./docs/DIRECTIVES.md)            | Built-in data-transformation and `@when` control-flow directives            |
+| [Virtual Columns](./docs/VIRTUAL_COLUMNS.md)          | Computed columns powered by SQL expressions or functions                    |
+| [Performance](./docs/PERFORMANCE.md)                  | Query strategy, caching behaviour, measured numbers and the gate            |
+| [Observability](./docs/OBSERVABILITY.md)              | Health endpoints, slow query log, Prometheus metrics, OTLP tracing          |
+| [Remote GraphQL Schemas](./docs/REMOTE_SCHEMAS.md)    | Stitch external GraphQL APIs into the unified schema                        |
+| [Remote REST APIs](./docs/REMOTE_REST.md)             | Proxy external OpenAPI services under `/rest`                               |
+| [AI Agent](./docs/AI.md)                              | Natural-language → database Q&A as the caller's role, over GraphQL and REST |
+| [MCP Server](./docs/MCP.md)                           | Model Context Protocol server — schema as tools for AI editors              |
+| [Admin Console](./docs/CONSOLE.md)                    | Web UI for tables, roles, permissions, API docs, and runtime status         |
+| [React SDK](./docs/REACT.md)                          | `@graphoria/react` hooks, providers, and recipes for Apollo and urql        |
 
 ## Contributing
 

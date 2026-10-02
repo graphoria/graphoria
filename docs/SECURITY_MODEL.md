@@ -26,16 +26,16 @@ edit the configuration has already won, and no check in the product is placed to
 
 ### Who a caller can be
 
-| Caller                   | Identified by                                                                                        | Resolves to                                  | Reaches                                                                             |
-| ------------------------ | ---------------------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Anonymous                | nothing                                                                                              | `ANONYMOUS_ROLE` (default `anonymous`)       | That role's compiled schema, and nothing else                                       |
-| Authenticated user       | `Authorization: Bearer <token>`, audience `access`                                                   | the token's `role` claim                     | That role's compiled schema, rows narrowed by the role's filter and its own session |
-| Administrator            | `x-admin-secret: <ADMIN_SECRET>`                                                                     | `SUPERADMIN_ROLE` (default `superadmin`)     | Everything. RBAC is bypassed, not widened                                           |
-| Console operator         | `graphoria_console_session` cookie, audience `console`                                               | the console's own session, `read` or `write` | `{console}/api/*` only; queue publish and cron control need `write`                 |
-| MCP client               | nothing, unless `AI_MCP_REQUIRE_ADMIN_SECRET=true`, then `ADMIN_SECRET` or `AI_MCP_SECRET`           | the anonymous role                           | The anonymous role's schema through the MCP tools                                   |
-| AI agent caller          | `x-admin-secret`: `ADMIN_SECRET`, or `AI_SECRET` over REST                                           | `superadmin`                                 | Every table, through a model                                                        |
-| Scoped credential holder | one of `CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET`, `METRICS_SECRET` | that one surface                             | Nothing else: anywhere but its surface it is the anonymous role                     |
-| Subscriber               | token presented once in `connection_init`                                                            | the token's `role` claim                     | That role's subscription root                                                       |
+| Caller                   | Identified by                                                                                                                | Resolves to                                              | Reaches                                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Anonymous                | nothing                                                                                                                      | `ANONYMOUS_ROLE` (default `anonymous`)                   | That role's compiled schema, and nothing else                                                    |
+| Authenticated user       | `Authorization: Bearer <token>`, audience `access`                                                                           | the token's `role` claim                                 | That role's compiled schema, rows narrowed by the role's filter and its own session              |
+| Administrator            | `x-admin-secret: <ADMIN_SECRET>`                                                                                             | `SUPERADMIN_ROLE` (default `superadmin`)                 | Everything. RBAC is bypassed, not widened                                                        |
+| Console operator         | `graphoria_console_session` cookie, audience `console`                                                                       | the console's own session, `read` or `write`             | `{console}/api/*` only; queue publish and cron control need `write`                              |
+| MCP client               | nothing, a bearer token, the admin secret, or `AI_MCP_SECRET`; `AI_MCP_REQUIRE_ADMIN_SECRET=true` refuses a caller with none | as on `/graphql`; `AI_MCP_SECRET` → `AI_MCP_SECRET_ROLE` | That role's schema through the MCP tools                                                         |
+| AI agent caller          | nothing, a bearer token, the admin secret, or `AI_SECRET` over REST                                                          | as on `/graphql`; `AI_SECRET` → `AI_SECRET_ROLE`         | What that role reads, through a model, if it is granted `ai`; otherwise `404` and no `ask` field |
+| Scoped credential holder | one of `CONSOLE_READ_SECRET`, `CONSOLE_WRITE_SECRET`, `AI_SECRET`, `AI_MCP_SECRET`, `METRICS_SECRET`                         | that one surface                                         | Nothing else: anywhere but its surface it is the anonymous role                                  |
+| Subscriber               | token presented once in `connection_init`                                                                                    | the token's `role` claim                                 | That role's subscription root                                                                    |
 
 Two properties of that table are easy to miss and are deliberate.
 
@@ -57,44 +57,49 @@ credential that bypasses role-based access control entirely. Presenting it in th
 every table, stored procedure, operation, queue and remote source the configuration knows about,
 with no row filter and no column restriction.
 
-It also gates, at the same strength:
+It is also accepted, at the same strength, by:
 
 - `POST {console}/api/login`, which exchanges it for a console session cookie.
-- `POST /ai`, the natural-language agent, which is bound to the superadmin schema.
-- `POST /mcp`, but only when `AI_MCP_REQUIRE_ADMIN_SECRET=true`. It is `false` by default.
+- `POST /rest/ai` and the GraphQL `ask` field, the natural-language agent, which then read as the
+  superadmin role. Neither requires it: every role granted `ai` may call them.
+- `POST /mcp`, which then reads as the superadmin role. MCP requires a credential only with
+  `AI_MCP_REQUIRE_ADMIN_SECRET=true`, and a valid bearer token is one.
 
-Each of those three gates also takes a credential scoped to it alone; see
-[Scoped credentials](#scoped-credentials). Comparison is `crypto.timingSafeEqual` on every path,
-and a blank secret never matches. The secret does not expire. It can be rotated without a
-cut-over: `ADMIN_SECRET` takes a comma-separated list and every entry is accepted, so the new value
-goes in first, the fleet rolls, and the old value is dropped once nothing presents it any more (see
-[Rotating secrets](./AUTHENTICATION.md#rotating-secrets)). Treat it as a break-glass credential: it
-belongs in a secret manager and behind network-level protection, not in a client.
+The console login, `POST /rest/ai` and `POST /mcp` each also take a credential scoped to them
+alone; see [Scoped credentials](#scoped-credentials). Comparison is `crypto.timingSafeEqual` on
+every path, and a blank secret never matches. The secret does not expire. It can be rotated without
+a cut-over: `ADMIN_SECRET` takes a comma-separated list and every entry is accepted, so the new
+value goes in first, the fleet rolls, and the old value is dropped once nothing presents it any
+more (see [Rotating secrets](./AUTHENTICATION.md#rotating-secrets)). Treat it as a break-glass
+credential: it belongs in a secret manager and behind network-level protection, not in a client.
 
 ## Scoped credentials
 
-Four further secrets each open one surface and nothing else. Every one is a comma-separated list
+Five further secrets each open one surface and nothing else. Every one is a comma-separated list
 rotated like `ADMIN_SECRET`, compared with `crypto.timingSafeEqual`, and unset by default — an
 unset credential matches nothing, not even an empty header.
 
-| Credential             | Opens                                                                          | And nothing else                                                                                                               |
-| ---------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `CONSOLE_READ_SECRET`  | `POST {console}/api/login`, for a session that can read every console page     | A `read` session gets `403` from `queues/publish` and `cron`                                                                   |
-| `CONSOLE_WRITE_SECRET` | The same login, for a session that can also publish to queues and control cron | Sent in the admin-secret header anywhere, it is the anonymous role                                                             |
-| `AI_SECRET`            | `POST /ai` over REST, in the admin-secret header                               | Sent to `/graphql`, `/rest/*`, the websocket or `/mcp` it is the anonymous role, so the GraphQL `ask` field stays out of reach |
-| `AI_MCP_SECRET`        | `POST /mcp`, when `AI_MCP_REQUIRE_ADMIN_SECRET=true`                           | Anywhere else it is the anonymous role                                                                                         |
-| `METRICS_SECRET`       | `GET /metrics`, when `METRICS_ENABLED=true`                                    | Anywhere else it is the anonymous role                                                                                         |
+| Credential             | Opens                                                                          | And nothing else                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CONSOLE_READ_SECRET`  | `POST {console}/api/login`, for a session that can read every console page     | A `read` session gets `403` from `queues/publish` and `cron`                                                                                   |
+| `CONSOLE_WRITE_SECRET` | The same login, for a session that can also publish to queues and control cron | Sent in the admin-secret header anywhere, it is the anonymous role                                                                             |
+| `AI_SECRET`            | `POST /rest/ai`, in the admin-secret header, reading as `AI_SECRET_ROLE`       | Sent to `/graphql`, any other `/rest/*` route, the websocket or `/mcp` it is the anonymous role, so the GraphQL `ask` field stays out of reach |
+| `AI_MCP_SECRET`        | `POST /mcp`, reading as `AI_MCP_SECRET_ROLE`                                   | Anywhere else it is the anonymous role                                                                                                         |
+| `METRICS_SECRET`       | `GET /metrics`, when `METRICS_ENABLED=true`                                    | Anywhere else it is the anonymous role                                                                                                         |
 
 The admin secret remains the superset: it opens all five, and every time it is used where a scoped
 credential would have done the server logs a warning at `warn` level — the signal that a scoped
 credential should be handed out instead. The audit record for the use names the credential: `scope`
-is `all` for the admin secret and the capability (`console:read`, `console:write`, `ai`, `mcp`,
-`metrics`)
-otherwise.
+is `all` for the admin secret and the capability (`console:read`, `console:write`, `ai`, `mcp`)
+otherwise. A scrape of `GET /metrics` writes no record, whichever secret it presents.
 
-Scoping narrows **who can reach** a surface, not what the surface does: `AI_SECRET` still drives an
-agent bound to the superadmin schema, and a `write` console session still publishes whatever it is
-given. Only `authentication/capabilities.ts` knows which secret grants what; every gate asks it.
+A scoped credential reads as one role on its surface: `AI_SECRET` as `AI_SECRET_ROLE` (default the
+superadmin role, which must be granted `ai`), `AI_MCP_SECRET` as `AI_MCP_SECRET_ROLE` (default the
+anonymous role). Point them at a narrower role to narrow what they read. The session carries `sub`
+`ai` or `mcp` and no claims, so that role should not filter rows on `$session`: such a filter
+matches nothing or fails. A `write` console session still publishes whatever it is given. Only
+`authentication/capabilities.ts` knows which secret grants what and which role it reads as; every
+gate asks it.
 
 ## What a valid low-privilege token reaches
 
@@ -113,8 +118,8 @@ On top of that, three narrowings apply to what remains:
   interpolated.
 - **Column lists.** A column outside `columns` is absent from every generated type, and cannot be
   selected, filtered on, or ordered by.
-- **Resource grants.** Stored procedures, operations, queues, remote schemas and remote REST APIs
-  are each granted per role and absent otherwise.
+- **Resource grants.** Stored procedures, operations, queues, remote schemas, remote REST APIs and
+  the AI agent (`ai`) are each granted per role and absent otherwise.
 
 A token carrying a role the configuration never defines reads nothing. It does not fall back to
 anonymous, and it does not inherit another role's schema.
@@ -126,7 +131,8 @@ Server instances and SQLite files — not mocks — on a two-tenant fixture wher
 appearing in the other's response is the failure condition. The suites live in
 `packages/server/src/__test/integration/rls/` and run with `bun run test:integration`.
 
-Sixty cases per engine, two hundred and forty in total. Each is listed against the claim it holds.
+Seventy cases per engine, two hundred and eighty in total. Each is listed against the claim it
+holds.
 
 ### C1 — A role's row filter reaches every read of the table
 
@@ -286,6 +292,24 @@ above.
 | ------------------------------------ |
 | mints a token for every fixture user |
 
+### C12 — The agent and MCP read as their caller
+
+A tool call is a query made on the caller's behalf, so the caller's row filter reaches it like any
+other read. A stand-in model runs one query over the tasks table and answers with the tool's raw
+result, so an answer is exactly the rows the caller's role and session let through.
+
+| Test (`ai.test.ts`)                                                                |
+| ---------------------------------------------------------------------------------- |
+| answers ana over REST with her own rows only                                       |
+| answers ana through the ask field with her own rows only                           |
+| keeps a role without ai away from the route and the field                          |
+| keeps an anonymous caller away from the route                                      |
+| refuses a caller with no credential while the gate is on                           |
+| runs graphql_execute as ana                                                        |
+| runs query_data as ana                                                             |
+| runs rest_execute as ana                                                           |
+| shows the admin secret every tenant, through the agent and over MCP — the controls |
+
 ## Resource limits
 
 These bound availability, not confidentiality. None of them keeps a caller from data it is entitled
@@ -317,16 +341,18 @@ deployment. See [Rate limiting](./CONFIGURATION.md#rate-limiting).
 ## Audit log
 
 Every privileged action writes one record through a pino child logger tagged `component: "audit"`,
-at `info` regardless of `LOG_LEVEL`: any request that presents the admin secret (over HTTP, in a
-websocket handshake, or at the MCP gate), every login and logout, every queue publish, every agent
-invocation with its prompt, and every console login, logout, publish and cron action. Each record
-names the actor, the action, the target and the time, and secret-bearing keys are redacted before it
-is written. The catalogue is in the [README](../README.md#audit-log).
+at `info` regardless of `LOG_LEVEL`: a `/graphql`, `/rest/*` or `POST /mcp` request or a websocket
+`connection_init` that presents the admin secret, `AI_SECRET` on `POST /rest/ai` and `AI_MCP_SECRET`
+on `POST /mcp`, every login and logout, every queue publish, every agent invocation with its prompt,
+and every console login, logout, publish and cron action. A scrape of `GET /metrics` writes none.
+Each record names the actor, the action, the target and the time, and secret-bearing keys are
+redacted before it is written. The catalogue is in the [README](../README.md#audit-log).
 
 It is a log, not a store. It goes where the rest of the log goes, and it holds only what a handler
-saw: a request the rate limiter rejected leaves no audit record, and `auth_login` records the
-username but not the client address. An audit trail that outlives the process is the operator's log
-shipping.
+saw. Such a `/graphql`, `/rest/*` or `POST /mcp` request is recorded before the rate limiter
+answers, so one answered `429` still leaves its record (`rateLimit.test.ts` asserts it for
+`POST /mcp`); a console login the limiter refuses leaves none. `auth_login` records the username but
+not the client address. An audit trail that outlives the process is the operator's log shipping.
 
 ## What is not defended
 
@@ -340,30 +366,31 @@ deliberate trade or an open gap, and it says which.
 **Deliberate** — it is the break-glass credential and the backward-compatible one. The mitigations
 are to hand out the scoped credentials for routine use, to treat the warning logged on every superset
 use at a scoped surface as something to chase down, and to keep the admin secret in a secret manager
-behind network-level protection. There is still no credential that narrows what the agent can read:
-`AI_SECRET` narrows who can call it.
+behind network-level protection. `AI_SECRET_ROLE` and `AI_MCP_SECRET_ROLE` narrow what the scoped
+credentials read.
 
-### The AI agent runs as superadmin
+### The AI agent sends what it reads to the LLM provider
 
-`POST /ai` is bound to the superadmin schema, so a prompt is evaluated against every table in the
-database with no row filter. It is gated by the admin secret or `AI_SECRET` and disabled by
-default. **Deliberate** — the agent's purpose is to answer questions across the whole database —
-but it means prompt injection against that endpoint is a read of everything. Do not put untrusted
-text into it.
+The agent reads as its caller (C12), so a prompt cannot reach a row the caller's own queries could
+not. Every row it does read goes to the configured LLM provider, and the prompt is audit-logged
+verbatim. Text a role can read can also steer the agent — prompt injection — within that role's
+reads; a tool query cannot start the agent again (`ask` is refused inside one). **Deliberate**;
+grant `ai` only to roles whose data may leave for the provider.
 
 ### The MCP endpoint is unauthenticated by default
 
-When `ai.mcp.enabled` is on, `AI_MCP_REQUIRE_ADMIN_SECRET` defaults to `false`, so anyone who can
-reach the port can call the MCP tools. They run against the **anonymous** role's schema, so the
-blast radius is exactly what an anonymous caller could already read over `/graphql` — but that is
-the whole radius only if the anonymous role is narrow. Set `AI_MCP_REQUIRE_ADMIN_SECRET=true` and
-hand MCP clients `AI_MCP_SECRET`, or keep the anonymous role empty.
+When MCP is on, `AI_MCP_REQUIRE_ADMIN_SECRET` defaults to `false`, so a caller with no credential
+reaches the MCP tools as the anonymous role — what it could already read over `/graphql`, which is
+the whole radius only if the anonymous role is narrow. Set `AI_MCP_REQUIRE_ADMIN_SECRET=true` to
+require a credential (a valid bearer token, the admin secret or `AI_MCP_SECRET`), or keep the
+anonymous role empty.
 
 ### `rest_execute` permits writes
 
 The MCP tool set includes `rest_execute`, which accepts `POST`, `PUT`, `PATCH` and `DELETE` against
-the anonymous-role REST handler. It is therefore not a read-only surface, whatever the anonymous
-role has been granted. **Deliberate**, and disableable: `AI_MCP_DISABLED_TOOLS=rest_execute`.
+the caller's REST handler, as the caller. It is therefore not a read-only surface, whatever the
+caller's role has been granted. **Deliberate**, and disableable:
+`AI_MCP_DISABLED_TOOLS=rest_execute`.
 
 ### `/openapi.json` is public and describes the superadmin surface
 
@@ -425,12 +452,6 @@ The REST response cache key hashes the pathname, method, variables, `sub` and `r
 names the deployment, the database or the configuration. Two Graphoria servers pointed at the same
 Redis, with an operation of the same name, will serve each other's cached rows to a caller whose
 `role` and `sub` match. **Open gap.** Give each deployment its own Redis database or its own Redis.
-
-### `AI_GRAPHQL_ENABLED` does nothing
-
-The variable parses and is then read by nothing. An operator who sets it to `false` believing
-GraphQL execution is disabled for the AI agent has changed nothing. **Open gap.** Use
-`AI_MCP_DISABLED_TOOLS` for the MCP surface; there is currently no switch for the agent's own tools.
 
 ### Failure directions, where they differ
 
