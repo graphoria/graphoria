@@ -53,13 +53,13 @@ The `permissions` map describes what each role is allowed to see. If a request a
 
 Graphoria creates one table per auth schema:
 
-| Column      | Type                               | Notes                                                                                                    |
-| ----------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `username`  | `VARCHAR(50)` / `NVARCHAR(50)`     | Primary key. Must match `^[A-Za-z_][A-Za-z0-9_]*$` style strings; otherwise the database itself decides. |
-| `password`  | `VARCHAR(255)` / `NVARCHAR(255)`   | Argon2id hash, stored as a single string.                                                                |
-| `role`      | `VARCHAR(20)` / `NVARCHAR(20)`     | Maps to a key under `auth.permissions`.                                                                  |
-| `is_active` | `BOOLEAN` / `BIT`                  | When `false`, login fails with "Invalid username or password" without exposing the cause.                |
-| `claims`    | `JSONB` / `NVARCHAR(MAX)` / `JSON` | Arbitrary JSON object copied into the JWT/PASETO payload. Surfaced as `$session.<key>` at query time.    |
+| Column      | Type                               | Notes                                                                                                        |
+| ----------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `username`  | `VARCHAR(50)` / `NVARCHAR(50)`     | Primary key. Must match `^[A-Za-z_][A-Za-z0-9_]*$` style strings; otherwise the database itself decides.     |
+| `password`  | `VARCHAR(255)` / `NVARCHAR(255)`   | Argon2id hash, stored as a single string.                                                                    |
+| `role`      | `VARCHAR(20)` / `NVARCHAR(20)`     | Maps to a key under `auth.permissions`.                                                                      |
+| `is_active` | `BOOLEAN` / `BIT`                  | When `false`, login fails with "Invalid username or password" without exposing the cause.                    |
+| `claims`    | `JSONB` / `NVARCHAR(MAX)` / `JSON` | Arbitrary JSON object copied into the JWT/PASETO payload. Surfaced as `$session.claims.<key>` at query time. |
 
 Passwords are verified with `Bun.password.verify`, which uses argon2id by default. Any hashing format Bun supports is accepted, so you can migrate from another scheme (bcrypt, scrypt, …) without re-hashing — Bun detects the format from the stored prefix.
 
@@ -86,7 +86,7 @@ bunx graphoria seed-auth \
 
 The same dispatcher backs the `bun run auth:seed` script for in-repo development. The auth user table must exist before seeding — either set `auth.autoCreateTables: true` and let the server provision it on first boot, or apply the schema yourself.
 
-Anything you put in `claims` is later available as `$session.<key>` (or `$session.claims.<key>` depending on how you read it) in row-level filters. You can store the user's tenant ID, feature flags, or any other identity attribute that should travel with the token.
+Anything you put in `claims` is later available as `$session.claims.<key>` in row-level filters. You can store the user's tenant ID, feature flags, or any other identity attribute that should travel with the token.
 
 ## Token strategies
 
@@ -212,7 +212,7 @@ The env is read once at startup, so each step needs a restart. On a fleet, roll 
 
 ## Session variables in filters
 
-Once a token is verified, the payload is exposed to your row-level filters as `$session.<claim>`:
+Once a token is verified, its claims are exposed to your row-level filters: the standard ones as `$session.<claim>`, the custom ones as `$session.claims.<key>`:
 
 ```typescript
 permissions: {
@@ -224,14 +224,14 @@ permissions: {
       },
       public_org_data: {
         columns: "ALL",
-        filter: { org_id: { eq: "$session.organizationId" } },
+        filter: { org_id: { eq: "$session.claims.organizationId" } },
       },
     },
   },
 }
 ```
 
-Standard claims (`sub`, `role`, `iat`, `exp`, `jti`, …) are always available. Anything you stored in the `claims` JSONB column is hoisted into the session as a top-level key. See [Permissions & Access Control](./PERMISSIONS.md) for nested access patterns.
+Standard claims (`sub`, `role`, `iat`, `exp`, `jti`) are always available. Anything you stored in the `claims` column stays under `claims`: a filter on a key that is not there fails the request. See [Permissions & Access Control](./PERMISSIONS.md) for nested access patterns.
 
 ## Operational notes
 
@@ -239,4 +239,4 @@ Standard claims (`sub`, `role`, `iat`, `exp`, `jti`, …) are always available. 
 - **Argon2id** parameters are inherited from Bun's defaults (`m=65536, t=2, p=1`). To tune them, hash passwords explicitly with `Bun.password.hash(plain, { algorithm: "argon2id", memoryCost, timeCost })` before inserting.
 - **Token clock skew** is not currently configurable — the verifier rejects tokens whose `exp` is in the past or whose `nbf` is in the future, with no grace period.
 - **Audit log.** Every `auth_login` (success and failure, by username) and every `auth_logout` that revoked a token writes one record; passwords and tokens never appear in it. See [Audit log](../README.md#audit-log).
-- **Multi-tenant deployments** can store the tenant ID in `claims.tenant_id` and reference it as `$session.tenant_id` in every filter; the JWT/PASETO payload carries it on every request, so there's no extra DB round-trip.
+- **Multi-tenant deployments** can store the tenant ID in `claims.tenant_id` and reference it as `$session.claims.tenant_id` in every filter; the JWT/PASETO payload carries it on every request, so there's no extra DB round-trip.

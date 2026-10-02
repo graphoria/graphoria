@@ -4,16 +4,19 @@ Thanks for your interest in improving Graphoria. This document covers the dev en
 
 ## Repository layout
 
-Graphoria is a Bun workspace with three packages:
+Graphoria is a Bun workspace with five packages:
 
 ```
-graphql-server/
+graphoria/
 ├── packages/
-│   ├── server/      # @graphoria/server — main runtime
-│   └── react/       # @graphoria/react — React hooks and Apollo integration
-├── docs/            # User-facing documentation (Markdown)
+│   ├── server/       # @graphoria/server — main runtime
+│   ├── queues/       # @graphoria/queues — RabbitMQ and Kafka adapters
+│   ├── graphoria/    # graphoria — the CLI under its unscoped name
+│   ├── react/        # @graphoria/react — client-agnostic auth and route helpers
+│   └── playgrounds/  # @graphoria/playgrounds (private) — GraphiQL, Scalar, console
+├── docs/             # User-facing documentation (Markdown)
 ├── README.md
-└── package.json     # Workspace root
+└── package.json      # Workspace root
 ```
 
 If you've never opened the codebase before, start at `packages/server/src/index.ts` (`createGraphQLServer`, `createHandlers`, `createBunServer`) and read [`CLAUDE.md`](./CLAUDE.md) for an architectural overview.
@@ -53,7 +56,8 @@ docker run -d --name graphoria-redis -p 6379:6379 redis:7
 For queue features:
 
 ```bash
-docker run -d --name graphoria-rmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+docker run -d --name graphoria-rmq -p 5672:5672 -p 15672:15672 rabbitmq:4-management
+docker run -d --name graphoria-kafka -p 9092:9092 apache/kafka:4.3.1
 ```
 
 ## Common commands
@@ -130,13 +134,22 @@ When you add or change a feature:
 
 The SQLite engine's tests open real SQLite files and need no Docker: `bun test packages/server/src/databases/engines/sqlite` runs a query end to end in seconds.
 
+The integration suite boots real servers against real services. `docker-compose.test.yml` runs them on non-default ports: PostgreSQL, MySQL, SQL Server, Redis, an OpenTelemetry collector, RabbitMQ and Kafka.
+
+```bash
+bun run test:integration:up     # start the stack, wait until it is healthy
+bun run test:integration        # the suite (INTEGRATION=1)
+bun run test:integration:down   # stop the stack, remove its volumes
+```
+
 If you change documentation, double-check that the examples actually run — the docs are written to be copy-pasteable.
 
 ## Versioning and releases
 
 Graphoria versions **in lockstep**: every workspace package carries the same version number, and
 they are bumped together, even when a release only touches one of them. `@graphoria/monorepo`
-(root), `@graphoria/server`, `@graphoria/react` and `@graphoria/playgrounds` must always agree.
+(root), `@graphoria/server`, `@graphoria/queues`, `@graphoria/react`, `graphoria` and
+`@graphoria/playgrounds` must always agree.
 
 A release is one git tag, `vX.Y.Z`, covering the whole repo. There is no `CHANGELOG.md` — the
 [GitHub releases page](https://github.com/graphoria/graphoria/releases) is the published history,
@@ -149,9 +162,10 @@ To bump:
 bun run version:set 0.3.0
 ```
 
-Lockstep stays in force until v1.0. Independent per-package versioning was considered and rejected
-for now: nothing in the workspace depends on another workspace package, so independent versions
-would buy nothing but a second release process to keep in sync.
+Lockstep stays in force until v1.0; independent per-package versioning was considered and rejected
+for now. The packages that depend on each other pin the exact version:
+`graphoria` depends on `@graphoria/server`, `@graphoria/queues` peers on it, and the server
+optionally peers on `@graphoria/queues`. `version:set` moves those pins with the versions.
 
 ## Pull-request checklist
 

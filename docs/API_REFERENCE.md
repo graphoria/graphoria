@@ -8,7 +8,7 @@ Complete exports reference for all Graphoria packages.
 
 ## @graphoria/server
 
-Main server package. Two export paths: `.` (the server runtime) and `./config` (configuration helpers + types — `operation`, `cron`, `queue`, virtual-column builders, `z`, `ConfigurationFn`). Installing `@graphoria/server` alone is enough.
+Main server package. Two export paths: `.` (the server runtime) and `./config` (configuration helpers + types — `operation`, `cron`, `queue`, virtual-column builders, `z`, `ConfigurationFn`). Installing `@graphoria/server` alone is enough, except for queues: their RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Installing the adapters](./QUEUES.md#installing-the-adapters)).
 
 ### Main Export (`.`)
 
@@ -85,7 +85,7 @@ The `graphoria` CLI supervises its server processes: it restarts one that crashe
 
 #### `createGraphQLEngine(env)`
 
-Run GraphQL queries in-process, without an HTTP server. Performs the same boot as `createBunServer` minus the route / websocket / queue / cron layer.
+Run GraphQL queries in-process, without an HTTP server. Performs the same boot as `createBunServer` minus the route / websocket / queue / cron layer: no queue connects, and a publish from an operation handler answers `false`.
 
 ```typescript
 async function createGraphQLEngine(env: Partial<Env>): Promise<{
@@ -121,6 +121,7 @@ type Prefixes = {
   scalar: string; // e.g. "/scalar"
   rest: string; // e.g. "/rest"
   openapi: string; // e.g. "/openapi.json"
+  console: string; // e.g. "/_console" — mounted only when CONSOLE_ENABLED
   health: string; // e.g. "/health" — serves /health/live and /health/ready
   metrics: string; // e.g. "/metrics" — mounted only when METRICS_ENABLED
 };
@@ -165,6 +166,16 @@ type Env = {
   logger?: pino.Logger | pino.LoggerOptions;
 };
 ```
+
+#### `setQueueAdapter(type, adapter)`
+
+Registers the adapter for a queue type (`"rabbitmq"` or `"kafka"`) before boot. A registered adapter wins over the one discovered from `@graphoria/queues`. See [QUEUES.md](./QUEUES.md#adapter-interface).
+
+```typescript
+function setQueueAdapter(type: QueueAdapterType, adapter: QueueAdapter): void;
+```
+
+The adapter types are exported with it: `QueueAdapter`, `QueueAdapterType`, `QueueManager` (what `start` resolves to), `QueueConnectionStatus`, `QueuePublisher`, `QueueRuntimeContext`, and `QueueConfig` / `RabbitMQConfig` / `KafkaConfig` — the parsed shape an adapter receives (`exchanges` / `queues`), not the `QueueConfig` you write in `graphoria.ts` (that one comes from `./config`).
 
 ### Config Export (`./config`)
 

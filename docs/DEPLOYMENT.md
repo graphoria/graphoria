@@ -14,8 +14,9 @@ on Bun 1.4.2. They are there to size from; measure your own project before relyi
 ## What you deploy
 
 Graphoria runs as your project's image: your `graphoria.ts`, the `index.ts` that starts the server,
-and `@graphoria/server` from npm. The process writes nothing to local disk, so any replica can
-answer any request and a replaced container loses nothing. The state lives elsewhere:
+and `@graphoria/server` from npm, with `@graphoria/queues` next to it when the configuration has
+queues. The process writes nothing to local disk, so any replica can answer any request and a
+replaced container loses nothing. The state lives elsewhere:
 
 | Component             | Holds                                                                                      | Needed when                        |
 | --------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------- |
@@ -208,7 +209,11 @@ Whichever way you get more than one process, some state stays per process:
   [Patterns and pitfalls](./CRON.md#patterns-and-pitfalls).
 - **Queue subscribers.** Without a `queue` (RabbitMQ) or a `group` (Kafka), each process gets its
   own randomly named queue or consumer group, so every process receives every message. Name one to
-  make the processes share the work. See [Subscribers](./QUEUES.md#subscribers).
+  make the processes share the work: each message then reaches one process, and only the GraphQL
+  subscriptions on that process. Leave a named RabbitMQ queue non-`exclusive`: an exclusive queue
+  serves one connection only, a second process is refused it and stays unready (which holds up a
+  rollout that waits on readiness), and RabbitMQ 4 makes it transient. See
+  [Subscribers](./QUEUES.md#subscribers).
 
 **Resources.** The starter idles at about 125 MiB and 0.2 % of a core. Answering 10,000 REST
 requests at 20 concurrent (1.9 s) it peaked at about 175 MiB and 1.6 cores, and went back to

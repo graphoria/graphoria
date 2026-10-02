@@ -97,7 +97,7 @@ bun init -y
 bun add @graphoria/server
 ```
 
-`@graphoria/server` is all you need: the runtime is exported from `@graphoria/server`, and the configuration helpers + types are exported from `@graphoria/server/config`.
+`@graphoria/server` is all you need: the runtime is exported from `@graphoria/server`, and the configuration helpers + types are exported from `@graphoria/server/config`. The one exception is queues: their RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Installing the adapters](./QUEUES.md#installing-the-adapters)).
 
 ## 2. Write a configuration file
 
@@ -118,7 +118,7 @@ export default (({ operation }) => ({
         host: "localhost",
         port: 5432,
         user: "postgres",
-        password: "postgres",
+        password: "postgrespassword",
         database: "my_app",
       },
     },
@@ -169,7 +169,7 @@ JWT_SECRET=dev-secret-change-me
 bun run index.ts
 ```
 
-Open `http://localhost:3000/graphiql` in your browser. The playground will list every table from your database, with relationships, filters, ordering, and pagination wired up automatically.
+Open `http://localhost:3000/graphiql` in your browser. This config grants the `anonymous` role nothing, so a request without a credential sees no table. In GraphiQL's **Headers** tab, send the admin secret from `.env` — `{ "x-admin-secret": "dev-admin-change-me" }` — and re-fetch the schema: the playground then lists every table from your database, with relationships, filters, ordering, and pagination wired up automatically.
 
 Try a query:
 

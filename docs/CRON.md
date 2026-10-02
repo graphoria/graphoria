@@ -2,7 +2,7 @@
 
 > **See also:** [Operations](./OPERATIONS.md) | [Queues](./QUEUES.md)
 
-Graphoria can run scheduled background work without a separate worker process. You declare cron jobs in your configuration, and the server fires them on the configured schedule using the same handler infrastructure as your GraphQL operations — meaning a job has access to your databases, queue publishers, and custom repositories.
+Graphoria can run scheduled background work without a separate worker process. You declare cron jobs in your configuration, and the server fires them on the configured schedule using the same handler infrastructure as your GraphQL operations — meaning a job has access to your databases, the queue manager (to publish), and custom repositories.
 
 There are two ways to express a job's work: provide a `query` string (Graphoria runs the GraphQL query on each tick), or provide an `onTick` callback (you write arbitrary TypeScript). You can also combine both — the callback receives the query result.
 
@@ -32,7 +32,7 @@ export default (() => ({
           query { usersToNotify { id } }
         `);
         for (const user of data.usersToNotify) {
-          queues.events_emailDispatch({ userId: user.id, kind: "digest" });
+          await queues.sendMessage("events_emailDispatch", { userId: user.id, kind: "digest" });
         }
         // Logs are emitted as structured JSON via pino
         // Set LOG_LEVEL=debug to see cron job lifecycle events
@@ -123,7 +123,7 @@ type CronTickCallback<TVariables = Record<string, unknown>> = (
       params?: Record<string, unknown>,
     ) => Promise<{ data: TReturn; errors?: unknown[] }>;
     databases: unknown;
-    queues: unknown;
+    queues: QueueManager; // sendMessage(publisher, message, key?) — see Queues
     repository: Record<string, unknown>;
   },
   context: TickContext<TVariables>,
@@ -131,7 +131,7 @@ type CronTickCallback<TVariables = Record<string, unknown>> = (
 ) => Promise<void> | void;
 ```
 
-`options` is the same handle that operation handlers receive — `gqlQuery` runs an arbitrary GraphQL query as the superadmin (which means it bypasses RBAC), `queues` is keyed by publisher resolver name, `databases` exposes raw database clients, and `repository` is the typed repository factory you defined in `databases[].repository`.
+`options` is the same handle that operation handlers receive — `gqlQuery` runs an arbitrary GraphQL query as the superadmin (which means it bypasses RBAC), `queues` is the queue manager (publish with `queues.sendMessage("<queue>_<publisher>", message)`), `databases` exposes raw database clients, and `repository` is the typed repository factory you defined in `databases[].repository`.
 
 `context` carries the runtime metadata of the tick:
 

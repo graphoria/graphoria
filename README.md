@@ -76,7 +76,7 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 - **JWT or PASETO authentication** with argon2id password hashing and role-based access control (RBAC)
 - **Row-level security** — per-role filters with session variable injection
 - **Real-time subscriptions** via WebSocket (`graphql-ws` protocol)
-- **Message queues** — RabbitMQ and Kafka with pub/sub and cache invalidation
+- **Message queues** — RabbitMQ and Kafka adapters (via `@graphoria/queues`) with pub/sub and cache invalidation
 - **Cron jobs** — scheduled background tasks with optional GraphQL query execution
 - **Custom operations** — type-safe query and handler-based endpoints with Zod validation
 - **Remote GraphQL schemas** — stitch external GraphQL APIs into the unified schema
@@ -89,7 +89,7 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 - **LRU cache** with queue-driven invalidation
 - **Built-in playgrounds** — GraphiQL and Scalar API documentation
 - **OpenAPI** spec generation from operations
-- **React SDK** — `@graphoria/react` with auth hooks, Apollo Client, and route-based access control
+- **React SDK** — `@graphoria/react` with auth hooks and route-based access control, for the GraphQL client of your choice
 - **Structured logging** — pino-based JSON logging with configurable levels
 - **Observability** — health endpoints, a slow query log, a Prometheus exposition and OpenTelemetry tracing
 
@@ -312,7 +312,7 @@ export default (({ operation }) => ({
         host: "localhost",
         port: 5432,
         user: "postgres",
-        password: "postgres",
+        password: "postgrespassword",
         database: "my_app",
       },
     },
@@ -435,7 +435,8 @@ The three limits that ship on — query depth, page size and the statement timeo
 | Package                                  | Description                                                                |
 | ---------------------------------------- | -------------------------------------------------------------------------- |
 | [`@graphoria/server`](./packages/server) | Main server — API generation, auth, queues, cron                           |
-| [`@graphoria/react`](./packages/react)   | React hooks for auth, Apollo Client, and route-based access control        |
+| [`@graphoria/react`](./packages/react)   | Client-agnostic React hooks for auth and route-based access control        |
+| [`@graphoria/queues`](./packages/queues) | RabbitMQ and Kafka adapter runtimes, discovered by the server at boot      |
 | [`graphoria`](./packages/graphoria)      | The CLI under its unscoped name: `bunx graphoria init` scaffolds a project |
 
 ## Documentation
@@ -469,7 +470,7 @@ The three limits that ship on — query depth, page size and the statement timeo
 | [AI Agent](./docs/AI.md)                              | Admin-only natural-language → database Q&A over GraphQL and REST      |
 | [MCP Server](./docs/MCP.md)                           | Model Context Protocol server — schema as tools for AI editors        |
 | [Admin Console](./docs/CONSOLE.md)                    | Web UI for tables, roles, permissions, API docs, and runtime status   |
-| [React SDK](./docs/REACT.md)                          | `@graphoria/react` hooks, providers, and Apollo integration           |
+| [React SDK](./docs/REACT.md)                          | `@graphoria/react` hooks, providers, and recipes for Apollo and urql  |
 
 ## Contributing
 
