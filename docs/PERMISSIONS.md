@@ -114,14 +114,14 @@ filter: {
 
 ## Session Variables
 
-Any JWT claim can be used as a dynamic filter value using the `$session.<claimName>` syntax:
+Token claims can be used as dynamic filter values: the standard ones as `$session.<claim>`, and the custom ones, from the user's `claims` column, as `$session.claims.<key>`:
 
-| Variable         | Description          | Example Value        |
-| ---------------- | -------------------- | -------------------- |
-| `$session.sub`   | Subject (user ID)    | `"user-123"`         |
-| `$session.role`  | User role            | `"admin"`            |
-| `$session.email` | User email           | `"user@example.com"` |
-| `$session.*`     | Any custom JWT claim | Various              |
+| Variable                | Description       | Example Value        |
+| ----------------------- | ----------------- | -------------------- |
+| `$session.sub`          | Subject (user ID) | `"user-123"`         |
+| `$session.role`         | User role         | `"admin"`            |
+| `$session.claims.email` | A custom claim    | `"user@example.com"` |
+| `$session.claims.*`     | Any custom claim  | Various              |
 
 ### How It Works
 
@@ -135,7 +135,7 @@ Any JWT claim can be used as a dynamic filter value using the `$session.<claimNa
 **JWT Payload:**
 
 ```json
-{ "sub": "user-123", "role": "user", "organizationId": "org-456" }
+{ "sub": "user-123", "role": "user", "claims": { "organizationId": "org-456" } }
 ```
 
 **Configuration:**
@@ -143,7 +143,7 @@ Any JWT claim can be used as a dynamic filter value using the `$session.<claimNa
 ```typescript
 filter: {
   userId: { eq: "$session.sub" },
-  organizationId: { eq: "$session.organizationId" },
+  organizationId: { eq: "$session.claims.organizationId" },
 }
 ```
 
@@ -199,8 +199,8 @@ employee: {
     documents: {
       columns: "ALL",
       filter: {
-        organizationId: { eq: "$session.organizationId" },
-        departmentId: { in: "$session.allowedDepartments" },
+        organizationId: { eq: "$session.claims.organizationId" },
+        departmentId: { in: "$session.claims.allowedDepartments" },
         status: { neq: "draft" },
       },
       orderBy: [
@@ -307,7 +307,7 @@ The `filter` and `orderBy` fields are **optional** — existing configs without 
 filter: { userId: { eq: "$session.sub" } }
 
 // Organization scoped
-filter: { organizationId: { eq: "$session.organizationId" } }
+filter: { organizationId: { eq: "$session.claims.organizationId" } }
 
 // Active records only
 filter: { status: { eq: "active" }, isPublished: { eq: true } }
@@ -322,7 +322,7 @@ filter: { status: { neq: "cancelled" }, deletedAt: { is_null: true } }
 filter: { email: { like: "%@company.com" } }
 
 // Multi-department access
-filter: { departmentId: { in: "$session.allowedDepartments" } }
+filter: { departmentId: { in: "$session.claims.allowedDepartments" } }
 ```
 
 ### Common Mistakes

@@ -201,7 +201,7 @@ export type StartedServer = {
   context: IntegrationContext;
   /** The server's own graceful shutdown, as `createBunServer` returns it. */
   shutdown: () => Promise<boolean>;
-  /** Closes the raw client, the server, and every database pool. */
+  /** Closes the raw client, the server, the queue connections and every database pool. */
   stop: () => Promise<void>;
 };
 
@@ -219,6 +219,7 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
 
   const { createBunServer } = await import("../../index");
   const { disconnectDatabases } = await import("../../singletons/databases");
+  const queues = await import("../../singletons/queues");
 
   const { server, prefixes, shutdown } = await createBunServer({
     port: 0,
@@ -319,6 +320,15 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
       }),
     );
 
+    // The server registers a subscription before it reads the next frame, so
+    // the pong proves it is in place. What arrives before the pong stays queued.
+    socket.send(JSON.stringify({ type: "ping" }));
+    const early: SubscriptionMessage[] = [];
+    for (let message = await next(); message.type !== "pong"; message = await next()) {
+      early.push(message);
+    }
+    queue.unshift(...early);
+
     const nextData = async <T = Record<string, unknown>>(timeoutMs?: number): Promise<T> => {
       const message = await next(timeoutMs);
       if (message.type !== "next") {
@@ -351,6 +361,8 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
     stop: async () => {
       await raw.close();
       server.stop(true);
+      // Consumers would otherwise stay on the broker that every suite shares.
+      await queues.queueManager?.cleanup?.();
       await disconnectDatabases();
     },
   };

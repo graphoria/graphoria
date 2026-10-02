@@ -2,7 +2,7 @@
 
 > **See also:** [Configuration](./CONFIGURATION.md) | [Permissions](./PERMISSIONS.md)
 
-Operations are the way you extend Graphoria with custom endpoints. They sit on top of the auto-generated CRUD API: you write a Zod-validated input schema, choose between a declarative GraphQL query or a custom TypeScript handler, and Graphoria registers the endpoint as both a GraphQL field and an OpenAPI-described REST route.
+Operations are the way you extend Graphoria with custom endpoints. They sit on top of the auto-generated CRUD API: you write a Zod-validated input schema, choose between a declarative GraphQL query or a custom TypeScript handler, and Graphoria registers the endpoint as an OpenAPI-described REST route and, unless that route is a `GET`, as a GraphQL mutation.
 
 This guide walks through the lifecycle of an operation from declaration to invocation, with examples for the common patterns.
 
@@ -11,7 +11,7 @@ This guide walks through the lifecycle of an operation from declaration to invoc
 Every operation is one of two types — they share the same surrounding shape but differ in the body:
 
 - **Query operations** declare a GraphQL `query` string. Graphoria runs it (with input validation, RBAC, hooks, and caching) on each call.
-- **Handler operations** declare an async `handler` function. You write the logic in TypeScript and have full access to the database, queue publishers, and your typed repositories.
+- **Handler operations** declare an async `handler` function. You write the logic in TypeScript and have full access to the database, the queue manager (to publish), and your typed repositories.
 
 Both types accept the same surrounding fields: `description`, `input`, `output`, `hooks`, `rest`, `graphql`, `cache`. The difference is whether you supply `query` or `handler`. `input` must be a Zod object schema (`z.object(...)`, refined or not); any other schema fails at startup.
 
@@ -38,16 +38,16 @@ export default (({ z, operation }) => ({
           z.object({
             id: z.string(),
             total: z.number(),
-            createdAt: z.string(),
+            created_at: z.string(),
           }),
         ),
       }),
       query: `
-        query GetOrdersByCustomer($customerId: ID!, $limit: Int!) {
+        query GetOrdersByCustomer($customerId: String!, $limit: Int!) {
           orders: public_orders(
             where: { customer_id: { eq: $customerId } }
             limit: $limit
-            order_by: { created_at: desc }
+            orderBy: [{ created_at: DESC }]
           ) {
             id
             total
@@ -55,7 +55,12 @@ export default (({ z, operation }) => ({
           }
         }
       `,
-      rest: { path: "/customers/:customerId/orders", method: "GET" },
+      rest: {
+        path: "/customers/:customerId/orders",
+        method: "GET",
+        pathParams: z.object({ customerId: z.string().uuid() }),
+        queryParams: z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) }),
+      },
       cache: { ttl: 30000, max: 1000 },
     }),
   },
@@ -64,8 +69,8 @@ export default (({ z, operation }) => ({
 
 When this operation is registered:
 
-- A GraphQL field `getOrdersByCustomer(input: GetOrdersByCustomerInput!)` is added to the unified schema.
-- A REST route `GET /rest/customers/:customerId/orders` is exposed; path params and query string are merged into the `input`.
+- A REST route `GET /rest/customers/:customerId/orders` is exposed. `rest.pathParams` and `rest.queryParams` parse the path parameter and the `?limit=` query string into the query's variables.
+- No GraphQL field: a `GET` operation is REST-only (see [REST and GraphQL exposure](#rest-and-graphql-exposure)).
 - The result is cached for 30 seconds, with up to 1000 distinct cache entries (LRU eviction).
 - The `output` schema is reflected into the OpenAPI spec at `/openapi.json` so SDK generators and API clients see the response shape.
 
@@ -99,11 +104,19 @@ operations: {
 
       const userId = data.insert_users[0].id;
 
-      queues.events_userRegistered({ userId, email: input.email });
+      await queues.sendMessage("events_userRegistered", { userId, email: input.email });
 
       return { userId, access_token: "stub" };
     },
-    rest: { path: "/users", method: "POST" },
+    rest: {
+      path: "/users",
+      method: "POST",
+      body: z.object({
+        email: z.email(),
+        password: z.string().min(8),
+        role: z.enum(["user", "admin"]).default("user"),
+      }),
+    },
   }),
 }
 ```
@@ -122,7 +135,7 @@ type OperationOptions<TRepository> = {
     params?: Record<string, unknown>,
   ) => Promise<{ data: TReturn; errors?: unknown[] }>;
   databases: {/* raw DB connections, keyed by config name */};
-  queues: {/* publisher functions, keyed by `${queueName}_${publisherKey}` */};
+  queues: QueueManager; // sendMessage(publisher, message, key?) — see Queues
   repository: TRepository;
 };
 ```
@@ -157,6 +170,11 @@ export default (({ operation, z }) => ({
   operations: {
     listOrders: operation.typed<{ main: Repo }>()({
       input: z.object({ customerId: z.string() }),
+      rest: {
+        path: "/customers/:customerId/all-orders",
+        method: "GET",
+        pathParams: z.object({ customerId: z.string() }),
+      },
       handler: async ({ repository }, input) => {
         return {
           orders: await repository.main.ordersByCustomer(input.customerId),
@@ -171,7 +189,7 @@ The handler sees `repository` typed as `{ main: Repo }` — access each database
 
 ## REST and GraphQL exposure
 
-By default, every operation is exposed as a GraphQL mutation and (if `rest` is set) as a REST route. Tweak with `graphql` and `rest`:
+An operation with a `rest` route is served there. Unless that route is a `GET`, the operation is also a GraphQL mutation, `<name>(input: <name>Input!)`, its argument typed by `input`. A `GET` operation is REST-only, and so is one without `rest`, whose method defaults to `GET`: it has no route at all, so give every operation a `rest` route. Tweak with `graphql` and `rest`:
 
 ```typescript
 operation({
@@ -182,26 +200,26 @@ operation({
     method: "POST",
     pathParams: z.object({/* schema for path params */}),
     queryParams: z.object({ source: z.string() }),
-    body: z.object({/* override body schema */}),
+    body: z.object({/* schema for the JSON body */}),
   },
 });
 ```
 
 - `graphql.enabled: false` keeps the operation REST-only — useful for endpoints that need REST semantics (file uploads, webhooks) but don't belong in the GraphQL schema.
 - `rest.method` defaults to `GET`. Operations that mutate state should use `POST`/`PUT`/`PATCH` so the OpenAPI spec is honest about their effects.
-- `rest.pathParams` / `queryParams` / `body` let you split a single `input` schema across multiple HTTP positions; if omitted, `input` is read from the body for non-GET requests and from the query string for GET.
-- Path and query values arrive as strings. A parameter declared `z.boolean()` is converted before validation, accepting `true`/`1`/`yes`/`on`/`y`/`enabled` and `false`/`0`/`no`/`off`/`n`/`disabled` (case-insensitive); any other value fails validation. Declaring it `z.boolean()` rather than `z.stringbool()` is also what makes the OpenAPI spec describe it as a boolean, so the docs render a true/false picker instead of a free-text box.
+- `rest.pathParams` / `queryParams` / `body` are where a REST call takes its input: each source is parsed by its schema, and a source without one is ignored. `input` types the GraphQL mutation's argument; REST does not read it.
+- Path and query values arrive as strings: declare a number `z.coerce.number()`. A parameter declared `z.boolean()` is converted before validation, accepting `true`/`1`/`yes`/`on`/`y`/`enabled` and `false`/`0`/`no`/`off`/`n`/`disabled` (case-insensitive); any other value fails validation. Declaring it `z.boolean()` rather than `z.stringbool()` is also what makes the OpenAPI spec describe it as a boolean, so the docs render a true/false picker instead of a free-text box.
 
 ## Hooks lifecycle
 
-Three optional hooks let you extend an operation without changing its core query/handler:
+Three optional hooks let you extend an operation without changing its core query/handler. They run on its REST route only: a call through GraphQL runs the handler alone.
 
 ```typescript
 operation({
   /* … */
   hooks: {
     init: async ({ gqlQuery }) => {
-      // Runs once on server boot. Return value is cached and passed to beforeRequest.
+      // Runs on the route's first REST request. Return value is cached and passed to beforeRequest.
       return await loadStaticConfig();
     },
     beforeRequest: ({ input, pathParams, queryParams, body }, initData) => {
@@ -221,7 +239,7 @@ operation({
 });
 ```
 
-`init` is the right place for one-time work: priming a cache, loading static metadata, opening a connection to a third-party service. Its return value is preserved between requests and passed as the second argument to `beforeRequest`.
+`init` is the right place for one-time work: priming a cache, loading static metadata, opening a connection to a third-party service. It runs on the route's first REST request, not at boot, and its return value is preserved between requests and passed as the second argument to `beforeRequest`. An `init` that returns `undefined` runs again on the next request, and requests that arrive while it is still running each run it too: keep it idempotent.
 
 `beforeRequest` is a transform from the validated `input` to the actual variables (or handler input). Alongside the merged `input`, the context exposes each REST source separately — `pathParams`, `queryParams`, and `body`, each parsed with its own `rest.*` schema (or `undefined` when that schema is omitted). Use it to inject server-side context, normalize input, or short-circuit the request by throwing.
 

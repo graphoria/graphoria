@@ -24,12 +24,14 @@ for (const relative of manifests.sort()) {
     process.exit(1);
   }
 
-  // The graphoria package pins the server of its own version.
-  const pin = /^(\s*"@graphoria\/server":\s*)"[^"]*"/m;
+  // The graphoria and queues packages pin the server of their own version; the
+  // server pins the queues package it optionally peers with.
+  const pin = /^(\s*"(@graphoria\/(?:server|queues))":\s*)"[^"]*"/m;
+  const pinned = source.match(pin)?.[2];
 
   // Rewrite the text rather than round-tripping through JSON, so key order,
   // indentation and trailing newline survive untouched.
   await Bun.write(path, source.replace(field, `$1"${version}"`).replace(pin, `$1"${version}"`));
   console.log(`${relative} -> ${version}`);
-  if (pin.test(source)) console.log(`${relative} @graphoria/server -> ${version}`);
+  if (pinned) console.log(`${relative} ${pinned} -> ${version}`);
 }

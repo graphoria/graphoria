@@ -26,7 +26,7 @@ restarting a server because its database is down does not bring the database bac
 | ------------------- | ----------------------- | -------------------------------------- | --------------------------------------------------------------- |
 | `database`          | the database's `name`   | always, one check per enabled database | `SELECT 1` on its pool                                          |
 | `redis`             | —                       | `auth.enabled`, or `CACHE_STORE=redis` | `PING`                                                          |
-| `rabbitmq`, `kafka` | the queue config's name | always, one check per configured queue | The connection state its reconnecting manager keeps. No traffic |
+| `rabbitmq`, `kafka` | the queue config's name | always, one check per enabled queue    | The connection state its reconnecting manager keeps. No traffic |
 
 ```json
 {
@@ -147,8 +147,8 @@ and counting it against a caller ceiling would drop samples.
 | `graphoria_rate_limit_rejections_total`        | counter   | `role`                                   | Requests the rate limiter refused, by the role its ceiling came from             |
 | `graphoria_cron_runs_total`                    | counter   | `job`, `outcome`                         | Cron ticks that finished or threw                                                |
 | `graphoria_cron_run_duration_seconds`          | histogram | `job`                                    | Time spent in a tick                                                             |
-| `graphoria_queue_messages_published_total`     | counter   | `broker`, `publisher`, `outcome`         | Messages handed to a broker. `outcome: "error"` covers a refused publish         |
-| `graphoria_queue_messages_consumed_total`      | counter   | `broker`, `queue`, `consumer`, `outcome` | Messages delivered. `error` means the handler threw and the message was nacked   |
+| `graphoria_queue_messages_published_total`     | counter   | `broker`, `publisher`, `outcome`         | Messages handed to a broker. `outcome: "error"`: the publish answered `false`    |
+| `graphoria_queue_messages_consumed_total`      | counter   | `broker`, `queue`, `consumer`, `outcome` | Messages delivered. `error`: the handler threw; only RabbitMQ nacks the message  |
 
 Histogram buckets are in seconds: `.005 .01 .025 .05 .1 .25 .5 1 2.5 5 10`, plus `+Inf`, `_sum` and
 `_count`.
@@ -191,8 +191,8 @@ Not covered by the series above, which is a gap rather than a decision: **subscr
 subscription is validated through the same path, so a rejected one is counted in
 `graphoria_graphql_rejections_total`, but the rows a poller pushes do not go through the GraphQL
 handler and are not counted or timed. The websocket upgrade itself answers no request, so it is not
-in `graphoria_http_requests_total` either. What a subscription publishes through a broker is
-counted, since that goes through a publisher.
+in `graphoria_http_requests_total` either. The broker messages a queue subscription streams are
+counted as deliveries, not per client, by `graphoria_queue_messages_consumed_total`.
 
 ## Tracing
 

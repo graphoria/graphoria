@@ -431,7 +431,7 @@ describe("consoleRoutesFactory", () => {
   it("publishes a message via POST /queues/publish", async () => {
     const sent: unknown[] = [];
     setQueueManager({
-      publisherMap: () => ({ orders: {} }),
+      publisherMap: () => ({ orders: { name: "orders" } }),
       sendMessage: async (publisher: string, message: unknown, key?: string) => {
         sent.push({ publisher, message, key });
         return true;
@@ -569,7 +569,7 @@ describe("console scope", () => {
 
   beforeEach(() => {
     setQueueManager({
-      publisherMap: () => ({ orders: {} }),
+      publisherMap: () => ({ orders: { name: "orders" } }),
       sendMessage: async () => true,
       connections: () => [],
     });
@@ -732,7 +732,7 @@ describe("consoleRoutesFactory — audit", () => {
     records = [];
 
     setQueueManager({
-      publisherMap: () => ({ orders: {} }),
+      publisherMap: () => ({ orders: { name: "orders" } }),
       sendMessage: async () => true,
       connections: () => [],
     });
@@ -785,7 +785,7 @@ describe("consoleRoutesFactory — audit", () => {
 
   it("records a queue publish from the console without the message body", async () => {
     setQueueManager({
-      publisherMap: () => ({ orders: {} }),
+      publisherMap: () => ({ orders: { name: "orders" } }),
       sendMessage: async () => true,
       connections: () => [],
     });

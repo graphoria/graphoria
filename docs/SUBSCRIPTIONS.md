@@ -2,7 +2,7 @@
 
 > **See also:** [Queues](./QUEUES.md) | [React SDK](./REACT.md)
 
-Graphoria implements GraphQL subscriptions over WebSockets using the [`graphql-ws`](https://github.com/enisdenjo/graphql-ws) protocol. The same `/graphql` URL accepts the WebSocket upgrade — there is no separate subscriptions endpoint. Subscriptions feed off the queue subscribers you've configured: every entry under `queues[].subscribers` becomes a GraphQL subscription that streams broker messages to connected clients.
+Graphoria implements GraphQL subscriptions over WebSockets using the [`graphql-ws`](https://github.com/enisdenjo/graphql-ws) protocol. The same `/graphql` URL accepts the WebSocket upgrade — there is no separate subscriptions endpoint. There are two kinds: a table subscription re-runs its query on an interval and pushes the result when it changes (see [Patterns and pitfalls](#patterns-and-pitfalls)), and a queue subscription streams broker messages: every entry under `queues[].subscribers` becomes one.
 
 ## What's available to subscribe to
 
@@ -35,7 +35,7 @@ subscription {
 }
 ```
 
-The payload contains the deliveryTag and the message body as a string. Parse it client-side as needed (or attach a `handler` to the subscriber to pre-process messages on the server).
+`message` is the message body as a string; parse it client-side as needed. `id` identifies the delivery: on RabbitMQ it is the delivery tag, which counts from 1 again on every connection, so it is unique per connection only; on Kafka it is `<partition>-<offset>`. A subscriber's `handler` runs after the event is sent and cannot change what clients receive.
 
 ## Connecting from the client
 
@@ -94,5 +94,5 @@ Queue subscriptions are the exception, and it is a difference in kind: their pay
 - **Backpressure** — Graphoria currently has no built-in backpressure for slow consumers. A subscriber that processes events slowly may drop messages. If your stream is high-volume, terminate slow clients aggressively or aggregate events before sending.
 - **Heartbeats** — let the client drive ping/pong. The server only responds to pings; it doesn't initiate them.
 - **Multiple subscriptions on one socket** — each `subscribe` message has a unique `id`. Multiple concurrent subscriptions multiplex over the same WebSocket; cleaning one up doesn't affect others.
-- **Reconnection** — the server doesn't rewind. After a reconnect, a client only sees events delivered after `connection_ack`. Persist offsets (Kafka) or use durable queues + manual ack (RabbitMQ) if you need at-least-once delivery across reconnects.
+- **Reconnection** — the server doesn't rewind. After a reconnect, a client only sees the messages that arrive once it has subscribed again: Graphoria acknowledges (RabbitMQ) or commits (Kafka) each message as it consumes it, whether a client is listening or not. A client that must not miss a message consumes the broker itself.
 - **Table subscriptions poll** — a subscription on a table re-runs its query on an interval and pushes when the result changes, so latency is bounded by the poll interval rather than by the write. For event-driven delivery, publish to a queue from the relevant code path and subscribe to that instead.

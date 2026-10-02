@@ -33,7 +33,7 @@ export const PublisherConfigZod = z.strictObject({
   routingKey: z.string().optional(),
   /** Whether messages should survive broker restart (RabbitMQ only) */
   persistent: z.boolean().optional().default(true),
-  /** Custom headers (Kafka only) */
+  /** Headers sent with each message (RabbitMQ and Kafka) */
   headers: z.record(z.string(), z.string()).optional(),
 });
 
@@ -71,6 +71,8 @@ export const SubscriberConfigZod = z.strictObject({
   durable: z.boolean().optional(),
   /** Whether queue should auto-delete when no consumers (RabbitMQ only) */
   autoDelete: z.boolean().optional(),
+  /** Whether only one connection can use the queue (RabbitMQ only) */
+  exclusive: z.boolean().optional(),
   /** Handler function to process received messages */
   handler: z.custom<SubscriberHandler>().optional(),
 });
@@ -97,7 +99,10 @@ export type TopicConfig = z.input<typeof TopicConfigZod>;
 export const BaseQueueConfigZod = z.strictObject({
   /** Unique name for this queue connection */
   name: z.string(),
-  /** Whether to auto-create topics/exchanges/queues */
+  /**
+   * Whether to declare the exchanges and named queues, and bind the queues, at
+   * startup (RabbitMQ only: Graphoria creates no Kafka topic)
+   */
   autoSetup: z.boolean().optional().default(true),
   /** Whether this queue is enabled */
   enabled: z.boolean().optional().default(true),
@@ -107,7 +112,10 @@ export const BaseQueueConfigZod = z.strictObject({
   publishers: z.record(z.string(), PublisherConfigZod).optional().default({}),
   /** Subscribers keyed by subscription name — become GraphQL subscriptions */
   subscribers: z.record(z.string(), SubscriberConfigZod).optional().default({}),
-  /** Topic configurations for customizing auto-setup behavior */
+  /**
+   * Every topic a publisher or subscriber names; on RabbitMQ each is an
+   * exchange, which `autoSetup` declares with these options
+   */
   topics: z.record(z.string(), TopicConfigZod).optional().default({}),
 });
 
@@ -176,3 +184,29 @@ export type KafkaQueueConfig = z.input<typeof KafkaConfigZod>;
 
 /** Queue configuration union — the shape users write in graphoria.ts */
 export type QueueConfig = RabbitMQQueueConfig | KafkaQueueConfig;
+
+// ============================================================================
+// Queue manager — what handlers receive as `queues`
+// ============================================================================
+
+/** A publisher, keyed `<queue>_<publisher>` in `QueueManager.publisherMap()`. */
+export type QueuePublisher = { name: string };
+
+/** One queue connection, as `/health/ready` and the console report it. */
+export type QueueConnectionStatus = {
+  type: QueueConfig["type"];
+  name: string;
+  connected: boolean;
+};
+
+/** The queues at runtime: operation handlers, `init` hooks and cron ticks get it as `queues`. */
+export type QueueManager = {
+  publisherMap: () => Record<string, QueuePublisher>;
+  sendMessage: (
+    publisherName: string,
+    message: string | object,
+    key?: string,
+  ) => Promise<boolean> | boolean;
+  connections: () => QueueConnectionStatus[];
+  cleanup?: () => Promise<void>;
+};

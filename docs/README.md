@@ -49,6 +49,6 @@ Reference guides for configuring and running Graphoria. New here? Start with the
 
 ## Frontend
 
-| Guide                   | Description                                                 |
-| ----------------------- | ----------------------------------------------------------- |
-| [React SDK](./REACT.md) | `@graphoria/react` hooks, providers, and Apollo integration |
+| Guide                   | Description                                                          |
+| ----------------------- | -------------------------------------------------------------------- |
+| [React SDK](./REACT.md) | `@graphoria/react` hooks, providers, and recipes for Apollo and urql |

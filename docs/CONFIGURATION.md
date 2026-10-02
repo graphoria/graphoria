@@ -656,7 +656,7 @@ filter: {
   status: { eq: "active" },
   price: { gte: 10, lte: 1000 },
   userId: { eq: "$session.sub" },           // Session variable
-  departmentId: { in: "$session.departments" },
+  departmentId: { in: "$session.claims.departments" },
   deletedAt: { is_null: true },
 }
 ```
@@ -836,6 +836,8 @@ queues: [
 ];
 ```
 
+Subscriber options `durable` / `autoDelete` / `exclusive` apply to RabbitMQ only. `exclusive` defaults to `true` for auto-generated queues and `false` for named ones. Kafka accepts all three for shape parity and ignores them.
+
 ### Kafka
 
 ```typescript
@@ -849,22 +851,27 @@ queues: [
     subscribers: {
       onUserEvent: { topic: "user-events", group: "my-group" },
     },
+    topics: {
+      "user-events": {},
+    },
   }),
 ];
 ```
 
 ### Reconnect Configuration
 
-Both queue types support reconnection:
+Both queue types reconnect after a lost connection or a failed setup:
 
 ```typescript
 reconnect: {
   initialDelay: 1000,   // ms
   maxDelay: 30000,       // ms
   multiplier: 2,
-  maxAttempts: 10,
+  maxAttempts: 10,      // 0 (the default) = forever
 }
 ```
+
+The wait before the n-th reconnect is `initialDelay × multiplier^(n-1)`, capped at `maxDelay`. Past `maxAttempts` reconnects in a row that failed, the queue stays down until the server restarts. Without `reconnect`: 1 s, doubling up to 30 s, forever.
 
 ---
 

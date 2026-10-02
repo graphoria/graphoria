@@ -106,6 +106,56 @@ services:
       timeout: 5s
       retries: 20
 
+  # The queue suites publish and consume through it, and read queue and
+  # connection state back from the management API.
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: graphoria
+      RABBITMQ_DEFAULT_PASS: graphoria_test
+    ports:
+      - "55672:5672"
+      - "55673:15672"
+    tmpfs:
+      - /var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  # A single KRaft node. Setting any KAFKA_* variable drops the image's default
+  # configuration, so the full set is here. The broker listens on the host
+  # port inside the container too: clients reconnect to the advertised address,
+  # which has to be the one the host reaches.
+  kafka:
+    image: apache/kafka:4.3.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:59092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:59092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    ports:
+      - "59092:59092"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:59092 > /dev/null",
+        ]
+      interval: 5s
+      timeout: 15s
+      retries: 30
+      start_period: 20s
+
   # The tracing acceptance check renders an OTLP payload and posts it here, so
   # the pass means a real collector accepted it rather than that it matched our
   # reading of the specification. The image ships a default config with an OTLP

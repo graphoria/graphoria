@@ -25,4 +25,17 @@ describe("cron helper", () => {
     expect(job.catchErrors).toBe(false);
     expect(job.context).toEqual({ source: "test" });
   });
+
+  // Type-checked too: `queues` was `unknown`, so no tick could publish.
+  it("hands onTick the queue manager, which publishes through sendMessage", () => {
+    cron({
+      name: "publish",
+      pattern: "0 0 * * *",
+      onTick: async ({ queues }) => {
+        await queues.sendMessage("events_orderCreated", { id: 1 });
+      },
+    });
+
+    expect(true).toBe(true);
+  });
 });

@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "paths": {
+      "@graphoria/server": ["../server/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*", "*.test.ts", "package.json"],
+  "exclude": ["node_modules", "dist"]
+}

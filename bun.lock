@@ -47,6 +47,22 @@
         "typescript": "6.0.3",
       },
     },
+    "packages/queues": {
+      "name": "@graphoria/queues",
+      "version": "0.6.0",
+      "dependencies": {
+        "amqplib": "2.0.1",
+        "kafkajs": "2.2.4",
+        "nanoid": "6.0.1",
+      },
+      "devDependencies": {
+        "@types/bun": "1.4.2",
+        "typescript": "6.0.3",
+      },
+      "peerDependencies": {
+        "@graphoria/server": "0.6.0",
+      },
+    },
     "packages/react": {
       "name": "@graphoria/react",
       "version": "0.6.0",
@@ -76,12 +92,10 @@
       "dependencies": {
         "@cfworker/json-schema": "^4.1.1",
         "@modelcontextprotocol/server": "^2.1.0",
-        "amqplib": "2.0.1",
         "croner": "10.0.1",
         "es-toolkit": "1.52.0",
         "graphql": "^17.0.2",
         "jose": "6.2.12",
-        "kafkajs": "2.2.4",
         "lru-cache": "11.5.3",
         "mssql": "12.7.2",
         "nanoid": "6.0.1",
@@ -95,8 +109,6 @@
         "zod": "4.6.5",
       },
       "devDependencies": {
-        "@types/amqplib": "0.10.8",
-        "@types/kafkajs": "1.9.0",
         "@types/mssql": "12.3.0",
       },
       "optionalDependencies": {
@@ -104,9 +116,11 @@
         "openai": "^7.23.0",
       },
       "peerDependencies": {
+        "@graphoria/queues": "0.6.0",
         "typescript": "^6.0.0",
       },
       "optionalPeers": [
+        "@graphoria/queues",
         "typescript",
       ],
     },
@@ -219,6 +233,8 @@
     "@graphiql/toolkit": ["@graphiql/toolkit@0.12.1", "", { "dependencies": { "@n1ru4l/push-pull-async-iterable-iterator": "^3.1.0", "meros": "^1.1.4" }, "peerDependencies": { "graphql": "^15.5.0 || ^16.0.0 || ^17.0.0", "graphql-ws": ">= 4.5.0" }, "optionalPeers": ["graphql-ws"] }, "sha512-OuHVUIvPL7nz3uAdG9eyZ5cZx87JH+XMOHiXgv3foYZWBPW8FNMGUyFflxP70jhv7bX9UPyYmRsTIJ+GSlK0PQ=="],
 
     "@graphoria/playgrounds": ["@graphoria/playgrounds@workspace:packages/playgrounds"],
+
+    "@graphoria/queues": ["@graphoria/queues@workspace:packages/queues"],
 
     "@graphoria/react": ["@graphoria/react@workspace:packages/react"],
 
@@ -534,8 +550,6 @@
 
     "@testing-library/react": ["@testing-library/react@16.3.3", "", { "dependencies": { "@babel/runtime": "^7.12.5" }, "peerDependencies": { "@testing-library/dom": "^10.0.0", "@types/react": "^18.0.0 || ^19.0.0", "@types/react-dom": "^18.0.0 || ^19.0.0", "react": "^18.0.0 || ^19.0.0", "react-dom": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["@types/react", "@types/react-dom"] }, "sha512-Uo193NgQbPMz6lrrhtRQQFcMC6Re/ELLFbbuVL30WDlZxlpZf9/lMHTAVxPRLw1q1iu9OJmR1c2BLiENRstdBg=="],
 
-    "@types/amqplib": ["@types/amqplib@0.10.8", "", { "dependencies": { "@types/node": "*" } }, "sha512-vtDp8Pk1wsE/AuQ8/Rgtm6KUZYqcnTgNvEHwzCkX8rL7AGsC6zqAfKAAJhUZXFhM/Pp++tbnUHiam/8vVpPztA=="],
-
     "@types/aria-query": ["@types/aria-query@5.0.4", "", {}, "sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw=="],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
@@ -545,8 +559,6 @@
     "@types/har-format": ["@types/har-format@1.2.16", "", {}, "sha512-fluxdy7ryD3MV6h8pTfTYpy/xQzCFC7m89nOH9y94cNqJ1mDIDPut7MnRHI3F6qRmh/cT2fUjG1MLdCNb4hE9A=="],
 
     "@types/hast": ["@types/hast@3.0.4", "", { "dependencies": { "@types/unist": "*" } }, "sha512-WPs+bbQw5aCj+x6laNGWLH3wviHtoCv/P3+otBhbOhJgG8qtpdAMlTCxLtsTWA7LH1Oh/bFCHsBn0TPS5m30EQ=="],
-
-    "@types/kafkajs": ["@types/kafkajs@1.9.0", "", { "dependencies": { "kafkajs": "*" } }, "sha512-R9VDNbiw+vNfxWjjFHUrLMF/Dfc7asGXzKtYUwI4FaT24Chf5ZNkfvce54p4dkLMxPcsrEsVazAK0Jp2ib4Zxw=="],
 
     "@types/mdast": ["@types/mdast@4.0.4", "", { "dependencies": { "@types/unist": "*" } }, "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA=="],
 
