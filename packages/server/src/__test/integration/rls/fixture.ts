@@ -1,6 +1,6 @@
 import type { ConfigurationInput } from "../../../config";
 import type { DatabaseType } from "../../../types/configuration";
-import type { IntegrationContext, StartedServer } from "../harness";
+import type { IntegrationContext, StartedServer, WithServerOptions } from "../harness";
 
 import { fieldName } from "../config";
 import { startServer } from "../harness";
@@ -168,6 +168,8 @@ const permissionsFor = (engine: DatabaseType) => {
       },
       storedProcedures: [],
       operations: ["taskByTitle", "cachedTasks"],
+      // The agent suite asks as `ana`; no other suite turns the agent on.
+      ai: true,
     },
 
     // The `{ in: "$session.<array claim>" }` pattern from docs/PERMISSIONS.md.
@@ -318,8 +320,15 @@ export type StartedRls = { context: RlsContext; stop: () => Promise<void> };
  * verification plus a token signature, and the suites ask for the same handful
  * of users hundreds of times.
  */
-export const startRlsServer = async (engine: DatabaseType): Promise<StartedRls> => {
-  const started: StartedServer = await startServer({ engine, config: rlsConfig(engine) });
+export const startRlsServer = async (
+  engine: DatabaseType,
+  overrides: Pick<WithServerOptions, "config" | "env"> = {},
+): Promise<StartedRls> => {
+  const started: StartedServer = await startServer({
+    engine,
+    config: { ...rlsConfig(engine), ...overrides.config },
+    env: overrides.env,
+  });
 
   await seedAuthUsers(started.context);
 

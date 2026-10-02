@@ -38,7 +38,7 @@ export const ConfigurationZod = z
     remoteSchemas: z.array(RemoteSchemaConfigZod).optional().default([]),
     /** Remote REST APIs (OpenAPI) to proxy under /rest */
     remoteREST: z.array(RemoteRESTConfigZod).optional().default([]),
-    /** AI agent (admin-only NL → database Q&A) + MCP server. Off by default. */
+    /** AI agent (NL → database Q&A) for the roles granted `ai`, plus the MCP server. Off by default. */
     ai: AIZod.optional().default({ enabled: false, endpoint: "/ai", mcp: { enabled: false } }),
   })
   .refine(

@@ -23,7 +23,7 @@ import type { StructuredQueryInput } from "./query-data";
 /** Preserve per-tool schema inference, then widen to the heterogeneous `Tool`. */
 const tool = <T extends z.ZodTypeAny>(t: Tool<T>): Tool => t as unknown as Tool;
 
-export const buildAgentTools = (role: RoleEntities, caller: ToolCaller = {}): Tool[] => {
+export const buildAgentTools = (role: RoleEntities, caller: ToolCaller): Tool[] => {
   const validateQuery = makeValidateQuery(role);
 
   return [

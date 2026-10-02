@@ -13,8 +13,8 @@ export const MCPZod = z.strictObject({
 export type MCPConfig = z.input<typeof MCPZod>;
 
 /**
- * AI agent configuration. Exposes an admin-only natural-language → database
- * Q&A agent as a GraphQL `ask` query and a REST `POST` endpoint.
+ * AI agent configuration. Exposes a natural-language → database Q&A agent to
+ * the roles granted `ai`, as a GraphQL `ask` query and a REST `POST` endpoint.
  *
  * The LLM provider, model, and API keys are read from environment variables
  * (`LLM_PROVIDER`, `LLM_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,

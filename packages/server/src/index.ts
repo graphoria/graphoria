@@ -269,9 +269,9 @@ const createGraphQLServer = async (env: Env) => {
     analyzedConfiguration.roles[env.superadmin.role].handlers.gql.handler,
   );
 
-  // Initialize the AI agent (admin-only), bound to the superadmin schema
+  // The agent's prompts. Its tools are built per call, for the caller's role.
   if (aiSurfaces.agent) {
-    instantiateAI(projectConfiguration.ai, analyzedConfiguration.roles[env.superadmin.role], {
+    instantiateAI(projectConfiguration.ai, {
       systemPrompt: env.ai?.systemPrompt,
       promptTemplate: env.ai?.promptTemplate,
     });
@@ -518,7 +518,7 @@ const createGraphQLServer = async (env: Env) => {
     ),
   };
 
-  // AI agent endpoint (admin-secret only), under the REST prefix like the rest of REST
+  // The AI agent over REST, for the roles granted `ai`
   if (aiSurfaces.rest) {
     const aiPath = `${prefixes.rest}${projectConfiguration.ai.endpoint}`;
     routes[aiPath] = {
@@ -527,7 +527,9 @@ const createGraphQLServer = async (env: Env) => {
         try {
           const { role, session, scope, limit } = await getRoleHandlers(req, server, "ai");
           if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
-          if (role !== env.superadmin.role) return new S404({ error: "Not Found" });
+          // A role without the grant sees no route, as it sees no `ask` field.
+          const roleSchema = analyzedConfiguration.roles[role];
+          if (!roleSchema?.entityOfRole.ai) return new S404({ error: "Not Found" });
 
           const { prompt } = await req.json();
           if (typeof prompt !== "string" || prompt.length === 0)
@@ -542,7 +544,9 @@ const createGraphQLServer = async (env: Env) => {
             prompt,
           });
 
-          return new S200({ answer: await getAgent()(prompt) });
+          return new S200({
+            answer: await getAgent()(prompt, { role: roleSchema, session, req }),
+          });
         } catch (error) {
           return new S400({ errors: [{ message: (error as Error)?.message }] });
         }

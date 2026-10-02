@@ -26,11 +26,11 @@ const buildRole = (includeAI = false) =>
     includeAI,
   );
 
-const findTool = (name: string) => buildAgentTools(buildRole()).find((t) => t.name === name)!;
+const findTool = (name: string) => buildAgentTools(buildRole(), {}).find((t) => t.name === name)!;
 
 describe("buildAgentTools", () => {
   it("exposes list_entities, describe_entity, graphql_execute", () => {
-    const tools = buildAgentTools(buildRole());
+    const tools = buildAgentTools(buildRole(), {});
     expect(tools.map((t) => t.name).sort()).toEqual([
       "describe_entity",
       "graphql_execute",

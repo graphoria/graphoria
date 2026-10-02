@@ -74,3 +74,17 @@ describe("RolePermissionZod rateLimit", () => {
     expect(() => RolePermissionZod.parse({ rateLimit: { max: 1, burst: 2 } })).toThrow();
   });
 });
+
+describe("RolePermissionZod ai", () => {
+  it("leaves the agent closed to a role that does not ask for it", () => {
+    expect(RolePermissionZod.parse({}).ai).toBe(false);
+  });
+
+  it("opens the agent to a role granted it", () => {
+    expect(RolePermissionZod.parse({ ai: true }).ai).toBe(true);
+  });
+
+  it("rejects a grant that is not a boolean", () => {
+    expect(() => RolePermissionZod.parse({ ai: "yes" })).toThrow();
+  });
+});

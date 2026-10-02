@@ -1,4 +1,5 @@
 import {
+  BREAK,
   GraphQLEnumType,
   GraphQLInputObjectType,
   GraphQLInterfaceType,
@@ -8,7 +9,10 @@ import {
   parse,
   printType,
   specifiedRules,
+  TypeInfo,
   validate,
+  visit,
+  visitWithTypeInfo,
 } from "graphql";
 
 import type { BunRequest } from "bun";
@@ -273,6 +277,29 @@ export const makeValidateQuery =
 
 // ---- graphql_execute ----
 
+/**
+ * Whether a query selects the agent's own `ask` field. Run from a tool, it would
+ * start the agent inside the agent: nested loops of LLM calls.
+ */
+const selectsAsk = (schema: GraphQLSchema, query: string): boolean => {
+  const queryType = schema.getQueryType();
+  const typeInfo = new TypeInfo(schema);
+  let found = false;
+
+  visit(
+    parse(query),
+    visitWithTypeInfo(typeInfo, {
+      Field(node) {
+        if (node.name.value !== "ask" || typeInfo.getParentType() !== queryType) return;
+        found = true;
+        return BREAK;
+      },
+    }),
+  );
+
+  return found;
+};
+
 export type GraphqlExecOutcome =
   | { kind: "non_query" }
   | { kind: "validation"; errors: ValidationError[] }
@@ -302,6 +329,13 @@ export const executeGraphqlCore = async (
           message: e.message,
           locations: e.locations,
         })),
+      };
+    }
+
+    if (selectsAsk(role.schema, query)) {
+      return {
+        kind: "error",
+        message: "`ask` cannot run inside a tool call: it would start the agent again.",
       };
     }
 

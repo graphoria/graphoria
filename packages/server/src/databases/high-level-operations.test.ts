@@ -389,6 +389,21 @@ describe("sourcesForEachRole", () => {
     });
   });
 
+  describe("ai", () => {
+    it("carries each role's ai grant onto its entities", () => {
+      const out = sourcesForEachRole(
+        [t("users")],
+        [],
+        [],
+        {},
+        mkPerms({ analyst: { ai: true }, viewer: {} }),
+      );
+
+      expect(out.analyst!.ai).toBe(true);
+      expect(out.viewer!.ai).toBe(false);
+    });
+  });
+
   describe("multi-role", () => {
     it("builds independent EntitiesOfRole per role", () => {
       const tables = [t("users"), t("orders"), t("secrets")];

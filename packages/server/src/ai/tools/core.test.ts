@@ -148,3 +148,61 @@ describe("executeGraphqlCore — the caller", () => {
     expect(calls[0]![3]).toBeUndefined();
   });
 });
+
+describe("executeGraphqlCore — the agent's own field", () => {
+  const askSdl = `
+    type Query {
+      ask(prompt: String!): String!
+      notes: [Note!]!
+    }
+    type Note {
+      ask: String!
+    }
+  `;
+
+  const recording = () => {
+    const queries: unknown[] = [];
+    const role = {
+      schema: buildSchema(askSdl),
+      handlers: {
+        gql: {
+          hasErrors: () => ({ hasErrors: false, validationErrors: [] }),
+          handler: async (query: unknown) => {
+            queries.push(query);
+            return { data: {} };
+          },
+        },
+      },
+    } as unknown as RoleEntities;
+    return { queries, role };
+  };
+
+  it.each([
+    '{ ask(prompt: "x") }',
+    '{ answer: ask(prompt: "x") }',
+    'query { ...Ask } fragment Ask on Query { ask(prompt: "x") }',
+    '{ ... on Query { ask(prompt: "x") } }',
+    '{ __typename ask(prompt: "x") }',
+  ])("refuses %s without running it", async (query) => {
+    const { queries, role } = recording();
+
+    const outcome = await executeGraphqlCore(role, makeValidateQuery(role), { query });
+
+    expect(outcome).toEqual({
+      kind: "error",
+      message: "`ask` cannot run inside a tool call: it would start the agent again.",
+    });
+    expect(queries).toEqual([]);
+  });
+
+  it("runs a query selecting a column named ask", async () => {
+    const { queries, role } = recording();
+
+    const outcome = await executeGraphqlCore(role, makeValidateQuery(role), {
+      query: "{ notes { ask } }",
+    });
+
+    expect(outcome.kind).toBe("ok");
+    expect(queries).toHaveLength(1);
+  });
+});

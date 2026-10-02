@@ -63,7 +63,7 @@ type ConfigurationInput = {
   remoteSchemas?: RemoteSchemaConfig[];
   /** External REST APIs (OpenAPI) to proxy under /rest. See REMOTE_REST.md. */
   remoteREST?: RemoteRESTConfig[];
-  /** Admin-only AI agent (NL → database Q&A) + MCP server. Off by default. */
+  /** AI agent (NL → database Q&A) for the roles granted `ai`, plus the MCP server. Off by default. */
   ai?: {
     enabled: boolean;
     systemPrompt?: string;

@@ -1,6 +1,9 @@
-import { buildAgentTools, createAgent, type RoleEntities } from "../ai";
+import type { BunRequest } from "bun";
 import type { Env } from "../types/env";
 import type { AIConfig } from "../types/zod/ai";
+import type { SessionContext } from "../utils/sessionVariables";
+
+import { ask, buildAgentTools, type RoleEntities } from "../ai";
 
 /**
  * Default system prompt: pins the agent to the list → describe → execute
@@ -51,11 +54,17 @@ CRITICAL RULES:
 - Filter operators: eq, neq, like, ilike, gt, gte, lt, lte, is_null. Use \`{ "is_null": true }\` for NULL checks.
 - If you are unsure about ANYTHING, call a tool. Do not guess.`;
 
-let agent: ((prompt: string) => Promise<string>) | null = null;
+/** Who an agent call answers for: its role, its session and its request. */
+export type AgentCaller = { role: RoleEntities; session?: SessionContext; req?: BunRequest };
+
+export type Agent = (prompt: string, caller: AgentCaller) => Promise<string>;
+
+type AgentSettings = { systemPrompt: string; wrap: (prompt: string) => string };
+
+let settings: AgentSettings | null = null;
 
 /**
- * Build and store the agent, bound to the given role's schema (the agent's
- * tools see exactly what that role can see). Called at boot when `ai.enabled`.
+ * Store the agent's prompts. Called at boot when the agent is on.
  *
  * Precedence for systemPrompt / promptTemplate:
  *   1. Env-var override (`AI_SYSTEM_PROMPT` / `AI_PROMPT_TEMPLATE`)
@@ -64,31 +73,33 @@ let agent: ((prompt: string) => Promise<string>) | null = null;
  */
 export const instantiateAI = (
   aiConfig: AIConfig,
-  role: RoleEntities,
   envOverrides?: { systemPrompt?: string; promptTemplate?: string },
 ): void => {
-  const systemPrompt =
-    envOverrides?.systemPrompt ?? aiConfig.systemPrompt ?? DEFAULT_AI_SYSTEM_PROMPT;
   const template = envOverrides?.promptTemplate ?? DEFAULT_AI_PROMPT_TEMPLATE;
 
-  const tools = buildAgentTools(role);
-  agent = createAgent({
-    tools,
-    systemPrompt,
+  settings = {
+    systemPrompt: envOverrides?.systemPrompt ?? aiConfig.systemPrompt ?? DEFAULT_AI_SYSTEM_PROMPT,
     wrap: (prompt: string) => template.replaceAll("{prompt}", prompt),
-  });
+  };
 };
 
-export const getAgent = (): ((prompt: string) => Promise<string>) => {
-  if (!agent) {
+/**
+ * The tools are built for each call rather than once at boot, so every caller
+ * reads through its own role, session and request — what its own queries see.
+ */
+export const getAgent = (): Agent => {
+  if (!settings) {
     throw new Error("AI agent is not enabled. Set `ai.enabled = true` in your configuration.");
   }
-  return agent;
+  const { systemPrompt, wrap } = settings;
+
+  return (prompt, { role, session, req }) =>
+    ask(prompt, buildAgentTools(role, { session, req }), systemPrompt, wrap);
 };
 
 /** Test-only reset. */
 export const resetAI = (): void => {
-  agent = null;
+  settings = null;
 };
 
 export type AISurfaces = { agent: boolean; ask: boolean; rest: boolean; mcp: boolean };

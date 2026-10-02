@@ -165,7 +165,7 @@ export const mergeEntities = (
     resolverRegistry["auth_me"] = createResolverEntry.auth("auth_me", "me");
   }
 
-  // Register the AI agent query (admin-only; gated by the caller)
+  // Register the AI agent query (a role granted `ai`; the caller decides)
   if (includeAI) {
     resolverRegistry["ask"] = createResolverEntry.ai("ask");
   }

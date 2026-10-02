@@ -230,62 +230,62 @@ Re-exported Zod library for convenience.
 
 #### Exported Types
 
-| Export                        | Description                                                                           |
-| ----------------------------- | ------------------------------------------------------------------------------------- |
-| `ConfigurationFn`             | Type for the configuration function `(helpers) => ConfigurationInput`                 |
-| `ConfigurationHelpers`        | Type for the helpers object (`z`, `operation`, virtual column fns)                    |
-| `ConfigurationInput`          | Full configuration shape                                                              |
-| `OperationFn`                 | Type for the `operation()` helper (`typeof operation`: 2 overloads + `.typed`)        |
-| `TypedOperation`              | Union of `QueryOperation` and `HandlerOperation`                                      |
-| `OperationHandler`            | `(options, input) => output` handler function type                                    |
-| `OperationOptions`            | `{ gqlQuery, databases, queues, repository }` passed to handlers                      |
-| `DefaultInput`                | `Record<string, unknown>` — default input type when no schema provided                |
-| `BaseOperation`               | Shared fields: description, input, output, hooks, rest, graphql, cache                |
-| `QueryOperation`              | Operation with `query` field                                                          |
-| `HandlerOperation`            | Operation with `handler` field                                                        |
-| `OperationRestConfig`         | REST exposure config: path, method, pathParams, queryParams, body                     |
-| `OperationGraphQLConfig`      | GraphQL exposure config: enabled, name                                                |
-| `OperationCacheConfig`        | LRU cache config: max, ttl, maxSize, etc.                                             |
-| `OperationInitHook`           | `(options) => initData` hook type                                                     |
-| `OperationBeforeRequestHook`  | `(context, initData) => variables` hook type                                          |
-| `OperationAfterRequestHook`   | `(context) => output` hook type                                                       |
-| `BeforeRequestContext`        | `{ input; pathParams?; queryParams?; body? }` — merged input + per-source REST params |
-| `AfterRequestContext`         | `{ output: TOutput }`                                                                 |
-| `GqlQueryResult`              | `{ data: T; errors?: unknown[] }`                                                     |
-| `DatabaseType`                | `"pg" \| "mssql" \| "mysql" \| "sqlite"`                                              |
-| `DatabaseConnection`          | `ServerConnection \| SQLiteConnection`                                                |
-| `ServerConnection`            | `{ host, port, user, password, database }` — pg/mysql/mssql connection shape          |
-| `SQLiteConnection`            | `{ filename, attach? }` — SQLite database files                                       |
-| `ConnectionForType`           | Maps a `DatabaseType` to its `connection` shape                                       |
-| `DatabaseConfig`              | Full database config with generics per type                                           |
-| `DatabaseSchemaConfig`        | Schema config: database table overrides, excludedTables                               |
-| `TableSchemaConfig`           | Per-table: virtual columns, relationships, description + columnDescriptions overrides |
-| `TableRelationship`           | `{ schema, name, columns: [{ source, target }] }`                                     |
-| `CustomRepositoryFactory`     | `(connection) => T` — typed per database type                                         |
-| `AnyDatabaseConfig`           | Discriminated union of all `DatabaseConfig<T>` variants                               |
-| `AuthConfig`                  | `{ enabled, database, schema?, permissions? }`                                        |
-| `MCPConfig`                   | `{ enabled }` — MCP server config, nested under `AIConfig.mcp`. See MCP.md.           |
-| `AIConfig`                    | `{ enabled, systemPrompt?, endpoint?, mcp? }` — admin-only AI agent + MCP. See AI.md. |
-| `RolePermission`              | `{ tables?, storedProcedures?, queues?, operations?, remoteSchemas?, remoteREST? }`   |
-| `TablePermission`             | `{ columns, filter?, orderBy? }`                                                      |
-| `FilterCondition`             | `Record<string, Record<string, unknown>>`                                             |
-| `DirectionUnion`              | `"ASC" \| "DESC" \| "ASC_NULLS_FIRST" \| ...`                                         |
-| `OrderByClause`               | `{ column: string; direction: DirectionUnion }`                                       |
-| `QueueConfig`                 | `RabbitMQConfig \| KafkaConfig`                                                       |
-| `RabbitMQConfig`              | RabbitMQ connection + publishers/subscribers/topics                                   |
-| `KafkaConfig`                 | Kafka connection + publishers/subscribers/topics                                      |
-| `PublisherConfig`             | `{ topic, routingKey?, persistent?, headers? }`                                       |
-| `SubscriberConfig`            | `{ topic, pattern?, queue?, group?, handler? }`                                       |
-| `SubscriberHandler`           | `(message, { cache }) => void`                                                        |
-| `CacheContext`                | `{ invalidate: (operationName, pattern?) => boolean }`                                |
-| `TopicConfig`                 | `{ type?, durable?, autoDelete? }`                                                    |
-| `CronJobConfig`               | Full cron job config                                                                  |
-| `CronTickCallback`            | `(options, context, response?) => void`                                               |
-| `VirtualColumnType`           | `{ name, dataType, isNullable, virtual?, function?, params?, expression? }`           |
-| `VirtualColumnFunctionFn`     | Function signature for `virtualColumnFunction`                                        |
-| `VirtualColumnExpressionFn`   | Function signature for `virtualColumnExpression`                                      |
-| `CreateOneToBooleanMSSQLFn`   | Function signature for `createOneToBooleanMSSQL`                                      |
-| `CreateYAndNToBooleanMSSQLFn` | Function signature for `createYAndNToBooleanMSSQL`                                    |
+| Export                        | Description                                                                                   |
+| ----------------------------- | --------------------------------------------------------------------------------------------- |
+| `ConfigurationFn`             | Type for the configuration function `(helpers) => ConfigurationInput`                         |
+| `ConfigurationHelpers`        | Type for the helpers object (`z`, `operation`, virtual column fns)                            |
+| `ConfigurationInput`          | Full configuration shape                                                                      |
+| `OperationFn`                 | Type for the `operation()` helper (`typeof operation`: 2 overloads + `.typed`)                |
+| `TypedOperation`              | Union of `QueryOperation` and `HandlerOperation`                                              |
+| `OperationHandler`            | `(options, input) => output` handler function type                                            |
+| `OperationOptions`            | `{ gqlQuery, databases, queues, repository }` passed to handlers                              |
+| `DefaultInput`                | `Record<string, unknown>` — default input type when no schema provided                        |
+| `BaseOperation`               | Shared fields: description, input, output, hooks, rest, graphql, cache                        |
+| `QueryOperation`              | Operation with `query` field                                                                  |
+| `HandlerOperation`            | Operation with `handler` field                                                                |
+| `OperationRestConfig`         | REST exposure config: path, method, pathParams, queryParams, body                             |
+| `OperationGraphQLConfig`      | GraphQL exposure config: enabled, name                                                        |
+| `OperationCacheConfig`        | LRU cache config: max, ttl, maxSize, etc.                                                     |
+| `OperationInitHook`           | `(options) => initData` hook type                                                             |
+| `OperationBeforeRequestHook`  | `(context, initData) => variables` hook type                                                  |
+| `OperationAfterRequestHook`   | `(context) => output` hook type                                                               |
+| `BeforeRequestContext`        | `{ input; pathParams?; queryParams?; body? }` — merged input + per-source REST params         |
+| `AfterRequestContext`         | `{ output: TOutput }`                                                                         |
+| `GqlQueryResult`              | `{ data: T; errors?: unknown[] }`                                                             |
+| `DatabaseType`                | `"pg" \| "mssql" \| "mysql" \| "sqlite"`                                                      |
+| `DatabaseConnection`          | `ServerConnection \| SQLiteConnection`                                                        |
+| `ServerConnection`            | `{ host, port, user, password, database }` — pg/mysql/mssql connection shape                  |
+| `SQLiteConnection`            | `{ filename, attach? }` — SQLite database files                                               |
+| `ConnectionForType`           | Maps a `DatabaseType` to its `connection` shape                                               |
+| `DatabaseConfig`              | Full database config with generics per type                                                   |
+| `DatabaseSchemaConfig`        | Schema config: database table overrides, excludedTables                                       |
+| `TableSchemaConfig`           | Per-table: virtual columns, relationships, description + columnDescriptions overrides         |
+| `TableRelationship`           | `{ schema, name, columns: [{ source, target }] }`                                             |
+| `CustomRepositoryFactory`     | `(connection) => T` — typed per database type                                                 |
+| `AnyDatabaseConfig`           | Discriminated union of all `DatabaseConfig<T>` variants                                       |
+| `AuthConfig`                  | `{ enabled, database, schema?, permissions? }`                                                |
+| `MCPConfig`                   | `{ enabled }` — MCP server config, nested under `AIConfig.mcp`. See MCP.md.                   |
+| `AIConfig`                    | `{ enabled, systemPrompt?, endpoint?, mcp? }` — AI agent (granted per role) + MCP. See AI.md. |
+| `RolePermission`              | `{ tables?, storedProcedures?, queues?, operations?, remoteSchemas?, remoteREST? }`           |
+| `TablePermission`             | `{ columns, filter?, orderBy? }`                                                              |
+| `FilterCondition`             | `Record<string, Record<string, unknown>>`                                                     |
+| `DirectionUnion`              | `"ASC" \| "DESC" \| "ASC_NULLS_FIRST" \| ...`                                                 |
+| `OrderByClause`               | `{ column: string; direction: DirectionUnion }`                                               |
+| `QueueConfig`                 | `RabbitMQConfig \| KafkaConfig`                                                               |
+| `RabbitMQConfig`              | RabbitMQ connection + publishers/subscribers/topics                                           |
+| `KafkaConfig`                 | Kafka connection + publishers/subscribers/topics                                              |
+| `PublisherConfig`             | `{ topic, routingKey?, persistent?, headers? }`                                               |
+| `SubscriberConfig`            | `{ topic, pattern?, queue?, group?, handler? }`                                               |
+| `SubscriberHandler`           | `(message, { cache }) => void`                                                                |
+| `CacheContext`                | `{ invalidate: (operationName, pattern?) => boolean }`                                        |
+| `TopicConfig`                 | `{ type?, durable?, autoDelete? }`                                                            |
+| `CronJobConfig`               | Full cron job config                                                                          |
+| `CronTickCallback`            | `(options, context, response?) => void`                                                       |
+| `VirtualColumnType`           | `{ name, dataType, isNullable, virtual?, function?, params?, expression? }`                   |
+| `VirtualColumnFunctionFn`     | Function signature for `virtualColumnFunction`                                                |
+| `VirtualColumnExpressionFn`   | Function signature for `virtualColumnExpression`                                              |
+| `CreateOneToBooleanMSSQLFn`   | Function signature for `createOneToBooleanMSSQL`                                              |
+| `CreateYAndNToBooleanMSSQLFn` | Function signature for `createYAndNToBooleanMSSQL`                                            |
 
 #### Exported Helpers
 

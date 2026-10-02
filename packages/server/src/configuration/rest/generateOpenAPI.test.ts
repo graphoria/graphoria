@@ -166,4 +166,24 @@ describe("generateOpenAPI", () => {
 
     expect(spec.paths?.["/payments/charges"]).toEqual({ get: { responses: {} } });
   });
+
+  it("opens the agent's route to bearer tokens as well as the admin secret", () => {
+    const role = getSchema({
+      tables: StoreMSSQL.tables,
+      storedProcedures: [],
+      queues: [],
+      operations: OperationsZod.parse({}),
+      remoteSchemas: [],
+      remoteREST: [],
+    });
+
+    const spec = generateOpenAPI({ role, options, ai: { path: "/ai" } });
+
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const post = (spec.paths!["/ai"] as any).post;
+    expect(post.security).toEqual([{ "HTTP Bearer Token": [] }, { "Admin Secret": [] }]);
+    expect(post.responses["404"].description).toBe(
+      "Not found (the caller's role is not granted `ai`)",
+    );
+  });
 });

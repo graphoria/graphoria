@@ -106,6 +106,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
         operations: [],
         remoteSchemas: [],
         remoteREST: [],
+        ai: false,
       },
       ...(configuration.auth.permissions ?? {}),
       superadmin: {
@@ -115,6 +116,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
         operations: "ALL",
         remoteSchemas: "ALL",
         remoteREST: "ALL",
+        ai: true,
       },
     },
     resolvedRemoteSchemas,
@@ -129,7 +131,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
 
   const schemas: Record<string, GetSchemaReturn> = {
     superadmin: superadminSchema,
-    ...getSchemas(others, configuration.auth, superadminSchema.handlers.gql),
+    ...getSchemas(others, configuration.auth, superadminSchema.handlers.gql, aiSurfaces.ask),
   };
 
   const jsonOpenApi = generateOpenAPI({

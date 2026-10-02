@@ -67,39 +67,11 @@ function toToolDefinition(tool: Tool): ToolDefinition {
   };
 }
 
-// ---- Factory ----
-
-/** Pre-bound agent config. Use with {@link createAgent}. */
-export interface AgentConfig {
-  tools: Tool[];
-  systemPrompt: string;
-  /** Wraps the raw user prompt into the final user message sent to the LLM. */
-  wrap: (content: string) => string;
-}
-
-/**
- * Create a pre-configured agent function. Bind tools, system prompt, and prompt
- * wrapper once — call with just a prompt string any number of times.
- *
- * @example
- *   const ask = createAgent({
- *     tools,
- *     systemPrompt: "You are a database assistant...",
- *     wrap: (prompt) => `Database-query from user:\n> ${prompt}`,
- *   });
- *   const answer = await ask("list all contacts grouped by role");
- */
-export function createAgent(config: AgentConfig): (prompt: string) => Promise<string> {
-  return (prompt: string) => ask(prompt, config.tools, config.systemPrompt, config.wrap);
-}
-
 // ---- Core agent loop ----
 
 /**
  * Send a prompt to the LLM and return ONLY the final text answer.
  * Handles tool-calling loops internally — the caller never sees tool calls.
- *
- * Use {@link createAgent} for a pre-configured single-arg version.
  *
  * @example
  *   const answer = await ask(
