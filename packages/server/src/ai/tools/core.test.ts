@@ -12,7 +12,7 @@ import type { RoleEntities } from "./core";
 const { env } = await import("../../singletons/env");
 const { handleGraphQLRequestFactory } =
   await import("../../configuration/gql/handleGraphQLRequestFactory");
-const { executeGraphqlCore, makeValidateQuery } = await import("./core");
+const { describeEntityCore, executeGraphqlCore, makeValidateQuery } = await import("./core");
 
 const sdl = `
   type Query {
@@ -214,5 +214,220 @@ describe("executeGraphqlCore — the agent's own field", () => {
 
     expect(outcome.kind).toBe("ok");
     expect(queries).toHaveLength(1);
+  });
+});
+
+describe("describeEntityCore", () => {
+  const sdlWithAccents = `
+    type Query { shop_people(limit: Int, where: shop_peopleWhereInput): [shop_people!]! }
+    input shop_peopleWhereInput { first_name: StringCondition }
+    input StringCondition { like: String }
+    type shop_people { first_name: String! }
+  `;
+
+  const idColumn = { name: "id", fieldName: "id", dataType: "int", isNullable: false };
+  const joining = (from: string, to: string, source: string, target: string, suffix = "") => ({
+    fromInternalName: from,
+    fromResolverName: `${from}${suffix}`,
+    toInternalName: to,
+    toResolverName: `${to}${suffix}`,
+    columns: [{ source, target }],
+  });
+  // The role reads `customer id`, but neither `seller ref` nor `région code`.
+  const toCustomer = joining("shop_orders", "shop_customers", "customer id", "id");
+  const toSeller = joining("shop_orders", "shop_sellers", "seller ref", "id");
+  const toRegion = joining("shop_orders", "shop_regions", "region", "région code");
+  // Two foreign keys to one table: each relationship field carries a suffix the
+  // table names do not.
+  const fromAccount = joining("shop_transfers", "shop_accounts", "from acct", "id", "_from_acct");
+  const toAccount = joining("shop_transfers", "shop_accounts", "to acct", "id", "_to_acct");
+  const joined = (name: string, relationshipsReversed: unknown[]) => ({
+    resolverName: name,
+    schema: "shop",
+    name,
+    tableDescription: null,
+    columns: [idColumn],
+    relationships: [],
+    relationshipsReversed,
+  });
+
+  const describing = {
+    schema: buildSchema(sdlWithAccents),
+    tables: [
+      {
+        resolverName: "shop_people",
+        schema: "shop",
+        name: "people",
+        tableDescription: null,
+        columns: [
+          { name: "first name", fieldName: "first_name", dataType: "varchar", isNullable: false },
+        ],
+        relationships: [],
+        relationshipsReversed: [],
+      },
+      {
+        resolverName: "shop_stock",
+        schema: "shop",
+        name: "stock",
+        tableDescription: null,
+        columns: [
+          { name: "units left", fieldName: "units_left", dataType: "int", isNullable: false },
+        ],
+        relationships: [],
+        relationshipsReversed: [],
+      },
+      {
+        resolverName: "shop_flags",
+        schema: "shop",
+        name: "flags",
+        tableDescription: null,
+        columns: [
+          { name: "is listed", fieldName: "is_listed", dataType: "boolean", isNullable: false },
+        ],
+        relationships: [],
+        relationshipsReversed: [],
+      },
+      {
+        resolverName: "shop_orders",
+        schema: "shop",
+        name: "orders",
+        tableDescription: null,
+        columns: [
+          idColumn,
+          { name: "customer id", fieldName: "customer_id", dataType: "int", isNullable: false },
+          { name: "region", fieldName: "region", dataType: "int", isNullable: false },
+        ],
+        relationships: [toCustomer, toSeller, toRegion],
+        relationshipsReversed: [],
+      },
+      joined("shop_customers", [toCustomer]),
+      joined("shop_sellers", [toSeller]),
+      joined("shop_regions", [toRegion]),
+      {
+        resolverName: "shop_transfers",
+        schema: "shop",
+        name: "transfers",
+        tableDescription: null,
+        columns: [
+          idColumn,
+          { name: "from acct", fieldName: "from_acct", dataType: "int", isNullable: false },
+          { name: "to acct", fieldName: "to_acct", dataType: "int", isNullable: false },
+        ],
+        relationships: [fromAccount, toAccount],
+        relationshipsReversed: [],
+      },
+      joined("shop_accounts", [fromAccount, toAccount]),
+    ],
+    remoteSchemas: [
+      {
+        config: { name: "billing", url: "http://billing.internal:8080/graphql" },
+        prefix: "billing",
+        queryFields: [],
+        mutationFields: [],
+        typeDefsSDL: "",
+      },
+    ],
+    remoteRESTApis: [
+      {
+        config: { name: "payments" },
+        baseUrl: "http://payments.internal:9090",
+        prefix: "payments",
+        routes: [],
+        openApiPaths: {},
+        openApiSchemas: {},
+      },
+    ],
+    storedProcedures: [],
+    queuesMap: {},
+    operations: {},
+  } as unknown as RoleEntities;
+
+  it("names a table's columns as their GraphQL fields", () => {
+    const described = describeEntityCore(describing, { name: "shop_people", kind: "table" }) as {
+      columns: { name: string }[];
+      examples: { list: string; filter: string; aggregate: string };
+    };
+
+    expect(described.columns.map((column) => column.name)).toEqual(["first_name"]);
+    expect(JSON.stringify(described.examples)).toContain("first_name");
+    expect(JSON.stringify(described.examples)).not.toContain("first name");
+  });
+
+  it("names the numeric and boolean filters and the sums by their GraphQL fields", () => {
+    const examplesOf = (name: string) =>
+      (
+        describeEntityCore(describing, { name, kind: "table" }) as {
+          examples: { filter: string; aggregate: string };
+        }
+      ).examples;
+    const stock = examplesOf("shop_stock");
+    const flags = examplesOf("shop_flags");
+
+    expect(stock.filter).toContain("where: { units_left: { gt: 0 } }");
+    expect(stock.aggregate).toContain("sum { units_left }");
+    expect(stock.aggregate).toContain("avg { units_left }");
+    expect(flags.filter).toContain("where: { is_listed: { eq: true } }");
+    expect(JSON.stringify([stock, flags])).not.toMatch(/units left|is listed/);
+  });
+
+  it("keeps upstream addresses out of a remote schema or API", () => {
+    const text = JSON.stringify([
+      describeEntityCore(describing, { name: "billing", kind: "remote_schema" }),
+      describeEntityCore(describing, { name: "payments", kind: "remote_rest" }),
+    ]);
+
+    expect(text).toContain("billing");
+    expect(text).toContain("payments");
+    expect(text).not.toContain("internal");
+  });
+
+  it("names relationship join columns as GraphQL fields, leaving out the ones the role cannot read", () => {
+    const described = Object.fromEntries(
+      ["shop_orders", "shop_customers", "shop_sellers", "shop_regions"].map((name) => [
+        name,
+        describeEntityCore(describing, { name, kind: "table" }) as {
+          relationships: unknown[];
+          relationshipsReversed: unknown[];
+        },
+      ]),
+    );
+
+    expect(described["shop_orders"]!.relationships).toEqual([
+      { to: "shop_customers", columns: [{ from: "customer_id", to: "id" }] },
+      { to: "shop_sellers", columns: [] },
+      { to: "shop_regions", columns: [] },
+    ]);
+    expect(described["shop_customers"]!.relationshipsReversed).toEqual([
+      { from: "shop_orders", columns: [{ from: "customer_id", to: "id" }] },
+    ]);
+    expect(described["shop_sellers"]!.relationshipsReversed).toEqual([
+      { from: "shop_orders", columns: [] },
+    ]);
+    expect(described["shop_regions"]!.relationshipsReversed).toEqual([
+      { from: "shop_orders", columns: [] },
+    ]);
+
+    const text = JSON.stringify(described);
+    expect(text).not.toContain("customer id");
+    expect(text).not.toContain("seller ref");
+    expect(text).not.toContain("région code");
+  });
+
+  it("finds join columns by table, not by a relationship's suffixed field name", () => {
+    const transfers = describeEntityCore(describing, { name: "shop_transfers", kind: "table" }) as {
+      relationships: unknown[];
+    };
+    const accounts = describeEntityCore(describing, { name: "shop_accounts", kind: "table" }) as {
+      relationshipsReversed: unknown[];
+    };
+
+    expect(transfers.relationships).toEqual([
+      { to: "shop_accounts_from_acct", columns: [{ from: "from_acct", to: "id" }] },
+      { to: "shop_accounts_to_acct", columns: [{ from: "to_acct", to: "id" }] },
+    ]);
+    expect(accounts.relationshipsReversed).toEqual([
+      { from: "shop_transfers_from_acct", columns: [{ from: "from_acct", to: "id" }] },
+      { from: "shop_transfers_to_acct", columns: [{ from: "to_acct", to: "id" }] },
+    ]);
   });
 });

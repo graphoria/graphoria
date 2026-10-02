@@ -48,7 +48,7 @@ export const buildAgentTools = (role: RoleEntities, caller: ToolCaller): Tool[] 
     tool({
       name: "describe_entity",
       description:
-        "Returns detailed information about an entity. For tables: columns, relationships, the generated GraphQL list-field and _aggregate-field signatures, and ready-to-run example queries (list / filter / aggregate) using the table's real column names.",
+        "Returns detailed information about an entity. For tables: columns, relationships, the generated GraphQL list-field and _aggregate-field signatures, and ready-to-run example queries (list / filter / aggregate) using the table's GraphQL field names.",
       schema: z.object({
         name: z.string(),
         kind: z.enum(ENTITY_KINDS).optional(),

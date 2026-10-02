@@ -18,6 +18,10 @@ const resolveBaseUrl = (config: RemoteRESTConfig, spec: OpenAPIV3_1.Document): s
   );
 };
 
+// The upstream spec is not validated: any part of it may be missing or malformed.
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
 /**
  * Prefix all $ref strings in an object tree: #/components/schemas/Foo becomes #/components/schemas/{prefix}_Foo
  */
@@ -86,6 +90,14 @@ export const transformRemoteREST = (
         // Prefix $refs in the operation and add remote API tag
         const prefixedOperation = prefixRefs(operation, prefix) as OpenAPIV3_1.OperationObject;
         prefixedOperation.tags = [prefix];
+        // Clients call the proxy, never the upstream: its own addresses stay out.
+        delete prefixedOperation.servers;
+        for (const response of Object.values<unknown>(prefixedOperation.responses ?? {})) {
+          if (!isObject(response) || !isObject(response.links)) continue;
+          for (const link of Object.values(response.links)) {
+            if (isObject(link)) delete link.server;
+          }
+        }
 
         (prefixedPathItem as Record<string, unknown>)[method] = prefixedOperation;
       }

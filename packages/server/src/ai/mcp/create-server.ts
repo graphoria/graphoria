@@ -239,7 +239,7 @@ export const createMcpServer = (
     {
       title: "Describe Entity",
       description:
-        "Returns detailed information about an entity. For tables, includes columns, relationships, the generated GraphQL list-field and _aggregate-field signatures, and ready-to-run example queries (list / filter / aggregate) using this table's real column names. For remote schemas/REST, includes their imported SDL/OpenAPI shape.",
+        "Returns detailed information about an entity. For tables, includes columns, relationships, the generated GraphQL list-field and _aggregate-field signatures, and ready-to-run example queries (list / filter / aggregate) using this table's GraphQL field names. For remote schemas/REST, includes their imported SDL/OpenAPI shape.",
       inputSchema: z.object({
         name: z.string().describe("Entity name (e.g. resolverName for tables)"),
         kind: z.enum(ENTITY_KINDS).optional(),
@@ -406,7 +406,7 @@ export const createMcpServer = (
 Use the Graphoria MCP tools to answer. Required workflow:
 
 1. list_entities — REQUIRES \`kind\` or \`search\`. Search matches resolverName AND tableDescription, so try natural-language keywords even when DB names are cryptic.
-2. describe_entity — read the table's columns, the aggregateField signature, AND \`examples.list / examples.filter / examples.aggregate\` (these are pre-built queries using this table's real column names; prefer copying them over composing from scratch).
+2. describe_entity — read the table's columns, the aggregateField signature, AND \`examples.list / examples.filter / examples.aggregate\` (these are pre-built queries using this table's GraphQL field names; prefer copying them over composing from scratch).
 3. graphql_validate (optional) — confirm a hand-written query parses before executing.
 4. graphql_execute — run the query.
 

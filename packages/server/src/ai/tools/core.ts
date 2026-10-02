@@ -23,6 +23,7 @@ import type { SessionContext } from "../../utils/sessionVariables";
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule } from "../../analyzeQuery/depthLimit";
 import { categorizeSqlType, isNumericType, SqlTypeCategory } from "../../databases/sqlTypeUtils";
+import { columnFieldName } from "../../databases/transformers/graphqlName";
 import { env } from "../../singletons/env";
 
 /**
@@ -121,6 +122,7 @@ const describeNamedType = (type: GraphQLNamedType): Record<string, unknown> => {
 
 type DescribableColumn = {
   name: string;
+  fieldName?: string;
   dataType: string;
   isNullable: boolean;
   virtual?: boolean;
@@ -139,7 +141,7 @@ const pickGroupByColumn = (cols: readonly DescribableColumn[]): string | null =>
       c.name !== "id" &&
       !c.name.endsWith("_id"),
   );
-  return (stringNonId ?? real[0]).name;
+  return columnFieldName(stringNonId ?? real[0]);
 };
 
 const buildFilterExample = (
@@ -151,15 +153,15 @@ const buildFilterExample = (
   const sub = sampleFields.join("\n    ");
   const stringCol = real.find((c) => categorizeSqlType(c.dataType) === SqlTypeCategory.STRING);
   if (stringCol) {
-    return `query {\n  ${resolverName}(where: { ${stringCol.name}: { like: "%search%" } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${columnFieldName(stringCol)}: { like: "%search%" } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
   const numericCol = real.find((c) => isNumericType(c.dataType));
   if (numericCol) {
-    return `query {\n  ${resolverName}(where: { ${numericCol.name}: { gt: 0 } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${columnFieldName(numericCol)}: { gt: 0 } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
   const boolCol = real.find((c) => categorizeSqlType(c.dataType) === SqlTypeCategory.BOOLEAN);
   if (boolCol) {
-    return `query {\n  ${resolverName}(where: { ${boolCol.name}: { eq: true } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${columnFieldName(boolCol)}: { eq: true } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
   return null;
 };
@@ -173,7 +175,7 @@ const buildTableExamples = (
   aggregate: string | null;
 } | null => {
   const real = realColumns(cols);
-  const sampleFields = real.slice(0, 4).map((c) => c.name);
+  const sampleFields = real.slice(0, 4).map(columnFieldName);
   if (!sampleFields.length) return null;
 
   const sub = sampleFields.join("\n    ");
@@ -186,13 +188,45 @@ const buildTableExamples = (
   if (groupCol) {
     const numericCol = real.find((c) => isNumericType(c.dataType));
     const numericAggLines = numericCol
-      ? `\n    sum { ${numericCol.name} }\n    avg { ${numericCol.name} }`
+      ? `\n    sum { ${columnFieldName(numericCol)} }\n    avg { ${columnFieldName(numericCol)} }`
       : "";
     const itemFields = sampleFields.slice(0, 3).join(" ");
     aggregate = `query {\n  ${resolverName}_aggregate(groupBy: [${groupCol}]) {\n    key { ${groupCol} }\n    count${numericAggLines}\n    items { ${itemFields} }\n  }\n}`;
   }
 
   return { list, filter, aggregate };
+};
+
+/**
+ * A relationship's join columns as the role's fields: `source` is a column of the
+ * table holding the foreign key, `target` one of the table it references. The
+ * role reads both tables but not necessarily these columns, so a pair naming a
+ * column it cannot read is left out; the relationship field needs no column.
+ */
+const joinColumnFields = (
+  role: RoleEntities,
+  {
+    fromInternalName,
+    toInternalName,
+    columns,
+  }: {
+    fromInternalName: string;
+    toInternalName: string;
+    columns: { source: string; target: string }[];
+  },
+): { from: string; to: string }[] => {
+  const fieldOf = (table: string, column: string) => {
+    const found = role.tables
+      .find((t) => t.resolverName === table)
+      ?.columns.find((c) => c.name === column);
+    return found && columnFieldName(found);
+  };
+
+  return columns.flatMap(({ source, target }) => {
+    const from = fieldOf(fromInternalName, source);
+    const to = fieldOf(toInternalName, target);
+    return from && to ? [{ from, to }] : [];
+  });
 };
 
 const findRootField = (
@@ -470,7 +504,7 @@ export const describeEntityCore = (
         tableName: t.name,
         description: t.tableDescription ?? null,
         columns: t.columns.map((c) => ({
-          name: c.name,
+          name: columnFieldName(c),
           dataType: c.dataType,
           nullable: c.isNullable,
           description: c.description ?? null,
@@ -478,11 +512,11 @@ export const describeEntityCore = (
         })),
         relationships: t.relationships.map((r) => ({
           to: r.toResolverName,
-          columns: r.columns.map((c) => ({ from: c.source, to: c.target })),
+          columns: joinColumnFields(role, r),
         })),
         relationshipsReversed: t.relationshipsReversed.map((r) => ({
           from: r.fromResolverName,
-          columns: r.columns.map((c) => ({ from: c.source, to: c.target })),
+          columns: joinColumnFields(role, r),
         })),
         graphqlField: findRootField(schema, name),
         aggregateField: findRootField(schema, `${name}_aggregate`),
@@ -508,7 +542,6 @@ export const describeEntityCore = (
       return {
         kind: "remote_schema",
         name: rs.config.name,
-        url: rs.config.url,
         prefix: rs.prefix,
         queryFields: rs.queryFields.map((f) => ({
           name: f.prefixedName,
@@ -527,7 +560,6 @@ export const describeEntityCore = (
       return {
         kind: "remote_rest",
         name: rr.config.name,
-        baseUrl: rr.baseUrl,
         prefix: rr.prefix,
         routes: rr.routes,
         openApiPaths: rr.openApiPaths,

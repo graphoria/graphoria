@@ -182,6 +182,61 @@ describe("Remote REST Transform", () => {
     expect(op.tags).toEqual(["shop"]);
   });
 
+  it("keeps the upstream's own servers out of the prefixed paths", () => {
+    const spec = buildTestSpec({
+      "/orders": {
+        servers: [{ url: "https://path.orders.internal" }],
+        get: { servers: [{ url: "https://op.orders.internal" }], responses: {} },
+      },
+    });
+    const upstream = structuredClone(spec);
+
+    const result = transformRemoteREST(spec, {
+      name: "shop",
+      url: "https://api.example.com",
+    });
+
+    expect(spec).toEqual(upstream);
+
+    expect(result.openApiPaths["/shop/orders"]!.get).not.toHaveProperty("servers");
+    expect(result.openApiPaths["/shop/orders"]).not.toHaveProperty("servers");
+    expect(JSON.stringify(result.openApiPaths)).not.toContain("internal");
+  });
+
+  it("keeps the upstream's own server out of a response link", () => {
+    const spec = buildTestSpec({
+      "/orders": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              links: {
+                next: { operationId: "getOrder", server: { url: "https://link.orders.internal" } },
+              },
+            },
+            // An upstream spec can be sloppy; these are copied as they are.
+            ...JSON.parse('{ "404": null, "500": { "description": "Down", "links": null } }'),
+          },
+        },
+      },
+    });
+    const upstream = structuredClone(spec);
+
+    const result = transformRemoteREST(spec, {
+      name: "shop",
+      url: "https://api.example.com",
+    });
+
+    expect(spec).toEqual(upstream);
+
+    const response = result.openApiPaths["/shop/orders"]!.get!.responses![
+      "200"
+    ] as OpenAPIV3_1.ResponseObject;
+    expect(response.links).toEqual({ next: { operationId: "getOrder" } });
+    expect(result.openApiPaths["/shop/orders"]!.get!.responses!["404"]).toBeNull();
+    expect(JSON.stringify(result.openApiPaths)).not.toContain("internal");
+  });
+
   it("should strip trailing slash from base URL", () => {
     const spec = buildTestSpec({ "/test": { get: { responses: {} } } });
 
