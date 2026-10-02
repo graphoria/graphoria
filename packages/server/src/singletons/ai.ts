@@ -4,6 +4,7 @@ import type { AIConfig } from "../types/zod/ai";
 import type { SessionContext } from "../utils/sessionVariables";
 
 import { ask, buildAgentTools, type RoleEntities } from "../ai";
+import { scopedCredentialRole } from "../authentication/capabilities";
 
 /**
  * Default system prompt: pins the agent to the list → describe → execute
@@ -117,4 +118,32 @@ export const resolveAISurfaces = (env: Env, ai: AIConfig | undefined): AISurface
     rest: agent && (env.ai?.restEnabled ?? true),
     mcp: env.ai?.mcp?.enabled ?? ai?.mcp?.enabled ?? false,
   };
+};
+
+/**
+ * A scoped credential naming a role the configuration does not define — or,
+ * for the agent, one not granted `ai` — would open nothing. Refuse to boot
+ * instead, but only for a credential someone can present on a mounted route.
+ */
+export const assertScopedRoles = (
+  env: Env,
+  roles: Record<string, { entityOfRole: { ai?: boolean } }>,
+  surfaces: AISurfaces,
+): void => {
+  const check = (variable: string, role: string, needsAi: boolean) => {
+    const granted = Object.hasOwn(roles, role) ? roles[role] : undefined;
+    if (!granted) throw new Error(`${variable} is "${role}", which is not a configured role`);
+    if (needsAi && !granted.entityOfRole.ai) {
+      throw new Error(
+        `${variable} is "${role}", which is not granted the AI agent (permissions.${role}.ai)`,
+      );
+    }
+  };
+
+  if (surfaces.rest && (env.ai?.secrets?.length ?? 0) > 0) {
+    check("AI_SECRET_ROLE", scopedCredentialRole(env, "ai"), true);
+  }
+  if (surfaces.mcp && (env.ai?.mcp?.secrets?.length ?? 0) > 0) {
+    check("AI_MCP_SECRET_ROLE", scopedCredentialRole(env, "mcp"), false);
+  }
 };

@@ -399,3 +399,32 @@ describe("EnvZod DB_CONNECT_RETRY_MS", () => {
     expect(() => EnvZod.parse({ ...baseEnv, DB_CONNECT_RETRY_MS: "-1" })).toThrow();
   });
 });
+
+describe("EnvZod AI_SECRET_ROLE / AI_MCP_SECRET_ROLE", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("reads the agent credential as the superadmin role and the MCP one as anonymous", () => {
+    const env = EnvZod.parse(baseEnv);
+    expect(env.ai.secretRole).toBe("superadmin");
+    expect(env.ai.mcp.secretRole).toBe("anonymous");
+  });
+
+  it("follows SUPERADMIN_ROLE and ANONYMOUS_ROLE when they are renamed", () => {
+    const env = EnvZod.parse({ ...baseEnv, SUPERADMIN_ROLE: "root", ANONYMOUS_ROLE: "guest" });
+    expect(env.ai.secretRole).toBe("root");
+    expect(env.ai.mcp.secretRole).toBe("guest");
+  });
+
+  it("takes the roles it is given", () => {
+    const env = EnvZod.parse({
+      ...baseEnv,
+      AI_SECRET_ROLE: "analyst",
+      AI_MCP_SECRET_ROLE: "reporter",
+    });
+    expect(env.ai.secretRole).toBe("analyst");
+    expect(env.ai.mcp.secretRole).toBe("reporter");
+  });
+});

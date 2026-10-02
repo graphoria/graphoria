@@ -114,4 +114,14 @@ describe("scopedCredentialRole", () => {
   it("reads any other capability as the anonymous role", () => {
     expect(scopedCredentialRole(renamed, "metrics")).toBe("guest");
   });
+
+  it("reads each credential as the role its env var names", () => {
+    const named = {
+      ...renamed,
+      ai: { secretRole: "analyst", mcp: { secretRole: "reporter" } },
+    } as unknown as Env;
+
+    expect(scopedCredentialRole(named, "ai")).toBe("analyst");
+    expect(scopedCredentialRole(named, "mcp")).toBe("reporter");
+  });
 });

@@ -17,7 +17,7 @@ import { consoleRoutesFactory } from "./console/api";
 import { createAuthTables, verifyAuthTablesExist } from "./databases";
 import { createMCPRoutes } from "./ai";
 import { createCapabilityAuthorizer, scopedCredentialRole } from "./authentication/capabilities";
-import { getAgent, instantiateAI, resolveAISurfaces } from "./singletons/ai";
+import { assertScopedRoles, getAgent, instantiateAI, resolveAISurfaces } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
 import { getCronJobs, instantiateCronJobs } from "./singletons/cron";
 import {
@@ -260,6 +260,7 @@ const createGraphQLServer = async (env: Env) => {
   const { projectConfiguration, analyzedConfiguration } = await bootAnalyzedConfiguration(env);
 
   const aiSurfaces = resolveAISurfaces(env, projectConfiguration.ai);
+  assertScopedRoles(env, analyzedConfiguration.roles, aiSurfaces);
 
   // Initialize queues
   await instantiateQueues(analyzedConfiguration.queues);

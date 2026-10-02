@@ -33,26 +33,27 @@ export default (() => ({
 
 The provider, model, and credentials come from **environment variables**, not the config file. The default is [Ollama](https://ollama.com) (local, no API key). Switch providers with `LLM_PROVIDER`:
 
-| Variable             | Default                  | Description                                                     |
-| -------------------- | ------------------------ | --------------------------------------------------------------- |
-| `LLM_PROVIDER`       | `ollama`                 | `ollama`, `openai`, `deepseek`, or `anthropic`                  |
-| `LLM_MODEL`          | per-provider             | Overrides the provider's default model                          |
-| `OPENAI_API_KEY`     | —                        | Required when `LLM_PROVIDER=openai`                             |
-| `OPENAI_BASE_URL`    | —                        | Any OpenAI-compatible endpoint (Groq, Mistral, …)               |
-| `DEEPSEEK_API_KEY`   | —                        | Required when `LLM_PROVIDER=deepseek`                           |
-| `ANTHROPIC_API_KEY`  | —                        | Required when `LLM_PROVIDER=anthropic`                          |
-| `OLLAMA_HOST`        | `http://localhost:11434` | Ollama server URL                                               |
-| `AI_SYSTEM_PROMPT`   | —                        | Overrides the built-in system prompt sent to the LLM            |
-| `AI_PROMPT_TEMPLATE` | —                        | Overrides the user-message wrapper (use `{prompt}` placeholder) |
-| `AI_ENABLED`         | (config field)           | Turns the agent on or off over `ai.enabled`                     |
-| `AI_GRAPHQL_ENABLED` | `true`                   | `false` leaves the GraphQL `ask` field out of every schema      |
-| `AI_REST_ENABLED`    | `true`                   | `false` leaves the REST route unmounted                         |
+| Variable             | Default                  | Description                                                                                                                                                                        |
+| -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`       | `ollama`                 | `ollama`, `openai`, `deepseek`, or `anthropic`                                                                                                                                     |
+| `LLM_MODEL`          | per-provider             | Overrides the provider's default model                                                                                                                                             |
+| `OPENAI_API_KEY`     | —                        | Required when `LLM_PROVIDER=openai`                                                                                                                                                |
+| `OPENAI_BASE_URL`    | —                        | Any OpenAI-compatible endpoint (Groq, Mistral, …)                                                                                                                                  |
+| `DEEPSEEK_API_KEY`   | —                        | Required when `LLM_PROVIDER=deepseek`                                                                                                                                              |
+| `ANTHROPIC_API_KEY`  | —                        | Required when `LLM_PROVIDER=anthropic`                                                                                                                                             |
+| `OLLAMA_HOST`        | `http://localhost:11434` | Ollama server URL                                                                                                                                                                  |
+| `AI_SYSTEM_PROMPT`   | —                        | Overrides the built-in system prompt sent to the LLM                                                                                                                               |
+| `AI_PROMPT_TEMPLATE` | —                        | Overrides the user-message wrapper (use `{prompt}` placeholder)                                                                                                                    |
+| `AI_ENABLED`         | (config field)           | Turns the agent on or off over `ai.enabled`                                                                                                                                        |
+| `AI_GRAPHQL_ENABLED` | `true`                   | `false` leaves the GraphQL `ask` field out of every schema                                                                                                                         |
+| `AI_REST_ENABLED`    | `true`                   | `false` leaves the REST route unmounted                                                                                                                                            |
+| `AI_SECRET_ROLE`     | `SUPERADMIN_ROLE`        | The role `AI_SECRET` reads as; must be granted `ai` (checked at boot). Its session is `sub: "ai"` with no claims, so a `$session` row filter on that role matches nothing or fails |
 
 The `openai` and `@anthropic-ai/sdk` packages are **optional dependencies** — they load lazily only when their provider is selected. With the default Ollama provider, neither is needed.
 
 ## Endpoints
 
-Both resolve the caller like `/graphql`: `Authorization: Bearer <token>` for the token's role, the admin secret (`x-admin-secret` by default) for the superadmin role. The REST route also accepts `AI_SECRET` in the admin-secret header: a credential scoped to the agent alone, a comma-separated list rotated like `ADMIN_SECRET`, unset by default. It reads as the superadmin role and opens nothing else — sent to `/graphql`, `/rest/*` or `/mcp` it resolves to the anonymous role, so the GraphQL `ask` field stays out of its reach. The admin secret logs a warning each time it is used on the REST route, where the scoped credential would have done.
+Both resolve the caller like `/graphql`: `Authorization: Bearer <token>` for the token's role, the admin secret (`x-admin-secret` by default) for the superadmin role. The REST route also accepts `AI_SECRET` in the admin-secret header: a credential scoped to the agent alone, a comma-separated list rotated like `ADMIN_SECRET`, unset by default. It reads as `AI_SECRET_ROLE` (default the superadmin role) and opens nothing else — sent to `/graphql`, `/rest/*` or `/mcp` it resolves to the anonymous role, so the GraphQL `ask` field stays out of its reach. The admin secret logs a warning each time it is used on the REST route, where the scoped credential would have done.
 
 A role without `ai` gets `404` from the REST route, and the `ask` field is absent from its schema.
 

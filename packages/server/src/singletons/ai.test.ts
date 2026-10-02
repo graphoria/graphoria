@@ -9,7 +9,8 @@ import type { ChatResult, Provider } from "../ai/agent/types";
 
 const { getSchema } = await import("../configuration/getSchemas");
 const { StoreMSSQL } = await import("../__test/dataset/store");
-const { instantiateAI, getAgent, resetAI, resolveAISurfaces } = await import("./ai");
+const { instantiateAI, getAgent, resetAI, resolveAISurfaces, assertScopedRoles } =
+  await import("./ai");
 const { setProvider } = await import("../ai/agent/providers");
 const { columnFieldName } = await import("../databases/transformers/graphqlName");
 
@@ -143,5 +144,86 @@ describe("resolveAISurfaces", () => {
       rest: false,
       mcp: false,
     });
+  });
+});
+
+describe("assertScopedRoles", () => {
+  const surfaces = { agent: true, ask: true, rest: true, mcp: true };
+  const roles = {
+    superadmin: { entityOfRole: { ai: true } },
+    anonymous: { entityOfRole: { ai: false } },
+    analyst: { entityOfRole: { ai: true } },
+  };
+  const envWith = (ai: { secrets?: string[]; secretRole?: string }, mcp: object = {}) =>
+    ({
+      superadmin: { role: "superadmin" },
+      anonymousRole: "anonymous",
+      ai: { secrets: [], ...ai, mcp: { secrets: [], ...mcp } },
+    }) as unknown as Env;
+
+  it("accepts the defaults", () => {
+    expect(() =>
+      assertScopedRoles(envWith({ secrets: ["s"] }, { secrets: ["m"] }), roles, surfaces),
+    ).not.toThrow();
+  });
+
+  it("refuses an agent credential naming a role the configuration lacks", () => {
+    expect(() =>
+      assertScopedRoles(envWith({ secrets: ["s"], secretRole: "ghost" }), roles, surfaces),
+    ).toThrow('AI_SECRET_ROLE is "ghost", which is not a configured role');
+  });
+
+  it.each(["constructor", "__proto__"])(
+    "refuses either credential naming %s, which no configuration defines",
+    (inherited) => {
+      expect(() =>
+        assertScopedRoles(envWith({ secrets: ["s"], secretRole: inherited }), roles, surfaces),
+      ).toThrow(`AI_SECRET_ROLE is "${inherited}", which is not a configured role`);
+      expect(() =>
+        assertScopedRoles(envWith({}, { secrets: ["m"], secretRole: inherited }), roles, surfaces),
+      ).toThrow(`AI_MCP_SECRET_ROLE is "${inherited}", which is not a configured role`);
+    },
+  );
+
+  it("refuses an agent credential naming a role not granted ai", () => {
+    expect(() =>
+      assertScopedRoles(envWith({ secrets: ["s"], secretRole: "anonymous" }), roles, surfaces),
+    ).toThrow("permissions.anonymous.ai");
+  });
+
+  it("refuses an MCP credential naming a role the configuration lacks", () => {
+    expect(() =>
+      assertScopedRoles(envWith({}, { secrets: ["m"], secretRole: "ghost" }), roles, surfaces),
+    ).toThrow('AI_MCP_SECRET_ROLE is "ghost", which is not a configured role');
+  });
+
+  it("does not ask an MCP role for the ai grant", () => {
+    expect(() =>
+      assertScopedRoles(envWith({}, { secrets: ["m"], secretRole: "anonymous" }), roles, surfaces),
+    ).not.toThrow();
+  });
+
+  it("ignores a role nobody can present", () => {
+    expect(() =>
+      assertScopedRoles(envWith({ secretRole: "ghost" }, { secretRole: "ghost" }), roles, surfaces),
+    ).not.toThrow();
+  });
+
+  it("ignores a surface that is not mounted", () => {
+    const off = { agent: false, ask: false, rest: false, mcp: false };
+    expect(() =>
+      assertScopedRoles(
+        envWith({ secrets: ["s"], secretRole: "ghost" }, { secrets: ["m"], secretRole: "ghost" }),
+        roles,
+        off,
+      ),
+    ).not.toThrow();
+  });
+
+  it("checks the agent credential while the REST route is mounted, not while the agent is on", () => {
+    const restOff = { agent: true, ask: true, rest: false, mcp: false };
+    expect(() =>
+      assertScopedRoles(envWith({ secrets: ["s"], secretRole: "anonymous" }), roles, restOff),
+    ).not.toThrow();
   });
 });
