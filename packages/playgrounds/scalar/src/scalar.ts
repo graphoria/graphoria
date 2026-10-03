@@ -34,12 +34,11 @@ if (!isConfigured) {
         preferredSecurityScheme: "bearerAuth",
         http: { bearer: { token: getToken() } },
       },
-      onBeforeRequest: (request: { request: { headers: Headers } }) => {
+      onRequestBuilt: (payload: { request: Request }) => {
         const token = getToken();
-        if (token && !request.request.headers.has("Authorization")) {
-          request.request.headers.append("Authorization", `Bearer ${token}`);
+        if (token && !payload.request.headers.has("Authorization")) {
+          payload.request.headers.append("Authorization", `Bearer ${token}`);
         }
-        return request;
       },
     });
   };
