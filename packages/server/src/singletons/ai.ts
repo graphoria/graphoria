@@ -80,7 +80,8 @@ export const instantiateAI = (
 
   settings = {
     systemPrompt: envOverrides?.systemPrompt ?? aiConfig.systemPrompt ?? DEFAULT_AI_SYSTEM_PROMPT,
-    wrap: (prompt: string) => template.replaceAll("{prompt}", prompt),
+    // A function replacement: a string one would expand `$&`, `$'` and `$$` in the prompt.
+    wrap: (prompt: string) => template.replaceAll("{prompt}", () => prompt),
     timeoutMs: envOverrides?.timeoutMs ?? 0,
   };
 };

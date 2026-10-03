@@ -96,6 +96,24 @@ describe("AI singleton", () => {
       "LLM call timed out after 20 ms",
     );
   });
+
+  it("hands the prompt to the template verbatim, $ sequences included", async () => {
+    const prompt = "orders over $$5, $& and $' and $`";
+    const sent: string[] = [];
+    setProvider({
+      chat: async (messages) => {
+        sent.push(messages.find((message) => message.role === "user")!.content);
+        throw new Error("stop after the first call");
+      },
+    });
+    instantiateAI(
+      { enabled: true, endpoint: "/ai", mcp: { enabled: false } },
+      { promptTemplate: "Q: {prompt} (end)" },
+    );
+
+    await expect(getAgent()(prompt, { role: buildRole() })).rejects.toThrow("stop");
+    expect(sent).toEqual([`Q: ${prompt} (end)`]);
+  });
 });
 
 describe("resolveAISurfaces", () => {
