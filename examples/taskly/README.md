@@ -301,11 +301,11 @@ over-run guard).
 
 ### AI agent + MCP
 
-`ai.enabled` adds admin-only NL→DB Q&A (`POST /ai` + GraphQL `ask`).
+`ai.enabled` adds NL→DB Q&A for the roles granted `ai` (`POST /rest/ai` + GraphQL `ask`).
 `ai.mcp.enabled` adds the `POST /mcp` Model Context Protocol endpoint. → `ai`.
 
 ```bash
-curl -X POST localhost:3000/ai -H "x-admin-secret: $ADMIN_SECRET" \
+curl -X POST localhost:3000/rest/ai -H "x-admin-secret: $ADMIN_SECRET" \
   -H "content-type: application/json" -d '{"prompt":"how many overdue tasks does Acme have?"}'
 ```
 

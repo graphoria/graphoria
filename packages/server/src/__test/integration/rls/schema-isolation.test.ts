@@ -1,4 +1,3 @@
-import { RedisClient } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { buildClientSchema, getIntrospectionQuery } from "graphql";
 
@@ -12,9 +11,9 @@ import type {
 import type { DatabaseType } from "../../../types/configuration";
 import type { RlsUserKey, StartedRls } from "./fixture";
 
-import { ENGINES, REDIS_URL, SCHEMAS, fieldName } from "../config";
+import { ENGINES, SCHEMAS, fieldName } from "../config";
 import { integrationEnabled } from "../harness";
-import { startRlsServer } from "./fixture";
+import { flushRedis, startRlsServer } from "./fixture";
 
 /**
  * Task 3.4 of the hardening plan, in two halves.
@@ -82,15 +81,7 @@ describe.skipIf(!integrationEnabled)("rls · schema isolation", () => {
       const restrictedFromAnonymous = [tasks, projects, users, organizations, taskTags];
 
       beforeAll(async () => {
-        // The Redis cache store keys entries on `cache:{operation}:{hash}`, and
-        // the hash covers only pathname, method, variables, sub and role —
-        // nothing that names this engine or this run. An entry left by the
-        // previous engine, or by the previous run, would therefore answer this
-        // one and the cache assertions below would be measuring the wrong
-        // server. Flush before the server that will write them comes up.
-        const redis = new RedisClient(REDIS_URL);
-        await redis.send("FLUSHDB", []);
-        redis.close();
+        await flushRedis();
 
         started = await startRlsServer(engine);
       });

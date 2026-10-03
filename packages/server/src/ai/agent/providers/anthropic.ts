@@ -79,17 +79,24 @@ export function makeAnthropic(cfg: AnthropicConfig): Provider {
   const temperature = cfg.temperature ?? 0;
 
   return {
-    async chat(messages: Message[], tools: ToolDefinition[]): Promise<ChatResult> {
+    async chat(
+      messages: Message[],
+      tools: ToolDefinition[],
+      signal?: AbortSignal,
+    ): Promise<ChatResult> {
       const { system, anthropicMessages } = toAnthropicMessages(messages);
 
-      const res = await client.messages.create({
-        model: cfg.model,
-        max_tokens: maxTokens,
-        temperature,
-        system,
-        tools: tools.map(toAnthropicTool),
-        messages: anthropicMessages,
-      });
+      const res = await client.messages.create(
+        {
+          model: cfg.model,
+          max_tokens: maxTokens,
+          temperature,
+          system,
+          tools: tools.map(toAnthropicTool),
+          messages: anthropicMessages,
+        },
+        { signal },
+      );
 
       let content = "";
       const toolCalls: ToolCall[] = [];

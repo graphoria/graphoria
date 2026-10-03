@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { RoleEntities } from "./core";
+import type { RoleEntities, ToolCaller } from "./core";
 import type { Tool } from "../agent/types";
 
 import {
@@ -9,20 +9,22 @@ import {
   executeGraphqlCore,
   listEntitiesCore,
   makeValidateQuery,
+  tableFieldNames,
 } from "./core";
 import { buildStructuredQuery, queryDataSchema } from "./query-data";
 import type { StructuredQueryInput } from "./query-data";
 
 /**
- * Build the agent's tool set against a compiled role schema. The agent reaches
- * the database ONLY through these tools, so it inherits that role's visibility.
- * `graphql_execute` must keep its name — the agent loop's anti-hallucination
- * guard recognises it as a data-access tool.
+ * Build the agent's tool set for one caller: its role's schema, its session and
+ * its request. The agent reaches the database ONLY through these tools, so it
+ * reads exactly what the caller's own queries would. `graphql_execute` must
+ * keep its name — the agent loop's anti-hallucination guard recognises it as a
+ * data-access tool.
  */
 /** Preserve per-tool schema inference, then widen to the heterogeneous `Tool`. */
 const tool = <T extends z.ZodTypeAny>(t: Tool<T>): Tool => t as unknown as Tool;
 
-export const buildAgentTools = (role: RoleEntities): Tool[] => {
+export const buildAgentTools = (role: RoleEntities, caller: ToolCaller): Tool[] => {
   const validateQuery = makeValidateQuery(role);
 
   return [
@@ -47,7 +49,7 @@ export const buildAgentTools = (role: RoleEntities): Tool[] => {
     tool({
       name: "describe_entity",
       description:
-        "Returns detailed information about an entity. For tables: columns, relationships, the generated GraphQL list-field and _aggregate-field signatures, and ready-to-run example queries (list / filter / aggregate) using the table's real column names.",
+        "Returns detailed information about an entity. For tables: columns, relationships, the generated GraphQL list-field and _aggregate-field signatures, and ready-to-run example queries (list / filter / aggregate) using the table's GraphQL field names.",
       schema: z.object({
         name: z.string(),
         kind: z.enum(ENTITY_KINDS).optional(),
@@ -63,10 +65,9 @@ export const buildAgentTools = (role: RoleEntities): Tool[] => {
         "Query data using structured JSON instead of raw GraphQL. PREFERRED over graphql_execute for list and aggregate queries — simpler, less error-prone. The server builds the query internally from your JSON input.",
       schema: queryDataSchema,
       execute: async (args) => {
-        const query = buildStructuredQuery(args as StructuredQueryInput);
-        const outcome = await executeGraphqlCore(role, validateQuery, {
-          query,
-        });
+        const input = args as StructuredQueryInput;
+        const query = buildStructuredQuery(input, tableFieldNames(role, input.entity));
+        const outcome = await executeGraphqlCore(role, validateQuery, { query }, caller);
         switch (outcome.kind) {
           case "non_query":
             return { error: "Internal: built query is not a query." };
@@ -88,10 +89,7 @@ export const buildAgentTools = (role: RoleEntities): Tool[] => {
         variables: z.record(z.string(), z.unknown()).optional(),
       }),
       execute: async ({ query, variables }) => {
-        const outcome = await executeGraphqlCore(role, validateQuery, {
-          query,
-          variables,
-        });
+        const outcome = await executeGraphqlCore(role, validateQuery, { query, variables }, caller);
         switch (outcome.kind) {
           case "non_query":
             return {

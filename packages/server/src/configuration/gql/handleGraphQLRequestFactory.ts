@@ -4,6 +4,7 @@ import { LRUCache } from "lru-cache";
 
 import type { BunRequest } from "bun";
 import type { DocumentNode, GraphQLError } from "graphql";
+import type { RoleEntities } from "../../ai/tools/core";
 import type { AnalysisResult, SelectionAnalysis } from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";
@@ -14,6 +15,7 @@ import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule, isDepthLimitError } from "../../analyzeQuery/depthLimit";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
+import { filterBasedOnDirective } from "../../databases/common";
 import { proxyRemoteField } from "../../remoteSchemas/proxy";
 import { getAgent } from "../../singletons/ai";
 import { actorFromSession, audit } from "../../logging/audit";
@@ -405,6 +407,41 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 field.source !== EntitySource.AI,
             );
 
+            // Every `ask` is settled before any field runs, so a refused prompt costs
+            // no remote call. Not from `resolved.allVariables`: it also holds what the
+            // server binds (role-filter constants, `$session` claims), which a prompt
+            // naming `$static_N` would hand to the LLM and the audit record.
+            const callerValues =
+              aiFields.length > 0
+                ? {
+                    ...Object.fromEntries(
+                      (operation.variables ?? [])
+                        .filter((variable) => variable.defaultValue !== undefined)
+                        .map((variable) => [variable.name, variable.defaultValue]),
+                    ),
+                    ...variables,
+                  }
+                : {};
+
+            // A skipped `ask` runs no agent, as a skipped table field selects nothing.
+            const runningAsks = aiFields.filter((field) =>
+              filterBasedOnDirective(field, operation.variables ?? [], callerValues),
+            );
+
+            // Each `ask` runs a whole agent loop, while the rate limiter counts
+            // the request once.
+            if (runningAsks.length > 1) {
+              throw new Error("Only one `ask` is allowed per request");
+            }
+
+            const asks = runningAsks.map((field) => {
+              const prompt = resolveVariableRef(callerValues, field.arguments?.prompt);
+              if (typeof prompt !== "string" || prompt.length === 0) {
+                throw new Error("`prompt` (string) is required");
+              }
+              return { field, prompt };
+            });
+
             // Handle auth queries (e.g. auth_me)
             let authData: Record<string, unknown> = {};
             for (const field of authFields) {
@@ -434,18 +471,17 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
               remoteData = remoteResults.reduce((acc, curr) => Object.assign(acc, curr), {});
             }
 
-            // Handle AI agent queries (admin-only `ask` field)
+            // Handle AI agent queries (the `ask` field of a role granted `ai`)
             let aiData: Record<string, unknown> = {};
-            for (const field of aiFields) {
+            for (const { field, prompt } of asks) {
               const alias = field.alias || field.name;
-              const prompt = String(field.arguments?.prompt ?? "");
               audit().emit({
                 action: "ai.ask",
                 actor: actorFromSession(session),
                 target: { kind: "ai", via: "graphql" },
                 prompt,
               });
-              aiData[alias] = await getAgent()(prompt);
+              aiData[alias] = await getAgent()(prompt, { role: asAgentRole(), session, req });
             }
 
             // Skip SQL generation if there are no table fields
@@ -562,6 +598,10 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       });
     },
   };
+
+  // The agent's tools read through this role, so an `ask` answers with what the
+  // caller's own queries would return.
+  const asAgentRole = (): RoleEntities => ({ ...entities, handlers: { gql } });
 
   /**
    * `handler` for operator-authored queries — REST operations, cron jobs, and

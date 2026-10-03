@@ -1,4 +1,5 @@
 import {
+  BREAK,
   GraphQLEnumType,
   GraphQLInputObjectType,
   GraphQLInterfaceType,
@@ -8,23 +9,49 @@ import {
   parse,
   printType,
   specifiedRules,
+  TypeInfo,
   validate,
+  visit,
+  visitWithTypeInfo,
 } from "graphql";
 
 import type { BunRequest } from "bun";
 import type { GraphQLNamedType, GraphQLSchema } from "graphql";
-import type { GetSchemaReturn } from "../../configuration/getSchemas";
+import type { SchemaEntities } from "../../configuration/getSchemas";
+import type { SessionContext } from "../../utils/sessionVariables";
 
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule } from "../../analyzeQuery/depthLimit";
 import { categorizeSqlType, isNumericType, SqlTypeCategory } from "../../databases/sqlTypeUtils";
+import { columnFieldName } from "../../databases/transformers/graphqlName";
 import { env } from "../../singletons/env";
 
 /**
- * A per-role compiled schema bundle (tables, operations, handlers, …).
- * Shared by the MCP server and the AI agent — both query the same surface.
+ * The two GraphQL entry points a tool calls, spelled out rather than taken from
+ * the factory's return type: the GraphQL factory hands its own role to the
+ * agent while that type is still being inferred.
  */
-export type RoleEntities = GetSchemaReturn;
+export type RoleGraphQL = {
+  hasErrors: (
+    query: string,
+    options?: { variables?: Record<string, unknown> },
+  ) => { hasErrors: boolean; validationErrors: readonly ValidationError[] };
+  handler: (
+    query: string,
+    variables?: Record<string, unknown>,
+    req?: BunRequest,
+    session?: SessionContext,
+  ) => Promise<unknown>;
+};
+
+/**
+ * The caller's compiled role: its entities and its GraphQL handler. Shared by
+ * the MCP server and the AI agent, which both read through it.
+ */
+export type RoleEntities = SchemaEntities & { handlers: { gql: RoleGraphQL } };
+
+/** Who a tool call runs for. `req` is the caller's own request: remote `forwardHeaders` read it. */
+export type ToolCaller = { session?: SessionContext; req?: BunRequest };
 
 export const ENTITY_KINDS = [
   "table",
@@ -95,6 +122,7 @@ const describeNamedType = (type: GraphQLNamedType): Record<string, unknown> => {
 
 type DescribableColumn = {
   name: string;
+  fieldName?: string;
   dataType: string;
   isNullable: boolean;
   virtual?: boolean;
@@ -113,7 +141,7 @@ const pickGroupByColumn = (cols: readonly DescribableColumn[]): string | null =>
       c.name !== "id" &&
       !c.name.endsWith("_id"),
   );
-  return (stringNonId ?? real[0]).name;
+  return columnFieldName(stringNonId ?? real[0]);
 };
 
 const buildFilterExample = (
@@ -125,15 +153,15 @@ const buildFilterExample = (
   const sub = sampleFields.join("\n    ");
   const stringCol = real.find((c) => categorizeSqlType(c.dataType) === SqlTypeCategory.STRING);
   if (stringCol) {
-    return `query {\n  ${resolverName}(where: { ${stringCol.name}: { like: "%search%" } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${columnFieldName(stringCol)}: { like: "%search%" } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
   const numericCol = real.find((c) => isNumericType(c.dataType));
   if (numericCol) {
-    return `query {\n  ${resolverName}(where: { ${numericCol.name}: { gt: 0 } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${columnFieldName(numericCol)}: { gt: 0 } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
   const boolCol = real.find((c) => categorizeSqlType(c.dataType) === SqlTypeCategory.BOOLEAN);
   if (boolCol) {
-    return `query {\n  ${resolverName}(where: { ${boolCol.name}: { eq: true } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${columnFieldName(boolCol)}: { eq: true } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
   return null;
 };
@@ -147,7 +175,7 @@ const buildTableExamples = (
   aggregate: string | null;
 } | null => {
   const real = realColumns(cols);
-  const sampleFields = real.slice(0, 4).map((c) => c.name);
+  const sampleFields = real.slice(0, 4).map(columnFieldName);
   if (!sampleFields.length) return null;
 
   const sub = sampleFields.join("\n    ");
@@ -160,13 +188,45 @@ const buildTableExamples = (
   if (groupCol) {
     const numericCol = real.find((c) => isNumericType(c.dataType));
     const numericAggLines = numericCol
-      ? `\n    sum { ${numericCol.name} }\n    avg { ${numericCol.name} }`
+      ? `\n    sum { ${columnFieldName(numericCol)} }\n    avg { ${columnFieldName(numericCol)} }`
       : "";
     const itemFields = sampleFields.slice(0, 3).join(" ");
     aggregate = `query {\n  ${resolverName}_aggregate(groupBy: [${groupCol}]) {\n    key { ${groupCol} }\n    count${numericAggLines}\n    items { ${itemFields} }\n  }\n}`;
   }
 
   return { list, filter, aggregate };
+};
+
+/**
+ * A relationship's join columns as the role's fields: `source` is a column of the
+ * table holding the foreign key, `target` one of the table it references. The
+ * role reads both tables but not necessarily these columns, so a pair naming a
+ * column it cannot read is left out; the relationship field needs no column.
+ */
+const joinColumnFields = (
+  role: RoleEntities,
+  {
+    fromInternalName,
+    toInternalName,
+    columns,
+  }: {
+    fromInternalName: string;
+    toInternalName: string;
+    columns: { source: string; target: string }[];
+  },
+): { from: string; to: string }[] => {
+  const fieldOf = (table: string, column: string) => {
+    const found = role.tables
+      .find((t) => t.resolverName === table)
+      ?.columns.find((c) => c.name === column);
+    return found && columnFieldName(found);
+  };
+
+  return columns.flatMap(({ source, target }) => {
+    const from = fieldOf(fromInternalName, source);
+    const to = fieldOf(toInternalName, target);
+    return from && to ? [{ from, to }] : [];
+  });
 };
 
 const findRootField = (
@@ -251,6 +311,29 @@ export const makeValidateQuery =
 
 // ---- graphql_execute ----
 
+/**
+ * Whether a query selects the agent's own `ask` field. Run from a tool, it would
+ * start the agent inside the agent: nested loops of LLM calls.
+ */
+const selectsAsk = (schema: GraphQLSchema, query: string): boolean => {
+  const queryType = schema.getQueryType();
+  const typeInfo = new TypeInfo(schema);
+  let found = false;
+
+  visit(
+    parse(query),
+    visitWithTypeInfo(typeInfo, {
+      Field(node) {
+        if (node.name.value !== "ask" || typeInfo.getParentType() !== queryType) return;
+        found = true;
+        return BREAK;
+      },
+    }),
+  );
+
+  return found;
+};
+
 export type GraphqlExecOutcome =
   | { kind: "non_query" }
   | { kind: "validation"; errors: ValidationError[] }
@@ -258,7 +341,8 @@ export type GraphqlExecOutcome =
   | { kind: "error"; message: string };
 
 /**
- * Validate and execute a read-only GraphQL query against a role's handler.
+ * Validate and execute a read-only GraphQL query as the caller: its session
+ * reaches the role's row filters, its request reaches remote `forwardHeaders`.
  * Mutations/subscriptions are rejected. Returns a discriminated outcome so
  * callers (MCP, AI agent) shape their own responses.
  */
@@ -266,6 +350,7 @@ export const executeGraphqlCore = async (
   role: RoleEntities,
   validateQuery: ValidateQueryFn,
   { query, variables }: { query: string; variables?: Record<string, unknown> },
+  { session, req }: ToolCaller,
 ): Promise<GraphqlExecOutcome> => {
   try {
     if (containsNonQueryOperation(query)) return { kind: "non_query" };
@@ -281,10 +366,15 @@ export const executeGraphqlCore = async (
       };
     }
 
-    const req = synthesizeRequest("http://graphoria.local/graphql", {
-      method: "POST",
-    });
-    const result = await role.handlers.gql.handler(query, variables ?? {}, req);
+    if (selectsAsk(role.schema, query)) {
+      return {
+        kind: "error",
+        message: "`ask` cannot run inside a tool call: it would start the agent again.",
+      };
+    }
+
+    const request = req ?? synthesizeRequest("http://graphoria.local/graphql", { method: "POST" });
+    const result = await role.handlers.gql.handler(query, variables ?? {}, request, session);
     return { kind: "ok", result };
   } catch (error) {
     return {
@@ -391,6 +481,10 @@ export const listEntitiesCore = (
   return items;
 };
 
+/** The fields a `query_data` list selects when it names none: every column the role reads. */
+export const tableFieldNames = (role: RoleEntities, entity: string): string[] =>
+  role.tables.find((t) => t.resolverName === entity)?.columns.map(columnFieldName) ?? [];
+
 // ---- describe_entity ----
 
 /**
@@ -414,7 +508,7 @@ export const describeEntityCore = (
         tableName: t.name,
         description: t.tableDescription ?? null,
         columns: t.columns.map((c) => ({
-          name: c.name,
+          name: columnFieldName(c),
           dataType: c.dataType,
           nullable: c.isNullable,
           description: c.description ?? null,
@@ -422,11 +516,11 @@ export const describeEntityCore = (
         })),
         relationships: t.relationships.map((r) => ({
           to: r.toResolverName,
-          columns: r.columns.map((c) => ({ from: c.source, to: c.target })),
+          columns: joinColumnFields(role, r),
         })),
         relationshipsReversed: t.relationshipsReversed.map((r) => ({
           from: r.fromResolverName,
-          columns: r.columns.map((c) => ({ from: c.source, to: c.target })),
+          columns: joinColumnFields(role, r),
         })),
         graphqlField: findRootField(schema, name),
         aggregateField: findRootField(schema, `${name}_aggregate`),
@@ -452,7 +546,6 @@ export const describeEntityCore = (
       return {
         kind: "remote_schema",
         name: rs.config.name,
-        url: rs.config.url,
         prefix: rs.prefix,
         queryFields: rs.queryFields.map((f) => ({
           name: f.prefixedName,
@@ -471,7 +564,6 @@ export const describeEntityCore = (
       return {
         kind: "remote_rest",
         name: rr.config.name,
-        baseUrl: rr.baseUrl,
         prefix: rr.prefix,
         routes: rr.routes,
         openApiPaths: rr.openApiPaths,

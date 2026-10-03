@@ -13,8 +13,8 @@ export const MCPZod = z.strictObject({
 export type MCPConfig = z.input<typeof MCPZod>;
 
 /**
- * AI agent configuration. Exposes an admin-only natural-language → database
- * Q&A agent as a GraphQL `ask` query and a REST `POST` endpoint.
+ * AI agent configuration. Exposes a natural-language → database Q&A agent to
+ * the roles granted `ai`, as a GraphQL `ask` query and a REST `POST` endpoint.
  *
  * The LLM provider, model, and API keys are read from environment variables
  * (`LLM_PROVIDER`, `LLM_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
@@ -25,7 +25,7 @@ export const AIZod = z.strictObject({
   enabled: z.boolean().default(false),
   /** Overrides the built-in system prompt sent to the LLM. */
   systemPrompt: z.string().optional(),
-  /** REST endpoint path for the agent (default: "/ai"). */
+  /** REST path for the agent, under REST_API_PREFIX (default: "/ai", so /rest/ai). */
   endpoint: z.string().default("/ai"),
   /** Model Context Protocol (MCP) server. Off by default. See MCP.md. */
   mcp: MCPZod.optional().default({ enabled: false }),

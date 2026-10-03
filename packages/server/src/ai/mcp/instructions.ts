@@ -1,8 +1,8 @@
-export const GRAPHORIA_MCP_INSTRUCTIONS = `Graphoria MCP server. Anonymous-role-only GraphQL+REST APIs auto-generated from a database schema. Mutations and subscriptions are rejected by graphql_execute.
+export const GRAPHORIA_MCP_INSTRUCTIONS = `Graphoria MCP server. GraphQL+REST APIs auto-generated from a database schema, as the caller's role sees them. Mutations and subscriptions are rejected by graphql_execute.
 
 Discovery workflow:
   1. list_entities             (REQUIRES kind or search — see below; never call with no args)
-  2. describe_entity           (columns, relationships, root-field signature, and ready-to-run example queries built from this table's real column names)
+  2. describe_entity           (columns, relationships, root-field signature, and ready-to-run example queries built from this table's GraphQL field names)
   3. graphql_validate          (optional — confirm a query parses against the schema)
   4. graphql_execute           (run the query)
 For the full picture use resources: graphql://schema (SDL) and graphql://introspection (JSON).

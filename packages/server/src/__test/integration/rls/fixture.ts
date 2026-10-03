@@ -1,8 +1,10 @@
+import { RedisClient } from "bun";
+
 import type { ConfigurationInput } from "../../../config";
 import type { DatabaseType } from "../../../types/configuration";
-import type { IntegrationContext, StartedServer } from "../harness";
+import type { IntegrationContext, StartedServer, WithServerOptions } from "../harness";
 
-import { fieldName } from "../config";
+import { REDIS_URL, fieldName } from "../config";
 import { startServer } from "../harness";
 
 /**
@@ -168,6 +170,8 @@ const permissionsFor = (engine: DatabaseType) => {
       },
       storedProcedures: [],
       operations: ["taskByTitle", "cachedTasks"],
+      // The agent suite asks as `ana`; no other suite turns the agent on.
+      ai: true,
     },
 
     // The `{ in: "$session.<array claim>" }` pattern from docs/PERMISSIONS.md.
@@ -318,8 +322,15 @@ export type StartedRls = { context: RlsContext; stop: () => Promise<void> };
  * verification plus a token signature, and the suites ask for the same handful
  * of users hundreds of times.
  */
-export const startRlsServer = async (engine: DatabaseType): Promise<StartedRls> => {
-  const started: StartedServer = await startServer({ engine, config: rlsConfig(engine) });
+export const startRlsServer = async (
+  engine: DatabaseType,
+  overrides: Pick<WithServerOptions, "config" | "env"> = {},
+): Promise<StartedRls> => {
+  const started: StartedServer = await startServer({
+    engine,
+    config: { ...rlsConfig(engine), ...overrides.config },
+    env: overrides.env,
+  });
 
   await seedAuthUsers(started.context);
 
@@ -361,4 +372,18 @@ export const startRlsServer = async (engine: DatabaseType): Promise<StartedRls> 
     context: { ...started.context, tokenFor },
     stop: started.stop,
   };
+};
+
+/**
+ * Empties the test Redis. Its cache store keys entries on
+ * `cache:{operation}:{hash}`, and the hash covers only pathname, method,
+ * variables, sub and role — nothing that names the engine or the run. An entry
+ * left by the previous engine, or by the previous run, would therefore answer
+ * the next one, and a cache assertion would be measuring the wrong server. Call
+ * it before the server that will write the entries comes up.
+ */
+export const flushRedis = async (): Promise<void> => {
+  const redis = new RedisClient(REDIS_URL);
+  await redis.send("FLUSHDB", []);
+  redis.close();
 };

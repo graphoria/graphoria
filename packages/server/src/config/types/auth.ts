@@ -137,6 +137,8 @@ export const RolePermissionZod = z
       .union([z.array(z.string()), z.literal("ALL")])
       .optional()
       .default([]),
+    /** Whether this role may call the AI agent. The superadmin role always may */
+    ai: z.boolean().optional().default(false),
     /** Request ceiling for this role, overriding RATE_LIMIT_MAX. 0 disables it */
     rateLimit: z
       .strictObject({
@@ -152,6 +154,7 @@ export const RolePermissionZod = z
     operations: [],
     remoteSchemas: [],
     remoteREST: [],
+    ai: false,
   });
 
 export type RolePermission = z.input<typeof RolePermissionZod>;

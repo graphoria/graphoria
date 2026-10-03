@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { Configuration } from "../types/configuration";
 import type { Env } from "../types/env";
+import type { OpenAPIV3_1 } from "openapi-types";
 
 import { logger } from "../logging";
 import type { GetSchemaReturn } from "./getSchemas";
@@ -22,6 +23,7 @@ import {
 import { collectCrossReferenceErrors } from "./crossReferences";
 import { getSchema, getSchemas } from "./getSchemas";
 import { generateOpenAPI } from "./rest/generateOpenAPI";
+import { resolveAISurfaces } from "../singletons/ai";
 
 export const loadConfiguration = async (config: string): Promise<Configuration> => {
   try {
@@ -105,6 +107,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
         operations: [],
         remoteSchemas: [],
         remoteREST: [],
+        ai: false,
       },
       ...(configuration.auth.permissions ?? {}),
       superadmin: {
@@ -114,6 +117,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
         operations: "ALL",
         remoteSchemas: "ALL",
         remoteREST: "ALL",
+        ai: true,
       },
     },
     resolvedRemoteSchemas,
@@ -122,25 +126,34 @@ export const analyzeConfiguration = async (configuration: Configuration, options
 
   const { superadmin, ...others } = sourcesByPermission;
 
-  const superadminSchema = getSchema(
-    superadmin,
-    configuration.auth,
-    null,
-    configuration.ai?.enabled ?? false,
-  );
+  const aiSurfaces = resolveAISurfaces(options, configuration.ai);
+
+  const superadminSchema = getSchema(superadmin, configuration.auth, null, aiSurfaces.ask);
 
   const schemas: Record<string, GetSchemaReturn> = {
     superadmin: superadminSchema,
-    ...getSchemas(others, configuration.auth, superadminSchema.handlers.gql),
+    ...getSchemas(others, configuration.auth, superadminSchema.handlers.gql, aiSurfaces.ask),
   };
 
-  const jsonOpenApi = generateOpenAPI({
-    title: configuration.name,
-    version: configuration.version,
-    role: schemas.superadmin,
-    options,
-    ai: configuration.ai?.enabled ? { path: configuration.ai.endpoint ?? "/ai" } : undefined,
-  });
+  // One document per role, built on first use: MCP shows each caller its own.
+  const openapiByRole = new Map<string, OpenAPIV3_1.Document>();
+  const openapiFor = (role: string): OpenAPIV3_1.Document => {
+    const cached = openapiByRole.get(role);
+    if (cached) return cached;
+
+    const document = generateOpenAPI({
+      title: configuration.name,
+      version: configuration.version,
+      role: schemas[role],
+      options,
+      ai:
+        aiSurfaces.rest && schemas[role].entityOfRole.ai
+          ? { path: configuration.ai.endpoint }
+          : undefined,
+    });
+    openapiByRole.set(role, document);
+    return document;
+  };
 
   log.info(
     {
@@ -156,7 +169,8 @@ export const analyzeConfiguration = async (configuration: Configuration, options
   return {
     databases: enabledDatabases,
     roles: schemas,
-    openapi: jsonOpenApi,
+    openapi: openapiFor("superadmin"),
+    openapiFor,
     queues: enabledQueues,
     auth: configuration.auth,
   };

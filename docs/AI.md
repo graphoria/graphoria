@@ -6,7 +6,7 @@ Graphoria can run an LLM agent **server-side** that answers natural-language que
 
 The agent reuses the same tooling as the [MCP server](./MCP.md) — `list_entities`, `describe_entity`, `query_data`, `graphql_execute`, sharing the executors in `ai/tools/core.ts` — but drives the tool-calling loop _inside_ the server instead of handing tools to an external client. It is four of the six MCP tools: `graphql_validate` and `rest_execute` are not offered to the agent, and none of the four can be disabled the way the MCP ones can.
 
-The integration is **opt-in**, **admin-only**, and **read-only**: only callers presenting the admin secret — or, over REST, the agent credential `AI_SECRET` — reach it, mutations/subscriptions are rejected, and the agent runs against the full (`superadmin`) schema.
+The integration is **opt-in**, **role-scoped**, and **read-only**. A role granted `ai` ([Permissions](./PERMISSIONS.md)) calls it with its own token, and the agent reads exactly what that role reads: its tables and columns, its row filters evaluated with the caller's session. The superadmin role — the admin secret — is always granted. Mutations and subscriptions are rejected.
 
 ## Enabling the agent
 
@@ -21,78 +21,90 @@ export default (() => ({
   databases: [/* … */],
   ai: {
     enabled: true,
-    // endpoint: "/ai",          // REST path (default "/ai")
+    // endpoint: "/ai",          // REST path under REST_API_PREFIX (default /rest/ai)
     // systemPrompt: "…",        // override the built-in prompt
   },
 })) satisfies ConfigurationFn;
 ```
 
+`AI_ENABLED` overrides `ai.enabled` when set; the override is logged at boot.
+
 ## Choosing an LLM provider
 
 The provider, model, and credentials come from **environment variables**, not the config file. The default is [Ollama](https://ollama.com) (local, no API key). Switch providers with `LLM_PROVIDER`:
 
-| Variable             | Default                  | Description                                                     |
-| -------------------- | ------------------------ | --------------------------------------------------------------- |
-| `LLM_PROVIDER`       | `ollama`                 | `ollama`, `openai`, `deepseek`, or `anthropic`                  |
-| `LLM_MODEL`          | per-provider             | Overrides the provider's default model                          |
-| `OPENAI_API_KEY`     | —                        | Required when `LLM_PROVIDER=openai`                             |
-| `OPENAI_BASE_URL`    | —                        | Any OpenAI-compatible endpoint (Groq, Mistral, …)               |
-| `DEEPSEEK_API_KEY`   | —                        | Required when `LLM_PROVIDER=deepseek`                           |
-| `ANTHROPIC_API_KEY`  | —                        | Required when `LLM_PROVIDER=anthropic`                          |
-| `OLLAMA_HOST`        | `http://localhost:11434` | Ollama server URL                                               |
-| `AI_SYSTEM_PROMPT`   | —                        | Overrides the built-in system prompt sent to the LLM            |
-| `AI_PROMPT_TEMPLATE` | —                        | Overrides the user-message wrapper (use `{prompt}` placeholder) |
+| Variable             | Default                  | Description                                                                                                                                                                        |
+| -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`       | `ollama`                 | `ollama`, `openai`, `deepseek`, or `anthropic`                                                                                                                                     |
+| `LLM_MODEL`          | per-provider             | Overrides the provider's default model                                                                                                                                             |
+| `OPENAI_API_KEY`     | —                        | Required when `LLM_PROVIDER=openai`                                                                                                                                                |
+| `OPENAI_BASE_URL`    | —                        | Any OpenAI-compatible endpoint (Groq, Mistral, …)                                                                                                                                  |
+| `DEEPSEEK_API_KEY`   | —                        | Required when `LLM_PROVIDER=deepseek`                                                                                                                                              |
+| `ANTHROPIC_API_KEY`  | —                        | Required when `LLM_PROVIDER=anthropic`                                                                                                                                             |
+| `OLLAMA_HOST`        | `http://localhost:11434` | Ollama server URL                                                                                                                                                                  |
+| `AI_SYSTEM_PROMPT`   | —                        | Overrides the built-in system prompt sent to the LLM                                                                                                                               |
+| `AI_PROMPT_TEMPLATE` | —                        | Overrides the user-message wrapper (use `{prompt}` placeholder)                                                                                                                    |
+| `AI_ENABLED`         | (config field)           | Turns the agent on or off over `ai.enabled`                                                                                                                                        |
+| `AI_GRAPHQL_ENABLED` | `true`                   | `false` leaves the GraphQL `ask` field out of every schema                                                                                                                         |
+| `AI_REST_ENABLED`    | `true`                   | `false` leaves the REST route unmounted                                                                                                                                            |
+| `AI_SECRET_ROLE`     | `SUPERADMIN_ROLE`        | The role `AI_SECRET` reads as; must be granted `ai` (checked at boot). Its session is `sub: "ai"` with no claims, so a `$session` row filter on that role matches nothing or fails |
+| `AI_TIMEOUT_MS`      | `60000`                  | Bound on each LLM call; `0` disables it (boot logs a warning)                                                                                                                      |
 
 The `openai` and `@anthropic-ai/sdk` packages are **optional dependencies** — they load lazily only when their provider is selected. With the default Ollama provider, neither is needed.
 
 ## Endpoints
 
-Both accept the admin secret (`x-admin-secret` header by default). The REST route also accepts `AI_SECRET` in the same header: a credential scoped to the agent alone, a comma-separated list rotated like `ADMIN_SECRET`, unset by default. It opens nothing else — sent to `/graphql`, `/rest/*` or `/mcp` it resolves to the anonymous role, so the GraphQL `ask` field stays out of its reach. The admin secret still works on both, and the server logs a warning each time it is used on the REST route, where the scoped credential would have done.
+Both resolve the caller like `/graphql`: `Authorization: Bearer <token>` for the token's role, the admin secret (`x-admin-secret` by default) for the superadmin role. The REST route also accepts `AI_SECRET` in the admin-secret header: a credential scoped to the agent alone, a comma-separated list rotated like `ADMIN_SECRET`, unset by default. It reads as `AI_SECRET_ROLE` (default the superadmin role) and opens nothing else — sent to `/graphql`, `/rest/*` or `/mcp` it resolves to the anonymous role, so the GraphQL `ask` field stays out of its reach. The admin secret logs a warning each time it is used on the REST route, where the scoped credential would have done. Every holder of `AI_SECRET` counts as one caller for [rate limiting](./CONFIGURATION.md#rate-limiting): they share one bucket under the ceiling of `AI_SECRET_ROLE`, so a secret handed to several clients needs that role's `permissions.<role>.rateLimit` raised, or an `AI_SECRET_ROLE` with a ceiling of its own.
 
-Without a credential the REST route returns `404`; without the admin secret or a superadmin token the GraphQL field is absent from the schema.
+A role without `ai` gets `404` from the REST route, and the `ask` field is absent from its schema.
 
 ### REST
 
-| Verb | Path  | Body                                          | Response            |
-| ---- | ----- | --------------------------------------------- | ------------------- |
-| POST | `/ai` | `{ "prompt": "how many orders per status?" }` | `{ "answer": "…" }` |
+| Verb | Path       | Body                                          | Response            |
+| ---- | ---------- | --------------------------------------------- | ------------------- |
+| POST | `/rest/ai` | `{ "prompt": "how many orders per status?" }` | `{ "answer": "…" }` |
 
 ```bash
-curl -X POST http://localhost:3000/ai \
+curl -X POST http://localhost:3000/rest/ai \
   -H "x-admin-secret: $ADMIN_SECRET" \
   -H "content-type: application/json" \
   -d '{"prompt":"how many orders per status?"}'
 ```
 
-The path is configurable via `ai.endpoint`. The full URL is `${PREFIX}${endpoint}`. Setting `AI_REST_ENABLED=false` leaves the route unmounted, so the agent is reachable through the GraphQL `ask` field only.
+The path is configurable via `ai.endpoint`, under the REST prefix: the full URL is `${PREFIX}${REST_API_PREFIX}${endpoint}` (default `/rest/ai`). Setting `AI_REST_ENABLED=false` leaves the route unmounted, so the agent is reachable through the GraphQL `ask` field only. `AI_GRAPHQL_ENABLED=false` leaves the `ask` field out of every schema, so the agent is reachable over REST only.
 
 ### GraphQL
 
-A single root **query** field, present only in the admin (`superadmin`) schema:
+A single root **query** field, compiled into the schema of every role granted `ai`:
 
 ```graphql
-query {
-  ask(prompt: "how many orders per status?")
+query Ask($prompt: String!) {
+  ask(prompt: $prompt)
 }
 ```
 
-Send it to `/graphql` with the admin secret header. Returns the answer as a `String`.
+Send it to `/graphql` with the caller's token (or the admin secret), passing the prompt inline or as a variable. Returns the answer as a `String`.
+
+A request runs at most one `ask`: a second one, under an alias, fails the request with ``Only one `ask` is allowed per request``, and an `ask` skipped by `@skip` or `@include` runs nothing. A prompt passed as a variable is read from the variables the request sends, or their declared defaults. An empty or non-string prompt fails with `` `prompt` (string) is required ``, as on `POST /rest/ai`.
 
 ## How it works
 
-1. The agent is built once at boot, bound to the `superadmin` role's compiled schema.
+1. At boot the agent stores its prompts. Each call builds its tools for the caller's role, session and request.
 2. Each call runs a tool-calling loop (max 10 iterations): `list_entities` → `describe_entity` → `query_data`. The built-in prompt steers the agent to `query_data`, whose structured JSON input the server turns into GraphQL; `graphql_execute` remains available for queries that shape cannot express.
 3. Anti-hallucination guards reject answers that never queried the data and forbid fabrication.
 4. The final text answer is returned; intermediate tool calls are hidden from the caller.
 
-Because the agent always runs as `superadmin`, it can read everything. Do not enable it on deployments where admin-secret holders should not see all data. `AI_SECRET` narrows who can reach the agent, not what it can read.
+The agent reads through the caller's role, so a prompt cannot reach a table, column or row the caller's own queries could not. What it reads is sent to the LLM provider.
 
 ## Limitations
 
 - **Database questions only.** The agent loop guards against fabrication by requiring at least one `query_data` or `graphql_execute` call before it accepts a final answer. A prompt that needs no data (e.g. "hello") is nudged to query and, finding nothing to query, eventually errors after the iteration cap. Treat this as a data Q&A endpoint, not a general chatbot.
-- **Runs as `superadmin`.** The agent sees the entire schema regardless of who calls it. Anyone holding the admin secret or `AI_SECRET` can read everything through it.
+- **Reads as the caller.** A role's row filters apply with the caller's session; the admin secret reads everything.
 - **Read-only.** Mutations and subscriptions are rejected at the tool boundary.
+- **No `ask` inside a tool.** A tool query that selects `ask` is refused, so the agent cannot start itself again.
+- **An inline prompt starting with `$` is read as a variable.** `ask(prompt: "$total")` fails with `Variable total not found`; pass such a prompt as a variable.
 - **Iteration cap.** The tool-calling loop is bounded (10 iterations); a question that can't be answered within that budget errors rather than looping forever.
+- **Each LLM call is bounded.** `AI_TIMEOUT_MS` (default 60 s) per call, up to 10 calls per question.
 - **Prompts are audit-logged.** Every invocation writes an `ai.ask` record carrying the prompt verbatim — see [Audit log](../README.md#audit-log). Do not put secrets in a prompt.
 
 ## Customizing the prompt

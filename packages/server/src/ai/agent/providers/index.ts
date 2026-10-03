@@ -45,12 +45,21 @@ const REGISTRY: Record<string, () => Promise<Provider>> = {
   },
 };
 
+let override: Provider | null = null;
+
+/** Test seam: a stand-in LLM for every agent call. Pass `null` to go back to `LLM_PROVIDER`. */
+export const setProvider = (provider: Provider | null): void => {
+  override = provider;
+};
+
 /**
  * Resolve the active LLM provider from `LLM_PROVIDER` (default "ollama").
  * The provider module (and its SDK) is dynamically imported on demand, so
  * unused provider SDKs never load. Each provider reads its own env vars lazily.
  */
 export function getProvider(): Promise<Provider> {
+  if (override) return Promise.resolve(override);
+
   const name = (process.env.LLM_PROVIDER ?? "ollama").toLowerCase();
   const factory = REGISTRY[name];
   if (!factory) {

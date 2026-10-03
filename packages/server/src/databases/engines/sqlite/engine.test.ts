@@ -4,6 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { Provider } from "../../../ai/agent/types";
+
 // `singletons/env` parses process.env at module load.
 process.env.ADMIN_SECRET ??= "test-admin-secret";
 process.env.LOG_LEVEL ??= "silent";
@@ -56,12 +58,15 @@ beforeAll(async () => {
   seed.close();
 
   const { createGraphQLEngine } = await import("../../../index");
+  const { env } = await import("../../../singletons/env");
 
   engine = await createGraphQLEngine({
     dbConnectRetryMs: 0,
+    ai: { ...env.ai, enabled: undefined, graphqlEnabled: true, timeoutMs: 60_000 },
     configuration: {
       name: "sqlite-engine-test",
       version: "1.0.0",
+      ai: { enabled: true },
       databases: [
         {
           name: "default",
@@ -80,6 +85,9 @@ afterAll(async () => {
   // file's query generator would otherwise emit a timeout hint it does not expect.
   const { setQueryTimeoutMs } = await import("../../../singletons/queryTimeout");
   setQueryTimeoutMs(0);
+  // It set up the agent too; a later file starts without one.
+  const { resetAI } = await import("../../../singletons/ai");
+  resetAI();
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -272,5 +280,43 @@ describe("sqlite engine, end to end", () => {
     );
 
     expect(data.catalog_order).toEqual([{ id: 1, user: "ana" }]);
+  });
+});
+
+describe("sqlite engine, the agent", () => {
+  // Reads through the tool the way a model would, then answers with what it read.
+  // Without a signal, AI_TIMEOUT_MS never reached the agent through the boot.
+  const readingOrganizations: Provider = {
+    chat: async (messages, _tools, signal) => {
+      if (!signal) throw new Error("no timeout reached the provider");
+      const last = messages.at(-1)!;
+      if (last.role === "tool") return { content: last.content, toolCalls: [] };
+      return {
+        content: "",
+        toolCalls: [
+          {
+            id: "1",
+            function: {
+              name: "graphql_execute",
+              arguments: { query: "{ main_organizations(orderBy: [{ id: ASC }]) { name } }" },
+            },
+          },
+        ],
+      };
+    },
+  };
+
+  it("answers ask through the agent, whose tools read this engine's database", async () => {
+    const { setProvider } = await import("../../../ai/agent/providers");
+    setProvider(readingOrganizations);
+    try {
+      const data = await run<{ ask: string }>(`{ ask(prompt: "which organizations?") }`);
+
+      expect(JSON.parse(data.ask)).toEqual({
+        data: { main_organizations: [{ name: "Acme" }, { name: "Umbrella" }] },
+      });
+    } finally {
+      setProvider(null);
+    }
   });
 });

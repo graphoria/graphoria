@@ -2,7 +2,10 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/server";
-import type { AnalyzedConfiguration } from "../../configuration";
+import type { OpenAPIV3_1 } from "openapi-types";
+import type { GetSchemaReturn } from "../../configuration/getSchemas";
+import type { ToolCaller } from "../tools/core";
+import type { StructuredQueryInput } from "../tools/query-data";
 
 import { GRAPHORIA_MCP_INSTRUCTIONS } from "./instructions";
 import {
@@ -12,6 +15,7 @@ import {
   listEntitiesCore,
   makeValidateQuery,
   synthesizeRequest,
+  tableFieldNames,
 } from "../tools/core";
 import { logger } from "../../logging";
 import { buildStructuredQuery, queryDataSchema } from "../tools/query-data";
@@ -20,14 +24,10 @@ export type CreateMcpServerOptions = {
   name?: string;
   version?: string;
   maxQueryDepth?: number;
-  graphqlEnabled?: boolean;
-  restEnabled?: boolean;
   disabledTools?: string[];
   disabledResources?: string[];
   disabledPrompts?: string[];
 };
-
-const ANONYMOUS_ROLE = "anonymous";
 
 const errorResult = (text: string): CallToolResult => ({
   content: [{ type: "text", text }],
@@ -38,24 +38,26 @@ const jsonResult = (value: unknown): CallToolResult => ({
   content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
 });
 
+/**
+ * One MCP server for one request: every tool reads through the caller's role,
+ * with the caller's session, as its own `/graphql` and `/rest` requests would.
+ */
 export const createMcpServer = (
-  analyzedConfiguration: AnalyzedConfiguration,
+  role: GetSchemaReturn,
+  caller: ToolCaller,
+  openapi: OpenAPIV3_1.Document,
   options: CreateMcpServerOptions = {},
 ) => {
   const {
     name = "graphoria-mcp-server",
     version = "1.0.0",
     maxQueryDepth,
-    graphqlEnabled,
-    restEnabled,
     disabledTools = [],
     disabledResources = [],
     disabledPrompts = [],
   } = options;
 
   const disabledToolSet = new Set(disabledTools);
-  if (graphqlEnabled === false) disabledToolSet.add("graphql_execute");
-  if (restEnabled === false) disabledToolSet.add("rest_execute");
   const disabledResourceSet = new Set(disabledResources);
   const disabledPromptSet = new Set(disabledPrompts);
 
@@ -67,12 +69,6 @@ export const createMcpServer = (
     },
   );
 
-  const role = analyzedConfiguration.roles[ANONYMOUS_ROLE];
-  if (!role) {
-    throw new Error(
-      `MCP server requires the '${ANONYMOUS_ROLE}' role to be present in the configuration.`,
-    );
-  }
   const { handlers, typeDefs, introspection } = role;
 
   const validateQuery = makeValidateQuery(role, maxQueryDepth);
@@ -118,10 +114,9 @@ export const createMcpServer = (
     },
     async (args): Promise<CallToolResult> => {
       try {
-        const query = buildStructuredQuery(args as Parameters<typeof buildStructuredQuery>[0]);
-        const outcome = await executeGraphqlCore(role, validateQuery, {
-          query,
-        });
+        const input = args as StructuredQueryInput;
+        const query = buildStructuredQuery(input, tableFieldNames(role, input.entity));
+        const outcome = await executeGraphqlCore(role, validateQuery, { query }, caller);
         switch (outcome.kind) {
           case "non_query":
             return errorResult("Internal: built query is not a query.");
@@ -145,17 +140,14 @@ export const createMcpServer = (
     {
       title: "Execute GraphQL Query",
       description:
-        "Executes a GraphQL query against the anonymous-role schema. Mutations and subscriptions are rejected. Returns { data, errors } JSON.",
+        "Executes a GraphQL query against the caller's role schema. Mutations and subscriptions are rejected. Returns { data, errors } JSON.",
       inputSchema: z.object({
         query: z.string().describe("GraphQL query string"),
         variables: z.record(z.string(), z.unknown()).optional().describe("GraphQL variables map"),
       }),
     },
     async ({ query, variables }): Promise<CallToolResult> => {
-      const outcome = await executeGraphqlCore(role, validateQuery, {
-        query,
-        variables,
-      });
+      const outcome = await executeGraphqlCore(role, validateQuery, { query, variables }, caller);
       switch (outcome.kind) {
         case "non_query":
           return errorResult(
@@ -176,7 +168,7 @@ export const createMcpServer = (
     {
       title: "Validate GraphQL Query",
       description:
-        "Validates a GraphQL query against the anonymous-role schema without executing it. Returns { valid, errors }.",
+        "Validates a GraphQL query against the caller's role schema without executing it. Returns { valid, errors }.",
       inputSchema: z.object({
         query: z.string().describe("GraphQL query string"),
       }),
@@ -209,7 +201,7 @@ export const createMcpServer = (
     {
       title: "List Entities",
       description:
-        "Lists entities exposed to the anonymous role: tables, operations, remote schemas, remote REST APIs, stored procedures, queue publishers. Requires at least one of `kind` or `search` — calling with no arguments is rejected to keep result sets focused. Use `kind` to browse a category, `search` to find by name fragment, or both together.",
+        "Lists entities exposed to the caller's role: tables, operations, remote schemas, remote REST APIs, stored procedures, queue publishers. Requires at least one of `kind` or `search` — calling with no arguments is rejected to keep result sets focused. Use `kind` to browse a category, `search` to find by name fragment, or both together.",
       inputSchema: z
         .object({
           kind: z
@@ -250,7 +242,7 @@ export const createMcpServer = (
     {
       title: "Describe Entity",
       description:
-        "Returns detailed information about an entity. For tables, includes columns, relationships, the generated GraphQL list-field and _aggregate-field signatures, and ready-to-run example queries (list / filter / aggregate) using this table's real column names. For remote schemas/REST, includes their imported SDL/OpenAPI shape.",
+        "Returns detailed information about an entity. For tables, includes columns, relationships, the generated GraphQL list-field and _aggregate-field signatures, and ready-to-run example queries (list / filter / aggregate) using this table's GraphQL field names. For remote schemas/REST, includes their imported SDL/OpenAPI shape.",
       inputSchema: z.object({
         name: z.string().describe("Entity name (e.g. resolverName for tables)"),
         kind: z.enum(ENTITY_KINDS).optional(),
@@ -275,7 +267,7 @@ export const createMcpServer = (
     {
       title: "Execute REST Request",
       description:
-        "Executes a request against the anonymous-role REST handler. `path` is the path under the REST prefix (e.g. /users/123). Body is auto-JSON-stringified.",
+        "Executes a request against the caller's REST handler, as the caller. `path` is the path under the REST prefix (e.g. /users/123). Body is auto-JSON-stringified.",
       inputSchema: z.object({
         method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).default("GET"),
         path: z.string().describe("Path relative to the REST prefix"),
@@ -305,7 +297,13 @@ export const createMcpServer = (
         }
 
         const req = synthesizeRequest(url.toString(), init);
-        const response = await handlers.rest.handler(url, url.pathname, method, req);
+        const response = await handlers.rest.handler(
+          url,
+          url.pathname,
+          method,
+          req,
+          caller.session,
+        );
 
         const text = await response.text();
         let parsedBody: unknown = text;
@@ -340,7 +338,7 @@ export const createMcpServer = (
     "graphql://schema",
     {
       title: "GraphQL Schema (SDL)",
-      description: "Anonymous-role GraphQL schema in SDL format.",
+      description: "The caller's role GraphQL schema in SDL format.",
       mimeType: "text/plain",
     },
     async (uri): Promise<ReadResourceResult> => ({
@@ -353,7 +351,7 @@ export const createMcpServer = (
     "graphql://introspection",
     {
       title: "GraphQL Introspection",
-      description: "Anonymous-role GraphQL introspection result (JSON).",
+      description: "The caller's role GraphQL introspection result (JSON).",
       mimeType: "application/json",
     },
     async (uri): Promise<ReadResourceResult> => ({
@@ -372,7 +370,7 @@ export const createMcpServer = (
     "openapi://spec",
     {
       title: "OpenAPI Spec",
-      description: "Unified OpenAPI specification (operations + remote-REST).",
+      description: "OpenAPI specification of the caller's role (operations + remote-REST).",
       mimeType: "application/json",
     },
     async (uri): Promise<ReadResourceResult> => ({
@@ -380,7 +378,7 @@ export const createMcpServer = (
         {
           uri: uri.href,
           mimeType: "application/json",
-          text: JSON.stringify(analyzedConfiguration.openapi, null, 2),
+          text: JSON.stringify(openapi, null, 2),
         },
       ],
     }),
@@ -411,7 +409,7 @@ export const createMcpServer = (
 Use the Graphoria MCP tools to answer. Required workflow:
 
 1. list_entities — REQUIRES \`kind\` or \`search\`. Search matches resolverName AND tableDescription, so try natural-language keywords even when DB names are cryptic.
-2. describe_entity — read the table's columns, the aggregateField signature, AND \`examples.list / examples.filter / examples.aggregate\` (these are pre-built queries using this table's real column names; prefer copying them over composing from scratch).
+2. describe_entity — read the table's columns, the aggregateField signature, AND \`examples.list / examples.filter / examples.aggregate\` (these are pre-built queries using this table's GraphQL field names; prefer copying them over composing from scratch).
 3. graphql_validate (optional) — confirm a hand-written query parses before executing.
 4. graphql_execute — run the query.
 

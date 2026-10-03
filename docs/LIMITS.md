@@ -55,10 +55,10 @@ to `8`. `0` disables it and logs a warning at boot.
 
 Depth is what stops nested-selection blowup: relationship resolvers are generated, so a caller can
 follow `user → posts → author → posts` for as long as the schema allows, and each level multiplies
-the work. The bound is a validation rule on the parsed document, so it costs nothing at execution and reaches
-every path that takes a query from a caller: `/graphql` over HTTP, the websocket subscription
-handshake, `/mcp`, `/ai` and the in-process `execute`. They all validate through the same role
-handler, so the one default covers them without per-path wiring.
+the work. The bound is a validation rule on the parsed document, so it costs nothing at execution
+and reaches every path that takes a query from a caller: `/graphql` over HTTP, the websocket
+subscription handshake, `/mcp`, the agent's tools and the in-process `execute`. They all validate
+through the same role handler, so the one default covers them without per-path wiring.
 
 Over the limit answers a validation error naming both numbers:
 
@@ -68,8 +68,9 @@ Query depth of 12 exceeds the maximum allowed depth of 8 (operation: "Feed"). Ra
 
 **`AI_MCP_MAX_QUERY_DEPTH` overrides it for the MCP endpoint only.** An agent exploring a schema
 legitimately writes deeper queries than an application does. Unset, MCP runs on `MAX_QUERY_DEPTH`;
-set, it replaces that value for `/mcp` and `/ai` rather than being capped by it, so it can be raised
-as well as lowered. See [MCP Server](./MCP.md).
+set, it replaces that value for `/mcp` rather than being capped by it, so it can be raised as well
+as lowered. `0` is the same as unset: it does not lift the bound for MCP. The AI agent's own tools
+stay on `MAX_QUERY_DEPTH`. See [MCP Server](./MCP.md).
 
 ## Page size
 
@@ -154,15 +155,18 @@ Off by default. `RATE_LIMIT_MAX` is the request ceiling per window for an authen
 | `RATE_LIMIT_TRUST_PROXY`   | `boolean` | `false` | Read the client address from `X-Forwarded-For` |
 
 A caller gets **one bucket across every endpoint** — `/graphql` including the websocket upgrade,
-`/rest/*`, `/ai`, `/mcp` and the console login — because what exhausts a server is total request
-volume, not volume on one route. An idle bucket refills to `max`, so a caller may burst `max` then
-sustain `max` per window. Over budget is `429` with `Retry-After` in seconds. The
-[health endpoints](./OBSERVABILITY.md#health-endpoints) are outside the limit, so a probe is never
-answered `429`.
+`/rest/*` (the agent's `/rest/ai` included), `/mcp` and the console login — because what exhausts a
+server is total request volume, not volume on one route. An idle bucket refills to `max`, so a
+caller may burst `max` then sustain `max` per window. Over budget is `429` with `Retry-After` in
+seconds. The [health endpoints](./OBSERVABILITY.md#health-endpoints) are outside the limit, so a
+probe is never answered `429`.
 
 Callers are identified by authenticated subject where there is one and by client address otherwise.
-**Neither the admin secret nor the superadmin role is exempt**, so set `RATE_LIMIT_MAX` above what
-your own tooling needs — the console alone polls status every five seconds.
+The admin secret is one subject, shared by everyone who presents it, and so is each AI credential on
+its own route: every holder of `AI_SECRET` shares one bucket under the ceiling of `AI_SECRET_ROLE`,
+every holder of `AI_MCP_SECRET` one under the ceiling of `AI_MCP_SECRET_ROLE`. **Neither the admin
+secret nor the superadmin role is exempt**, so set `RATE_LIMIT_MAX` above what your own tooling
+needs — the console alone polls status every five seconds.
 
 The override is per role, and it beats both environment values:
 
@@ -233,9 +237,9 @@ Estimated query cost of 1020201 exceeds the maximum allowed cost of 100000 (oper
 
 There is **no per-role or per-endpoint override** — one global budget. MCP gets its own depth knob
 because an agent legitimately writes deeper queries than an application does; nothing makes the same
-argument for asking a database for more rows, so `/mcp` and `/ai` are scored against the same budget
-as any other caller. Full derivation, including the one legitimate query shape it rejects, is under
-[Bounding how much one query asks for](./CONFIGURATION.md#bounding-how-much-one-query-asks-for).
+argument for asking a database for more rows, so `/mcp` and the agent are scored against the same
+budget as any other caller. Full derivation, including the one legitimate query shape it rejects, is
+under [Bounding how much one query asks for](./CONFIGURATION.md#bounding-how-much-one-query-asks-for).
 
 ## Connection pool bounds
 

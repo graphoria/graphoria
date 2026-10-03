@@ -24,6 +24,7 @@ type RolePermission = {
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[]; // Remote GraphQL schemas (see REMOTE_SCHEMAS.md)
   remoteREST?: "ALL" | string[]; // Remote REST APIs (see REMOTE_REST.md)
+  ai?: boolean; // May call the AI agent (see AI.md). Default false; superadmin always may
   rateLimit?: { max: number; windowMs?: number }; // Requests per window (see CONFIGURATION.md)
 };
 
@@ -69,6 +70,10 @@ auth: {
   },
 }
 ```
+
+### The AI agent
+
+`ai: true` lets a role call the [AI agent](./AI.md): the GraphQL `ask` field is compiled into its schema and `POST /rest/ai` answers it. The agent reads what the role reads — its tables and columns, its row filters evaluated with the caller's session — and every row it reads goes to the LLM provider, so grant it only where that is acceptable. The superadmin role (the admin secret) always has it.
 
 ## Table Access Modes
 

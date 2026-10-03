@@ -81,7 +81,7 @@ type GenerateOpenAPIParams = {
   version?: string;
   role: GetSchemaReturn;
   options: Env;
-  /** When set, adds the admin-only AI agent endpoint to the spec. */
+  /** When set, adds the AI agent endpoint to the spec. */
   ai?: { path: string };
 };
 
@@ -137,7 +137,7 @@ export const generateOpenAPI = ({
         ? [
             {
               name: "AI",
-              description: "AI agent — natural-language → database Q&A (admin-secret only)",
+              description: "AI agent — natural-language → database Q&A, for the roles granted `ai`",
             },
           ]
         : []),
@@ -345,9 +345,9 @@ export const generateOpenAPI = ({
                 tags: ["AI"],
                 summary: "Ask the AI agent",
                 description:
-                  "Send a natural-language question about the database. The agent discovers relevant tables, runs read-only GraphQL queries, and returns an answer. Requires admin secret.",
+                  "Send a natural-language question about the database. The agent discovers relevant tables, runs read-only GraphQL queries, and returns an answer. Open to the roles granted `ai`, the admin secret and `AI_SECRET`; the agent reads as the caller's role.",
                 operationId: "askAI",
-                security: [{ "Admin Secret": [] }],
+                security: [{ "HTTP Bearer Token": [] }, { "Admin Secret": [] }],
                 requestBody: {
                   required: true,
                   content: {
@@ -386,7 +386,7 @@ export const generateOpenAPI = ({
                     },
                   },
                   "404": {
-                    description: "Not found (missing admin secret)",
+                    description: "Not found (the caller's role is not granted `ai`)",
                     content: {
                       "application/json": {
                         schema: { $ref: "#/components/schemas/NotFoundError" },

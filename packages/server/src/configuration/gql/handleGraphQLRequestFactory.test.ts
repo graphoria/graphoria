@@ -549,6 +549,231 @@ describe("handleGraphQLRequestFactory — audit", () => {
       spy.mockRestore();
     }
   });
+
+  const asking = () => {
+    const seen: { prompt: string; caller: Record<string, unknown> }[] = [];
+    const spy = spyOn(aiModule, "getAgent").mockReturnValue(
+      async (prompt: string, caller: Record<string, unknown>) => {
+        seen.push({ prompt, caller });
+        return "forty-two";
+      },
+    );
+    return { seen, spy };
+  };
+
+  it("asks the agent as the caller, through this role's own handler", async () => {
+    const { seen, spy } = asking();
+    try {
+      const entities = buildEntities();
+      const factory = factoryFn(entities);
+      const session = { sub: "ana@acme.test", role: "user", jti: "jti-1" };
+
+      const result = await factory.handler('{ ask(prompt: "how many?") }', {}, fakeReq, session);
+
+      expect(result.data).toEqual({ ask: "forty-two" });
+      const caller = seen[0]!.caller as {
+        role: { schema: unknown; handlers: { gql: { handler: unknown } } };
+        session: unknown;
+        req: unknown;
+      };
+      expect(caller.session).toBe(session);
+      expect(caller.req).toBe(fakeReq);
+      expect(caller.role.schema).toBe(entities.schema);
+      expect(caller.role.handlers.gql.handler).toBe(factory.handler);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("hands the agent and the audit record the prompt a variable carries", async () => {
+    const { seen, spy } = asking();
+    try {
+      await factoryFn(buildEntities()).handler(
+        "query Ask($p: String!) { ask(prompt: $p) }",
+        { p: "how many users?" },
+        fakeReq,
+        { sub: "superadmin", role: "superadmin", authMethod: "admin_secret" },
+      );
+
+      expect(seen[0]!.prompt).toBe("how many users?");
+      expect(records).toEqual([
+        expect.objectContaining({ action: "ai.ask", prompt: "how many users?" }),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("hands the agent and the audit record the prompt a declared default carries", async () => {
+    const { seen, spy } = asking();
+    try {
+      await factoryFn(buildEntities()).handler(
+        'query Ask($p: String = "how many users?") { ask(prompt: $p) }',
+        {},
+        fakeReq,
+        { sub: "superadmin", role: "superadmin", authMethod: "admin_secret" },
+      );
+
+      expect(seen[0]!.prompt).toBe("how many users?");
+      expect(records).toEqual([
+        expect.objectContaining({ action: "ai.ask", prompt: "how many users?" }),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("never resolves the prompt to a value the server bound", async () => {
+    const { seen, spy } = asking();
+    try {
+      // The role filter's constant is bound as `static_0` while the operation resolves.
+      const entities = {
+        ...buildEntities(),
+        queriesMap: { users: { rolePermission: { filter: { id: { eq: "tenant-7731" } } } } },
+      };
+
+      const error = await factoryFn(entities)
+        .handler('{ users { id } ask(prompt: "$static_0") }', {}, fakeReq, {
+          sub: "ana@acme.test",
+          role: "user",
+        })
+        .catch((caught: unknown) => caught);
+
+      expect(seen.map((call) => call.prompt)).toEqual([]);
+      expect(records).toEqual([]);
+      expect((error as Error).message).toBe("Variable static_0 not found");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    ["a number", 42],
+    ["null", null],
+    ["an object", { text: "how many?" }],
+    ["an empty string", ""],
+  ])("refuses %s as the prompt, before any agent call or record", async (_label, value) => {
+    const { seen, spy } = asking();
+    try {
+      const outcome = factoryFn(buildEntities()).handler(
+        "query Ask($p: String) { ask(prompt: $p) }",
+        { p: value },
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      await expect(outcome).rejects.toThrow("`prompt` (string) is required");
+      expect(seen).toEqual([]);
+      expect(records).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("refuses an operation selecting ask twice, before any agent call or record", async () => {
+    const { seen, spy } = asking();
+    try {
+      const outcome = factoryFn(buildEntities()).handler(
+        '{ first: ask(prompt: "one") second: ask(prompt: "two") }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      await expect(outcome).rejects.toThrow("Only one `ask` is allowed per request");
+      expect(seen).toEqual([]);
+      expect(records).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each(["@skip(if: true)", "@include(if: false)"])(
+    "runs no agent for an ask under %s, as a skipped table field selects nothing",
+    async (directive) => {
+      const { seen, spy } = asking();
+      try {
+        const result = await factoryFn(buildEntities()).handler(
+          `{ ask(prompt: "how many?") ${directive} }`,
+          {},
+          fakeReq,
+          { sub: "ana@acme.test", role: "user" },
+        );
+
+        expect(result).toEqual({ data: {} });
+        expect(seen).toEqual([]);
+        expect(records).toEqual([]);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it("reads an ask's skip condition from the caller's variables", async () => {
+    const { seen, spy } = asking();
+    try {
+      const factory = factoryFn(buildEntities());
+      const query = 'query Q($skip: Boolean!) { ask(prompt: "how many?") @skip(if: $skip) }';
+      const session = { sub: "ana@acme.test", role: "user" };
+
+      expect(await factory.handler(query, { skip: true }, fakeReq, session)).toEqual({ data: {} });
+      expect(await factory.handler(query, { skip: false }, fakeReq, session)).toEqual({
+        data: { ask: "forty-two" },
+      });
+      expect(seen.map((call) => call.prompt)).toEqual(["how many?"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("counts only the asks that run toward the one-ask limit", async () => {
+    const { seen, spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        '{ first: ask(prompt: "one") second: ask(prompt: "two") @skip(if: true) }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({ data: { first: "forty-two" } });
+      expect(seen.map((call) => call.prompt)).toEqual(["one"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("refuses a bad prompt before the remote fields beside it are called", async () => {
+    const { seen, spy } = asking();
+    const remoteCalls: unknown[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      remoteCalls.push(url);
+      return Response.json({ data: { originalQ: "remote" } });
+    }) as typeof fetch;
+    try {
+      const entities = buildEntities();
+      entities.remoteQueriesMap.remote_query_field.remoteSchema = {
+        name: "remote-q",
+        config: { name: "remote-q", url: "http://remote.test/graphql" },
+      };
+
+      const outcome = factoryFn(entities).handler(
+        '{ remote_query_field ask(prompt: "") }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      await expect(outcome).rejects.toThrow("`prompt` (string) is required");
+      expect(remoteCalls).toEqual([]);
+      expect(seen).toEqual([]);
+      expect(records).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      spy.mockRestore();
+    }
+  });
 });
 
 describe("handleGraphQLRequestFactory — metrics", () => {

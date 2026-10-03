@@ -89,7 +89,11 @@ function toOllamaMessages(messages: Message[]): OllamaMessage[] {
  * per-model sampling presets. Default provider — runs local/free, no API key.
  */
 export const ollamaProvider: Provider = {
-  async chat(messages: Message[], tools: ToolDefinition[]): Promise<ChatResult> {
+  async chat(
+    messages: Message[],
+    tools: ToolDefinition[],
+    signal?: AbortSignal,
+  ): Promise<ChatResult> {
     const preset = resolvePreset(config.model);
 
     const body = {
@@ -110,6 +114,7 @@ export const ollamaProvider: Provider = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal,
     });
 
     if (!res.ok) {

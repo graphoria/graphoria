@@ -1,10 +1,12 @@
 import { RedisClient } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 
+import type { AuditEvent } from "../../logging/audit";
 import type { StartedServer } from "./harness";
 
 import { INTEGRATION_ENABLED, REDIS_URL } from "./config";
 import { startServer } from "./harness";
+import { callMcpTool } from "./mcp";
 
 /**
  * The limiter is engine-agnostic — it never reaches the query builder — so one
@@ -31,7 +33,11 @@ describeIf("rate limiting", () => {
 
   beforeAll(async () => {
     redis = new RedisClient(REDIS_URL);
-    started = await startServer({ engine: "pg", env: { rateLimit } });
+    started = await startServer({
+      engine: "pg",
+      config: { ai: { mcp: { enabled: true } } },
+      env: { rateLimit },
+    });
   });
 
   afterAll(async () => {
@@ -46,6 +52,16 @@ describeIf("rate limiting", () => {
   });
 
   const post = (options?: { admin?: boolean }) => started.context.gqlRaw(QUERY, undefined, options);
+
+  const admin = () => ({ "x-admin-secret": process.env["ADMIN_SECRET"]! });
+
+  const mcp = (headers: Record<string, string> = {}) =>
+    callMcpTool(
+      `http://localhost:${started.context.server.port}/mcp`,
+      "graphql_validate",
+      { query: QUERY },
+      headers,
+    );
 
   it("serves the anonymous caller up to the ceiling", async () => {
     for (let i = 0; i < ANONYMOUS_MAX; i++) expect((await post()).status).toBe(200);
@@ -78,6 +94,41 @@ describeIf("rate limiting", () => {
     for (let i = 0; i < rateLimit.max; i++) await post({ admin: true });
 
     expect((await post({ admin: true })).status).toBe(429);
+  });
+
+  it("counts POST /mcp against the caller's own bucket", async () => {
+    for (let i = 0; i < ANONYMOUS_MAX; i++) await post();
+
+    expect((await mcp()).status).toBe(429);
+    expect((await mcp(admin())).status).toBe(200);
+  });
+
+  it("refuses POST /mcp to a credential that spent its own bucket on /graphql", async () => {
+    for (let i = 0; i < rateLimit.max; i++) await post({ admin: true });
+
+    expect((await mcp(admin())).status).toBe(429);
+    expect((await mcp()).status).toBe(200);
+  });
+
+  it("still records the admin secret on a POST /mcp it refuses", async () => {
+    const { setAuditLog } = await import("../../logging/audit");
+    for (let i = 0; i < rateLimit.max; i++) await mcp(admin());
+
+    const records: AuditEvent[] = [];
+    setAuditLog({ emit: (event) => records.push(event) });
+    try {
+      expect((await mcp(admin())).status).toBe(429);
+    } finally {
+      setAuditLog(null);
+    }
+
+    expect(records).toEqual([
+      {
+        action: "admin_secret.used",
+        actor: { type: "admin_secret", scope: "all", ip: expect.any(String) },
+        target: { kind: "endpoint", method: "POST", path: "/mcp" },
+      },
+    ]);
   });
 
   it("shares one budget between two servers on the same redis", async () => {

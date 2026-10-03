@@ -54,11 +54,17 @@ export const getSchemas = (
   tablesAndStoredProceduresForRole: Record<string, EntitiesOfRole>,
   auth: Auth,
   gqlSuperadminHandler: HandleGraphQLRequest,
+  askEnabled: boolean = false,
 ) => {
   const schemas: Record<string, GetSchemaReturn> = {};
 
   for (const [role, entitiesOfRole] of Object.entries(tablesAndStoredProceduresForRole)) {
-    schemas[role] = getSchema(entitiesOfRole, auth, gqlSuperadminHandler);
+    schemas[role] = getSchema(
+      entitiesOfRole,
+      auth,
+      gqlSuperadminHandler,
+      askEnabled && entitiesOfRole.ai === true,
+    );
   }
 
   return schemas;

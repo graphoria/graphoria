@@ -213,6 +213,7 @@ export type EntitiesOfRole = {
   operations: Operations;
   remoteSchemas: RemoteSchemaResolved[];
   remoteREST: RemoteRESTResolved[];
+  ai?: boolean;
 };
 
 /**
@@ -342,6 +343,7 @@ export const sourcesForEachRole = (
         operations: filteredOperations,
         remoteSchemas: filteredRemoteSchemas,
         remoteREST: filteredRemoteREST,
+        ai: permissions.ai === true,
       };
 
       return acc;

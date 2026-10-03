@@ -77,16 +77,19 @@ export const EnvZod = z
     AI_GRAPHQL_ENABLED: z.stringbool().default(true),
     AI_REST_ENABLED: z.stringbool().default(true),
     AI_SECRET: secretList,
+    AI_SECRET_ROLE: z.string().optional(),
     AI_MCP_ENABLED: z.stringbool().optional(),
     AI_MCP_ENDPOINT: z.string().default("/mcp"),
     AI_MCP_REQUIRE_ADMIN_SECRET: z.stringbool().default(false),
     AI_MCP_SECRET: secretList,
+    AI_MCP_SECRET_ROLE: z.string().optional(),
     AI_MCP_MAX_QUERY_DEPTH: z.coerce.number().int().min(0).optional(),
     AI_MCP_DISABLED_TOOLS: z.string().default(""),
     AI_MCP_DISABLED_RESOURCES: z.string().default(""),
     AI_MCP_DISABLED_PROMPTS: z.string().default(""),
     AI_SYSTEM_PROMPT: z.string().optional(),
     AI_PROMPT_TEMPLATE: z.string().optional(),
+    AI_TIMEOUT_MS: z.coerce.number().int().min(0).default(60000),
   })
   .transform((env) => ({
     port: env.PORT,
@@ -171,11 +174,13 @@ export const EnvZod = z
       graphqlEnabled: env.AI_GRAPHQL_ENABLED,
       restEnabled: env.AI_REST_ENABLED,
       secrets: env.AI_SECRET,
+      secretRole: env.AI_SECRET_ROLE ?? env.SUPERADMIN_ROLE,
       mcp: {
         enabled: env.AI_MCP_ENABLED,
         endpoint: env.AI_MCP_ENDPOINT,
         requireAdminSecret: env.AI_MCP_REQUIRE_ADMIN_SECRET,
         secrets: env.AI_MCP_SECRET,
+        secretRole: env.AI_MCP_SECRET_ROLE ?? env.ANONYMOUS_ROLE,
         maxQueryDepth: env.AI_MCP_MAX_QUERY_DEPTH,
         disabledTools: env.AI_MCP_DISABLED_TOOLS
           ? env.AI_MCP_DISABLED_TOOLS.split(",")
@@ -195,6 +200,7 @@ export const EnvZod = z
       },
       systemPrompt: env.AI_SYSTEM_PROMPT,
       promptTemplate: env.AI_PROMPT_TEMPLATE,
+      timeoutMs: env.AI_TIMEOUT_MS,
     },
   }));
 
