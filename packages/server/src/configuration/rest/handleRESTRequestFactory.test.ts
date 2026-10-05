@@ -382,6 +382,122 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
     expect(calls).toBe(2);
     expect(await getCache("op_query_cached_bigint")!.keys()).toEqual([]);
   });
+
+  it("coalesces concurrent misses for the same key into one query", async () => {
+    let operatorCalls = 0;
+    let afterCalls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_coalesced", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+        hooks: {
+          afterRequest: ({ output }: { output: Record<string, unknown> }) => {
+            afterCalls++;
+            return { ...output, n: afterCalls };
+          },
+        },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        operatorQuery: async () => {
+          operatorCalls++;
+          await Bun.sleep(10);
+          return { data: { ping: true } };
+        },
+      },
+    );
+
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET")),
+      ),
+    );
+    const bodies = await Promise.all(responses.map((res) => res.text()));
+
+    // The herd shares one query and one afterRequest run; every waiter gets
+    // the same serialized body.
+    expect(operatorCalls).toBe(1);
+    expect(afterCalls).toBe(1);
+    expect(new Set(bodies).size).toBe(1);
+    expect(JSON.parse(bodies[0])).toEqual({ data: { ping: true, n: 1 } });
+  });
+
+  it("runs separate queries for concurrent misses with different keys", async () => {
+    let operatorCalls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_coalesced_keys", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET", queryParams: z.object({ q: z.string() }) },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        operatorQuery: async (_analysis: unknown, variables: { q: string }) => {
+          operatorCalls++;
+          await Bun.sleep(10);
+          return { data: { q: variables.q } };
+        },
+      },
+    );
+
+    const responses = await Promise.all([
+      factory.handler(new URL("http://x/q?q=1"), "/q", "GET", fakeReq("GET")),
+      factory.handler(new URL("http://x/q?q=2"), "/q", "GET", fakeReq("GET")),
+    ]);
+    const bodies = await Promise.all(responses.map((res) => res.json()));
+
+    // The in-flight map is keyed by cache key, not by route: each variables
+    // combination runs its own query and caches its own entry.
+    expect(operatorCalls).toBe(2);
+    expect(bodies).toContainEqual({ data: { q: "1" } });
+    expect(bodies).toContainEqual({ data: { q: "2" } });
+    expect(await getCache("op_query_coalesced_keys")!.keys()).toHaveLength(2);
+  });
+
+  it("shares a failing query across concurrent missers and retries later", async () => {
+    let operatorCalls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_coalesced_fail", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        operatorQuery: async () => {
+          operatorCalls++;
+          await Bun.sleep(10);
+          if (operatorCalls === 1) throw new Error("boom");
+          return { data: { ping: true } };
+        },
+      },
+    );
+
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET")),
+      ),
+    );
+
+    expect(operatorCalls).toBe(1);
+    for (const res of responses) {
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ errors: ["boom"] });
+    }
+    expect(await getCache("op_query_coalesced_fail")!.keys()).toEqual([]);
+
+    // A later request is not served the stale rejection: the in-flight entry
+    // was dropped when the herd settled, so it re-executes and caches.
+    const retry = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ data: { ping: true } });
+    expect(operatorCalls).toBe(2);
+    expect(await getCache("op_query_coalesced_fail")!.keys()).toHaveLength(1);
+  });
 });
 
 describe("handleRESTRequestFactory statement timeout", () => {

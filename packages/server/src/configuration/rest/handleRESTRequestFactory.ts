@@ -67,6 +67,8 @@ export const handleRESTRequestFactory = (
 
   const routesInitDataPromises: Record<string, unknown> = {};
 
+  const inflight = new Map<string, Promise<string>>();
+
   return {
     operationsEnhanced,
     handler: async (
@@ -357,7 +359,17 @@ export const handleRESTRequestFactory = (
         }
         log.debug({ route: route.routeKey }, "rest cache miss");
 
-        try {
+        const pending = inflight.get(cacheKey);
+        if (pending !== undefined) {
+          try {
+            return new S200Serialized(await pending);
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            return new S401({ errors: [message] });
+          }
+        }
+
+        const promise = (async () => {
           // Execute the GraphQL request, then transform via afterRequest before
           // caching so hits and misses return the same shape.
           const result = await applyAfterRequest(
@@ -369,10 +381,16 @@ export const handleRESTRequestFactory = (
           // Cache the (already transformed) result
           await cache.set(cacheKey, serialized);
 
-          return new S200Serialized(serialized);
+          return serialized;
+        })();
+        inflight.set(cacheKey, promise);
+        try {
+          return new S200Serialized(await promise);
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
           return new S401({ errors: [message] });
+        } finally {
+          inflight.delete(cacheKey);
         }
       } else if (queryAnalysis) {
         // No caching for this route, execute normally
