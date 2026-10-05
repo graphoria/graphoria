@@ -1,0 +1,67 @@
+{
+  "name": "@graphoria/ai",
+  "version": "0.6.0",
+  "description": "AI agent and MCP server runtimes for Graphoria",
+  "keywords": [
+    "ai",
+    "graphoria",
+    "llm",
+    "mcp"
+  ],
+  "homepage": "https://github.com/graphoria/graphoria#readme",
+  "bugs": {
+    "url": "https://github.com/graphoria/graphoria/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Alex Ferreli <ferreli.ale@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/graphoria/graphoria.git",
+    "directory": "packages/ai"
+  },
+  "files": [
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "type": "module",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "bun": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "type-check": "tsc --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@cfworker/json-schema": "^4.1.1",
+    "@modelcontextprotocol/server": "^2.1.0",
+    "graphql": "^17.0.2",
+    "openai": "^7.23.0",
+    "openapi-types": "12.1.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "@graphoria/server": "0.6.0"
+  },
+  "engines": {
+    "bun": ">=1.3.4"
+  }
+}
