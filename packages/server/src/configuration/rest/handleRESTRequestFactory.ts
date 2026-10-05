@@ -13,9 +13,10 @@ import { proxyRemoteRESTRequest } from "../../remoteREST/proxy";
 import { actorFromSession, audit } from "../../logging/audit";
 import { getTokenService } from "../../singletons/authentication";
 import { getCache } from "../../singletons/cache";
+import type { CacheStore } from "../../singletons/cache";
 import { databasesConnections, repositoryMap } from "../../singletons/databases";
 import { queueManager } from "../../singletons/queues";
-import { S200, S200Serialized, S401, S404 } from "../../utils/responses";
+import { S200, S200Serialized, S304, S401, S404 } from "../../utils/responses";
 import { buildApiRoutes } from "../rest";
 import { parseStringParams } from "./parseStringParams";
 import { logger } from "../../logging";
@@ -27,6 +28,8 @@ type RemoteRouteEntry = {
   testPath: MatchFunction<Record<string, string>>;
 };
 
+// The ETag of a serialized body, derived from the exact stored text.
+const etagFor = (text: string): string => `"${Bun.hash(text).toString(36)}"`;
 export const handleRESTRequestFactory = (
   entities: SchemaEntities,
   gql: HandleGraphQLRequest,
@@ -41,12 +44,21 @@ export const handleRESTRequestFactory = (
   // keep the path-to-regexp scan. The charset stays conservative so a path
   // path-to-regexp would treat specially never reaches the map.
   const staticRoutes = new Map<string, (typeof routes)[number]>();
+  // The cache key of a static route's anonymous parameterless request never
+  // changes, so build it once instead of per request.
+  const staticCacheKeys = new Map<(typeof routes)[number], string>();
   const dynamicRoutes: (typeof routes)[number][] = [];
   for (const route of routes) {
     const path = route.rest!.path;
     if (/^[/a-zA-Z0-9_-]+$/.test(path)) {
       const key = `${route.rest!.method}:${path}`;
-      if (!staticRoutes.has(key)) staticRoutes.set(key, route);
+      if (!staticRoutes.has(key)) {
+        staticRoutes.set(key, route);
+        staticCacheKeys.set(
+          route,
+          JSON.stringify({ pathname: path, method: route.rest!.method, variables: {} }),
+        );
+      }
     } else {
       dynamicRoutes.push(route);
     }
@@ -69,6 +81,26 @@ export const handleRESTRequestFactory = (
 
   const inflight = new Map<string, Promise<string>>();
 
+  // Per-role pino children: roles are bounded, so the logger stops being a
+  // per-request allocation after each role's first request.
+  const roleLoggers = new Map<string, ReturnType<typeof logger>>();
+  const logFor = (role: string | undefined) => {
+    const key = role ?? "";
+    const existing = roleLoggers.get(key);
+    if (existing) return existing;
+    const created = logger("rest").child({ role });
+    roleLoggers.set(key, created);
+    return created;
+  };
+
+  // Lazy so a store re-registered after factory creation (tests) is picked up.
+  const cacheByRouteKey = new Map<string, CacheStore | undefined>();
+  const cacheFor = (routeKey: string | undefined): CacheStore | undefined => {
+    if (!routeKey) return undefined;
+    if (!cacheByRouteKey.has(routeKey)) cacheByRouteKey.set(routeKey, getCache(routeKey));
+    return cacheByRouteKey.get(routeKey);
+  };
+
   return {
     operationsEnhanced,
     handler: async (
@@ -78,13 +110,14 @@ export const handleRESTRequestFactory = (
       req: BunRequest,
       session?: SessionContext,
     ) => {
-      const log = logger("rest").child({ role: session?.role });
+      const log = logFor(session?.role);
       log.debug({ method, pathname }, "rest request");
 
       let pathParameters: Record<string, string | string[]> = {};
 
+      const staticRoute = staticRoutes.get(`${method}:${pathname}`);
       const route =
-        staticRoutes.get(`${method}:${pathname}`) ??
+        staticRoute ??
         dynamicRoutes.find((a) => {
           const pathFound = a.testPath(pathname);
 
@@ -134,10 +167,12 @@ export const handleRESTRequestFactory = (
       // `parseStringParams` converts the keys declared as `z.boolean()` first.
       const pathVariables = parseStringParams(route.rest!.pathParams, pathParameters);
 
-      const paramsQuery = new URLSearchParams(url.search);
-      const paramsQueryDictionary = Object.fromEntries(paramsQuery.entries());
-
-      const queryVariables = parseStringParams(route.rest!.queryParams, paramsQueryDictionary);
+      const queryVariables = route.rest!.queryParams
+        ? parseStringParams(
+            route.rest!.queryParams,
+            Object.fromEntries(new URLSearchParams(url.search).entries()),
+          )
+        : undefined;
 
       let bodyVariables: Record<string, unknown> | undefined;
 
@@ -338,24 +373,35 @@ export const handleRESTRequestFactory = (
       };
 
       // Check if this route has caching enabled
-      const cache = route.routeKey ? getCache(route.routeKey) : undefined;
+      const cache = cacheFor(route.routeKey);
 
       if (cache && route.query) {
-        // Create cache key from route pattern, method, variables, and session
-        const cacheKey = JSON.stringify({
-          pathname,
-          method,
-          variables,
-          sub: session?.sub,
-          role: session?.role,
-        });
+        // Create cache key from route pattern, method, variables, and session.
+        // The concatenated form is byte-identical to stringifying the whole
+        // object: each component is JSON-encoded separately, undefined props
+        // are omitted, and the field order matches.
+        const precomputedKey = staticCacheKeys.get(route);
+        const cacheKey =
+          precomputedKey !== undefined && Object.keys(variables).length === 0 && !session
+            ? precomputedKey
+            : (() => {
+                let key = `{"pathname":${JSON.stringify(pathname)},"method":${JSON.stringify(
+                  method,
+                )},"variables":${JSON.stringify(variables)}`;
+                if (session?.sub !== undefined) key += `,"sub":${JSON.stringify(session.sub)}`;
+                if (session?.role !== undefined)
+                  key += `,"role":${JSON.stringify(session.role)}`;
+                return key + "}";
+              })();
 
         // Try to get from cache first. A cached entry has already been through
         // afterRequest, so serve it directly without re-running the hook.
         const cachedResult = await cache.get(cacheKey);
         if (cachedResult !== undefined) {
           log.debug({ route: route.routeKey }, "rest cache hit");
-          return new S200Serialized(cachedResult);
+          const etag = etagFor(cachedResult);
+          if (req.headers?.get("if-none-match") === etag) return new S304();
+          return new S200Serialized(cachedResult, etag);
         }
         log.debug({ route: route.routeKey }, "rest cache miss");
 
@@ -385,7 +431,8 @@ export const handleRESTRequestFactory = (
         })();
         inflight.set(cacheKey, promise);
         try {
-          return new S200Serialized(await promise);
+          const serialized = await promise;
+          return new S200Serialized(serialized, etagFor(serialized));
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
           return new S401({ errors: [message] });

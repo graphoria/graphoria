@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { ClientResponse, S200, S200Serialized, S400, S401, S404, S429, S500 } from "./responses";
+import { ClientResponse, S200, S200Serialized, S304, S400, S401, S404, S429, S500 } from "./responses";
 
 describe("ClientResponse", () => {
   it("serializes body as JSON", async () => {
@@ -85,5 +85,28 @@ describe("S200Serialized", () => {
 
   it("sends an empty text as an empty body", async () => {
     expect(await new S200Serialized("").text()).toBe("");
+  });
+
+  it("sets the ETag when one is given", async () => {
+    const res = new S200Serialized("x", '"abc"');
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("ETag")).toBe('"abc"');
+    expect(res.headers.get("Content-Type")).toBe("application/json");
+    expect(await res.text()).toBe("x");
+  });
+});
+
+describe("S304", () => {
+  it("has status 304, CORS headers only, no content type, and an empty body", async () => {
+    const res = new S304();
+
+    expect(res.status).toBe(304);
+    expect(res.headers.get("Content-Type")).toBeNull();
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+    expect(res.headers.get("Access-Control-Allow-Methods")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Headers")).toBe("*");
   });
 });
