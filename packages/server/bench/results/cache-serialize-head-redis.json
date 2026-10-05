@@ -1,0 +1,34 @@
+{
+  "engine": "cache-serialize",
+  "store": "redis",
+  "iterations": 20000,
+  "warmup": 20000,
+  "recordedAt": "2026-10-04T12:22:15.378Z",
+  "bun": "1.4.2",
+  "scenarios": [
+    {
+      "count": 20000,
+      "min": 0.025652,
+      "max": 0.799438,
+      "mean": 0.036732912549999844,
+      "p50": 0.033322,
+      "p95": 0.05417,
+      "p99": 0.069762,
+      "throughputPerSecond": 27223.542337919083,
+      "name": "redis-hit",
+      "batchMs": 1438.67884
+    },
+    {
+      "count": 20000,
+      "min": 0.101038,
+      "max": 2.483625,
+      "mean": 0.1431062546999988,
+      "p50": 0.127667,
+      "p95": 0.217229,
+      "p99": 0.283006,
+      "throughputPerSecond": 6987.8147680990805,
+      "name": "redis-miss",
+      "batchMs": 5723.330144
+    }
+  ]
+}

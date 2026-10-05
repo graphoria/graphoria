@@ -1,7 +1,9 @@
 # Benchmarks
 
-Measures seven representative workloads against a real Graphoria server on a real
-database engine, and writes a report to [`results/`](./results).
+`bun run bench` measures seven representative workloads against a real Graphoria
+server on a real database engine, and writes a report to [`results/`](./results).
+A second, in-process script times the REST cache alone; see
+[REST cache micro-benchmark](#rest-cache-micro-benchmark).
 
 ## Running
 
@@ -47,12 +49,54 @@ bun run packages/server/bench/seed.ts pg
 
 Each run writes `results/<engine>.json` (the machine-readable record) and
 `results/<engine>.md` (the same numbers plus the hardware and engine version).
-Only PostgreSQL results are committed; the other two engines are there so a
-change can be checked against them, not tracked over time.
+Of the `bun run bench` results, only PostgreSQL is committed; the other two
+engines are there so a change can be checked against them, not tracked over time.
 
 The Markdown report is written unaligned, and `oxfmt` aligns table columns, so
 run `bun run format` after regenerating results or `format:check` will fail on
 the report alone.
+
+## REST cache micro-benchmark
+
+`cacheSerialize.ts` times the REST cache hit and miss paths in-process, through
+`handleRESTRequestFactory` with a stubbed query. There is no HTTP and no
+database. Scenarios:
+
+| Scenario              | What it measures                                                  |
+| --------------------- | ----------------------------------------------------------------- |
+| `memory-hit`          | a cache hit on a small payload, in-process store                  |
+| `memory-hit-large`    | a cache hit on a large payload, in-process store                  |
+| `memory-miss`         | a cache miss on the large payload: query, stringify, store        |
+| `reference-stringify` | one `JSON.stringify` of the large payload, to read deltas against |
+| `reference-parse`     | one `JSON.parse` of the large payload, to read deltas against     |
+
+`--store=redis` runs `redis-hit` and `redis-miss` instead, and needs the test
+stack's Redis (`bun run test:integration:up`).
+
+```bash
+bun run packages/server/bench/cacheSerialize.ts --out=/tmp/cache-head
+bun run packages/server/bench/cacheSerialize.ts --store=redis --out=/tmp/cache-head-redis
+```
+
+Options: `--store=memory|redis` (default `memory`), `--iterations` and `--warmup`
+(default 20000 each). A run writes `<out>.json` and `<out>.md`; the Markdown
+tables are in µs. Run `bun run format` after regenerating, for the same
+table-alignment reason as above.
+
+Each cached scenario counts how often its query ran. The script throws instead
+of writing numbers when a hit scenario did not hit or a miss scenario did not
+miss.
+
+To compare a change, record a base run and a head run in one session on the
+same machine, and read each delta against the `reference-*` rows of the same
+run. `bun run bench:compare` reads these files, but it prints milliseconds to
+two decimals and by default needs a 1ms difference, so it cannot flag a
+regression at this scale. Use the µs tables.
+
+The committed runs are `results/cache-serialize-base.*` and
+`results/cache-serialize-head.*` (memory), and their `-redis` counterparts: the
+REST cache before and after it stored pre-serialized JSON, recorded in one
+session.
 
 ## Dataset
 
