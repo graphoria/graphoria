@@ -1,7 +1,6 @@
 import { z } from "zod";
 
-import type { RoleEntities, ToolCaller } from "./core";
-import type { Tool } from "../agent/types";
+import type { AiToolDeps, RoleEntities, ToolCaller } from "@graphoria/server";
 
 import {
   describeEntityCore,
@@ -14,6 +13,15 @@ import {
 import { buildStructuredQuery, queryDataSchema } from "./query-data";
 import type { StructuredQueryInput } from "./query-data";
 
+// ---- Unified tool (Zod schema + executor in one place) ----
+
+export interface Tool<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
+  name: string;
+  description: string;
+  schema: TSchema;
+  execute: (args: z.infer<TSchema>) => Promise<unknown>;
+}
+
 /**
  * Build the agent's tool set for one caller: its role's schema, its session and
  * its request. The agent reaches the database ONLY through these tools, so it
@@ -24,8 +32,12 @@ import type { StructuredQueryInput } from "./query-data";
 /** Preserve per-tool schema inference, then widen to the heterogeneous `Tool`. */
 const tool = <T extends z.ZodTypeAny>(t: Tool<T>): Tool => t as unknown as Tool;
 
-export const buildAgentTools = (role: RoleEntities, caller: ToolCaller): Tool[] => {
-  const validateQuery = makeValidateQuery(role);
+export const buildAgentTools = (
+  deps: AiToolDeps,
+  role: RoleEntities,
+  caller: ToolCaller,
+): Tool[] => {
+  const validateQuery = makeValidateQuery(deps, role);
 
   return [
     tool({
@@ -55,7 +67,7 @@ export const buildAgentTools = (role: RoleEntities, caller: ToolCaller): Tool[] 
         kind: z.enum(ENTITY_KINDS).optional(),
       }),
       execute: async ({ name, kind }) => {
-        const result = describeEntityCore(role, { name, kind });
+        const result = describeEntityCore(deps, role, { name, kind });
         return result ?? { error: `Entity '${name}' not found.` };
       },
     }),
@@ -66,8 +78,8 @@ export const buildAgentTools = (role: RoleEntities, caller: ToolCaller): Tool[] 
       schema: queryDataSchema,
       execute: async (args) => {
         const input = args as StructuredQueryInput;
-        const query = buildStructuredQuery(input, tableFieldNames(role, input.entity));
-        const outcome = await executeGraphqlCore(role, validateQuery, { query }, caller);
+        const query = buildStructuredQuery(input, tableFieldNames(deps, role, input.entity));
+        const outcome = await executeGraphqlCore(deps, role, validateQuery, { query }, caller);
         switch (outcome.kind) {
           case "non_query":
             return { error: "Internal: built query is not a query." };
@@ -89,7 +101,13 @@ export const buildAgentTools = (role: RoleEntities, caller: ToolCaller): Tool[] 
         variables: z.record(z.string(), z.unknown()).optional(),
       }),
       execute: async ({ query, variables }) => {
-        const outcome = await executeGraphqlCore(role, validateQuery, { query, variables }, caller);
+        const outcome = await executeGraphqlCore(
+          deps,
+          role,
+          validateQuery,
+          { query, variables },
+          caller,
+        );
         switch (outcome.kind) {
           case "non_query":
             return {

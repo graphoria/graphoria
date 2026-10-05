@@ -4,7 +4,7 @@ import { LRUCache } from "lru-cache";
 
 import type { BunRequest } from "bun";
 import type { DocumentNode, GraphQLError } from "graphql";
-import type { RoleEntities } from "../../ai/tools/core";
+import type { RoleEntities } from "../../ai/adapter";
 import type { AnalysisResult, SelectionAnalysis } from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";

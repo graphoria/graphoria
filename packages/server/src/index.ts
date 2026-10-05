@@ -15,9 +15,15 @@ import { buildExecute } from "./configuration/gql/buildExecute";
 import { websocketHandlerFactory } from "./configuration/gql/handleGraphQLSubscriptionFactory";
 import { consoleRoutesFactory } from "./console/api";
 import { createAuthTables, verifyAuthTablesExist } from "./databases";
-import { createMCPRoutes } from "./ai";
 import { createCapabilityAuthorizer, scopedCredentialRole } from "./authentication/capabilities";
-import { assertScopedRoles, getAgent, instantiateAI, resolveAISurfaces } from "./singletons/ai";
+import {
+  assertScopedRoles,
+  getAgent,
+  importAiPackage,
+  instantiateAI,
+  makeAiToolDeps,
+  resolveAISurfaces,
+} from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
 import { getCronJobs, instantiateCronJobs } from "./singletons/cron";
 import {
@@ -62,6 +68,26 @@ export type {
 export type { KafkaConfig, QueueConfig, RabbitMQConfig } from "./types/zod/queue";
 export type { QueueConnectionStatus, QueueManager } from "./singletons/queues";
 export { setQueueAdapter } from "./singletons/queues";
+
+export type {
+  Agent,
+  AgentCaller,
+  AiPackage,
+  AiToolDeps,
+  ChatResult,
+  CreateMCPRoutesOptions,
+  GetSchemaReturn,
+  McpCaller,
+  Message,
+  Provider,
+  RoleEntities,
+  RoleGraphQL,
+  ToolCall,
+  ToolCaller,
+  ToolDefinition,
+  ToolFunction,
+  ValidationError,
+} from "./ai/adapter";
 
 type RouteHandler =
   | Response
@@ -198,8 +224,8 @@ const bootAnalyzedConfiguration = async (env: Env) => {
  * the caller's role. Both boots call it, the engine's included: its schemas
  * carry `ask` too.
  */
-const startAgent = (env: Env, ai: Configuration["ai"]) => {
-  instantiateAI(ai, {
+const startAgent = async (env: Env, ai: Configuration["ai"]) => {
+  await instantiateAI(ai, {
     systemPrompt: env.ai?.systemPrompt,
     promptTemplate: env.ai?.promptTemplate,
     timeoutMs: env.ai?.timeoutMs,
@@ -252,7 +278,7 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
     await bootAnalyzedConfiguration(optionsWithDefaults);
 
   // No route here takes a scoped credential, so no role check comes first.
-  if (aiSurfaces.agent) startAgent(optionsWithDefaults, projectConfiguration.ai);
+  if (aiSurfaces.agent) await startAgent(optionsWithDefaults, projectConfiguration.ai);
 
   return {
     execute: buildExecute(analyzedConfiguration.roles, env.superadmin.role),
@@ -297,7 +323,7 @@ const createGraphQLServer = async (env: Env) => {
   );
 
   // After the role check, so a boot it refuses leaves no agent behind.
-  if (aiSurfaces.agent) startAgent(env, projectConfiguration.ai);
+  if (aiSurfaces.agent) await startAgent(env, projectConfiguration.ai);
 
   // Write schema in development
   if (env.schemas.print) {
@@ -585,7 +611,10 @@ const createGraphQLServer = async (env: Env) => {
   // as its caller, resolved like /graphql.
   if (aiSurfaces.mcp) {
     const mcpPath = `${env.prefix}${env.ai?.mcp?.endpoint ?? "/mcp"}`;
-    const mcpRoutes = createMCPRoutes(analyzedConfiguration, {
+    const aiPkg = await importAiPackage();
+    if (!aiPkg) throw new Error("ai.mcp.enabled requires @graphoria/ai (add it to dependencies)");
+
+    const mcpRoutes = aiPkg.createMCPRoutes(makeAiToolDeps(env), analyzedConfiguration.roles, {
       name: projectConfiguration.name,
       version: projectConfiguration.version,
       maxQueryDepth: env.ai?.mcp?.maxQueryDepth ?? env.maxQueryDepth,

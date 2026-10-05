@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
-import type { Message, Provider } from "../../../ai/agent/types";
+import type { Message, Provider } from "../../../ai/adapter";
 import type { DatabaseType } from "../../../types/configuration";
 import type { StartedRls } from "./fixture";
 
@@ -60,11 +60,12 @@ describe.skipIf(!integrationEnabled)("rls · AI agent and MCP", () => {
         await flushRedis();
 
         const { env } = await import("../../../singletons/env");
+        const { importAiPackage } = await import("../../../singletons/ai");
         started = await startRlsServer(engine, {
           config: { ai: { enabled: true, mcp: { enabled: true } } },
           env: { ai: { ...env.ai, mcp: { ...env.ai.mcp, requireAdminSecret: true } } },
         });
-        ({ setProvider } = await import("../../../ai/agent/providers"));
+        ({ setProvider } = (await importAiPackage())!);
         setProvider(echoProvider(tasks));
       });
 

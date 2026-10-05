@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Provider } from "../../../ai/agent/types";
+import type { Provider } from "../../../ai/adapter";
 
 // `singletons/env` parses process.env at module load.
 process.env.ADMIN_SECRET ??= "test-admin-secret";
@@ -307,7 +307,8 @@ describe("sqlite engine, the agent", () => {
   };
 
   it("answers ask through the agent, whose tools read this engine's database", async () => {
-    const { setProvider } = await import("../../../ai/agent/providers");
+    const { importAiPackage } = await import("../../../singletons/ai");
+    const { setProvider } = (await importAiPackage())!;
     setProvider(readingOrganizations);
     try {
       const data = await run<{ ask: string }>(`{ ask(prompt: "which organizations?") }`);

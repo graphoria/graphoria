@@ -83,8 +83,8 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 - **Remote REST APIs** — proxy external OpenAPI services under `/rest`
 - **Virtual columns** — computed columns powered by SQL expressions or functions
 - **GraphQL directives** — `@where`, `@truncate`, `@replace`, `@concat`, and more for data transformation
-- **AI agent** — natural-language → database Q&A for the roles you grant it, reading only what the caller's role reads; GraphQL `ask` query and REST endpoint
-- **MCP server** — Model Context Protocol server so AI editors can explore your schema as tools
+- **AI agent** — natural-language → database Q&A for the roles you grant it, reading only what the caller's role reads; GraphQL `ask` query and REST endpoint (via `@graphoria/ai`)
+- **MCP server** — Model Context Protocol server so AI editors can explore your schema as tools (via `@graphoria/ai`)
 - **Admin console** — web UI at `/_console` for tables, roles, permissions, API docs, and runtime status
 - **LRU cache** with queue-driven invalidation
 - **Built-in playgrounds** — GraphiQL and Scalar API documentation
@@ -437,6 +437,7 @@ The three limits that ship on — query depth, page size and the statement timeo
 | [`@graphoria/server`](./packages/server) | Main server — API generation, auth, queues, cron                           |
 | [`@graphoria/react`](./packages/react)   | Client-agnostic React hooks for auth and route-based access control        |
 | [`@graphoria/queues`](./packages/queues) | RabbitMQ and Kafka adapter runtimes, discovered by the server at boot      |
+| [`@graphoria/ai`](./packages/ai)         | AI agent and MCP server runtimes, discovered by the server at boot         |
 | [`graphoria`](./packages/graphoria)      | The CLI under its unscoped name: `bunx graphoria init` scaffolds a project |
 
 ## Documentation

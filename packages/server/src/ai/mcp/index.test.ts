@@ -4,13 +4,14 @@ process.env.JWT_SECRET ??= "test-jwt";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import type { OpenAPIV3_1 } from "openapi-types";
-import type { AnalyzedConfiguration } from "../../configuration";
 import type { AuditEvent } from "../../logging/audit";
-import type { McpCaller } from "./index";
+import type { McpCaller } from "../adapter";
 
 const { getSchema } = await import("../../configuration/getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
-const { createMCPRoutes } = await import("./index");
+const { env } = await import("../../singletons/env");
+const { makeAiToolDeps } = await import("../../singletons/ai");
+const { createMCPRoutes } = await import("../../../../ai/src/mcp/index");
 const { setAuditLog } = await import("../../logging/audit");
 
 const OPENAPI: OpenAPIV3_1.Document = {
@@ -29,13 +30,10 @@ const fullRole = getSchema({
 });
 
 /** `superadmin` lists every table, `anonymous` the first one only. */
-const buildAnalyzedConfig = (): AnalyzedConfiguration =>
-  ({
-    roles: {
-      superadmin: fullRole,
-      anonymous: { ...fullRole, tables: fullRole.tables.slice(0, 1) },
-    },
-  }) as unknown as AnalyzedConfiguration;
+const roles = {
+  superadmin: fullRole,
+  anonymous: { ...fullRole, tables: fullRole.tables.slice(0, 1) },
+};
 
 const anonymous: McpCaller = {
   role: "anonymous",
@@ -48,7 +46,7 @@ const adminSecret: McpCaller = {
 };
 
 const routesFor = (resolveCaller: () => Promise<McpCaller>, requireAdminSecret = false) =>
-  createMCPRoutes(buildAnalyzedConfig(), {
+  createMCPRoutes(makeAiToolDeps(env), roles, {
     requireAdminSecret,
     resolveCaller,
     openapiFor: () => OPENAPI,

@@ -1,7 +1,9 @@
 import { z } from "zod";
-import type { ChatResult, Message, Provider, Tool, ToolDefinition } from "./types";
+
+import type { AiToolDeps, ChatResult, Message, Provider, ToolDefinition } from "@graphoria/server";
+import type { Tool } from "../tools/agent";
+
 import { getProvider } from "./providers";
-import { logger } from "../../logging";
 
 const MAX_ITERATIONS = 10;
 
@@ -113,6 +115,7 @@ async function chatWithin(
  *   );
  */
 export async function ask(
+  logger: AiToolDeps["logger"],
   prompt: string,
   tools: Tool[],
   systemPrompt: string,

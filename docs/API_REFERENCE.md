@@ -8,7 +8,7 @@ Complete exports reference for all Graphoria packages.
 
 ## @graphoria/server
 
-Main server package. Two export paths: `.` (the server runtime) and `./config` (configuration helpers + types — `operation`, `cron`, `queue`, virtual-column builders, `z`, `ConfigurationFn`). Installing `@graphoria/server` alone is enough, except for queues: their RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Installing the adapters](./QUEUES.md#installing-the-adapters)).
+Main server package. Two export paths: `.` (the server runtime) and `./config` (configuration helpers + types — `operation`, `cron`, `queue`, virtual-column builders, `z`, `ConfigurationFn`). Installing `@graphoria/server` alone is enough, except for queues and AI: the RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Installing the adapters](./QUEUES.md#installing-the-adapters)) and the AI agent + MCP runtimes in `@graphoria/ai` (see [Installing](./AI.md#installing)).
 
 ### Main Export (`.`)
 
@@ -266,6 +266,7 @@ Re-exported Zod library for convenience.
 | `AuthConfig`                  | `{ enabled, database, schema?, permissions? }`                                                       |
 | `MCPConfig`                   | `{ enabled }` — MCP server config, nested under `AIConfig.mcp`. See MCP.md.                          |
 | `AIConfig`                    | `{ enabled, systemPrompt?, endpoint?, mcp? }` — AI agent (granted per role) + MCP. See AI.md.        |
+| `AiPackage`                   | The `@graphoria/ai` runtime seam: `AiToolDeps`, `Agent`, `AgentCaller`, `ToolCaller`, `McpCaller`.   |
 | `RolePermission`              | `{ tables?, storedProcedures?, queues?, operations?, remoteSchemas?, remoteREST?, ai?, rateLimit? }` |
 | `TablePermission`             | `{ columns, filter?, orderBy? }`                                                                     |
 | `FilterCondition`             | `Record<string, Record<string, unknown>>`                                                            |

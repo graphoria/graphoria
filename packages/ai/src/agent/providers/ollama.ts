@@ -1,4 +1,4 @@
-import type { ChatResult, Message, Provider, ToolDefinition } from "../types";
+import type { ChatResult, Message, Provider, ToolDefinition } from "@graphoria/server";
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 // LLM_MODEL is the unified knob; OLLAMA_MODEL kept for backward compatibility.

@@ -39,8 +39,8 @@ jobs:
       - name: Type check
         run: bun run type-check
 
-      # Every package's dist, the server first: the queues build reads the
-      # server's types, so a wrong order fails here instead of at publish.
+      # Every package's dist, the server first: the queues and ai builds read
+      # the server's types, so a wrong order fails here instead of at publish.
       - name: Build
         run: bun run build
 

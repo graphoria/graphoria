@@ -4,20 +4,22 @@ process.env.JWT_SECRET ??= "test-jwt";
 import { describe, expect, it } from "bun:test";
 
 import type { BunRequest } from "bun";
-import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";
-import type { ToolCaller } from "../tools/core";
-import type { CreateMcpServerOptions } from "./create-server";
+import type { AiToolDeps, ToolCaller } from "../adapter";
+import type { CallToolResult, CreateMcpServerOptions } from "../../../../ai/src/mcp/create-server";
 
 const { env } = await import("../../singletons/env");
+const { makeAiToolDeps } = await import("../../singletons/ai");
 const { createJWTService } = await import("../../authentication/jwt");
 const { getSchema } = await import("../../configuration/getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
 const { columnFieldName } = await import("../../databases/transformers/graphqlName");
-const { createMcpServer } = await import("./create-server");
-const { GRAPHORIA_MCP_INSTRUCTIONS } = await import("./instructions");
+const { createMcpServer } = await import("../../../../ai/src/mcp/create-server");
+const { GRAPHORIA_MCP_INSTRUCTIONS } = await import("../../../../ai/src/mcp/instructions");
+
+const deps: AiToolDeps = makeAiToolDeps(env);
 
 const OPENAPI: OpenAPIV3_1.Document = {
   openapi: "3.1.0",
@@ -39,7 +41,7 @@ const serverFor = (
   options?: CreateMcpServerOptions,
   role: GetSchemaReturn = buildRole(),
   caller: ToolCaller = {},
-) => createMcpServer(role, caller, OPENAPI, options);
+) => createMcpServer(deps, role, caller, OPENAPI, options);
 
 type PromptMessage = {
   role: "user" | "assistant";

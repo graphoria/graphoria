@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
-import { INTEGRATION_ENABLED } from "./config";
-
 /**
  * Each LLM provider hands the agent's signal to its HTTP call: against a server
  * that never answers, the call rejects once the signal fires instead of
@@ -14,7 +12,7 @@ import { INTEGRATION_ENABLED } from "./config";
 
 const ABORTED = /aborted|timed out/;
 
-describe.skipIf(!INTEGRATION_ENABLED)("LLM providers abort on the agent's signal", () => {
+describe.skipIf(!process.env.INTEGRATION)("LLM providers abort on the agent's signal", () => {
   let server: ReturnType<typeof Bun.serve>;
   let ollamaConfig: { host: string };
   let previousOllamaHost: string;
@@ -26,7 +24,7 @@ describe.skipIf(!INTEGRATION_ENABLED)("LLM providers abort on the agent's signal
   beforeAll(async () => {
     server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
 
-    ({ config: ollamaConfig } = await import("../../ai/agent/providers/ollama"));
+    ({ config: ollamaConfig } = await import("../src/agent/providers/ollama"));
     previousOllamaHost = ollamaConfig.host;
     ollamaConfig.host = url();
 
@@ -42,7 +40,7 @@ describe.skipIf(!INTEGRATION_ENABLED)("LLM providers abort on the agent's signal
   });
 
   it("ollama", async () => {
-    const { ollamaProvider } = await import("../../ai/agent/providers/ollama");
+    const { ollamaProvider } = await import("../src/agent/providers/ollama");
 
     await expect(ollamaProvider.chat(message, [], AbortSignal.timeout(50))).rejects.toThrow(
       ABORTED,
@@ -50,14 +48,14 @@ describe.skipIf(!INTEGRATION_ENABLED)("LLM providers abort on the agent's signal
   });
 
   it("openai-compatible", async () => {
-    const { makeOpenAICompatible } = await import("../../ai/agent/providers/openai");
+    const { makeOpenAICompatible } = await import("../src/agent/providers/openai");
     const provider = makeOpenAICompatible({ apiKey: "test", model: "m", baseURL: url() });
 
     await expect(provider.chat(message, [], AbortSignal.timeout(50))).rejects.toThrow(ABORTED);
   });
 
   it("anthropic", async () => {
-    const { makeAnthropic } = await import("../../ai/agent/providers/anthropic");
+    const { makeAnthropic } = await import("../src/agent/providers/anthropic");
     const provider = makeAnthropic({ apiKey: "test", model: "m" });
 
     await expect(provider.chat(message, [], AbortSignal.timeout(50))).rejects.toThrow(ABORTED);

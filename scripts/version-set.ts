@@ -24,9 +24,9 @@ for (const relative of manifests.sort()) {
     process.exit(1);
   }
 
-  // The graphoria and queues packages pin the server of their own version; the
-  // server pins the queues package it optionally peers with.
-  const pin = /^(\s*"(@graphoria\/(?:server|queues))":\s*)"[^"]*"/m;
+  // The graphoria, queues and ai packages pin the server of their own version;
+  // the server pins the queues and ai packages it optionally peers with.
+  const pin = /^(\s*"(@graphoria\/(?:server|queues|ai))":\s*)"[^"]*"/gm;
   const pinned = source.match(pin)?.[2];
 
   // Rewrite the text rather than round-tripping through JSON, so key order,
