@@ -1,4 +1,4 @@
-import type { Provider } from "../types";
+import type { Provider } from "../../adapter";
 
 function requireEnv(key: string): string {
   const value = process.env[key];

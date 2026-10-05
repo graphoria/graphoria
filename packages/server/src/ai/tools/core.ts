@@ -17,8 +17,7 @@ import {
 
 import type { BunRequest } from "bun";
 import type { GraphQLNamedType, GraphQLSchema } from "graphql";
-import type { SchemaEntities } from "../../configuration/getSchemas";
-import type { SessionContext } from "../../utils/sessionVariables";
+import type { RoleEntities, RoleGraphQL, ToolCaller, ValidationError } from "../adapter";
 
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule } from "../../analyzeQuery/depthLimit";
@@ -26,32 +25,7 @@ import { categorizeSqlType, isNumericType, SqlTypeCategory } from "../../databas
 import { columnFieldName } from "../../databases/transformers/graphqlName";
 import { env } from "../../singletons/env";
 
-/**
- * The two GraphQL entry points a tool calls, spelled out rather than taken from
- * the factory's return type: the GraphQL factory hands its own role to the
- * agent while that type is still being inferred.
- */
-export type RoleGraphQL = {
-  hasErrors: (
-    query: string,
-    options?: { variables?: Record<string, unknown> },
-  ) => { hasErrors: boolean; validationErrors: readonly ValidationError[] };
-  handler: (
-    query: string,
-    variables?: Record<string, unknown>,
-    req?: BunRequest,
-    session?: SessionContext,
-  ) => Promise<unknown>;
-};
-
-/**
- * The caller's compiled role: its entities and its GraphQL handler. Shared by
- * the MCP server and the AI agent, which both read through it.
- */
-export type RoleEntities = SchemaEntities & { handlers: { gql: RoleGraphQL } };
-
-/** Who a tool call runs for. `req` is the caller's own request: remote `forwardHeaders` read it. */
-export type ToolCaller = { session?: SessionContext; req?: BunRequest };
+export type { RoleEntities, RoleGraphQL, ToolCaller, ValidationError };
 
 export const ENTITY_KINDS = [
   "table",
@@ -258,11 +232,6 @@ const findRootField = (
 };
 
 // ---- Query validation ----
-
-export type ValidationError = {
-  message: string;
-  locations?: ReadonlyArray<{ line: number; column: number }>;
-};
 
 export type ValidateQueryFn = (
   query: string,

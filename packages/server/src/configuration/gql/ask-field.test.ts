@@ -2,11 +2,11 @@ process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
 import { describe, expect, it } from "bun:test";
-import type { Auth } from "../types/configuration";
+import type { Auth } from "../../types/configuration";
 
-const { getSchema, getSchemas } = await import("../configuration/getSchemas");
-const { StoreMSSQL } = await import("../__test/dataset/store");
-const { EntitySource } = await import("../types/resolver");
+const { getSchema, getSchemas } = await import("../../configuration/getSchemas");
+const { StoreMSSQL } = await import("../../__test/dataset/store");
+const { EntitySource } = await import("../../types/resolver");
 
 const entities = {
   tables: StoreMSSQL.tables,

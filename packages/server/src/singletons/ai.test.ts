@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import type { Env } from "../types/env";
 import type { BunRequest } from "bun";
-import type { ChatResult, Provider } from "../ai/agent/types";
+import type { ChatResult, Provider } from "../ai/adapter";
 
 const { getSchema } = await import("../configuration/getSchemas");
 const { StoreMSSQL } = await import("../__test/dataset/store");

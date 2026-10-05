@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ChatResult, Message, Provider, ToolDefinition } from "../types";
+import type { ChatResult, Message, Provider, ToolDefinition } from "../../adapter";
 
 type OAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type OAITool = OpenAI.Chat.Completions.ChatCompletionTool;

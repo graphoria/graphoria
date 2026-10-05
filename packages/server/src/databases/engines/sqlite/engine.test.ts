@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Provider } from "../../../ai/agent/types";
+import type { Provider } from "../../../ai/adapter";
 
 // `singletons/env` parses process.env at module load.
 process.env.ADMIN_SECRET ??= "test-admin-secret";

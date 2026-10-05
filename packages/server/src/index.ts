@@ -63,6 +63,26 @@ export type { KafkaConfig, QueueConfig, RabbitMQConfig } from "./types/zod/queue
 export type { QueueConnectionStatus, QueueManager } from "./singletons/queues";
 export { setQueueAdapter } from "./singletons/queues";
 
+export type {
+  Agent,
+  AgentCaller,
+  AiPackage,
+  AiToolDeps,
+  ChatResult,
+  CreateMCPRoutesOptions,
+  GetSchemaReturn,
+  McpCaller,
+  Message,
+  Provider,
+  RoleEntities,
+  RoleGraphQL,
+  ToolCall,
+  ToolCaller,
+  ToolDefinition,
+  ToolFunction,
+  ValidationError,
+} from "./ai/adapter";
+
 type RouteHandler =
   | Response
   | ((req: BunRequest, server: Bun.Server<unknown>) => Response | Promise<Response | undefined>);

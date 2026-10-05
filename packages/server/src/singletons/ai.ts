@@ -1,10 +1,11 @@
-import type { BunRequest } from "bun";
+import type { Agent, AgentCaller, RoleEntities } from "../ai/adapter";
 import type { Env } from "../types/env";
 import type { AIConfig } from "../types/zod/ai";
-import type { SessionContext } from "../utils/sessionVariables";
 
-import { ask, buildAgentTools, type RoleEntities } from "../ai";
+import { ask, buildAgentTools } from "../ai";
 import { scopedCredentialRole } from "../authentication/capabilities";
+
+export type { AgentCaller, RoleEntities };
 
 /**
  * Default system prompt: pins the agent to the list → describe → execute
@@ -54,11 +55,6 @@ CRITICAL RULES:
 - The \`entity\` field is the EXACT resolverName from step 1 (e.g. "pg_public_contacts", NOT "contacts").
 - Filter operators: eq, neq, like, ilike, gt, gte, lt, lte, is_null. Use \`{ "is_null": true }\` for NULL checks.
 - If you are unsure about ANYTHING, call a tool. Do not guess.`;
-
-/** Who an agent call answers for: its role, its session and its request. */
-export type AgentCaller = { role: RoleEntities; session?: SessionContext; req?: BunRequest };
-
-export type Agent = (prompt: string, caller: AgentCaller) => Promise<string>;
 
 type AgentSettings = { systemPrompt: string; wrap: (prompt: string) => string; timeoutMs: number };
 

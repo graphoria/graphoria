@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { ChatResult, Message, Provider, Tool, ToolDefinition } from "./types";
+import type { ChatResult, Message, Provider, ToolDefinition } from "../adapter";
+import type { Tool } from "./types";
 import { getProvider } from "./providers";
 import { logger } from "../../logging";
 

@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ChatResult, Message, Provider, ToolCall, ToolDefinition } from "../types";
+import type { ChatResult, Message, Provider, ToolCall, ToolDefinition } from "../../adapter";
 
 export interface AnthropicConfig {
   apiKey: string;

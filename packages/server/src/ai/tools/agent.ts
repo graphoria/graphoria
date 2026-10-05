@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { RoleEntities, ToolCaller } from "./core";
+import type { RoleEntities, ToolCaller } from "../adapter";
 import type { Tool } from "../agent/types";
 
 import {
