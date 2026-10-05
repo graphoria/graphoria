@@ -17,15 +17,7 @@ import {
 
 import type { BunRequest } from "bun";
 import type { GraphQLNamedType, GraphQLSchema } from "graphql";
-import type { RoleEntities, RoleGraphQL, ToolCaller, ValidationError } from "../adapter";
-
-import { checkQueryCost } from "../../analyzeQuery/costLimit";
-import { depthLimitRule } from "../../analyzeQuery/depthLimit";
-import { categorizeSqlType, isNumericType, SqlTypeCategory } from "../../databases/sqlTypeUtils";
-import { columnFieldName } from "../../databases/transformers/graphqlName";
-import { env } from "../../singletons/env";
-
-export type { RoleEntities, RoleGraphQL, ToolCaller, ValidationError };
+import type { AiToolDeps, RoleEntities, ToolCaller, ValidationError } from "@graphoria/server";
 
 export const ENTITY_KINDS = [
   "table",
@@ -105,42 +97,44 @@ type DescribableColumn = {
 const realColumns = <T extends DescribableColumn>(cols: readonly T[]): T[] =>
   cols.filter((c) => !c.virtual);
 
-const pickGroupByColumn = (cols: readonly DescribableColumn[]): string | null => {
+const pickGroupByColumn = (deps: AiToolDeps, cols: readonly DescribableColumn[]): string | null => {
   const real = realColumns(cols);
   if (!real.length) return null;
   const stringNonId = real.find(
     (c) =>
-      categorizeSqlType(c.dataType) === SqlTypeCategory.STRING &&
+      deps.categorizeSqlType(c.dataType) === "STRING" &&
       !c.isNullable &&
       c.name !== "id" &&
       !c.name.endsWith("_id"),
   );
-  return columnFieldName(stringNonId ?? real[0]);
+  return deps.columnFieldName(stringNonId ?? real[0]);
 };
 
 const buildFilterExample = (
+  deps: AiToolDeps,
   resolverName: string,
   cols: readonly DescribableColumn[],
   sampleFields: readonly string[],
 ): string | null => {
   const real = realColumns(cols);
   const sub = sampleFields.join("\n    ");
-  const stringCol = real.find((c) => categorizeSqlType(c.dataType) === SqlTypeCategory.STRING);
+  const stringCol = real.find((c) => deps.categorizeSqlType(c.dataType) === "STRING");
   if (stringCol) {
-    return `query {\n  ${resolverName}(where: { ${columnFieldName(stringCol)}: { like: "%search%" } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${deps.columnFieldName(stringCol)}: { like: "%search%" } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
-  const numericCol = real.find((c) => isNumericType(c.dataType));
+  const numericCol = real.find((c) => deps.isNumericType(c.dataType));
   if (numericCol) {
-    return `query {\n  ${resolverName}(where: { ${columnFieldName(numericCol)}: { gt: 0 } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${deps.columnFieldName(numericCol)}: { gt: 0 } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
-  const boolCol = real.find((c) => categorizeSqlType(c.dataType) === SqlTypeCategory.BOOLEAN);
+  const boolCol = real.find((c) => deps.categorizeSqlType(c.dataType) === "BOOLEAN");
   if (boolCol) {
-    return `query {\n  ${resolverName}(where: { ${columnFieldName(boolCol)}: { eq: true } }, limit: 10) {\n    ${sub}\n  }\n}`;
+    return `query {\n  ${resolverName}(where: { ${deps.columnFieldName(boolCol)}: { eq: true } }, limit: 10) {\n    ${sub}\n  }\n}`;
   }
   return null;
 };
 
 const buildTableExamples = (
+  deps: AiToolDeps,
   resolverName: string,
   cols: readonly DescribableColumn[],
 ): {
@@ -149,20 +143,20 @@ const buildTableExamples = (
   aggregate: string | null;
 } | null => {
   const real = realColumns(cols);
-  const sampleFields = real.slice(0, 4).map(columnFieldName);
+  const sampleFields = real.slice(0, 4).map(deps.columnFieldName);
   if (!sampleFields.length) return null;
 
   const sub = sampleFields.join("\n    ");
   const list = `query {\n  ${resolverName}(limit: 10) {\n    ${sub}\n  }\n}`;
 
-  const filter = buildFilterExample(resolverName, cols, sampleFields);
+  const filter = buildFilterExample(deps, resolverName, cols, sampleFields);
 
-  const groupCol = pickGroupByColumn(cols);
+  const groupCol = pickGroupByColumn(deps, cols);
   let aggregate: string | null = null;
   if (groupCol) {
-    const numericCol = real.find((c) => isNumericType(c.dataType));
+    const numericCol = real.find((c) => deps.isNumericType(c.dataType));
     const numericAggLines = numericCol
-      ? `\n    sum { ${columnFieldName(numericCol)} }\n    avg { ${columnFieldName(numericCol)} }`
+      ? `\n    sum { ${deps.columnFieldName(numericCol)} }\n    avg { ${deps.columnFieldName(numericCol)} }`
       : "";
     const itemFields = sampleFields.slice(0, 3).join(" ");
     aggregate = `query {\n  ${resolverName}_aggregate(groupBy: [${groupCol}]) {\n    key { ${groupCol} }\n    count${numericAggLines}\n    items { ${itemFields} }\n  }\n}`;
@@ -178,6 +172,7 @@ const buildTableExamples = (
  * column it cannot read is left out; the relationship field needs no column.
  */
 const joinColumnFields = (
+  deps: AiToolDeps,
   role: RoleEntities,
   {
     fromInternalName,
@@ -193,7 +188,7 @@ const joinColumnFields = (
     const found = role.tables
       .find((t) => t.resolverName === table)
       ?.columns.find((c) => c.name === column);
-    return found && columnFieldName(found);
+    return found && deps.columnFieldName(found);
   };
 
   return columns.flatMap(({ source, target }) => {
@@ -252,7 +247,7 @@ export type ValidateQueryFn = (
  * argument for asking a database for more rows.
  */
 export const makeValidateQuery =
-  (role: RoleEntities, maxQueryDepth?: number): ValidateQueryFn =>
+  (deps: AiToolDeps, role: RoleEntities, maxQueryDepth?: number): ValidateQueryFn =>
   (query, variables) => {
     if (maxQueryDepth === undefined || maxQueryDepth <= 0) {
       return role.handlers.gql.hasErrors(query, { variables });
@@ -260,17 +255,17 @@ export const makeValidateQuery =
     const document = parse(query);
     const errors = validate(role.schema, document, [
       ...specifiedRules,
-      depthLimitRule(maxQueryDepth),
+      deps.depthLimitRule(maxQueryDepth),
     ]);
     if (errors.length > 0) return { hasErrors: true, validationErrors: errors };
 
-    if (env.maxQueryCost > 0) {
-      const costError = checkQueryCost(
+    if (deps.maxQueryCost > 0) {
+      const costError = deps.checkQueryCost(
         document,
         role.schema,
         variables ?? {},
-        { defaultPageSize: env.defaultPageSize, maxPageSize: env.maxPageSize },
-        env.maxQueryCost,
+        { defaultPageSize: deps.defaultPageSize, maxPageSize: deps.maxPageSize },
+        deps.maxQueryCost,
       );
       if (costError) return { hasErrors: true, validationErrors: [costError] };
     }
@@ -316,11 +311,13 @@ export type GraphqlExecOutcome =
  * callers (MCP, AI agent) shape their own responses.
  */
 export const executeGraphqlCore = async (
+  deps: AiToolDeps,
   role: RoleEntities,
   validateQuery: ValidateQueryFn,
   { query, variables }: { query: string; variables?: Record<string, unknown> },
   { session, req }: ToolCaller,
 ): Promise<GraphqlExecOutcome> => {
+  void deps;
   try {
     if (containsNonQueryOperation(query)) return { kind: "non_query" };
 
@@ -451,8 +448,8 @@ export const listEntitiesCore = (
 };
 
 /** The fields a `query_data` list selects when it names none: every column the role reads. */
-export const tableFieldNames = (role: RoleEntities, entity: string): string[] =>
-  role.tables.find((t) => t.resolverName === entity)?.columns.map(columnFieldName) ?? [];
+export const tableFieldNames = (deps: AiToolDeps, role: RoleEntities, entity: string): string[] =>
+  role.tables.find((t) => t.resolverName === entity)?.columns.map(deps.columnFieldName) ?? [];
 
 // ---- describe_entity ----
 
@@ -462,6 +459,7 @@ export const tableFieldNames = (role: RoleEntities, entity: string): string[] =>
  * type. Returns `null` when nothing matches.
  */
 export const describeEntityCore = (
+  deps: AiToolDeps,
   role: RoleEntities,
   { name, kind }: { name: string; kind?: EntityKind },
 ): Record<string, unknown> | null => {
@@ -477,7 +475,7 @@ export const describeEntityCore = (
         tableName: t.name,
         description: t.tableDescription ?? null,
         columns: t.columns.map((c) => ({
-          name: columnFieldName(c),
+          name: deps.columnFieldName(c),
           dataType: c.dataType,
           nullable: c.isNullable,
           description: c.description ?? null,
@@ -485,15 +483,15 @@ export const describeEntityCore = (
         })),
         relationships: t.relationships.map((r) => ({
           to: r.toResolverName,
-          columns: joinColumnFields(role, r),
+          columns: joinColumnFields(deps, role, r),
         })),
         relationshipsReversed: t.relationshipsReversed.map((r) => ({
           from: r.fromResolverName,
-          columns: joinColumnFields(role, r),
+          columns: joinColumnFields(deps, role, r),
         })),
         graphqlField: findRootField(schema, name),
         aggregateField: findRootField(schema, `${name}_aggregate`),
-        examples: buildTableExamples(t.resolverName, t.columns),
+        examples: buildTableExamples(deps, t.resolverName, t.columns),
       };
     },
     operation: () => {

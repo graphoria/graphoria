@@ -1,4 +1,4 @@
-import type { Provider } from "../../adapter";
+import type { Provider } from "@graphoria/server";
 
 function requireEnv(key: string): string {
   const value = process.env[key];

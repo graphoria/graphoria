@@ -307,7 +307,8 @@ describe("sqlite engine, the agent", () => {
   };
 
   it("answers ask through the agent, whose tools read this engine's database", async () => {
-    const { setProvider } = await import("../../../ai/agent/providers");
+    const { importAiPackage } = await import("../../../singletons/ai");
+    const { setProvider } = (await importAiPackage())!;
     setProvider(readingOrganizations);
     try {
       const data = await run<{ ask: string }>(`{ ask(prompt: "which organizations?") }`);

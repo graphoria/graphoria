@@ -4,15 +4,20 @@ process.env.JWT_SECRET ??= "test-jwt";
 import { afterEach, describe, expect, it } from "bun:test";
 
 import type { BunRequest } from "bun";
-import type { Provider, Tool } from "../agent/types";
-import type { EntityListItem } from "./core";
+import type { Provider } from "../adapter";
+import type { Tool } from "../../../../ai/src/tools/agent";
+import type { EntityListItem } from "../../../../ai/src/tools/core";
 
 const { getSchema } = await import("../../configuration/getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
-const { buildAgentTools } = await import("./agent");
-const { ask } = await import("../agent/agent");
-const { setProvider } = await import("../agent/providers");
+const { env } = await import("../../singletons/env");
+const { makeAiToolDeps } = await import("../../singletons/ai");
+const { buildAgentTools } = await import("../../../../ai/src/tools/agent");
+const { ask } = await import("../../../../ai/src/agent/agent");
+const { setProvider } = await import("../../../../ai/src/agent/providers");
 const { columnFieldName } = await import("../../databases/transformers/graphqlName");
+
+const deps = makeAiToolDeps(env);
 
 const buildRole = (includeAI = false) =>
   getSchema(
@@ -29,11 +34,12 @@ const buildRole = (includeAI = false) =>
     includeAI,
   );
 
-const findTool = (name: string) => buildAgentTools(buildRole(), {}).find((t) => t.name === name)!;
+const findTool = (name: string) =>
+  buildAgentTools(deps, buildRole(), {}).find((t) => t.name === name)!;
 
 describe("buildAgentTools", () => {
   it("exposes list_entities, describe_entity, graphql_execute", () => {
-    const tools = buildAgentTools(buildRole(), {});
+    const tools = buildAgentTools(deps, buildRole(), {});
     expect(tools.map((t) => t.name).sort()).toEqual([
       "describe_entity",
       "graphql_execute",
@@ -113,7 +119,7 @@ describe("buildAgentTools — the caller", () => {
     const req = new Request("http://graphoria.test/rest/ai") as unknown as BunRequest;
     const table = role.tables[0]!;
     const field = columnFieldName(table.columns[0]!);
-    const tools = buildAgentTools(recorded, { session, req });
+    const tools = buildAgentTools(deps, recorded, { session, req });
 
     await tools
       .find((t) => t.name === "graphql_execute")!
@@ -136,6 +142,7 @@ describe("buildAgentTools — query_data", () => {
     const role = buildRole();
     const queries: unknown[] = [];
     const tools = buildAgentTools(
+      deps,
       {
         ...role,
         handlers: {
@@ -169,7 +176,7 @@ describe("buildAgentTools — query_data", () => {
 
   const askWith = (tools: Tool[], args: Record<string, unknown>) => {
     setProvider(callingQueryData(args));
-    return ask("question", tools, "system", (prompt) => prompt);
+    return ask(deps.logger, "question", tools, "system", (prompt) => prompt);
   };
 
   it("selects every column the role reads when it names none", async () => {

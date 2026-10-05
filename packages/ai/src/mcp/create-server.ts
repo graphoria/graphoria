@@ -3,8 +3,7 @@ import { z } from "zod";
 
 import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/server";
 import type { OpenAPIV3_1 } from "openapi-types";
-import type { GetSchemaReturn } from "../../configuration/getSchemas";
-import type { ToolCaller } from "../tools/core";
+import type { AiToolDeps, GetSchemaReturn, ToolCaller } from "@graphoria/server";
 import type { StructuredQueryInput } from "../tools/query-data";
 
 import { GRAPHORIA_MCP_INSTRUCTIONS } from "./instructions";
@@ -17,7 +16,6 @@ import {
   synthesizeRequest,
   tableFieldNames,
 } from "../tools/core";
-import { logger } from "../../logging";
 import { buildStructuredQuery, queryDataSchema } from "../tools/query-data";
 
 export type CreateMcpServerOptions = {
@@ -43,6 +41,7 @@ const jsonResult = (value: unknown): CallToolResult => ({
  * with the caller's session, as its own `/graphql` and `/rest` requests would.
  */
 export const createMcpServer = (
+  deps: AiToolDeps,
   role: GetSchemaReturn,
   caller: ToolCaller,
   openapi: OpenAPIV3_1.Document,
@@ -71,7 +70,7 @@ export const createMcpServer = (
 
   const { handlers, typeDefs, introspection } = role;
 
-  const validateQuery = makeValidateQuery(role, maxQueryDepth);
+  const validateQuery = makeValidateQuery(deps, role, maxQueryDepth);
 
   const registerToolIfEnabled: typeof server.registerTool = ((
     toolName: string,
@@ -115,8 +114,8 @@ export const createMcpServer = (
     async (args): Promise<CallToolResult> => {
       try {
         const input = args as StructuredQueryInput;
-        const query = buildStructuredQuery(input, tableFieldNames(role, input.entity));
-        const outcome = await executeGraphqlCore(role, validateQuery, { query }, caller);
+        const query = buildStructuredQuery(input, tableFieldNames(deps, role, input.entity));
+        const outcome = await executeGraphqlCore(deps, role, validateQuery, { query }, caller);
         switch (outcome.kind) {
           case "non_query":
             return errorResult("Internal: built query is not a query.");
@@ -147,7 +146,13 @@ export const createMcpServer = (
       }),
     },
     async ({ query, variables }): Promise<CallToolResult> => {
-      const outcome = await executeGraphqlCore(role, validateQuery, { query, variables }, caller);
+      const outcome = await executeGraphqlCore(
+        deps,
+        role,
+        validateQuery,
+        { query, variables },
+        caller,
+      );
       switch (outcome.kind) {
         case "non_query":
           return errorResult(
@@ -250,7 +255,7 @@ export const createMcpServer = (
     },
     async ({ name, kind }): Promise<CallToolResult> => {
       try {
-        const result = describeEntityCore(role, { name, kind });
+        const result = describeEntityCore(deps, role, { name, kind });
         if (!result)
           return errorResult(kind ? `${kind} '${name}' not found.` : `Entity '${name}' not found.`);
         return jsonResult(result);
@@ -435,7 +440,7 @@ Present grouped results as a Markdown table with the grouped-by column(s) and th
   );
 
   server.server.onerror = (err: unknown) => {
-    logger("mcp").error({ err }, "server error");
+    deps.logger("mcp").error({ err }, "server error");
   };
 
   return server;

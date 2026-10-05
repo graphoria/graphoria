@@ -110,8 +110,6 @@
         "graphoria": "./cli.ts",
       },
       "dependencies": {
-        "@cfworker/json-schema": "^4.1.1",
-        "@modelcontextprotocol/server": "^2.1.0",
         "croner": "10.0.1",
         "es-toolkit": "1.52.0",
         "graphql": "^17.0.2",
@@ -130,10 +128,6 @@
       },
       "devDependencies": {
         "@types/mssql": "12.3.0",
-      },
-      "optionalDependencies": {
-        "@anthropic-ai/sdk": "^0.128.0",
-        "openai": "^7.23.0",
       },
       "peerDependencies": {
         "@graphoria/ai": "0.6.0",

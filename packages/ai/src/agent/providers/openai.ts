@@ -1,5 +1,6 @@
 import OpenAI from "openai";
-import type { ChatResult, Message, Provider, ToolDefinition } from "../../adapter";
+
+import type { ChatResult, Message, Provider, ToolDefinition } from "@graphoria/server";
 
 type OAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type OAITool = OpenAI.Chat.Completions.ChatCompletionTool;

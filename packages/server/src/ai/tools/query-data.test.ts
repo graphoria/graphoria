@@ -8,9 +8,14 @@ import type { FieldNode, OperationDefinitionNode } from "graphql";
 
 const { getSchema } = await import("../../configuration/getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
+const { env } = await import("../../singletons/env");
+const { makeAiToolDeps } = await import("../../singletons/ai");
 const { columnFieldName } = await import("../../databases/transformers/graphqlName");
-const { buildStructuredQuery, queryDataSchema } = await import("./query-data");
-const { tableFieldNames } = await import("./core");
+const { buildStructuredQuery, queryDataSchema } =
+  await import("../../../../ai/src/tools/query-data");
+const { tableFieldNames } = await import("../../../../ai/src/tools/core");
+
+const deps = makeAiToolDeps(env);
 
 const role = getSchema({
   tables: StoreMSSQL.tables,
@@ -42,7 +47,7 @@ describe("buildStructuredQuery", () => {
   it("selects every readable column when a list names none", () => {
     const query = buildStructuredQuery(
       { entity: table.resolverName, operation: "list", limit: 5 },
-      tableFieldNames(role, table.resolverName),
+      tableFieldNames(deps, role, table.resolverName),
     );
 
     for (const column of table.columns) expect(query).toContain(columnFieldName(column));
@@ -53,7 +58,7 @@ describe("buildStructuredQuery", () => {
     expect(() =>
       buildStructuredQuery(
         { entity: "nope", operation: "list", limit: 5 },
-        tableFieldNames(role, "nope"),
+        tableFieldNames(deps, role, "nope"),
       ),
     ).toThrow(/columns/);
   });

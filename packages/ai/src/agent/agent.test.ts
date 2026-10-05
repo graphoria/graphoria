@@ -3,10 +3,25 @@ process.env.JWT_SECRET ??= "test-jwt";
 
 import { afterEach, describe, expect, it } from "bun:test";
 
-import type { Provider } from "./types";
+import type { AiToolDeps, Provider } from "@graphoria/server";
 
 const { ask } = await import("./agent");
 const { setProvider } = await import("./providers");
+
+/** `ask` logs through the deps' logger; the tests need no output. */
+const logger = (() => ({
+  debug() {},
+  warn() {},
+  error() {},
+  info() {},
+  fatal() {},
+  trace() {},
+  silent() {},
+  child() {
+    return logger;
+  },
+  level: "silent" as const,
+})) as unknown as AiToolDeps["logger"];
 
 describe("ask — LLM call timeout", () => {
   afterEach(() => setProvider(null));
@@ -23,7 +38,7 @@ describe("ask — LLM call timeout", () => {
     };
     setProvider(hanging);
 
-    await expect(ask("q", [], "system", (prompt) => prompt, 20)).rejects.toThrow(
+    await expect(ask(logger, "q", [], "system", (prompt) => prompt, 20)).rejects.toThrow(
       "LLM call timed out after 20 ms",
     );
   });
@@ -38,7 +53,7 @@ describe("ask — LLM call timeout", () => {
         }),
     });
 
-    const error = await ask("q", [], "system", (prompt) => prompt, 20).catch(
+    const error = await ask(logger, "q", [], "system", (prompt) => prompt, 20).catch(
       (caught: unknown) => caught,
     );
 
@@ -55,7 +70,7 @@ describe("ask — LLM call timeout", () => {
       },
     });
 
-    await expect(ask("q", [], "system", (prompt) => prompt, 0)).rejects.toThrow("stop");
+    await expect(ask(logger, "q", [], "system", (prompt) => prompt, 0)).rejects.toThrow("stop");
     expect(signals).toEqual([undefined]);
   });
 
@@ -67,6 +82,6 @@ describe("ask — LLM call timeout", () => {
       },
     });
 
-    await expect(ask("q", [], "system", (prompt) => prompt, 60_000)).rejects.toBe(failure);
+    await expect(ask(logger, "q", [], "system", (prompt) => prompt, 60_000)).rejects.toBe(failure);
   });
 });

@@ -1,18 +1,20 @@
 process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { buildSchema, introspectionFromSchema } from "graphql";
 
 import type { BunRequest } from "bun";
 import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
-import type { RoleEntities } from "./core";
+import type { AiToolDeps, RoleEntities } from "../adapter";
 
 const { env } = await import("../../singletons/env");
+const { makeAiToolDeps } = await import("../../singletons/ai");
 const { handleGraphQLRequestFactory } =
   await import("../../configuration/gql/handleGraphQLRequestFactory");
-const { describeEntityCore, executeGraphqlCore, makeValidateQuery } = await import("./core");
+const { describeEntityCore, executeGraphqlCore, makeValidateQuery } =
+  await import("../../../../ai/src/tools/core");
 
 const sdl = `
   type Query {
@@ -45,20 +47,19 @@ const role = {
 
 const PAGINATED = "query ($n: Int) { users(limit: $n) { id name posts { id } } }";
 
+// `validateQuery` below is created at describe-evaluation time, so `deps` must
+// exist then too — a `beforeAll` assignment would arrive too late for it.
+const previousCost = env.maxQueryCost;
+env.maxQueryCost = 10_000;
+const deps: AiToolDeps = makeAiToolDeps(env);
+
+afterAll(() => {
+  env.maxQueryCost = previousCost;
+});
+
 describe("makeValidateQuery — cost limit", () => {
-  let previous: number;
-
-  beforeAll(() => {
-    previous = env.maxQueryCost;
-    env.maxQueryCost = 10_000;
-  });
-
-  afterAll(() => {
-    env.maxQueryCost = previous;
-  });
-
   describe("delegating to the role's own validator", () => {
-    const validateQuery = makeValidateQuery(role);
+    const validateQuery = makeValidateQuery(deps, role);
 
     it("passes a query its variables keep within budget", () => {
       expect(validateQuery(PAGINATED, { n: 1 }).hasErrors).toBe(false);
@@ -73,7 +74,7 @@ describe("makeValidateQuery — cost limit", () => {
   });
 
   describe("with its own depth override", () => {
-    const validateQuery = makeValidateQuery(role, 20);
+    const validateQuery = makeValidateQuery(deps, role, 20);
 
     it("passes a query its variables keep within budget", () => {
       expect(validateQuery(PAGINATED, { n: 1 }).hasErrors).toBe(false);
@@ -92,9 +93,10 @@ describe("makeValidateQuery — cost limit", () => {
   });
 
   it("budgets a tool call against the variables it was handed", async () => {
-    const validateQuery = makeValidateQuery(role);
+    const validateQuery = makeValidateQuery(deps, role);
 
     const outcome = await executeGraphqlCore(
+      deps,
       role,
       validateQuery,
       { query: PAGINATED, variables: { n: 1000 } },
@@ -131,8 +133,9 @@ describe("executeGraphqlCore — the caller", () => {
     }) as unknown as BunRequest;
 
     await executeGraphqlCore(
+      deps,
       recorded,
-      makeValidateQuery(recorded),
+      makeValidateQuery(deps, recorded),
       { query: "{ users { id } }" },
       { session, req },
     );
@@ -145,8 +148,9 @@ describe("executeGraphqlCore — the caller", () => {
     const { calls, role: recorded } = recording();
 
     await executeGraphqlCore(
+      deps,
       recorded,
-      makeValidateQuery(recorded),
+      makeValidateQuery(deps, recorded),
       { query: "{ users { id } }" },
       {},
     );
@@ -193,7 +197,13 @@ describe("executeGraphqlCore — the agent's own field", () => {
   ])("refuses %s without running it", async (query) => {
     const { queries, role } = recording();
 
-    const outcome = await executeGraphqlCore(role, makeValidateQuery(role), { query }, {});
+    const outcome = await executeGraphqlCore(
+      deps,
+      role,
+      makeValidateQuery(deps, role),
+      { query },
+      {},
+    );
 
     expect(outcome).toEqual({
       kind: "error",
@@ -206,8 +216,9 @@ describe("executeGraphqlCore — the agent's own field", () => {
     const { queries, role } = recording();
 
     const outcome = await executeGraphqlCore(
+      deps,
       role,
-      makeValidateQuery(role),
+      makeValidateQuery(deps, role),
       { query: "{ notes { ask } }" },
       {},
     );
@@ -343,7 +354,10 @@ describe("describeEntityCore", () => {
   } as unknown as RoleEntities;
 
   it("names a table's columns as their GraphQL fields", () => {
-    const described = describeEntityCore(describing, { name: "shop_people", kind: "table" }) as {
+    const described = describeEntityCore(deps, describing, {
+      name: "shop_people",
+      kind: "table",
+    }) as {
       columns: { name: string }[];
       examples: { list: string; filter: string; aggregate: string };
     };
@@ -356,7 +370,7 @@ describe("describeEntityCore", () => {
   it("names the numeric and boolean filters and the sums by their GraphQL fields", () => {
     const examplesOf = (name: string) =>
       (
-        describeEntityCore(describing, { name, kind: "table" }) as {
+        describeEntityCore(deps, describing, { name, kind: "table" }) as {
           examples: { filter: string; aggregate: string };
         }
       ).examples;
@@ -372,8 +386,8 @@ describe("describeEntityCore", () => {
 
   it("keeps upstream addresses out of a remote schema or API", () => {
     const text = JSON.stringify([
-      describeEntityCore(describing, { name: "billing", kind: "remote_schema" }),
-      describeEntityCore(describing, { name: "payments", kind: "remote_rest" }),
+      describeEntityCore(deps, describing, { name: "billing", kind: "remote_schema" }),
+      describeEntityCore(deps, describing, { name: "payments", kind: "remote_rest" }),
     ]);
 
     expect(text).toContain("billing");
@@ -385,7 +399,7 @@ describe("describeEntityCore", () => {
     const described = Object.fromEntries(
       ["shop_orders", "shop_customers", "shop_sellers", "shop_regions"].map((name) => [
         name,
-        describeEntityCore(describing, { name, kind: "table" }) as {
+        describeEntityCore(deps, describing, { name, kind: "table" }) as {
           relationships: unknown[];
           relationshipsReversed: unknown[];
         },
@@ -414,10 +428,16 @@ describe("describeEntityCore", () => {
   });
 
   it("finds join columns by table, not by a relationship's suffixed field name", () => {
-    const transfers = describeEntityCore(describing, { name: "shop_transfers", kind: "table" }) as {
+    const transfers = describeEntityCore(deps, describing, {
+      name: "shop_transfers",
+      kind: "table",
+    }) as {
       relationships: unknown[];
     };
-    const accounts = describeEntityCore(describing, { name: "shop_accounts", kind: "table" }) as {
+    const accounts = describeEntityCore(deps, describing, {
+      name: "shop_accounts",
+      kind: "table",
+    }) as {
       relationshipsReversed: unknown[];
     };
 

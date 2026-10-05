@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ChatResult, Message, Provider, ToolCall, ToolDefinition } from "../../adapter";
+
+import type { ChatResult, Message, Provider, ToolCall, ToolDefinition } from "@graphoria/server";
 
 export interface AnthropicConfig {
   apiKey: string;

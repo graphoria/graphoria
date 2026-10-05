@@ -6,6 +6,6 @@
       "@graphoria/server": ["../server/src/index.ts"]
     }
   },
-  "include": ["src/**/*", "integration/**/*", "package.json"],
+  "include": ["src/**/*", "integration/**/*", "../server/src/ai/**/*.test.ts", "package.json"],
   "exclude": ["node_modules", "dist"]
 }
