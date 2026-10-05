@@ -12,7 +12,7 @@ import { analyzeQuery } from "../../analyzeQuery";
 import { LruCacheStore, RedisCacheStore, registerCache } from "../../singletons/cache";
 import { env } from "../../singletons/env";
 
-type LruOptions = LRUCache.Options<string, unknown, unknown>;
+type LruOptions = LRUCache.Options<string, string, unknown>;
 
 export type AuthOperation = "login" | "logout" | "refresh" | "me";
 
@@ -74,7 +74,12 @@ export const buildApiRoutes = (
         const cacheOptions: Partial<LruOptions> = {};
 
         if (routeConfig.cache.max) cacheOptions.max = routeConfig.cache.max;
-        if (routeConfig.cache.maxSize) cacheOptions.maxSize = routeConfig.cache.maxSize;
+        if (routeConfig.cache.maxSize) {
+          cacheOptions.maxSize = routeConfig.cache.maxSize;
+          // lru-cache needs every entry's size once maxSize is set. An entry is
+          // the response's JSON text, so its size is the text's length.
+          cacheOptions.sizeCalculation = (value: string) => value.length;
+        }
         if (routeConfig.cache.ttl) cacheOptions.ttl = routeConfig.cache.ttl;
         if (routeConfig.cache.allowStale !== undefined)
           cacheOptions.allowStale = routeConfig.cache.allowStale;

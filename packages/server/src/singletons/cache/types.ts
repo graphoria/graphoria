@@ -1,6 +1,6 @@
 export interface CacheStore {
-  get(key: string): Promise<unknown | undefined>;
-  set(key: string, value: unknown): Promise<void>;
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
   delete(key: string): Promise<void>;
   clear(): Promise<void>;
   keys(): Promise<string[]>;

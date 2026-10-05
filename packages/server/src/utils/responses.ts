@@ -1,19 +1,33 @@
+const setClientHeaders = (headers: Headers) => {
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Credentials", "true");
+  headers.set("Access-Control-Allow-Methods", "*");
+  headers.set("Access-Control-Allow-Headers", "*");
+
+  headers.set("Content-Type", "application/json");
+};
+
 export class ClientResponse extends Response {
   constructor(body?: object | null, init?: ResponseInit) {
     super(body ? JSON.stringify(body) : null, init);
 
-    this.headers.set("Access-Control-Allow-Origin", "*");
-    this.headers.set("Access-Control-Allow-Credentials", "true");
-    this.headers.set("Access-Control-Allow-Methods", "*");
-    this.headers.set("Access-Control-Allow-Headers", "*");
-
-    this.headers.set("Content-Type", "application/json");
+    setClientHeaders(this.headers);
   }
 }
 
 export class S200 extends ClientResponse {
   constructor(body?: object | null, init?: ResponseInit) {
     super(body, { ...init, status: 200 });
+  }
+}
+
+// Sends JSON text as is. S200 encodes a string body as a JSON string, which a
+// handler that returns a string relies on, so serialized text has its own class.
+export class S200Serialized extends Response {
+  constructor(json: string) {
+    super(json, { status: 200 });
+
+    setClientHeaders(this.headers);
   }
 }
 

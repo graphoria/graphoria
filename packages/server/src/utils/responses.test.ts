@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { ClientResponse, S200, S400, S401, S404, S429, S500 } from "./responses";
+import { ClientResponse, S200, S200Serialized, S400, S401, S404, S429, S500 } from "./responses";
 
 describe("ClientResponse", () => {
   it("serializes body as JSON", async () => {
@@ -68,5 +68,22 @@ describe("S429", () => {
     const res = new S429(1000);
 
     expect([...res.headers.keys()].filter((h) => h.startsWith("x-ratelimit"))).toEqual([]);
+  });
+});
+
+describe("S200Serialized", () => {
+  it("sends pre-serialized JSON text as is", async () => {
+    const res = new S200Serialized('{"a":1}');
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"a":1}');
+  });
+
+  it("sets the same headers as S200", () => {
+    expect([...new S200Serialized("{}").headers]).toEqual([...new S200({}).headers]);
+  });
+
+  it("sends an empty text as an empty body", async () => {
+    expect(await new S200Serialized("").text()).toBe("");
   });
 });

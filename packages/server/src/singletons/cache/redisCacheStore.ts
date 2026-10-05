@@ -22,21 +22,21 @@ export class RedisCacheStore implements CacheStore {
     return `${this.prefix}${hash}`;
   }
 
-  async get(key: string): Promise<unknown | undefined> {
+  async get(key: string): Promise<string | undefined> {
     try {
       const raw = await this.client.get(this.fullKey(key));
       if (raw === null) return undefined;
-      return JSON.parse(raw);
+      return raw;
     } catch (error) {
       this.log.error({ err: error, operation: "get" }, "cache get failed");
       return undefined;
     }
   }
 
-  async set(key: string, value: unknown): Promise<void> {
+  async set(key: string, value: string): Promise<void> {
     try {
       const redisKey = this.fullKey(key);
-      await this.client.set(redisKey, JSON.stringify(value));
+      await this.client.set(redisKey, value);
       if (this.ttlSeconds) {
         await this.client.expire(redisKey, this.ttlSeconds);
       }

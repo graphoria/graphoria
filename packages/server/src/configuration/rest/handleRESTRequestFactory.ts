@@ -15,7 +15,7 @@ import { getTokenService } from "../../singletons/authentication";
 import { getCache } from "../../singletons/cache";
 import { databasesConnections, repositoryMap } from "../../singletons/databases";
 import { queueManager } from "../../singletons/queues";
-import { S200, S401, S404 } from "../../utils/responses";
+import { S200, S200Serialized, S401, S404 } from "../../utils/responses";
 import { buildApiRoutes } from "../rest";
 import { parseStringParams } from "./parseStringParams";
 import { logger } from "../../logging";
@@ -351,9 +351,9 @@ export const handleRESTRequestFactory = (
         // Try to get from cache first. A cached entry has already been through
         // afterRequest, so serve it directly without re-running the hook.
         const cachedResult = await cache.get(cacheKey);
-        if (cachedResult) {
+        if (cachedResult !== undefined) {
           log.debug({ route: route.routeKey }, "rest cache hit");
-          return new S200(cachedResult);
+          return new S200Serialized(cachedResult);
         }
         log.debug({ route: route.routeKey }, "rest cache miss");
 
@@ -364,10 +364,12 @@ export const handleRESTRequestFactory = (
             await gql.operatorQuery(queryAnalysis!, variables, req, session, route.timeout),
           );
 
-          // Cache the (already transformed) result
-          await cache.set(cacheKey, result);
+          const serialized = JSON.stringify(result);
 
-          return new S200(result);
+          // Cache the (already transformed) result
+          await cache.set(cacheKey, serialized);
+
+          return new S200Serialized(serialized);
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
           return new S401({ errors: [message] });

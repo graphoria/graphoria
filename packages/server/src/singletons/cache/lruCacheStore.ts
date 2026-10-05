@@ -2,21 +2,18 @@ import { LRUCache } from "lru-cache";
 
 import type { CacheStore } from "./types";
 
-// oxlint-disable-next-line typescript/no-explicit-any
 export class LruCacheStore implements CacheStore {
-  // oxlint-disable-next-line typescript/no-explicit-any
-  private cache: LRUCache<string, any>;
+  private cache: LRUCache<string, string>;
 
-  // oxlint-disable-next-line typescript/no-explicit-any
-  constructor(options: LRUCache.Options<string, any, unknown>) {
+  constructor(options: LRUCache.Options<string, string, unknown>) {
     this.cache = new LRUCache(options);
   }
 
-  async get(key: string): Promise<unknown | undefined> {
+  async get(key: string): Promise<string | undefined> {
     return this.cache.get(key);
   }
 
-  async set(key: string, value: unknown): Promise<void> {
+  async set(key: string, value: string): Promise<void> {
     this.cache.set(key, value);
   }
 

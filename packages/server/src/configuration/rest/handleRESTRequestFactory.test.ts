@@ -14,9 +14,11 @@ type Hooks = Record<string, any>;
 
 // oxlint-disable-next-line typescript/no-explicit-any
 let handleRESTRequestFactory: any;
+let getCache: typeof import("../../singletons/cache").getCache;
 
 beforeAll(async () => {
   ({ handleRESTRequestFactory } = await import("./handleRESTRequestFactory"));
+  ({ getCache } = await import("../../singletons/cache"));
 });
 
 const stubGql = () =>
@@ -181,6 +183,17 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
     expect(res.status).toBe(200);
   });
 
+  it("JSON-encodes a string the handler returns", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_string", { handler: () => "pong" }),
+      stubGql(),
+    );
+
+    const res = await factory.handler(new URL("http://x/test"), "/test", "GET", fakeReq());
+
+    expect(await res.text()).toBe('"pong"');
+  });
+
   it("returns 404 when no route matches the path", async () => {
     const factory = handleRESTRequestFactory(
       stubEntities("op_f", { handler: () => ({}) }),
@@ -324,17 +337,50 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
       stubGqlWithData({ ping: true }),
     );
 
-    const first = await (
-      await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"))
-    ).json();
-    const second = await (
-      await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"))
-    ).json();
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const firstText = await first.text();
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
 
     // afterRequest runs on the cache miss only; the hit reuses the cached value.
     expect(calls).toBe(1);
-    expect(first).toEqual({ data: { ping: true, n: 1 } });
-    expect(second).toEqual({ data: { ping: true, n: 1 } });
+    expect(JSON.parse(firstText)).toEqual({ data: { ping: true, n: 1 } });
+    expect(await second.text()).toBe(firstText);
+
+    const store = getCache("op_query_cached")!;
+    const [key] = await store.keys();
+    expect(await store.get(key)).toBe(firstText);
+
+    // A hit sends the stored text as is: no parse, no re-encode.
+    await store.set(key, '{ "data" : { "ping" : true } }');
+    const third = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(await third.text()).toBe('{ "data" : { "ping" : true } }');
+  });
+
+  it("answers 401 and caches nothing when the result cannot be serialized", async () => {
+    let calls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_cached_bigint", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+        hooks: {
+          afterRequest: () => {
+            calls++;
+            return { big: 1n };
+          },
+        },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(first.status).toBe(401);
+    expect(second.status).toBe(401);
+    expect(calls).toBe(2);
+    expect(await getCache("op_query_cached_bigint")!.keys()).toEqual([]);
   });
 });
 
@@ -479,5 +525,61 @@ describe("handleRESTRequestFactory route lookup", () => {
     const res = await factory.handler(new URL("http://x/users"), "/users", "POST", fakeReq("POST"));
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe("handleRESTRequestFactory memory cache size", () => {
+  // The cached entry is `{"data":{"ping":true}}`: 22 characters.
+  const sizedFactory = (maxSize: number, ping: unknown = true) => {
+    const counter = { calls: 0 };
+
+    const factory = handleRESTRequestFactory(
+      stubEntities(`op_query_max_size_${maxSize}_${ping}`, {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, maxSize },
+      }),
+      {
+        ...stubGqlWithData({ ping }),
+        operatorQuery: async () => {
+          counter.calls++;
+          return { data: { ping } };
+        },
+      },
+    );
+
+    return { factory, counter };
+  };
+
+  it("serves and caches an entry that fits maxSize", async () => {
+    const { factory, counter } = sizedFactory(22);
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(counter.calls).toBe(1);
+  });
+
+  it("serves but does not cache an entry longer than maxSize", async () => {
+    const { factory, counter } = sizedFactory(21);
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(counter.calls).toBe(2);
+  });
+
+  it("measures an entry in UTF-16 code units, not bytes", async () => {
+    // `{"data":{"ping":"é"}}` is 21 code units and 22 UTF-8 bytes.
+    const { factory, counter } = sizedFactory(21, "é");
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(counter.calls).toBe(1);
   });
 });

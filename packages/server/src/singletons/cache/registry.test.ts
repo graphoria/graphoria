@@ -4,8 +4,8 @@ import type { CacheStore } from "./types";
 
 import { getCache, InvalidationHelper, registerCache } from "./registry";
 
-const makeFakeCache = (): CacheStore & { storage: Map<string, unknown> } => {
-  const storage = new Map<string, unknown>();
+const makeFakeCache = (): CacheStore & { storage: Map<string, string> } => {
+  const storage = new Map<string, string>();
   return {
     storage,
     get: async (k) => storage.get(k),
@@ -57,8 +57,8 @@ describe("InvalidationHelper.invalidate", () => {
   it("clears the entire cache when no pattern is supplied", async () => {
     const name = ns("full-clear");
     const cache = makeFakeCache();
-    await cache.set("k1", 1);
-    await cache.set("k2", 2);
+    await cache.set("k1", "1");
+    await cache.set("k2", "2");
     registerCache(name, cache);
 
     const ok = await InvalidationHelper.invalidate(name);
@@ -70,7 +70,7 @@ describe("InvalidationHelper.invalidate", () => {
   it("clears the entire cache when an empty pattern object is supplied", async () => {
     const name = ns("empty-pattern");
     const cache = makeFakeCache();
-    await cache.set("k1", 1);
+    await cache.set("k1", "1");
     registerCache(name, cache);
 
     await InvalidationHelper.invalidate(name, {});

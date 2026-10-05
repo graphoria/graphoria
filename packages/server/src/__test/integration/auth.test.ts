@@ -323,5 +323,26 @@ describe.skipIf(!integrationEnabled)("auth · redis", () => {
         `UPDATE app.tasks SET title = '${original.title.replaceAll("'", "''")}' WHERE id = ${original.id}`,
       );
     });
+
+    it("stores the response text in Redis and answers a hit with it as is", async () => {
+      const { InvalidationHelper, getCache } = await import("../../singletons/cache");
+      await InvalidationHelper.invalidate(OPERATION);
+
+      try {
+        const missText = await (await started.context.rest("/cached-tasks")).text();
+        const store = getCache(OPERATION)!;
+        const [key] = await store.keys();
+        expect(await store.get(key!)).toBe(missText);
+
+        // Non-canonical JSON: a parse or a re-encode on the hit path would change it.
+        await store.set(key!, '{ "data" : { "app_tasks" : [] } }');
+        const hit = await started.context.rest("/cached-tasks");
+
+        expect(hit.headers.get("content-type")).toBe("application/json");
+        expect(await hit.text()).toBe('{ "data" : { "app_tasks" : [] } }');
+      } finally {
+        await InvalidationHelper.invalidate(OPERATION);
+      }
+    });
   });
 });
