@@ -14,7 +14,7 @@ The runtime that powers Graphoria — schema introspection, GraphQL/REST handler
 bun add @graphoria/server
 ```
 
-Installing the server package is enough: the runtime is exported from `@graphoria/server` and the configuration helpers + types from `@graphoria/server/config`. The one exception is queues: their RabbitMQ and Kafka adapters ship in `@graphoria/queues`, which the server discovers at boot (see [Queues](../../docs/QUEUES.md#installing-the-adapters)).
+Installing the server package is enough: the runtime is exported from `@graphoria/server` and the configuration helpers + types from `@graphoria/server/config`. The exceptions are queues and AI: the RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Queues](../../docs/QUEUES.md#installing-the-adapters)) and the AI agent + MCP runtimes in `@graphoria/ai` (see [AI](../../docs/AI.md#installing)); the server discovers each at boot.
 
 ## Public API
 

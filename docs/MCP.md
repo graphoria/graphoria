@@ -33,6 +33,8 @@ AI_MCP_ENABLED=true bun run start
 
 The env variable wins over the config field; an override is logged at boot. MCP needs no `ai.enabled`: it calls no LLM, so it mounts on its own flag.
 
+The MCP runtime ships in `@graphoria/ai`, discovered by the server at boot — `bun add @graphoria/ai`. With MCP enabled and the package missing, boot fails with `ai.mcp.enabled requires @graphoria/ai (add it to dependencies)`.
+
 ## Endpoint
 
 | Verb   | Path   | Notes                                                         |

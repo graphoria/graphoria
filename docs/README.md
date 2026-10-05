@@ -42,6 +42,8 @@ Reference guides for configuring and running Graphoria. New here? Start with the
 
 ## AI
 
+The AI agent and MCP server runtimes ship in `@graphoria/ai`, discovered by the server at boot.
+
 | Guide                  | Description                                                                             |
 | ---------------------- | --------------------------------------------------------------------------------------- |
 | [AI Agent](./AI.md)    | Natural-language → database Q&A as the caller's role, over GraphQL and REST             |

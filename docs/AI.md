@@ -4,9 +4,19 @@
 
 Graphoria can run an LLM agent **server-side** that answers natural-language questions about your database. Ask it a question; it discovers the relevant tables, writes and runs read-only GraphQL queries against your schema, and returns a written answer. It is exposed two ways: a GraphQL `ask` query and a REST `POST` endpoint.
 
-The agent reuses the same tooling as the [MCP server](./MCP.md) — `list_entities`, `describe_entity`, `query_data`, `graphql_execute`, sharing the executors in `ai/tools/core.ts` — but drives the tool-calling loop _inside_ the server instead of handing tools to an external client. It is four of the six MCP tools: `graphql_validate` and `rest_execute` are not offered to the agent, and none of the four can be disabled the way the MCP ones can.
+The agent reuses the same tooling as the [MCP server](./MCP.md) — `list_entities`, `describe_entity`, `query_data`, `graphql_execute`, sharing the executors in `@graphoria/ai`'s tools — but the tool-calling loop lives in `@graphoria/ai` (running server-side) instead of handing tools to an external client. It is four of the six MCP tools: `graphql_validate` and `rest_execute` are not offered to the agent, and none of the four can be disabled the way the MCP ones can.
 
 The integration is **opt-in**, **role-scoped**, and **read-only**. A role granted `ai` ([Permissions](./PERMISSIONS.md)) calls it with its own token, and the agent reads exactly what that role reads: its tables and columns, its row filters evaluated with the caller's session. The superadmin role — the admin secret — is always granted. Mutations and subscriptions are rejected.
+
+## Installing
+
+The agent runtime ships in `@graphoria/ai`, discovered by the server at boot:
+
+```bash
+bun add @graphoria/ai
+```
+
+With `ai.enabled` on and the package missing, boot fails with `ai.enabled requires @graphoria/ai (add it to dependencies)`.
 
 ## Enabling the agent
 
@@ -50,7 +60,7 @@ The provider, model, and credentials come from **environment variables**, not th
 | `AI_SECRET_ROLE`     | `SUPERADMIN_ROLE`        | The role `AI_SECRET` reads as; must be granted `ai` (checked at boot). Its session is `sub: "ai"` with no claims, so a `$session` row filter on that role matches nothing or fails |
 | `AI_TIMEOUT_MS`      | `60000`                  | Bound on each LLM call; `0` disables it (boot logs a warning)                                                                                                                      |
 
-The `openai` and `@anthropic-ai/sdk` packages are **optional dependencies** — they load lazily only when their provider is selected. With the default Ollama provider, neither is needed.
+The `openai` and `@anthropic-ai/sdk` packages are **dependencies of `@graphoria/ai`**, loaded lazily only when their provider is selected. With the default Ollama provider, neither is needed.
 
 ## Endpoints
 
@@ -111,12 +121,12 @@ The agent reads through the caller's role, so a prompt cannot reach a table, col
 
 Three layers, highest priority first:
 
-| Layer            | Key                      | What it controls                                           |
-| ---------------- | ------------------------ | ---------------------------------------------------------- |
-| Env var          | `AI_SYSTEM_PROMPT`       | Full system prompt override                                |
-| Env var          | `AI_PROMPT_TEMPLATE`     | User-message wrapper template (use `{prompt}` placeholder) |
-| Config file      | `ai.systemPrompt`        | Full system prompt override (no template from config)      |
-| Built-in default | (see `singletons/ai.ts`) | Discovery workflow + aggregate rules + anti-fabrication    |
+| Layer            | Key                                                                     | What it controls                                           |
+| ---------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Env var          | `AI_SYSTEM_PROMPT`                                                      | Full system prompt override                                |
+| Env var          | `AI_PROMPT_TEMPLATE`                                                    | User-message wrapper template (use `{prompt}` placeholder) |
+| Config file      | `ai.systemPrompt`                                                       | Full system prompt override (no template from config)      |
+| Built-in default | (see `@graphoria/ai`'s `defaults` export in `packages/ai/src/index.ts`) | Discovery workflow + aggregate rules + anti-fabrication    |
 
 `AI_SYSTEM_PROMPT` replaces the built-in system prompt entirely. `AI_PROMPT_TEMPLATE` replaces the wrapper that surrounds the user's raw question before it's sent to the LLM — use `{prompt}` where the user's input should go. The default template includes step-by-step workflow instructions; override it if your LLM provider has different conventions.
 
