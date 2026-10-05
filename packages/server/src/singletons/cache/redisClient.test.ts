@@ -3,9 +3,8 @@ import { describe, expect, it } from "bun:test";
 process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
-const { CACHE_REDIS_POOL_SIZE, closeCacheRedisClient, getCacheRedisClient } = await import(
-  "./redisClient"
-);
+const { CACHE_REDIS_POOL_SIZE, closeCacheRedisClient, getCacheRedisClient } =
+  await import("./redisClient");
 
 describe("getCacheRedisClient", () => {
   it("round-robins a fixed-size pool of clients", () => {

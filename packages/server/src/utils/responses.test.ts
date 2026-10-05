@@ -1,6 +1,16 @@
 import { describe, expect, it } from "bun:test";
 
-import { ClientResponse, S200, S200Serialized, S304, S400, S401, S404, S429, S500 } from "./responses";
+import {
+  ClientResponse,
+  S200,
+  S200Serialized,
+  S304,
+  S400,
+  S401,
+  S404,
+  S429,
+  S500,
+} from "./responses";
 
 describe("ClientResponse", () => {
   it("serializes body as JSON", async () => {
