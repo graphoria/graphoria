@@ -266,6 +266,9 @@ Console sessions and subscriptions are not in Redis.
   failover, point it at an endpoint that follows the primary under one hostname. The clients
   reconnect on their own, with a backoff from 1 to 30 seconds
   ([Recovery](./OBSERVABILITY.md#recovery)).
+- **Scripting.** With `CACHE_STORE=redis`, the cache writes and tracks its entries with a Lua
+  script (`EVAL`). Redis and Valkey allow it by default; behind a service that blocks scripting,
+  nothing is cached and each write logs `cache set failed`.
 - **Persistence.** Turn on AOF so a Redis restart keeps the revocations. If the data is lost
   anyway, replace `JWT_SECRET` (or the PASETO keys) without keeping the old value in the list: every
   token issued before becomes invalid, and every user signs in again.

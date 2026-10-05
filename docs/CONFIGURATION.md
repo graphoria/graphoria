@@ -787,7 +787,7 @@ type OperationGraphQLConfig = {
 ```typescript
 type OperationCacheConfig = {
   max?: number;
-  maxSize?: number;
+  maxSize?: number; // total length of the cached JSON responses, in UTF-16 code units
   ttl?: number; // milliseconds
   allowStale?: boolean;
   updateAgeOnGet?: boolean;
@@ -795,6 +795,9 @@ type OperationCacheConfig = {
   ttlAutopurge?: boolean;
 };
 ```
+
+These fields configure the in-process store (`CACHE_STORE=memory`, the default). A response
+longer than `maxSize` is served but not cached. With `CACHE_STORE=redis`, only `ttl` applies.
 
 ---
 
