@@ -92,6 +92,43 @@ describe("LruCacheStore", () => {
     });
   });
 
+  describe("etags", () => {
+    it("stores and returns the etag written with the value", async () => {
+      const store = new LruCacheStore({ max: 10 });
+      await store.setWithEtag("k1", '{"v":1}', '"abc"');
+      expect(await store.getWithEtag("k1")).toEqual({ value: '{"v":1}', etag: '"abc"' });
+    });
+
+    it("returns undefined for an unknown key", async () => {
+      const store = new LruCacheStore({ max: 10 });
+      expect(await store.getWithEtag("nope")).toBeUndefined();
+    });
+
+    it("reports no etag for a value stored without one", async () => {
+      const store = new LruCacheStore({ max: 10 });
+      await store.set("k1", "v");
+      expect(await store.getWithEtag("k1")).toEqual({ value: "v", etag: undefined });
+    });
+
+    it("drops a stale etag when the value is overwritten without one", async () => {
+      const store = new LruCacheStore({ max: 10 });
+      await store.setWithEtag("k1", "v1", '"a"');
+      await store.set("k1", "v2");
+      expect(await store.getWithEtag("k1")).toEqual({ value: "v2", etag: undefined });
+    });
+
+    it("removes the etag on delete and on clear", async () => {
+      const store = new LruCacheStore({ max: 10 });
+      await store.setWithEtag("a", "1", '"a1"');
+      await store.delete("a");
+      expect(await store.getWithEtag("a")).toBeUndefined();
+
+      await store.setWithEtag("b", "2", '"b2"');
+      await store.clear();
+      expect(await store.getWithEtag("b")).toBeUndefined();
+    });
+  });
+
   describe("value types", () => {
     it("returns the stored JSON text unchanged", async () => {
       const store = new LruCacheStore({ max: 10 });

@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it } from "bun:test";
 
 import type { TokenRepositoryClient } from "./tokenRepository";
 
-import { createTokenRepositoryWithClient } from "./tokenRepository";
+import {
+  createShardedTokenRepositoryClient,
+  createTokenRepositoryWithClient,
+} from "./tokenRepository";
 
 type FakeClient = TokenRepositoryClient & {
   store: Map<string, Record<string, string>>;
@@ -105,9 +108,65 @@ describe("tokenRepository", () => {
     expect(await failRepo.isTokenUsed("any")).toBe(true);
   });
 
+  it("checkRefresh reads both flags in one call", async () => {
+    await repo.saveJti("jti-both", "5m");
+    expect(await repo.checkRefresh("jti-both")).toEqual({ isUsed: true, isRevoked: false });
+
+    await repo.revoke("jti-both", "7d");
+    expect(await repo.checkRefresh("jti-both")).toEqual({ isUsed: true, isRevoked: true });
+  });
+
+  it("checkRefresh fails closed when client throws", async () => {
+    const throwingClient: TokenRepositoryClient = {
+      hset: async () => {},
+      hmget: async () => {
+        throw new Error("redis down");
+      },
+      expire: async () => {},
+      close: () => {},
+    };
+    const failRepo = createTokenRepositoryWithClient(throwingClient);
+    expect(await failRepo.checkRefresh("any")).toEqual({ isUsed: true, isRevoked: true });
+  });
+
   it("close() closes its Redis client", () => {
     repo.close();
 
     expect(client.closes).toBe(1);
+  });
+
+  describe("createShardedTokenRepositoryClient", () => {
+    it("routes every command for one key to the same client", async () => {
+      const a = createFakeClient();
+      const b = createFakeClient();
+      const sharded = createShardedTokenRepositoryClient([a, b]);
+
+      await sharded.hset("jti-x", { isUsed: "true" });
+      await sharded.hmget("jti-x", ["isUsed"]);
+      await sharded.expire("jti-x", 60);
+
+      const saw = [a, b].filter((candidate) => candidate.store.has("jti-x"));
+      expect(saw).toHaveLength(1);
+    });
+
+    it("spreads keys across clients", async () => {
+      const clients = Array.from({ length: 4 }, () => createFakeClient());
+      const sharded = createShardedTokenRepositoryClient(clients);
+
+      for (let index = 0; index < 50; index += 1) {
+        await sharded.hset(`jti-${index}`, { isUsed: "true" });
+      }
+
+      const used = clients.filter((candidate) => candidate.store.size > 0);
+      expect(used.length).toBeGreaterThan(1);
+    });
+
+    it("closes every client", () => {
+      const clients = [createFakeClient(), createFakeClient()];
+
+      createShardedTokenRepositoryClient(clients).close();
+
+      expect(clients.map((candidate) => candidate.closes)).toEqual([1, 1]);
+    });
   });
 });

@@ -31,6 +31,7 @@ describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
       tracked: `${prefix}__keys`,
       expiry: `${prefix}__expiry`,
       entry: (key: string) => `${prefix}${Bun.hash(key).toString(36)}`,
+      etagEntry: (key: string) => `${prefix}${Bun.hash(key).toString(36)}:etag`,
     };
   };
 
@@ -243,5 +244,61 @@ describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
     // What that clear leaves in the expiry index goes with the next one.
     await target.cache.clear();
     expect(await client.exists(target.expiry)).toBe(false);
+  });
+
+  it("stores and serves the precomputed etag alongside the entry", async () => {
+    const target = store("etag");
+
+    await target.cache.setWithEtag('{"k":1}', '{"data":1}', '"sha"');
+
+    expect(await target.cache.getWithEtag('{"k":1}')).toEqual({
+      value: '{"data":1}',
+      etag: '"sha"',
+    });
+    expect(await target.cache.get('{"k":1}')).toBe('{"data":1}');
+  });
+
+  it("reports no etag for an entry written by an older version", async () => {
+    const target = store("etag-old");
+
+    await writeAsOlderVersion(target, '{"k":1}');
+
+    expect(await target.cache.getWithEtag('{"k":1}')).toEqual({
+      value: "{}",
+      etag: undefined,
+    });
+  });
+
+  it("expires the etag companion with the entry", async () => {
+    const target = store("etag-ttl", 1000);
+
+    await target.cache.setWithEtag('{"k":1}', "{}", '"sha"');
+    await Bun.sleep(1100);
+
+    expect(await target.cache.getWithEtag('{"k":1}')).toBeUndefined();
+    expect(await client.get(target.etagEntry('{"k":1}'))).toBeNull();
+  });
+
+  it("removes the etag companion on delete and on clear", async () => {
+    const target = store("etag-del");
+
+    await target.cache.setWithEtag('{"k":1}', "{}", '"sha"');
+    await target.cache.delete('{"k":1}');
+    expect(await client.get(target.etagEntry('{"k":1}'))).toBeNull();
+
+    await target.cache.setWithEtag('{"k":2}', "{}", '"sha"');
+    await target.cache.clear();
+    expect(await client.get(target.etagEntry('{"k":2}'))).toBeNull();
+  });
+
+  it("serves writes after a script flush (EVALSHA fallback)", async () => {
+    const target = store("evalsha");
+
+    await target.cache.set("k1", "v1");
+    await client.send("SCRIPT", ["FLUSH"]);
+    await target.cache.set("k2", "v2");
+
+    expect(await target.cache.get("k2")).toBe("v2");
+    expect(await client.smembers(target.tracked)).toContain("k2");
   });
 });

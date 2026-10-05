@@ -231,13 +231,14 @@ export const createPASETOService = (
       audience: REFRESH_TOKEN_AUDIENCE,
     });
 
-    if (await tokenRepository.isRevoked(payload.jti)) {
+    // One round trip for both flags; revoked wins the error.
+    const { isUsed, isRevoked } = await tokenRepository.checkRefresh(payload.jti);
+
+    if (isRevoked) {
       throw new Error("Token revoked");
     }
 
-    const isAlreadyUsed = await tokenRepository.isTokenUsed(payload.jti);
-
-    if (isAlreadyUsed) {
+    if (isUsed) {
       throw new Error("Token reuse detected");
     }
 

@@ -14,6 +14,7 @@ const RECHECK_MS = 3_600_000;
 // members, scored by when to check the entry next. ARGV[1]: the entry prefix.
 // ARGV[2]: RECHECK_MS. ARGV[7]: whether to prune ("1"). To cache an entry,
 // KEYS[3] is the entry and ARGV[3..6] its key, member, value and TTL in seconds
+// ("" for none); KEYS[4] is the entry's etag companion and ARGV[8] its value
 // ("" for none). Writing and tracking in one script means a Redis that refuses
 // scripts caches nothing rather than entries no invalidation can find. A due
 // member is untracked only once its entry is gone: a worker of an older version
@@ -25,9 +26,11 @@ if KEYS[3] then
   if ARGV[6] ~= '' then
     redis.call('SET', KEYS[3], ARGV[5], 'EX', ARGV[6])
     redis.call('ZADD', KEYS[2], now + ARGV[6] * 1000, ARGV[4])
+    if ARGV[8] ~= '' then redis.call('SET', KEYS[4], ARGV[8], 'EX', ARGV[6]) end
   else
     redis.call('SET', KEYS[3], ARGV[5])
     redis.call('ZADD', KEYS[2], now + ARGV[2], ARGV[4])
+    if ARGV[8] ~= '' then redis.call('SET', KEYS[4], ARGV[8]) end
   end
   redis.call('SADD', KEYS[1], ARGV[3])
 end
@@ -64,6 +67,9 @@ export class RedisCacheStore implements CacheStore {
   private lastPruneAt = 0;
   private client: ReturnType<typeof getCacheRedisClient>;
   private log = logger("redis-cache");
+  // `SCRIPT LOAD` runs once per store; EVALSHA skips re-sending the script text.
+  // A `SCRIPT FLUSH` or server restart clears it — the NOSCRIPT fallback reloads.
+  private scriptSha: string | null = null;
 
   constructor(operationName: string, ttlMs?: number, pruneIntervalMs = 1_000) {
     this.prefix = `cache:${operationName}:`;
@@ -85,11 +91,15 @@ export class RedisCacheStore implements CacheStore {
     return `${this.prefix}${hash}`;
   }
 
+  private etagKey(key: string, hash: string): string {
+    return `${this.fullKey(key, hash)}:etag`;
+  }
+
   private member(key: string, hash: string): string {
     return `${hash}:${key}`;
   }
 
-  private runScript(entry?: { key: string; value: string }) {
+  private async runScript(entry?: { key: string; value: string; etag?: string }) {
     const keys = [this.trackingKey, this.expiryKey];
     const args = [this.prefix, String(RECHECK_MS)];
     if (entry) {
@@ -97,18 +107,41 @@ export class RedisCacheStore implements CacheStore {
       const pruning = now - this.lastPruneAt >= this.pruneIntervalMs;
       if (pruning) this.lastPruneAt = now;
       const hash = this.hash(entry.key);
-      keys.push(this.fullKey(entry.key, hash));
+      keys.push(this.fullKey(entry.key, hash), this.etagKey(entry.key, hash));
       args.push(
         entry.key,
         this.member(entry.key, hash),
         entry.value,
         this.ttlSeconds ? String(this.ttlSeconds) : "",
         pruning ? "1" : "0",
+        entry.etag ?? "",
       );
     } else {
-      args.push("", "", "", "", "1");
+      args.push("", "", "", "", "1", "");
     }
-    return this.client.send("EVAL", [SCRIPT, String(keys.length), ...keys, ...args]);
+
+    if (this.scriptSha) {
+      try {
+        return await this.client.send("EVALSHA", [
+          this.scriptSha,
+          String(keys.length),
+          ...keys,
+          ...args,
+        ]);
+      } catch (error) {
+        if (!(error instanceof Error && error.message.includes("NOSCRIPT"))) throw error;
+        this.scriptSha = null;
+      }
+    }
+
+    const loaded = await this.client.send("SCRIPT", ["LOAD", SCRIPT]);
+    this.scriptSha = loaded as string;
+    return await this.client.send("EVALSHA", [
+      this.scriptSha,
+      String(keys.length),
+      ...keys,
+      ...args,
+    ]);
   }
 
   async get(key: string): Promise<string | undefined> {
@@ -123,11 +156,35 @@ export class RedisCacheStore implements CacheStore {
     }
   }
 
+  async getWithEtag(key: string): Promise<{ value: string; etag?: string } | undefined> {
+    try {
+      const hash = this.hash(key);
+      // One round trip for both: the etag companion expires with the entry.
+      const [value, etag] = await this.client.mget(
+        this.fullKey(key, hash),
+        this.etagKey(key, hash),
+      );
+      if (value === null) return undefined;
+      return { value, etag: etag ?? undefined };
+    } catch (error) {
+      this.log.error({ err: error, operation: "getWithEtag" }, "cache get failed");
+      return undefined;
+    }
+  }
+
   async set(key: string, value: string): Promise<void> {
     try {
       await this.runScript({ key, value });
     } catch (error) {
       this.log.error({ err: error, operation: "set" }, "cache set failed");
+    }
+  }
+
+  async setWithEtag(key: string, value: string, etag: string): Promise<void> {
+    try {
+      await this.runScript({ key, value, etag });
+    } catch (error) {
+      this.log.error({ err: error, operation: "setWithEtag" }, "cache set failed");
     }
   }
 
@@ -139,7 +196,7 @@ export class RedisCacheStore implements CacheStore {
       await Promise.all([
         this.client.zrem(this.expiryKey, this.member(key, hash)),
         this.client.srem(this.trackingKey, key),
-        this.client.del(this.fullKey(key, hash)),
+        this.client.del(this.fullKey(key, hash), this.etagKey(key, hash)),
       ]);
     } catch (error) {
       this.log.error({ err: error, operation: "delete" }, "cache delete failed");
@@ -169,7 +226,12 @@ export class RedisCacheStore implements CacheStore {
           await Promise.all([
             this.client.zrem(this.expiryKey, firstMember!, ...restMembers),
             this.client.srem(this.trackingKey, first!, ...rest),
-            this.client.unlink(...batch.map((key, index) => this.fullKey(key, hashes[index]!))),
+            this.client.unlink(
+              ...batch.flatMap((key, index) => [
+                this.fullKey(key, hashes[index]!),
+                this.etagKey(key, hashes[index]!),
+              ]),
+            ),
           ]);
         }
         cursor = next;
@@ -194,7 +256,12 @@ export class RedisCacheStore implements CacheStore {
           await Promise.all([
             this.client.zrem(this.expiryKey, first!, ...rest),
             this.client.srem(this.trackingKey, keys[0]!, ...keys.slice(1)),
-            this.client.unlink(...keys.map((key, index) => this.fullKey(key, hashes[index]!))),
+            this.client.unlink(
+              ...keys.flatMap((key, index) => [
+                this.fullKey(key, hashes[index]!),
+                this.etagKey(key, hashes[index]!),
+              ]),
+            ),
           ]);
         }
         cursor = next;

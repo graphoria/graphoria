@@ -15,10 +15,11 @@ type Hooks = Record<string, any>;
 // oxlint-disable-next-line typescript/no-explicit-any
 let handleRESTRequestFactory: any;
 let getCache: typeof import("../../singletons/cache").getCache;
+let registerCache: typeof import("../../singletons/cache").registerCache;
 
 beforeAll(async () => {
   ({ handleRESTRequestFactory } = await import("./handleRESTRequestFactory"));
-  ({ getCache } = await import("../../singletons/cache"));
+  ({ getCache, registerCache } = await import("../../singletons/cache"));
 });
 
 const stubGql = () =>
@@ -628,6 +629,53 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
     expect(operatorCalls).toBe(1);
   });
 
+  it("serves hits and 304s when the store keeps no etag (hash fallback)", async () => {
+    const storage = new Map<string, string>();
+    const plain = {
+      async get(key: string) {
+        return storage.get(key);
+      },
+      async set(key: string, value: string) {
+        storage.set(key, value);
+      },
+      async delete(key: string) {
+        storage.delete(key);
+      },
+      async clear() {
+        storage.clear();
+      },
+      async keys() {
+        return [...storage.keys()];
+      },
+    };
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_etag_plain", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    // The factory registered its own store for the route; replace it after
+    // creation, before the first request reads it.
+    registerCache("op_etag_plain", plain);
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(first.status).toBe(200);
+    const etag = first.headers.get("ETag");
+    expect(etag).toBeTruthy();
+
+    const secondReq = {
+      method: "GET",
+      headers: new Headers({ "if-none-match": etag! }),
+    } as unknown as BunRequest;
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", secondReq);
+
+    expect(second.status).toBe(304);
+    expect(await second.text()).toBe("");
+  });
 });
 
 describe("handleRESTRequestFactory statement timeout", () => {

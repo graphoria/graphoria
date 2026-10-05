@@ -24,6 +24,7 @@ const createFakeRepo = (): FakeRepo => {
       revoked.add(jti);
     },
     isRevoked: async (jti) => revoked.has(jti),
+    checkRefresh: async (jti) => ({ isUsed: used.has(jti), isRevoked: revoked.has(jti) }),
   };
   return repo;
 };

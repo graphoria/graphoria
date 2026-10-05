@@ -12,6 +12,17 @@ import { startSpan } from "../../observability/tracing";
  * Core database execution functions
  */
 
+// Per-database pino children: databases are bounded, so the logger stops being
+// a per-statement allocation after each database's first query.
+const dbLoggers = new Map<string, ReturnType<typeof logger>>();
+const logForDatabase = (key: string, child: Record<string, string>) => {
+  const existing = dbLoggers.get(key);
+  if (existing) return existing;
+  const created = logger("db").child(child);
+  dbLoggers.set(key, created);
+  return created;
+};
+
 /** Names only. The variable values are caller data and never reach a span. */
 const sourceAttributes = (source?: QuerySource) => ({
   "graphql.operation.name": source?.operation.name ?? undefined,
@@ -33,7 +44,7 @@ export const executeQuery = async <T>(
     throw new Error(`Unsupported database type: ${db?.type}`);
   }
 
-  const log = logger("db").child({ dbType: db.type, dbName: db.name });
+  const log = logForDatabase(`${db.type}:${db.name}`, { dbType: db.type, dbName: db.name });
   const startTime = Bun.nanoseconds();
   const report = (durationMs: number, outcome: "success" | "error") =>
     reportQueryDuration({
@@ -87,7 +98,7 @@ export const executeQueryJSON = async <T>(
     throw new Error(`Unsupported database type: ${db.type}`);
   }
 
-  const log = logger("db").child({ dbType: db.type, dbName: db.name });
+  const log = logForDatabase(`${db.type}:${db.name}`, { dbType: db.type, dbName: db.name });
   const startTime = Bun.nanoseconds();
   const report = (durationMs: number, outcome: "success" | "error") =>
     reportQueryDuration({
@@ -141,7 +152,7 @@ export const callStoredProcedure = async (
     throw new Error(`Unsupported database type: ${sp.db!.type}`);
   }
 
-  const log = logger("db").child({
+  const log = logForDatabase(`${sp.db!.type}:${sp.db!.name}:${sp.dottedName}`, {
     dbType: sp.db!.type,
     dbName: sp.db!.name,
     procedure: sp.dottedName,

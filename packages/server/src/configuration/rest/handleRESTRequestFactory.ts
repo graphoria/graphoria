@@ -79,7 +79,9 @@ export const handleRESTRequestFactory = (
 
   const routesInitDataPromises: Record<string, unknown> = {};
 
-  const inflight = new Map<string, Promise<string>>();
+  // Waiters share the winner's serialized response and its ETag, so neither is
+  // recomputed per waiter.
+  const inflight = new Map<string, Promise<{ value: string; etag: string }>>();
 
   // Per-role pino children: roles are bounded, so the logger stops being a
   // per-request allocation after each role's first request.
@@ -389,26 +391,30 @@ export const handleRESTRequestFactory = (
                   method,
                 )},"variables":${JSON.stringify(variables)}`;
                 if (session?.sub !== undefined) key += `,"sub":${JSON.stringify(session.sub)}`;
-                if (session?.role !== undefined)
-                  key += `,"role":${JSON.stringify(session.role)}`;
+                if (session?.role !== undefined) key += `,"role":${JSON.stringify(session.role)}`;
                 return key + "}";
               })();
 
         // Try to get from cache first. A cached entry has already been through
         // afterRequest, so serve it directly without re-running the hook.
-        const cachedResult = await cache.get(cacheKey);
-        if (cachedResult !== undefined) {
+        const cachedEntry = cache.getWithEtag
+          ? await cache.getWithEtag(cacheKey)
+          : { value: (await cache.get(cacheKey)) ?? undefined, etag: undefined };
+        if (cachedEntry !== undefined && cachedEntry.value !== undefined) {
           log.debug({ route: route.routeKey }, "rest cache hit");
-          const etag = etagFor(cachedResult);
+          // The store keeps the ETag computed at write time; only entries from
+          // a store without one (or an older worker) are hashed on the hit.
+          const etag = cachedEntry.etag ?? etagFor(cachedEntry.value);
           if (req.headers?.get("if-none-match") === etag) return new S304();
-          return new S200Serialized(cachedResult, etag);
+          return new S200Serialized(cachedEntry.value, etag);
         }
         log.debug({ route: route.routeKey }, "rest cache miss");
 
         const pending = inflight.get(cacheKey);
         if (pending !== undefined) {
           try {
-            return new S200Serialized(await pending);
+            const { value, etag } = await pending;
+            return new S200Serialized(value, etag);
           } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
             return new S401({ errors: [message] });
@@ -423,16 +429,20 @@ export const handleRESTRequestFactory = (
           );
 
           const serialized = JSON.stringify(result);
+          const etag = etagFor(serialized);
 
-          // Cache the (already transformed) result
-          await cache.set(cacheKey, serialized);
+          // Cache the (already transformed) result, with the ETag next to it
+          // when the store supports it, so hits stop hashing the whole body.
+          await (cache.setWithEtag
+            ? cache.setWithEtag(cacheKey, serialized, etag)
+            : cache.set(cacheKey, serialized));
 
-          return serialized;
+          return { value: serialized, etag };
         })();
         inflight.set(cacheKey, promise);
         try {
-          const serialized = await promise;
-          return new S200Serialized(serialized, etagFor(serialized));
+          const { value, etag } = await promise;
+          return new S200Serialized(value, etag);
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
           return new S401({ errors: [message] });
