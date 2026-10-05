@@ -4,12 +4,11 @@ process.env.JWT_SECRET ??= "test-jwt";
 import { describe, expect, it } from "bun:test";
 
 import type { BunRequest } from "bun";
-import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";
 import type { AiToolDeps, ToolCaller } from "../adapter";
-import type { CreateMcpServerOptions } from "../../../../ai/src/mcp/create-server";
+import type { CallToolResult, CreateMcpServerOptions } from "../../../../ai/src/mcp/create-server";
 
 const { env } = await import("../../singletons/env");
 const { makeAiToolDeps } = await import("../../singletons/ai");

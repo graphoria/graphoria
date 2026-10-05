@@ -2,6 +2,8 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/server";
+
+export type { CallToolResult };
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { AiToolDeps, GetSchemaReturn, ToolCaller } from "@graphoria/server";
 import type { StructuredQueryInput } from "../tools/query-data";
