@@ -71,7 +71,7 @@ When this operation is registered:
 
 - A REST route `GET /rest/customers/:customerId/orders` is exposed. `rest.pathParams` and `rest.queryParams` parse the path parameter and the `?limit=` query string into the query's variables.
 - No GraphQL field: a `GET` operation is REST-only (see [REST and GraphQL exposure](#rest-and-graphql-exposure)).
-- The result is cached for 30 seconds, with up to 1000 distinct cache entries (LRU eviction).
+- The result is cached for 30 seconds, with up to 1000 distinct cache entries (LRU eviction; in-process store, see [Caching](#caching)).
 - The `output` schema is reflected into the OpenAPI spec at `/openapi.json` so SDK generators and API clients see the response shape.
 
 If `output` is omitted, the OpenAPI document marks the response as `unknown`. The `output` schema is purely descriptive — it is not used to validate the response at runtime, since the GraphQL query result already conforms to the schema's types.
@@ -284,12 +284,12 @@ A plain string `query` carries no compile-time type information, so `output` is 
 cache: {
   max: 1000,           // max number of cached entries
   ttl: 60_000,          // ms before an entry is considered stale
-  allowStale: true,     // serve stale entries while revalidating
+  allowStale: true,     // may return an expired entry once instead of a miss
   updateAgeOnGet: true, // bump the TTL on every cache hit
 }
 ```
 
-Caches are LRU and operation-scoped. The cache key is derived from the resolved input — two requests with the same input share the cache entry.
+Caches are LRU and operation-scoped. This describes the in-process store (`CACHE_STORE=memory`, the default); with `CACHE_STORE=redis` only `ttl` applies. See [Cache Configuration](./CONFIGURATION.md#cache-configuration). The cache key is built from the path, the method, the resolved input and the caller's `sub` and role — two requests share a cache entry only when all of these match.
 
 To invalidate a cache from outside the request flow, attach a queue subscriber and call `cache.invalidate(operationName, pattern?)` from its handler. See [Queues](./QUEUES.md) for examples.
 

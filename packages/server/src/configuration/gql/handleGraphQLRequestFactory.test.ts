@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn
 import { buildSchema, introspectionFromSchema } from "graphql";
 
 import type { BunRequest } from "bun";
+
+import { databaseAdapters } from "../../databases/core/function-mapping";
 import type { AnalysisResult } from "../../analyzeQuery/types";
 import type { AuditEvent } from "../../logging/audit";
 import type { Auth } from "../../types/configuration";
@@ -388,6 +390,96 @@ describe("handleGraphQLRequestFactory — query cache", () => {
   it("hasErrors still throws a syntax error for an unparseable query", () => {
     const factory = factoryFn(buildEntities());
     expect(() => factory.hasErrors("query {")).toThrow("Syntax Error");
+  });
+});
+
+describe("handleGraphQLRequestFactory — SQL memoization", () => {
+  const tableEntities = () => {
+    const entities = buildEntities();
+    entities.queriesMap = {
+      users: {
+        db: { name: "default", type: "sqlite" },
+        dottedQuotedName: '"users"',
+        columns: [],
+      },
+    };
+    entities.columnSqlName = (_table: string, name: string) => name;
+    entities.isVirtualColumn = () => undefined;
+    entities.getForeignKeysBetweenTables = () => ({ relationships: [], relationshipsReversed: [] });
+    return entities;
+  };
+
+  // The SQL text carries the table's quoted name, so a rebuild after renaming
+  // the table is observable in the SQL the adapter receives.
+  const stubSqliteAdapter = () => {
+    const original = databaseAdapters.sqlite.executeJson;
+    const seen: string[] = [];
+    databaseAdapters.sqlite.executeJson = (async (query: string) => {
+      seen.push(query);
+      return [];
+    }) as typeof databaseAdapters.sqlite.executeJson;
+    return {
+      seen,
+      restore: () => {
+        databaseAdapters.sqlite.executeJson = original;
+      },
+    };
+  };
+
+  it("reuses the memoized SQL for a repeated query with the same layout", async () => {
+    const entities = tableEntities();
+    const factory = factoryFn(entities);
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      const query = "query { users { id } }";
+      await factory.handler(query, {}, fakeReq, undefined);
+
+      // A rebuild would pick up the renamed table; a memo hit serves the old SQL.
+      entities.queriesMap.users.dottedQuotedName = '"users_renamed"';
+      await factory.handler(query, {}, fakeReq, undefined);
+
+      expect(seen).toHaveLength(2);
+      expect(seen[1]).toBe(seen[0]);
+      expect(seen[0]).toContain('"users"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("rebuilds SQL when a control-flow directive can change the selection", async () => {
+    const entities = tableEntities();
+    const factory = factoryFn(entities);
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      const query = "query Q($skip: Boolean!) { users { id @skip(if: $skip) } }";
+      await factory.handler(query, { skip: false }, fakeReq, undefined);
+
+      entities.queriesMap.users.dottedQuotedName = '"users_renamed"';
+      await factory.handler(query, { skip: false }, fakeReq, undefined);
+
+      expect(seen).toHaveLength(2);
+      expect(seen[1]).toContain('"users_renamed"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not reuse caller SQL for an operator-authored query", async () => {
+    const entities = tableEntities();
+    const factory = factoryFn(entities);
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      const query = "query { users { id } }";
+      await factory.handler(query, {}, fakeReq, undefined);
+
+      entities.queriesMap.users.dottedQuotedName = '"users_renamed"';
+      await factory.operatorQuery(query, {}, fakeReq, undefined);
+
+      expect(seen).toHaveLength(2);
+      expect(seen[1]).toContain('"users_renamed"');
+    } finally {
+      restore();
+    }
   });
 });
 

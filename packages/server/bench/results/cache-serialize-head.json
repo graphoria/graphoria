@@ -1,0 +1,70 @@
+{
+  "engine": "cache-serialize",
+  "store": "memory",
+  "iterations": 20000,
+  "warmup": 20000,
+  "recordedAt": "2026-10-04T12:21:38.146Z",
+  "bun": "1.4.2",
+  "scenarios": [
+    {
+      "count": 20000,
+      "min": 0.001144,
+      "max": 0.719096,
+      "mean": 0.001692080100000012,
+      "p50": 0.001318,
+      "p95": 0.00256,
+      "p99": 0.007016,
+      "throughputPerSecond": 590988.5708129259,
+      "name": "memory-hit",
+      "batchMs": 73.683571
+    },
+    {
+      "count": 20000,
+      "min": 0.001255,
+      "max": 1.280757,
+      "mean": 0.0020305036000000066,
+      "p50": 0.001413,
+      "p95": 0.00277,
+      "p99": 0.008126,
+      "throughputPerSecond": 492488.6614335462,
+      "name": "memory-hit-large",
+      "batchMs": 78.760784
+    },
+    {
+      "count": 20000,
+      "min": 0.004119,
+      "max": 2.441942,
+      "mean": 0.006187638199999972,
+      "p50": 0.004958,
+      "p95": 0.008354,
+      "p99": 0.019303,
+      "throughputPerSecond": 161612.55194267898,
+      "name": "memory-miss",
+      "batchMs": 253.929003
+    },
+    {
+      "count": 20000,
+      "min": 0.002148,
+      "max": 0.731673,
+      "mean": 0.0029577596999999863,
+      "p50": 0.002352,
+      "p95": 0.004881,
+      "p99": 0.005712,
+      "throughputPerSecond": 338093.7268162808,
+      "name": "reference-stringify",
+      "batchMs": 114.0475
+    },
+    {
+      "count": 20000,
+      "min": 0.006434,
+      "max": 0.80718,
+      "mean": 0.008199187100000017,
+      "p50": 0.007031,
+      "p95": 0.013653,
+      "p99": 0.017128,
+      "throughputPerSecond": 121963.31024084057,
+      "name": "reference-parse",
+      "batchMs": 318.768305
+    }
+  ]
+}

@@ -34,6 +34,10 @@ export const createJWTService = (
   const jwtSecrets = env.jwt.secrets.map((secret) => new TextEncoder().encode(secret));
   const signingSecret = jwtSecrets[0];
 
+  // One child per service: the strategy never changes, so the per-request
+  // verification stops allocating a pino child on every call.
+  const log = logger("auth").child({ strategy: "jwt" });
+
   const createToken = async (
     payload: TokenGenerationParameters,
     options: TokenOptions = {},
@@ -59,7 +63,7 @@ export const createJWTService = (
       if (!signingSecret) throw new Error("No JWT secret configured");
       return await jwt.sign(signingSecret);
     } catch (error) {
-      logger("auth").child({ strategy: "jwt" }).error({ err: error }, "token creation failed");
+      log.error({ err: error }, "token creation failed");
       throw new Error("Token creation failed");
     }
   };
@@ -80,9 +84,7 @@ export const createJWTService = (
       try {
         const { payload } = await jwtVerify(token, secret, verifyOptions);
         if (index > 0) {
-          logger("auth")
-            .child({ strategy: "jwt" })
-            .debug({ index }, "token verified with a previous secret");
+          log.debug({ index }, "token verified with a previous secret");
         }
         return payload as T;
       } catch (error) {
@@ -131,12 +133,10 @@ export const createJWTService = (
     try {
       const payload = await verifyToken(token, { audience: ACCESS_TOKEN_AUDIENCE });
       if (await tokenRepository.isRevoked(payload.jti)) {
-        logger("auth").child({ strategy: "jwt" }).warn({ jti: payload.jti }, "token revoked");
+        log.warn({ jti: payload.jti }, "token revoked");
         return { sub: "anonymous", role: env.anonymousRole };
       }
-      logger("auth")
-        .child({ strategy: "jwt" })
-        .debug({ sub: payload.sub, role: payload.role }, "token verified");
+      log.debug({ sub: payload.sub, role: payload.role }, "token verified");
       return {
         sub: payload.sub,
         role: payload.role,
@@ -146,7 +146,7 @@ export const createJWTService = (
         exp: payload.exp,
       };
     } catch (error) {
-      logger("auth").child({ strategy: "jwt" }).debug({ err: error }, "token verification failed");
+      log.debug({ err: error }, "token verification failed");
       return { sub: "anonymous", role: env.anonymousRole };
     }
   };
@@ -185,16 +185,16 @@ export const createJWTService = (
       audience: REFRESH_TOKEN_AUDIENCE,
     });
 
-    if (await tokenRepository.isRevoked(payload.jti)) {
+    // One round trip for both flags; revoked wins the error.
+    const { isUsed, isRevoked } = await tokenRepository.checkRefresh(payload.jti);
+
+    if (isRevoked) {
       throw new Error("Token revoked");
     }
 
-    // Check if this refresh token has already been used (token rotation)
-    const isAlreadyUsed = await tokenRepository.isTokenUsed(payload.jti);
-
-    if (isAlreadyUsed) {
-      // Token reuse detected - this could indicate token theft
-      // In a production system, you might want to revoke all tokens for this user
+    // Token reuse detected - this could indicate token theft
+    // In a production system, you might want to revoke all tokens for this user
+    if (isUsed) {
       throw new Error("Token reuse detected");
     }
 

@@ -14,9 +14,12 @@ type Hooks = Record<string, any>;
 
 // oxlint-disable-next-line typescript/no-explicit-any
 let handleRESTRequestFactory: any;
+let getCache: typeof import("../../singletons/cache").getCache;
+let registerCache: typeof import("../../singletons/cache").registerCache;
 
 beforeAll(async () => {
   ({ handleRESTRequestFactory } = await import("./handleRESTRequestFactory"));
+  ({ getCache, registerCache } = await import("../../singletons/cache"));
 });
 
 const stubGql = () =>
@@ -62,10 +65,16 @@ const stubEntities = (
     introspection: null,
   }) as const;
 
-const fakeReq = (method = "GET"): BunRequest => ({ method }) as unknown as BunRequest;
+const fakeReq = (method = "GET"): BunRequest =>
+  ({ method, headers: new Headers() }) as unknown as BunRequest;
 
 const fakeJsonReq = (method: string, body: unknown): BunRequest =>
-  ({ method, body: JSON.stringify(body), json: async () => body }) as unknown as BunRequest;
+  ({
+    method,
+    body: JSON.stringify(body),
+    json: async () => body,
+    headers: new Headers(),
+  }) as unknown as BunRequest;
 
 describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
   it("invokes init then beforeRequest then handler then afterRequest, in order", async () => {
@@ -179,6 +188,17 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
     const res = await factory.handler(new URL("http://x/test"), "/test", "GET", fakeReq());
 
     expect(res.status).toBe(200);
+  });
+
+  it("JSON-encodes a string the handler returns", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_string", { handler: () => "pong" }),
+      stubGql(),
+    );
+
+    const res = await factory.handler(new URL("http://x/test"), "/test", "GET", fakeReq());
+
+    expect(await res.text()).toBe('"pong"');
   });
 
   it("returns 404 when no route matches the path", async () => {
@@ -324,17 +344,337 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
       stubGqlWithData({ ping: true }),
     );
 
-    const first = await (
-      await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"))
-    ).json();
-    const second = await (
-      await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"))
-    ).json();
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const firstText = await first.text();
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
 
     // afterRequest runs on the cache miss only; the hit reuses the cached value.
     expect(calls).toBe(1);
-    expect(first).toEqual({ data: { ping: true, n: 1 } });
-    expect(second).toEqual({ data: { ping: true, n: 1 } });
+    expect(JSON.parse(firstText)).toEqual({ data: { ping: true, n: 1 } });
+    expect(await second.text()).toBe(firstText);
+
+    const store = getCache("op_query_cached")!;
+    const [key] = await store.keys();
+    expect(await store.get(key)).toBe(firstText);
+
+    // A hit sends the stored text as is: no parse, no re-encode.
+    await store.set(key, '{ "data" : { "ping" : true } }');
+    const third = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(await third.text()).toBe('{ "data" : { "ping" : true } }');
+  });
+
+  it("answers 401 and caches nothing when the result cannot be serialized", async () => {
+    let calls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_cached_bigint", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+        hooks: {
+          afterRequest: () => {
+            calls++;
+            return { big: 1n };
+          },
+        },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(first.status).toBe(401);
+    expect(second.status).toBe(401);
+    expect(calls).toBe(2);
+    expect(await getCache("op_query_cached_bigint")!.keys()).toEqual([]);
+  });
+
+  it("coalesces concurrent misses for the same key into one query", async () => {
+    let operatorCalls = 0;
+    let afterCalls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_coalesced", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+        hooks: {
+          afterRequest: ({ output }: { output: Record<string, unknown> }) => {
+            afterCalls++;
+            return { ...output, n: afterCalls };
+          },
+        },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        operatorQuery: async () => {
+          operatorCalls++;
+          await Bun.sleep(10);
+          return { data: { ping: true } };
+        },
+      },
+    );
+
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET")),
+      ),
+    );
+    const bodies = await Promise.all(responses.map((res) => res.text()));
+
+    // The herd shares one query and one afterRequest run; every waiter gets
+    // the same serialized body.
+    expect(operatorCalls).toBe(1);
+    expect(afterCalls).toBe(1);
+    expect(new Set(bodies).size).toBe(1);
+    expect(JSON.parse(bodies[0])).toEqual({ data: { ping: true, n: 1 } });
+  });
+
+  it("runs separate queries for concurrent misses with different keys", async () => {
+    let operatorCalls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_coalesced_keys", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET", queryParams: z.object({ q: z.string() }) },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        operatorQuery: async (_analysis: unknown, variables: { q: string }) => {
+          operatorCalls++;
+          await Bun.sleep(10);
+          return { data: { q: variables.q } };
+        },
+      },
+    );
+
+    const responses = await Promise.all([
+      factory.handler(new URL("http://x/q?q=1"), "/q", "GET", fakeReq("GET")),
+      factory.handler(new URL("http://x/q?q=2"), "/q", "GET", fakeReq("GET")),
+    ]);
+    const bodies = await Promise.all(responses.map((res) => res.json()));
+
+    // The in-flight map is keyed by cache key, not by route: each variables
+    // combination runs its own query and caches its own entry.
+    expect(operatorCalls).toBe(2);
+    expect(bodies).toContainEqual({ data: { q: "1" } });
+    expect(bodies).toContainEqual({ data: { q: "2" } });
+    expect(await getCache("op_query_coalesced_keys")!.keys()).toHaveLength(2);
+  });
+
+  it("shares a failing query across concurrent missers and retries later", async () => {
+    let operatorCalls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_query_coalesced_fail", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        operatorQuery: async () => {
+          operatorCalls++;
+          await Bun.sleep(10);
+          if (operatorCalls === 1) throw new Error("boom");
+          return { data: { ping: true } };
+        },
+      },
+    );
+
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET")),
+      ),
+    );
+
+    expect(operatorCalls).toBe(1);
+    for (const res of responses) {
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ errors: ["boom"] });
+    }
+    expect(await getCache("op_query_coalesced_fail")!.keys()).toEqual([]);
+
+    // A later request is not served the stale rejection: the in-flight entry
+    // was dropped when the herd settled, so it re-executes and caches.
+    const retry = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ data: { ping: true } });
+    expect(operatorCalls).toBe(2);
+    expect(await getCache("op_query_coalesced_fail")!.keys()).toHaveLength(1);
+  });
+
+  it("keys an anonymous parameterless GET with pathname, method and empty variables", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_key_format", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(await getCache("op_key_format")!.keys()).toEqual([
+      '{"pathname":"/q","method":"GET","variables":{}}',
+    ]);
+  });
+
+  it("keys a query-param request with the parsed variables", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_key_q", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET", queryParams: z.object({ q: z.string() }) },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    await factory.handler(new URL("http://x/q?q=1"), "/q", "GET", fakeReq("GET"));
+
+    expect(await getCache("op_key_q")!.keys()).toEqual([
+      '{"pathname":"/q","method":"GET","variables":{"q":"1"}}',
+    ]);
+  });
+
+  it("keys a session-scoped request with sub and role", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_key_session", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"), {
+      sub: "u1",
+      role: "user",
+    });
+
+    expect(await getCache("op_key_session")!.keys()).toEqual([
+      '{"pathname":"/q","method":"GET","variables":{},"sub":"u1","role":"user"}',
+    ]);
+  });
+
+  it("keys a POST request with the parsed body variables", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_key_post", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "POST", body: z.object({ n: z.number() }) },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    await factory.handler(new URL("http://x/q"), "/q", "POST", fakeJsonReq("POST", { n: 1 }));
+
+    expect(await getCache("op_key_post")!.keys()).toEqual([
+      '{"pathname":"/q","method":"POST","variables":{"n":1}}',
+    ]);
+  });
+
+  it("ignores unsolicited query params when the route declares none", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_key_unwanted_query", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    const res = await factory.handler(new URL("http://x/q?x=1"), "/q", "GET", fakeReq("GET"));
+
+    expect(res.status).toBe(200);
+    expect(await getCache("op_key_unwanted_query")!.keys()).toEqual([
+      '{"pathname":"/q","method":"GET","variables":{}}',
+    ]);
+  });
+
+  it("answers a cached hit with an ETag and a 304 on If-None-Match", async () => {
+    let operatorCalls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_etag", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        operatorQuery: async () => {
+          operatorCalls++;
+          return { data: { ping: true } };
+        },
+      },
+    );
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(first.status).toBe(200);
+    const etag = first.headers.get("ETag");
+    expect(etag).toBeTruthy();
+
+    const secondReq = {
+      method: "GET",
+      headers: new Headers({ "if-none-match": etag! }),
+    } as unknown as BunRequest;
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", secondReq);
+
+    expect(second.status).toBe(304);
+    expect(await second.text()).toBe("");
+    expect(operatorCalls).toBe(1);
+  });
+
+  it("serves hits and 304s when the store keeps no etag (hash fallback)", async () => {
+    const storage = new Map<string, string>();
+    const plain = {
+      async get(key: string) {
+        return storage.get(key);
+      },
+      async set(key: string, value: string) {
+        storage.set(key, value);
+      },
+      async delete(key: string) {
+        storage.delete(key);
+      },
+      async clear() {
+        storage.clear();
+      },
+      async keys() {
+        return [...storage.keys()];
+      },
+    };
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_etag_plain", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      stubGqlWithData({ ping: true }),
+    );
+
+    // The factory registered its own store for the route; replace it after
+    // creation, before the first request reads it.
+    registerCache("op_etag_plain", plain);
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(first.status).toBe(200);
+    const etag = first.headers.get("ETag");
+    expect(etag).toBeTruthy();
+
+    const secondReq = {
+      method: "GET",
+      headers: new Headers({ "if-none-match": etag! }),
+    } as unknown as BunRequest;
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", secondReq);
+
+    expect(second.status).toBe(304);
+    expect(await second.text()).toBe("");
   });
 });
 
@@ -479,5 +819,61 @@ describe("handleRESTRequestFactory route lookup", () => {
     const res = await factory.handler(new URL("http://x/users"), "/users", "POST", fakeReq("POST"));
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe("handleRESTRequestFactory memory cache size", () => {
+  // The cached entry is `{"data":{"ping":true}}`: 22 characters.
+  const sizedFactory = (maxSize: number, ping: unknown = true) => {
+    const counter = { calls: 0 };
+
+    const factory = handleRESTRequestFactory(
+      stubEntities(`op_query_max_size_${maxSize}_${ping}`, {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, maxSize },
+      }),
+      {
+        ...stubGqlWithData({ ping }),
+        operatorQuery: async () => {
+          counter.calls++;
+          return { data: { ping } };
+        },
+      },
+    );
+
+    return { factory, counter };
+  };
+
+  it("serves and caches an entry that fits maxSize", async () => {
+    const { factory, counter } = sizedFactory(22);
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(counter.calls).toBe(1);
+  });
+
+  it("serves but does not cache an entry longer than maxSize", async () => {
+    const { factory, counter } = sizedFactory(21);
+
+    const first = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    const second = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(counter.calls).toBe(2);
+  });
+
+  it("measures an entry in UTF-16 code units, not bytes", async () => {
+    // `{"data":{"ping":"é"}}` is 21 code units and 22 UTF-8 bytes.
+    const { factory, counter } = sizedFactory(21, "é");
+
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+
+    expect(counter.calls).toBe(1);
   });
 });

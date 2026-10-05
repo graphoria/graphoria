@@ -71,6 +71,7 @@ beforeAll(async () => {
     isTokenUsed: async () => false,
     revoke: async () => {},
     isRevoked: async () => false,
+    checkRefresh: async () => ({ isUsed: false, isRevoked: false }),
     close: () => {},
   });
 

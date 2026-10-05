@@ -172,11 +172,30 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     document: DocumentNode;
     validationErrors?: readonly GraphQLError[];
     analysis?: AnalysisResult;
+    /**
+     * SQL memoized for one resolved-variable layout. The fingerprint is the
+     * ordered definition names: object-variable flattening and session-claim
+     * binding mint static_N definitions per request, so different layouts emit
+     * different placeholder numbering and need their own SQL text.
+     */
+    sqlMemo?: { fingerprint: string; queries: ReturnType<typeof generateSQL> };
   }
 
   const queryCache = new LRUCache<string, CachedQuery>({ max: 1000 });
 
   const pageLimits = { defaultPageSize: env.defaultPageSize, maxPageSize: env.maxPageSize };
+
+  // Per-role pino children: roles are bounded, so the logger stops being a
+  // per-request allocation after each role's first request.
+  const roleLoggers = new Map<string, ReturnType<typeof logger>>();
+  const logFor = (role: string | undefined) => {
+    const key = role ?? "";
+    const existing = roleLoggers.get(key);
+    if (existing) return existing;
+    const created = logger("graphql").child({ role });
+    roleLoggers.set(key, created);
+    return created;
+  };
 
   // Results are merged by assignment (last write wins) and nothing here checks
   // the spec's field-merging constraints, so the overlap rule only rejects
@@ -197,6 +216,22 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     } catch {
       return undefined;
     }
+  };
+
+  // These directives resolve against request values, so their verdicts change
+  // the emitted SQL per request; documents carrying them are never memoized.
+  const CONTROL_FLOW_DIRECTIVES = new Set(["skip", "include", "when"]);
+  const hasControlFlowDirectives = (analysis: AnalysisResult): boolean => {
+    const selectionsHave = (fields: SelectionAnalysis[]): boolean =>
+      fields.some(
+        (field) =>
+          field.directives?.some((directive) => CONTROL_FLOW_DIRECTIVES.has(directive.name)) ===
+            true ||
+          (field.selections !== undefined && selectionsHave(field.selections)),
+      );
+    return analysis.operations.some(
+      (operation) => operation.fields !== undefined && selectionsHave(operation.fields),
+    );
   };
 
   const isIntrospectionAST = (document: DocumentNode): boolean =>
@@ -321,7 +356,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       options?: { enforcePageLimits?: boolean; timeoutMs?: number },
       // oxlint-disable-next-line typescript/no-explicit-any
     ): Promise<{ data: any }> => {
-      const log = logger("graphql").child({ role: session?.role });
+      const log = logFor(session?.role);
       const startTime = Bun.nanoseconds();
 
       // Reuse cached analysis on repeated identical queries
@@ -504,14 +539,38 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
               ],
             };
 
-            const sqlQueries = generateSQL(
-              entities,
-              tableQueryAnalysis,
-              resolved.allVariables,
-              false,
-              (options?.enforcePageLimits ?? true) ? pageLimits : null,
-              options?.timeoutMs,
-            );
+            const sqlQueries = (() => {
+              // The SQL text is a pure function of the resolved definition
+              // layout — values ride as bound parameters — so a repeated query
+              // skips the rebuild. Only the caller path: operator-authored
+              // queries exempt page limits, and MySQL inlines a per-request
+              // timeout hint, both of which change the text.
+              const enforcePageLimits = options?.enforcePageLimits ?? true;
+              const memoizable = enforcePageLimits && !hasControlFlowDirectives(queryAnalysis);
+              const fingerprint = resolved.variables
+                .map((variable) => variable.name)
+                .join("\u0000");
+              const memo = entry?.sqlMemo;
+
+              if (memoizable && memo !== undefined && memo.fingerprint === fingerprint) {
+                return memo.queries;
+              }
+
+              const queries = generateSQL(
+                entities,
+                tableQueryAnalysis,
+                resolved.allVariables,
+                false,
+                enforcePageLimits ? pageLimits : null,
+                options?.timeoutMs,
+              );
+
+              if (memoizable && entry !== undefined && memo === undefined) {
+                entry.sqlMemo = { fingerprint, queries };
+              }
+
+              return queries;
+            })();
 
             const data = await Promise.all<object>(
               sqlQueries.map(([db, query]) =>

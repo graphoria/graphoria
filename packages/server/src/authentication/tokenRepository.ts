@@ -8,6 +8,8 @@ export type TokenRepository = {
   /** `expiresIn` only applies to a JTI with no TTL of its own — see `revoke`. */
   revoke(jti: string, expiresIn: string): Promise<void>;
   isRevoked(jti: string): Promise<boolean>;
+  /** Both flags in one round trip — the refresh rotation reads them together. */
+  checkRefresh(jti: string): Promise<{ isUsed: boolean; isRevoked: boolean }>;
   close(): void;
 };
 
@@ -69,17 +71,59 @@ export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): 
     }
   };
 
+  const checkRefresh = async (jti: string): Promise<{ isUsed: boolean; isRevoked: boolean }> => {
+    try {
+      const [isUsed, isRevoked] = await client.hmget(jti, ["isUsed", "isRevoked"]);
+      return { isUsed: isUsed === "true", isRevoked: isRevoked === "true" };
+    } catch (error) {
+      log.error({ err: error }, "failed to check JTI state, failing closed");
+      return { isUsed: true, isRevoked: true };
+    }
+  };
+
   return {
     saveJti,
     isTokenUsed,
     revoke,
     isRevoked,
+    checkRefresh,
     close: () => closeRedisClient(client),
   };
 };
 
-export const createTokenRepository = (redisUrl: string): TokenRepository =>
+export const TOKEN_REPOSITORY_POOL_SIZE = 4;
+
+/**
+ * Spreads commands across the pool while keeping every command for one JTI on
+ * the same connection: `saveJti` and `revoke` are multi-command sequences on
+ * one key, and a per-command round-robin would let their halves land on
+ * different sockets and reorder.
+ */
+export const createShardedTokenRepositoryClient = (
+  clients: TokenRepositoryClient[],
+): TokenRepositoryClient => {
+  const clientFor = (key: string): TokenRepositoryClient => {
+    const index = Number(BigInt(Bun.hash(key)) % BigInt(clients.length));
+    return clients[index < 0 ? -index : index]!;
+  };
+
+  return {
+    hset: (key, fields) => clientFor(key).hset(key, fields),
+    hmget: (key, fields) => clientFor(key).hmget(key, fields),
+    expire: (key, seconds) => clientFor(key).expire(key, seconds),
+    close: () => {
+      for (const pooled of clients) closeRedisClient(pooled);
+    },
+  };
+};
+
+export const createTokenRepository = (redisUrl: string): TokenRepository => {
   // Bun's RedisClient exposes the same hset/hmget/expire surface we need but
   // its declared types are wider than TokenRepositoryClient. The cast is the
   // structural-typing bridge and is intentional.
-  createTokenRepositoryWithClient(createRedisClient(redisUrl) as unknown as TokenRepositoryClient);
+  const clients = Array.from({ length: TOKEN_REPOSITORY_POOL_SIZE }, () =>
+    createRedisClient(redisUrl),
+  ) as unknown as TokenRepositoryClient[];
+
+  return createTokenRepositoryWithClient(createShardedTokenRepositoryClient(clients));
+};
