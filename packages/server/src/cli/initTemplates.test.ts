@@ -21,6 +21,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   rabbitmq: false,
   ai: false,
   redis: false,
+  dataTools: false,
   frontend: false,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
@@ -158,14 +159,36 @@ describe("renderProject .env", () => {
     },
   );
 
+  it.each(["pg", "sqlite"] as const)("publishes dbgate's port for %s", (database) => {
+    const lines = renderWith({ dataTools: true }, database)[".env"]!.split("\n");
+
+    expect(lines).toContain("DBGATE_PORT=9000");
+    expect(lines).not.toContain("REDIS_COMMANDER_PORT=8081");
+    expect(render(database)[".env"]).not.toContain("DBGATE_PORT");
+  });
+
+  it("adds Redis Commander's port only when Redis is present too", () => {
+    const lines = renderWith({ dataTools: true, redis: true })[".env"]!.split("\n");
+
+    expect(lines).toContain("DBGATE_PORT=9000");
+    expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
+  });
+
   it("adds every feature's settings together without overlap", () => {
-    const lines = renderWith({ rabbitmq: true, ai: true, redis: true })[".env"]!.split("\n");
+    const lines = renderWith({
+      rabbitmq: true,
+      ai: true,
+      redis: true,
+      dataTools: true,
+    })[".env"]!.split("\n");
 
     expect(lines).toContain("DB_HOST=localhost");
     expect(lines).toContain("RABBITMQ_HOST=localhost");
     expect(lines).toContain("LLM_PROVIDER=ollama");
     expect(lines).toContain("REDIS_URL=redis://localhost:6379");
     expect(lines).toContain("CACHE_STORE=redis");
+    expect(lines).toContain("DBGATE_PORT=9000");
+    expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
   });
 });
 
@@ -188,6 +211,8 @@ describe("renderProject docker-compose.yml", () => {
       "db-init"?: Service;
       rabbitmq?: Service;
       redis?: Service;
+      dbgate?: Service;
+      "redis-commander"?: Service;
     };
     volumes: Record<string, unknown>;
   };
@@ -313,6 +338,59 @@ describe("renderProject docker-compose.yml", () => {
 
   it("leaves Redis out by default", () => {
     expect(compose("pg").services.redis).toBeUndefined();
+  });
+
+  it.each([
+    { database: "pg" as const, engine: "postgres@dbgate-plugin-postgres", port: "5432" },
+    { database: "mysql" as const, engine: "mysql@dbgate-plugin-mysql", port: "3306" },
+    { database: "mssql" as const, engine: "mssql@dbgate-plugin-mssql", port: "1433" },
+  ])("points dbgate at the $database service", ({ database, engine, port }) => {
+    const { services, volumes } = compose(database, { dataTools: true });
+
+    expect(services.dbgate!.image).toBe("dbgate/dbgate");
+    expect(services.dbgate!.ports).toEqual(["${DBGATE_PORT}:3000"]);
+    expect(services.dbgate!.volumes).toContain("dbgate-data:/root/.dbgate");
+    expect(services.dbgate!.environment).toEqual({
+      CONNECTIONS: "db",
+      LABEL_db: expect.any(String),
+      ENGINE_db: engine,
+      SERVER_db: "db",
+      PORT_db: port,
+      USER_db: "${DB_USER}",
+      PASSWORD_db: "${DB_PASSWORD}",
+    });
+    expect(services.dbgate!.depends_on).toEqual({ db: { condition: "service_healthy" } });
+    expect(Object.keys(volumes).sort()).toEqual(["db-data", "dbgate-data"]);
+  });
+
+  it("opens the SQLite file dbgate shares with Graphoria", () => {
+    const { services, volumes } = compose("sqlite", { dataTools: true });
+
+    expect(services.dbgate!.environment).toEqual({
+      CONNECTIONS: "db",
+      LABEL_db: "SQLite",
+      ENGINE_db: "sqlite@dbgate-plugin-sqlite",
+      FILE_db: "/app/data/shop.db",
+    });
+    expect(services.dbgate!.volumes).toContain("db-data:/app/data");
+    expect(services.dbgate!.depends_on).toEqual({ graphoria: { condition: "service_healthy" } });
+    expect(Object.keys(volumes).sort()).toEqual(["db-data", "dbgate-data"]);
+  });
+
+  it("adds Redis Commander only alongside Redis", () => {
+    const withRedis = compose("pg", { dataTools: true, redis: true }).services["redis-commander"];
+    expect(withRedis!.image).toBe("rediscommander/redis-commander:latest");
+    expect(withRedis!.ports).toEqual(["${REDIS_COMMANDER_PORT}:8081"]);
+    expect(withRedis!.environment).toEqual({ REDIS_HOSTS: "local:redis:6379" });
+    expect(withRedis!.depends_on).toEqual({ redis: { condition: "service_healthy" } });
+
+    expect(compose("pg", { dataTools: true }).services["redis-commander"]).toBeUndefined();
+  });
+
+  it("leaves the data tools out by default", () => {
+    expect(compose("pg").services.dbgate).toBeUndefined();
+    expect(compose("pg").services["redis-commander"]).toBeUndefined();
+    expect(Object.keys(compose("pg").volumes)).toEqual(["db-data"]);
   });
 
   it.each(["pg", "sqlite"] as const)(

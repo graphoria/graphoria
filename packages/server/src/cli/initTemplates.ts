@@ -8,6 +8,7 @@ export type InitAnswers = {
   rabbitmq: boolean;
   ai: boolean;
   redis: boolean;
+  dataTools: boolean;
   frontend: boolean;
 };
 
@@ -43,8 +44,22 @@ export const ENGINES: Record<ServerEngine, Engine> = {
   },
 };
 
+// dbgate names its engine as `<driver>@<plugin>`.
+const DBGATE_ENGINES: Record<ServerEngine, string> = {
+  pg: "postgres@dbgate-plugin-postgres",
+  mysql: "mysql@dbgate-plugin-mysql",
+  mssql: "mssql@dbgate-plugin-mssql",
+};
+
 export const RABBITMQ_PORT = 5672;
 export const RABBITMQ_MANAGEMENT_PORT = 15672;
+
+// The host port dbgate's single-page app is published on; it listens on 3000
+// inside its own container, which Graphoria already took on the host.
+export const DBGATE_PORT = 9000;
+
+// Redis Commander's own default port.
+export const REDIS_COMMANDER_PORT = 8081;
 
 export const PROJECT_FILES = [
   "package.json",
@@ -398,6 +413,12 @@ CACHE_STORE=redis
 `
     : "";
 
+const dataToolsEnv = (values: ProjectValues) =>
+  values.dataTools
+    ? `DBGATE_PORT=${DBGATE_PORT}
+${values.redis ? `REDIS_COMMANDER_PORT=${REDIS_COMMANDER_PORT}\n` : ""}`
+    : "";
+
 const sqliteDotEnv = (
   values: ProjectValues,
 ) => `# Secrets and the database file, read by Bun on the host and by Docker Compose.
@@ -405,7 +426,7 @@ const sqliteDotEnv = (
 ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
-${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -418,7 +439,7 @@ DB_PORT=${values.dbPort}
 DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
-${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -595,11 +616,67 @@ const REDIS_SERVICE = `  redis:
       retries: 10
 `;
 
+// dbgate reads one connection per `_<id>` suffix; `CONNECTIONS` lists the ids.
+// It listens on 3000 inside its container, published on DBGATE_PORT.
+const DBGATE_SERVICE = (database: ServerEngine) => `  dbgate:
+    image: dbgate/dbgate
+    restart: always
+    ports:
+      - "\${DBGATE_PORT}:3000"
+    volumes:
+      - dbgate-data:/root/.dbgate
+    environment:
+      CONNECTIONS: db
+      LABEL_db: ${ENGINES[database].label}
+      ENGINE_db: ${DBGATE_ENGINES[database]}
+      SERVER_db: db
+      PORT_db: "${ENGINES[database].port}"
+      USER_db: \${DB_USER}
+      PASSWORD_db: \${DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+`;
+
+// No server to point at: dbgate opens the file Graphoria seeds, so it shares
+// the volume and waits for the app to create it.
+const DBGATE_SQLITE_SERVICE = (dbName: string) => `  dbgate:
+    image: dbgate/dbgate
+    restart: always
+    ports:
+      - "\${DBGATE_PORT}:3000"
+    volumes:
+      - dbgate-data:/root/.dbgate
+      - db-data:/app/data
+    environment:
+      CONNECTIONS: db
+      LABEL_db: SQLite
+      ENGINE_db: sqlite@dbgate-plugin-sqlite
+      FILE_db: /app/data/${dbName}.db
+    depends_on:
+      graphoria:
+        condition: service_healthy
+`;
+
+// REDIS_HOSTS is `label:host:port`; the seed Redis has no password.
+const REDIS_COMMANDER_SERVICE = `  redis-commander:
+    image: rediscommander/redis-commander:latest
+    restart: always
+    ports:
+      - "\${REDIS_COMMANDER_PORT}:8081"
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+`;
+
 const sqliteCompose = ({
   name,
   dbName,
   rabbitmq,
   redis,
+  dataTools,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -607,7 +684,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}  graphoria:
+${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}${dataTools ? DBGATE_SQLITE_SERVICE(dbName) : ""}${dataTools && redis ? REDIS_COMMANDER_SERVICE : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -623,11 +700,11 @@ ${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}  graphoria:
 
 volumes:
   db-data:
-${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}`;
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database, rabbitmq, redis } = values;
+  const { name, database, rabbitmq, redis, dataTools } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -642,7 +719,7 @@ const dockerCompose = (values: ProjectValues) => {
 # Then open http://localhost:3000/graphiql. Credentials come from .env. The
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${DB_SERVICES[database]}${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}  graphoria:
+${DB_SERVICES[database]}${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}${dataTools ? DBGATE_SERVICE(database) : ""}${dataTools && redis ? REDIS_COMMANDER_SERVICE : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -660,7 +737,7 @@ ${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy
 
 volumes:
   db-data:
-${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}`;
 };
 
 const PG_SEED = `-- Runs once, when the Postgres volume is first created. \`docker compose down -v\` resets it.

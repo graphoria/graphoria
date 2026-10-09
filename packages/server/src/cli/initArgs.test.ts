@@ -56,6 +56,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("redis");
   });
 
+  it("answers the data-tools question with --data-tools or --no-data-tools", () => {
+    expect(parseInitArgs(["--data-tools"]).dataTools).toBe(true);
+    expect(parseInitArgs(["--no-data-tools"]).dataTools).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("dataTools");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

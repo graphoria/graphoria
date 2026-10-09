@@ -10,11 +10,13 @@ import type { InitAnswers } from "./initTemplates";
 import { version } from "../../package.json";
 import { DATABASE_TYPES, dbNameError, isDatabaseType, parseInitArgs, portError } from "./initArgs";
 import {
+  DBGATE_PORT,
   ENGINES,
   FRONTEND_FILES,
   PROJECT_FILES,
   RABBITMQ_MANAGEMENT_PORT,
   RABBITMQ_PORT,
+  REDIS_COMMANDER_PORT,
   renderProject,
   seedSchema,
 } from "./initTemplates";
@@ -124,6 +126,10 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
     args.ai ?? /^y(es)?$/i.test(question(ask, say, "Enable the AI agent? (y/N)", "n", yesNo));
   const redis = args.redis ?? /^y(es)?$/i.test(question(ask, say, "Add Redis? (y/N)", "n", yesNo));
 
+  const dataTools =
+    args.dataTools ??
+    /^y(es)?$/i.test(question(ask, say, "Add data inspection tools? (y/N)", "n", yesNo));
+
   const frontend =
     args.frontend ??
     /^y(es)?$/i.test(
@@ -132,7 +138,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       ),
     );
 
-  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, redis, frontend };
+  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, redis, dataTools, frontend };
 };
 
 export const isPortFree = (port: number): boolean => {
@@ -170,6 +176,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.rabbitmq ? ["--rabbitmq"] : []),
     ...(answers.ai ? ["--ai"] : []),
     ...(answers.redis ? ["--redis"] : []),
+    ...(answers.dataTools ? ["--data-tools"] : []),
     ...(answers.frontend ? ["--frontend"] : []),
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
@@ -222,6 +229,15 @@ export const nextSteps = (answers: InitAnswers, installed: boolean) => {
     ...(answers.redis
       ? ["", "Redis serves the cache and the auth token store (REDIS_URL and CACHE_STORE in .env)."]
       : []),
+    ...(answers.dataTools
+      ? [
+          "",
+          `dbgate explores the database at http://localhost:${DBGATE_PORT} once \`docker compose up\` runs it.`,
+          ...(answers.redis
+            ? [`Redis Commander inspects Redis at http://localhost:${REDIS_COMMANDER_PORT}.`]
+            : []),
+        ]
+      : []),
     ...(answers.frontend
       ? [
           "",
@@ -239,7 +255,7 @@ export const nextSteps = (answers: InitAnswers, installed: boolean) => {
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--redis] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--redis] [--data-tools] [--frontend] [--no-install]";
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
@@ -274,6 +290,15 @@ export const initCommand = async (argv: string[]): Promise<never> => {
       ? portWarning(RABBITMQ_MANAGEMENT_PORT, {
           service: "RabbitMQ management UI",
           envVar: "RABBITMQ_MANAGEMENT_PORT",
+        })
+      : undefined,
+    answers.dataTools
+      ? portWarning(DBGATE_PORT, { service: "dbgate", envVar: "DBGATE_PORT" })
+      : undefined,
+    answers.dataTools && answers.redis
+      ? portWarning(REDIS_COMMANDER_PORT, {
+          service: "Redis Commander",
+          envVar: "REDIS_COMMANDER_PORT",
         })
       : undefined,
   ];
