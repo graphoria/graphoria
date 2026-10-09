@@ -11,6 +11,9 @@ import { FRONTEND_FILES, PROJECT_FILES, renderProject, type ProjectValues } from
 
 const STARTER = join(import.meta.dir, "../../../../examples/docker-compose-starter");
 const PLAYGROUNDS = join(import.meta.dir, "../../../playgrounds/package.json");
+// What `@graphoria/server/config` resolves to. A generated config written outside
+// the workspace imports this instead: no node_modules above it holds the package.
+const CONFIG_SOURCE = join(import.meta.dir, "../config/index.ts");
 
 const values = (database: DatabaseType): ProjectValues => ({
   database,
@@ -850,9 +853,7 @@ describe("renderProject with the frontend", () => {
     let dir: string;
 
     beforeAll(async () => {
-      // Under bun:test, a dynamic import from tmpdir cannot resolve the workspace
-      // package `@graphoria/server`, which the queue frontend's config imports.
-      dir = await mkdtemp(join(import.meta.dir, "../../../.graphoria-init-frontend-"));
+      dir = await mkdtemp(join(tmpdir(), "graphoria-init-frontend-"));
       process.env.DB_HOST = "db.internal";
       process.env.DB_PORT = "15432";
       process.env.DB_USER = "someone";
@@ -892,7 +893,9 @@ describe("renderProject with the frontend", () => {
       const path = join(dir, `${database}-${frontend}-${seq++}.graphoria.ts`);
       await writeFile(
         path,
-        renderProject({ ...values(database), frontend, ...patch }, versions)["graphoria.ts"]!,
+        renderProject({ ...values(database), frontend, ...patch }, versions)[
+          "graphoria.ts"
+        ]!.replaceAll('"@graphoria/server/config"', JSON.stringify(CONFIG_SOURCE)),
       );
       const configure = (await import(path)).default as (helpers: object) => unknown;
       return ConfigurationZod.parse(configure({}));
