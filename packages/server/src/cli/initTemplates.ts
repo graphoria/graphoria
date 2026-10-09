@@ -87,6 +87,13 @@ const FRONTEND_DEPENDENCIES = {
 
 const FRONTEND_DEV_DEPENDENCIES = { "@types/react": "19.3.0", "@types/react-dom": "19.3.0" };
 
+// The queue demo's websocket subscription client; urql core already rides
+// along as urql's dependency, declared here because App.tsx imports it.
+const FRONTEND_QUEUE_DEPENDENCIES = {
+  "@urql/core": "6.0.3",
+  "graphql-ws": "6.3.0",
+};
+
 const packageJson = ({ name, rabbitmq, ai, frontend }: ProjectValues, { graphoria }: Versions) =>
   JSON.stringify(
     {
@@ -105,6 +112,7 @@ const packageJson = ({ name, rabbitmq, ai, frontend }: ProjectValues, { graphori
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
         ...(ai && { "@graphoria/ai": `^${graphoria}` }),
         ...(frontend && FRONTEND_DEPENDENCIES),
+        ...(frontend && rabbitmq && FRONTEND_QUEUE_DEPENDENCIES),
       },
       devDependencies: {
         "@types/bun": "latest",
@@ -182,7 +190,7 @@ const anonymousGrant = (values: ProjectValues) => {
     values.rabbitmq || values.ai
       ? `{
         tables: ["${schema}_authors", "${schema}_books"],
-${values.rabbitmq ? '        queues: ["events"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      }`
+${values.rabbitmq ? '        queues: ["events"],\n' : ""}${values.rabbitmq && values.frontend ? '        operations: ["addBook"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      }`
       : `{ tables: ["${schema}_authors", "${schema}_books"] }`;
   return `  // The frontend has no login, so anyone can read these two tables without a
   // secret, in the app and in GraphiQL alike. Tables are read-only in the
@@ -231,14 +239,64 @@ const QUEUE_CONFIG = `  queues: [
   ],
 `;
 
+// Insert statements per engine, interpolated into the addBook handler below.
+const ADD_BOOK_INSERT: Record<DatabaseType, string> = {
+  pg: `        await databases.main.unsafe(
+          \`INSERT INTO books (title, published_year, author_id) VALUES ($1, $2, $3)\`,
+          [input.title, input.publishedYear, input.authorId],
+        );`,
+  mysql: `        await databases.main.unsafe(
+          \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)\`,
+          [input.title, input.publishedYear, input.authorId],
+        );`,
+  mssql: `        await databases.main
+          .request()
+          .input("title", input.title)
+          .input("publishedYear", input.publishedYear)
+          .input("authorId", input.authorId)
+          .query(
+            \`INSERT INTO books (title, published_year, author_id) VALUES (@title, @publishedYear, @authorId)\`,
+          );`,
+  sqlite: `        databases.main
+          .query(
+            \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)\`,
+          )
+          .run(input.title, input.publishedYear, input.authorId);`,
+};
+
+const ADD_BOOK_OPERATION = (values: ProjectValues) => `  operations: {
+    // The frontend posts a new book here; after the insert, the handler publishes
+    // events_bookAdded, the queued event the frontend's subscription watches.
+    addBook: operation({
+      input: addBookInput,
+      rest: {
+        path: "/add-book",
+        method: "POST",
+        body: addBookInput,
+      },
+      handler: async ({ databases, queues }, input) => {
+${ADD_BOOK_INSERT[values.database]}
+        queues.sendMessage("events_bookAdded", {
+          title: input.title,
+          publishedYear: input.publishedYear,
+          authorId: input.authorId,
+        });
+        return input;
+      },
+    }),
+  },
+`;
+
 const AI_CONFIG = `  ai: {
     enabled: true,
   },
 `;
 
-const graphoriaConfig = (
-  values: ProjectValues,
-) => `import type { ConfigurationFn } from "@graphoria/server/config";
+const graphoriaConfig = (values: ProjectValues) => `${
+  values.frontend && values.rabbitmq
+    ? 'import { operation, z } from "@graphoria/server/config";\n'
+    : ""
+}import type { ConfigurationFn } from "@graphoria/server/config";
 
 // Bun loads these from .env; in Docker Compose they come from the environment.
 const env = (name: string) => {
@@ -246,8 +304,18 @@ const env = (name: string) => {
   if (!value) throw new Error(\`\${name} is not set (see .env)\`);
   return value;
 };
+${
+  values.frontend && values.rabbitmq
+    ? `// The body of POST /rest/add-book and of the addBook GraphQL mutation.
+const addBookInput = z.object({
+  title: z.string().min(1),
+  publishedYear: z.number().int(),
+  authorId: z.number().int(),
+});
 
-export default (() => ({
+`
+    : ""
+}export default (() => ({
   name: ${JSON.stringify(values.name)},
   version: "1.0.0",
   databases: [
@@ -257,7 +325,7 @@ export default (() => ({
       enabled: true,
 ${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
   ],
-${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.frontend && values.rabbitmq ? ADD_BOOK_OPERATION(values) : ""}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -718,7 +786,9 @@ const indexHtml = ({ name }: ProjectValues) => `<!doctype html>
 </html>
 `;
 
-const FRONTEND_TSX = `import { StrictMode } from "react";
+const frontendTsx = (values: ProjectValues) => {
+  if (!values.rabbitmq) {
+    return `import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Client, Provider, cacheExchange, fetchExchange } from "urql";
 
@@ -747,9 +817,183 @@ if (import.meta.hot) {
   createRoot(root).render(app);
 }
 `;
+  }
+
+  return `import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { Client, Provider, cacheExchange, fetchExchange } from "urql";
+import { subscriptionExchange } from "@urql/core";
+import { createClient as createWSClient } from "graphql-ws";
+
+import { App } from "./App.tsx";
+
+// Graphoria upgrades GET /graphql to its websocket; the queued book-added
+// events arrive through the events_onBookAdded subscription.
+const wsClient = createWSClient({
+  url: \`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/graphql\`,
+});
+
+const client = new Client({
+  url: "/graphql",
+  // Graphoria answers queries over POST; GET /graphql is its websocket.
+  preferGetMethod: false,
+  exchanges: [
+    cacheExchange,
+    fetchExchange,
+    subscriptionExchange({
+      forwardSubscription: (request) => ({
+        subscribe: (sink) => ({
+          unsubscribe: wsClient.subscribe(
+            { query: request.query ?? "", variables: request.variables },
+            sink,
+          ),
+        }),
+      }),
+    }),
+  ],
+});
+
+const app = (
+  <StrictMode>
+    <Provider value={client}>
+      <App />
+    </Provider>
+  </StrictMode>
+);
+
+const root = document.getElementById("root")!;
+if (import.meta.hot) {
+  // Hot reload keeps one React root across updates.
+  (import.meta.hot.data.root ??= createRoot(root)).render(app);
+} else {
+  createRoot(root).render(app);
+}
+`;
+};
 
 const appTsx = (values: ProjectValues) => {
   const schema = seedSchema(values);
+
+  if (values.rabbitmq) {
+    return `import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { useQuery, useSubscription } from "urql";
+
+import { graphql } from "./graphql.ts";
+
+const AuthorsQuery = graphql(\`
+  query Authors {
+    ${schema}_authors(orderBy: [{ id: ASC }]) {
+      id
+      name
+      ${schema}_books(orderBy: [{ published_year: ASC }]) {
+        id
+        title
+        published_year
+      }
+    }
+  }
+\`);
+
+// A message is an event, not a state: its arrival just re-fetches the list.
+const BookAddedSubscription = graphql(\`
+  subscription OnBookAdded {
+    events_onBookAdded {
+      id
+      message
+    }
+  }
+\`);
+
+export function App() {
+  const [{ data, fetching, error }, reexecute] = useQuery({ query: AuthorsQuery });
+  const [subscription] = useSubscription({ query: BookAddedSubscription });
+
+  useEffect(() => {
+    if (subscription.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscription.data, reexecute]);
+
+  const [title, setTitle] = useState("");
+  const [year, setYear] = useState("");
+  const [authorId, setAuthorId] = useState("");
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch("/rest/add-book", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, publishedYear: Number(year), authorId: Number(authorId) }),
+    });
+    if (!response.ok) return;
+    // The list refreshes when the queued book-added event arrives.
+    setTitle("");
+    setYear("");
+  };
+
+  return (
+    <main className="mx-auto max-w-2xl p-8 font-sans">
+      <h1 className="mb-6 text-3xl font-bold">Authors</h1>
+      <form className="mb-8 space-y-2" onSubmit={submit}>
+        <input
+          className="block w-full rounded border border-gray-300 p-2"
+          placeholder="Title"
+          required
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+        />
+        <input
+          className="block w-full rounded border border-gray-300 p-2"
+          placeholder="Year"
+          required
+          type="number"
+          value={year}
+          onChange={(event) => setYear(event.target.value)}
+        />
+        <select
+          className="block w-full rounded border border-gray-300 p-2"
+          required
+          value={authorId}
+          onChange={(event) => setAuthorId(event.target.value)}
+        >
+          <option value="">Pick an author…</option>
+          {data?.${schema}_authors.map((author) => (
+            <option key={author.id} value={author.id}>
+              {author.name}
+            </option>
+          ))}
+        </select>
+        <button
+          className="rounded bg-black px-4 py-2 text-white"
+          type="submit"
+        >
+          Add book
+        </button>
+      </form>
+      {fetching && <p className="text-gray-500">Loading…</p>}
+      {error && <p className="text-red-600">{error.message}</p>}
+      <ul className="space-y-6">
+        {data?.${schema}_authors.map((author) => (
+          <li key={author.id}>
+            <h2 className="text-xl font-semibold">{author.name}</h2>
+            <ul className="mt-2 list-disc pl-6">
+              {author.${schema}_books?.map(
+                (book) =>
+                  book && (
+                    <li key={book.id}>
+                      {book.title} <span className="text-gray-500">({book.published_year})</span>
+                    </li>
+                  ),
+              )}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+`;
+  }
+
   return `import { useQuery } from "urql";
 
 import { graphql } from "./graphql.ts";
@@ -810,7 +1054,7 @@ export const graphql = initGraphQLTada<{ introspection: introspection }>();
 const frontendFiles = (values: ProjectValues): Record<(typeof FRONTEND_FILES)[number], string> => ({
   "bunfig.toml": BUNFIG,
   "web/index.html": indexHtml(values),
-  "web/frontend.tsx": FRONTEND_TSX,
+  "web/frontend.tsx": frontendTsx(values),
   "web/App.tsx": appTsx(values),
   "web/graphql.ts": GRAPHQL_TS,
   "web/styles.css": `@import "tailwindcss";\n`,

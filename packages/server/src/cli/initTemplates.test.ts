@@ -489,6 +489,25 @@ describe("renderProject with the frontend", () => {
     expect(pkg.dependencies["gql.tada"]).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
+  it("adds the queue client packages only with RabbitMQ", () => {
+    const plain = JSON.parse(renderWeb("pg")["package.json"]!);
+    const queued = JSON.parse(
+      renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)["package.json"]!,
+    );
+
+    expect(plain.dependencies).not.toHaveProperty("graphql-ws");
+    expect(plain.dependencies).not.toHaveProperty("@urql/core");
+    expect(queued.dependencies["graphql-ws"]).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(queued.dependencies["@urql/core"]).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("keeps the frontend packages out without the frontend", () => {
+    const pkg = JSON.parse(renderWith({ rabbitmq: true })["package.json"]!);
+
+    expect(pkg.dependencies).not.toHaveProperty("graphql-ws");
+    expect(pkg.dependencies).not.toHaveProperty("urql");
+  });
+
   it("prints the schemas in dev and generates the types from them", () => {
     const pkg = JSON.parse(renderWeb("pg")["package.json"]!);
 
@@ -556,6 +575,25 @@ describe("renderProject with the frontend", () => {
     expect(frontend).toContain("preferGetMethod: false");
   });
 
+  it("opens the websocket and forwards subscriptions, only with RabbitMQ", () => {
+    const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
+      "web/frontend.tsx"
+    ]!;
+    const plain = renderWeb("pg")["web/frontend.tsx"]!;
+
+    for (const marker of [
+      'import { subscriptionExchange } from "@urql/core"',
+      'import { createClient as createWSClient } from "graphql-ws"',
+      "subscriptionExchange({",
+      'url: `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/graphql`',
+      'query: request.query ?? ""',
+    ]) {
+      expect(queued).toContain(marker);
+    }
+    expect(plain).not.toContain("subscriptionExchange");
+    expect(plain).not.toContain("graphql-ws");
+  });
+
   it("types the queries from the generated introspection", () => {
     expect(renderWeb("pg")["web/graphql.ts"]).toContain(
       'import type { introspection } from "./graphql-env.d.ts";',
@@ -573,11 +611,78 @@ describe("renderProject with the frontend", () => {
     }
   });
 
+  it("adds the book form and refreshes on the queue event, only with RabbitMQ", () => {
+    const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
+      "web/App.tsx"
+    ]!;
+    const plain = renderWeb("pg")["web/App.tsx"]!;
+
+    for (const marker of [
+      "const BookAddedSubscription = graphql(",
+      "events_onBookAdded {",
+      "const [subscription] = useSubscription({ query: BookAddedSubscription })",
+      'reexecute({ requestPolicy: "network-only" })',
+      'fetch("/rest/add-book"',
+      "Add book",
+    ]) {
+      expect(queued).toContain(marker);
+    }
+    for (const marker of ["useSubscription", "events_onBookAdded", "/rest/add-book"]) {
+      expect(plain).not.toContain(marker);
+    }
+  });
+
+  it.each(ENGINES)("queries the %s seed in the queue frontend too", (database) => {
+    const app = renderProject({ ...values(database), frontend: true, rabbitmq: true }, versions)[
+      "web/App.tsx"
+    ]!;
+    const schema = SCHEMAS[database];
+
+    expect(app).toContain(`${genResolverName(schema, "authors", "table")}(`);
+    expect(app).toContain(`${genResolverName(schema, "books", "table")}(`);
+  });
+
+  it("imports the operation helper only for the queue frontend", () => {
+    const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
+      "graphoria.ts"
+    ]!;
+    const plain = renderWeb("pg")["graphoria.ts"]!;
+
+    expect(queued).toContain('import { operation, z } from "@graphoria/server/config";');
+    expect(plain).not.toContain("import { operation");
+  });
+
+  it("emits no operations without the frontend", () => {
+    expect(renderWith({ rabbitmq: true })["graphoria.ts"]).not.toContain("operation(");
+  });
+
+  it.each(ENGINES)("runs the %s insert and publishes the queued event", (database) => {
+    const config = renderProject({ ...values(database), frontend: true, rabbitmq: true }, versions)[
+      "graphoria.ts"
+    ]!;
+
+    expect(config).toContain("addBook: operation(");
+    expect(config).toContain('queues.sendMessage("events_bookAdded"');
+    expect(config).toContain('path: "/add-book"');
+    expect(config).toContain('method: "POST"');
+    expect(config).toContain(
+      database === "pg"
+        ? "VALUES ($1, $2, $3)"
+        : database === "mysql"
+          ? "VALUES (?, ?, ?)"
+          : database === "mssql"
+            ? "@publishedYear"
+            : ".run(input.title",
+    );
+  });
+
   describe("graphoria.ts", () => {
     let dir: string;
 
     beforeAll(async () => {
-      dir = await mkdtemp(join(tmpdir(), "graphoria-init-frontend-"));
+      // Under bun:test, a dynamic import from tmpdir cannot resolve the workspace
+      // package `@graphoria/server`, which the queue frontend's config imports.
+      dir = await mkdtemp(join(import.meta.dir, "../../../.graphoria-init-frontend-"));
       process.env.DB_HOST = "db.internal";
       process.env.DB_PORT = "15432";
       process.env.DB_USER = "someone";
@@ -652,14 +757,27 @@ describe("renderProject with the frontend", () => {
     it.each([
       [
         { rabbitmq: true, ai: true },
-        { queues: ["events"], ai: true },
+        { queues: ["events"], ai: true, operations: ["addBook"] },
       ],
+      [{ rabbitmq: true }, { queues: ["events"], operations: ["addBook"] }],
       [{}, {}],
     ])("extends the anonymous grant for %j", async (patch, expected) => {
       const { auth } = await parse(true, "pg", patch);
 
       expect(auth.permissions.anonymous).toMatchObject(expected);
     });
+
+    it.each(SERVER_ENGINES)(
+      "parses the %s config with the add-book operation",
+      async (database) => {
+        const configuration = await parse(true, database, { rabbitmq: true });
+
+        expect(configuration.operations.addBook!.rest).toMatchObject({
+          path: "/add-book",
+          method: "POST",
+        });
+      },
+    );
   });
 });
 

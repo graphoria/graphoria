@@ -186,6 +186,32 @@ describe("cli init", () => {
     expect(result.stdout.toString()).toContain("bun run types");
   });
 
+  it("wires the add-book operation and its queue event with --rabbitmq --frontend", async () => {
+    const { cwd, result } = await init(["--yes", "--rabbitmq", "--frontend", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect((await readdir(cwd, { recursive: true })).sort()).toEqual(
+      [
+        ...FILES,
+        "bunfig.toml",
+        "web",
+        "web/App.tsx",
+        "web/frontend.tsx",
+        "web/graphql.ts",
+        "web/index.html",
+        "web/styles.css",
+      ].sort(),
+    );
+    const pkg = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+    expect(pkg.dependencies["graphql-ws"]).toMatch(/^\d+\.\d+\.\d+$/);
+    const config = await readFile(join(cwd, "graphoria.ts"), "utf8");
+    expect(config).toContain("addBook: operation(");
+    expect(config).toContain('queues.sendMessage("events_bookAdded"');
+    expect(config).toContain('operations: ["addBook"]');
+    expect(await readFile(join(cwd, "web", "App.tsx"), "utf8")).toContain("events_onBookAdded");
+  });
+
   it("scaffolds RabbitMQ and the AI agent with --rabbitmq --ai", async () => {
     const { cwd, result } = await init(["--yes", "--rabbitmq", "--ai", "--no-install"]);
     cwds.push(cwd);
