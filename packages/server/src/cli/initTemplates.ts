@@ -320,6 +320,7 @@ const env = (name: string) => {
   if (!value) throw new Error(\`\${name} is not set (see .env)\`);
   return value;
 };
+
 ${
   values.frontend && values.rabbitmq
     ? `// The body of POST /rest/add-book and of the addBook GraphQL mutation.
@@ -684,7 +685,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}${dataTools ? DBGATE_SQLITE_SERVICE(dbName) : ""}${dataTools && redis ? REDIS_COMMANDER_SERVICE : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -719,7 +720,8 @@ const dockerCompose = (values: ProjectValues) => {
 # Then open http://localhost:3000/graphiql. Credentials come from .env. The
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${DB_SERVICES[database]}${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}${dataTools ? DBGATE_SERVICE(database) : ""}${dataTools && redis ? REDIS_COMMANDER_SERVICE : ""}  graphoria:
+${DB_SERVICES[database]}
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true

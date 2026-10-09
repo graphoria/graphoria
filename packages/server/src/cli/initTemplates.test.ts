@@ -412,6 +412,15 @@ describe("renderProject docker-compose.yml", () => {
       expect(Object.keys(volumes).sort()).toEqual(["db-data", "rabbitmq-data", "redis-data"]);
     },
   );
+
+  it.each(ENGINES)("sets each %s service apart with a blank line", (database) => {
+    for (const patch of [{}, { rabbitmq: true, redis: true, dataTools: true }]) {
+      // A service's last, indented line followed straight by the next service.
+      expect(renderWith(patch, database)["docker-compose.yml"]).not.toMatch(
+        /\n {4}.*\n {2}[a-z-]+:\n/,
+      );
+    }
+  });
 });
 
 describe("renderProject graphoria.ts", () => {
@@ -561,6 +570,14 @@ describe("renderProject graphoria.ts", () => {
 
     const configure = await load("pg", patch);
     expect(() => ConfigurationZod.parse(configure({}))).not.toThrow();
+  });
+
+  it.each(ENGINES)("sets the %s config's blocks apart with a blank line", (database) => {
+    expect(render(database)["graphoria.ts"]).toContain("};\n\nexport default");
+
+    const queued = renderWith({ frontend: true, rabbitmq: true }, database)["graphoria.ts"]!;
+    expect(queued).toContain("};\n\n// The body of POST /rest/add-book");
+    expect(queued).toContain("});\n\nexport default");
   });
 });
 
