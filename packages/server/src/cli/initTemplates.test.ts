@@ -924,6 +924,18 @@ describe("renderProject with the frontend", () => {
       expect(config).not.toContain("anonymous: {\n");
     });
 
+    it("says what else the grant opens to anyone", () => {
+      const config = renderWith({ frontend: true, rabbitmq: true, ai: true })["graphoria.ts"]!;
+
+      expect(config).toContain(
+        "// Anyone can also add books through addBook and use the events queue.",
+      );
+      expect(config).toContain(
+        "// Anyone can also ask the AI agent, which calls your LLM provider.",
+      );
+      expect(renderWeb("pg")["graphoria.ts"]).not.toContain("Anyone can also");
+    });
+
     it.each([
       [
         { rabbitmq: true, ai: true },

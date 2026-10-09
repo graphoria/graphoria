@@ -211,7 +211,7 @@ ${values.rabbitmq ? '        queues: ["events"],\n' : ""}${values.rabbitmq && va
   return `  // The frontend has no login, so anyone can read these two tables without a
   // secret, in the app and in GraphiQL alike. Tables are read-only in the
   // generated API.
-  auth: {
+${values.rabbitmq ? "  // Anyone can also add books through addBook and use the events queue.\n" : ""}${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provider.\n" : ""}  auth: {
     enabled: false,
     database: "main",
     permissions: {
