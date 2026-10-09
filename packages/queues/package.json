@@ -47,7 +47,7 @@
     "prepublishOnly": "bun run build"
   },
   "dependencies": {
-    "amqplib": "2.0.1",
+    "amqplib": "2.2.0",
     "kafkajs": "2.2.4",
     "nanoid": "6.0.1"
   },
