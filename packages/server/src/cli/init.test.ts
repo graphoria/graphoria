@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { InitArgs } from "./initArgs";
+import type { InitAnswers } from "./initTemplates";
 
 import {
   collectAnswers,
@@ -11,9 +12,11 @@ import {
   generatePassword,
   generateSecret,
   isPortFree,
+  nextSteps,
   passwordError,
   portWarning,
   projectName,
+  recreateCommand,
   sampleQuery,
 } from "./init";
 
@@ -79,6 +82,14 @@ describe("collectAnswers", () => {
     expect(answers.database).toBe("mssql");
     expect(answers.dbPort).toBe(1433);
     expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n", "n", "n", "n"]);
+  });
+
+  it("skips the name and port questions when --db-name and --db-port answered them", () => {
+    const io = prompter([]);
+    const answers = collectAnswers({ ...ARGS, dbName: "shop", dbPort: 15432 }, io.ask, io.say);
+
+    expect(answers).toMatchObject({ dbName: "shop", dbPort: 15432 });
+    expect(io.fallbacks).toEqual(["pg", answers.dbPassword, "n", "n", "n", "n"]);
   });
 
   it.each([
@@ -342,5 +353,50 @@ describe("sampleQuery", () => {
     ["sqlite", "{ main_authors { name main_books { title } } }"],
   ] as const)("uses the %s schema's field names", (database, query) => {
     expect(sampleQuery({ database, dbName: "shop" })).toBe(query);
+  });
+});
+
+const ANSWERS: InitAnswers = {
+  database: "pg",
+  dbName: "app",
+  dbPassword: "S3cret.pass",
+  dbPort: 5432,
+  rabbitmq: false,
+  ai: false,
+  redis: false,
+  frontend: false,
+};
+
+describe("recreateCommand", () => {
+  it("turns every choice into a flag, with --yes so nothing is asked", () => {
+    expect(
+      recreateCommand({ ...ANSWERS, rabbitmq: true, ai: true, redis: true, frontend: true }, true),
+    ).toBe(
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --redis --frontend",
+    );
+  });
+
+  it("leaves out the port SQLite does not have", () => {
+    expect(recreateCommand({ ...ANSWERS, database: "sqlite", dbPort: 0 }, true)).toBe(
+      "bunx graphoria init --yes --database sqlite --db-name app",
+    );
+  });
+
+  it("adds --no-install when the install was skipped", () => {
+    expect(recreateCommand(ANSWERS, false)).toBe(
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-install",
+    );
+  });
+
+  it("never carries a password", () => {
+    expect(recreateCommand(ANSWERS, true)).not.toContain(ANSWERS.dbPassword);
+  });
+});
+
+describe("nextSteps", () => {
+  it("closes with the command that recreates the answers", () => {
+    expect(nextSteps(ANSWERS, true)).toContain(
+      "Recreate this setup in a new directory without prompts (the secrets are regenerated):\n  bunx graphoria init --yes --database pg --db-name app --db-port 5432",
+    );
   });
 });

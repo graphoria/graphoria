@@ -8,7 +8,7 @@ import type { InitArgs } from "./initArgs";
 import type { InitAnswers } from "./initTemplates";
 
 import { version } from "../../package.json";
-import { DATABASE_TYPES, isDatabaseType, parseInitArgs } from "./initArgs";
+import { DATABASE_TYPES, dbNameError, isDatabaseType, parseInitArgs, portError } from "./initArgs";
 import {
   ENGINES,
   FRONTEND_FILES,
@@ -47,8 +47,6 @@ export const projectName = (dir: string): string =>
 export const findConflicts = (dir: string, paths: readonly string[]): string[] =>
   paths.filter((path) => existsSync(join(dir, path)));
 
-const DB_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
-
 // `$` is expanded by both Bun's .env loader and Compose, `#` starts a comment,
 // and a leading `-` reads as a flag to sqlcmd in the SQL Server healthcheck.
 const PASSWORD = /^[A-Za-z0-9._~!@%^*+=:?-]+$/;
@@ -70,13 +68,6 @@ export const passwordError = (database: DatabaseType, password: string): string 
     }
   }
   return undefined;
-};
-
-const portError = (answer: string) => {
-  const port = Number(answer);
-  return /^\d+$/.test(answer) && port >= 1 && port <= 65535
-    ? undefined
-    : "Use a port number from 1 to 65535.";
 };
 
 const question = (
@@ -102,11 +93,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       isDatabaseType(answer) ? undefined : `Choose one of ${DATABASE_TYPES.join(", ")}.`,
     ) as DatabaseType);
 
-  const dbName = question(ask, say, "Database name", "app", (answer) =>
-    DB_NAME.test(answer)
-      ? undefined
-      : "Use lowercase letters, digits and _, not starting with a digit, up to 63 characters.",
-  );
+  const dbName = args.dbName ?? question(ask, say, "Database name", "app", dbNameError);
 
   // A SQLite project has no database server: no password, and no port to publish.
   const dbPassword =
@@ -119,7 +106,8 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
   const dbPort =
     database === "sqlite"
       ? 0
-      : Number(
+      : (args.dbPort ??
+        Number(
           question(
             ask,
             say,
@@ -127,7 +115,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
             String(ENGINES[database].port),
             portError,
           ),
-        );
+        ));
 
   const yesNo = (answer: string) => (/^(y(es)?|no?)$/i.test(answer) ? undefined : "Answer y or n.");
   const rabbitmq =
@@ -173,7 +161,20 @@ export const sampleQuery = (answers: Pick<InitAnswers, "database" | "dbName">): 
   return `{ ${schema}_authors { name ${schema}_books { title } } }`;
 };
 
-const nextSteps = (answers: InitAnswers, installed: boolean) => {
+export const recreateCommand = (answers: InitAnswers, installed: boolean): string =>
+  [
+    "bunx graphoria init --yes",
+    `--database ${answers.database}`,
+    `--db-name ${answers.dbName}`,
+    ...(answers.database === "sqlite" ? [] : [`--db-port ${answers.dbPort}`]),
+    ...(answers.rabbitmq ? ["--rabbitmq"] : []),
+    ...(answers.ai ? ["--ai"] : []),
+    ...(answers.redis ? ["--redis"] : []),
+    ...(answers.frontend ? ["--frontend"] : []),
+    ...(installed ? [] : ["--no-install"]),
+  ].join(" ");
+
+export const nextSteps = (answers: InitAnswers, installed: boolean) => {
   const open = answers.frontend
     ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
     : "  then open http://localhost:3000/graphiql";
@@ -231,11 +232,14 @@ const nextSteps = (answers: InitAnswers, installed: boolean) => {
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try: ${sampleQuery(answers)}`,
+    "",
+    "Recreate this setup in a new directory without prompts (the secrets are regenerated):",
+    `  ${recreateCommand(answers, installed)}`,
   ].join("\n");
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--rabbitmq] [--ai] [--redis] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--redis] [--frontend] [--no-install]";
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
