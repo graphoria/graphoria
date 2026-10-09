@@ -11,6 +11,9 @@ import { FRONTEND_FILES, PROJECT_FILES, renderProject, type ProjectValues } from
 
 const STARTER = join(import.meta.dir, "../../../../examples/docker-compose-starter");
 const PLAYGROUNDS = join(import.meta.dir, "../../../playgrounds/package.json");
+// What `@graphoria/server/config` resolves to. A generated config written outside
+// the workspace imports this instead: no node_modules above it holds the package.
+const CONFIG_SOURCE = join(import.meta.dir, "../config/index.ts");
 
 const values = (database: DatabaseType): ProjectValues => ({
   database,
@@ -18,7 +21,12 @@ const values = (database: DatabaseType): ProjectValues => ({
   dbName: "shop",
   dbPassword: "Pa55word.x",
   dbPort: 15432,
+  rabbitmq: false,
+  ai: false,
+  redis: false,
+  dataTools: false,
   frontend: false,
+  rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
 });
@@ -26,6 +34,9 @@ const values = (database: DatabaseType): ProjectValues => ({
 const versions = { graphoria: "0.6.0", bun: "1.4.2" };
 
 const render = (database: DatabaseType) => renderProject(values(database), versions);
+
+const renderWith = (patch: Partial<ProjectValues>, database: DatabaseType = "pg") =>
+  renderProject({ ...values(database), ...patch }, versions);
 
 const ENGINES: DatabaseType[] = ["pg", "mysql", "mssql", "sqlite"];
 const SERVER_ENGINES: DatabaseType[] = ["pg", "mysql", "mssql"];
@@ -83,6 +94,20 @@ describe("renderProject package.json", () => {
     expect(pkg.devDependencies.typescript).toBe("^6.0.0");
     expect(pkg.scripts).toEqual({ dev: "bun --watch index.ts", start: "bun index.ts" });
   });
+
+  it.each([
+    [{}, {}],
+    [{ rabbitmq: true }, { "@graphoria/queues": "^0.6.0" }],
+    [{ ai: true }, { "@graphoria/ai": "^0.6.0" }],
+    [
+      { rabbitmq: true, ai: true },
+      { "@graphoria/queues": "^0.6.0", "@graphoria/ai": "^0.6.0" },
+    ],
+  ] as const)("adds the adapter packages for %j", (patch, expected) => {
+    const pkg = JSON.parse(renderWith(patch as Partial<ProjectValues>)["package.json"]!);
+
+    expect(pkg.dependencies).toEqual({ "@graphoria/server": "^0.6.0", ...expected });
+  });
 });
 
 describe("renderProject .env", () => {
@@ -101,6 +126,73 @@ describe("renderProject .env", () => {
     expect(lines).toContain("DB_PASSWORD=Pa55word.x");
     expect(lines).toContain("DB_NAME=shop");
   });
+
+  it("adds the RabbitMQ settings, with a generated password", () => {
+    const lines = renderWith({ rabbitmq: true })[".env"]!.split("\n");
+
+    expect(lines).toContain("RABBITMQ_HOST=localhost");
+    expect(lines).toContain("RABBITMQ_PORT=5672");
+    expect(lines).toContain("RABBITMQ_MANAGEMENT_PORT=15672");
+    expect(lines).toContain("RABBITMQ_USER=graphoria");
+    expect(lines).toContain("RABBITMQ_PASSWORD=rabbit-pass");
+    expect(lines).toContain("RABBITMQ_VHOST=/");
+    expect(render("pg")[".env"]).not.toContain("RABBITMQ_");
+  });
+
+  it.each(["pg", "sqlite"] as const)(
+    "adds the LLM settings, keeping Ollama on localhost for %s",
+    (database) => {
+      const lines = renderWith({ ai: true }, database)[".env"]!.split("\n");
+
+      expect(lines).toContain("LLM_PROVIDER=ollama");
+      expect(lines).toContain("OLLAMA_HOST=http://localhost:11434");
+      expect(render(database)[".env"]).not.toContain("LLM_PROVIDER");
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)(
+    "points the cache and auth token store at Redis for %s",
+    (database) => {
+      const lines = renderWith({ redis: true }, database)[".env"]!.split("\n");
+
+      expect(lines).toContain("REDIS_URL=redis://localhost:6379");
+      expect(lines).toContain("CACHE_STORE=redis");
+      expect(render(database)[".env"]).not.toContain("REDIS_URL");
+      expect(render(database)[".env"]).not.toContain("CACHE_STORE");
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)("publishes dbgate's port for %s", (database) => {
+    const lines = renderWith({ dataTools: true }, database)[".env"]!.split("\n");
+
+    expect(lines).toContain("DBGATE_PORT=9000");
+    expect(lines).not.toContain("REDIS_COMMANDER_PORT=8081");
+    expect(render(database)[".env"]).not.toContain("DBGATE_PORT");
+  });
+
+  it("adds Redis Commander's port only when Redis is present too", () => {
+    const lines = renderWith({ dataTools: true, redis: true })[".env"]!.split("\n");
+
+    expect(lines).toContain("DBGATE_PORT=9000");
+    expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
+  });
+
+  it("adds every feature's settings together without overlap", () => {
+    const lines = renderWith({
+      rabbitmq: true,
+      ai: true,
+      redis: true,
+      dataTools: true,
+    })[".env"]!.split("\n");
+
+    expect(lines).toContain("DB_HOST=localhost");
+    expect(lines).toContain("RABBITMQ_HOST=localhost");
+    expect(lines).toContain("LLM_PROVIDER=ollama");
+    expect(lines).toContain("REDIS_URL=redis://localhost:6379");
+    expect(lines).toContain("CACHE_STORE=redis");
+    expect(lines).toContain("DBGATE_PORT=9000");
+    expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
+  });
 });
 
 describe("renderProject docker-compose.yml", () => {
@@ -116,11 +208,19 @@ describe("renderProject docker-compose.yml", () => {
     depends_on?: Record<string, { condition: string }>;
   };
   type Compose = {
-    services: { db: Service; graphoria: Service; "db-init"?: Service };
+    services: {
+      db: Service;
+      graphoria: Service;
+      "db-init"?: Service;
+      rabbitmq?: Service;
+      redis?: Service;
+      dbgate?: Service;
+      "redis-commander"?: Service;
+    };
     volumes: Record<string, unknown>;
   };
-  const compose = (database: DatabaseType) =>
-    Bun.YAML.parse(render(database)["docker-compose.yml"]!) as Compose;
+  const compose = (database: DatabaseType, patch: Partial<ProjectValues> = {}) =>
+    Bun.YAML.parse(renderWith(patch, database)["docker-compose.yml"]!) as Compose;
 
   it.each([
     {
@@ -188,6 +288,142 @@ describe("renderProject docker-compose.yml", () => {
       "db-init": { condition: "service_completed_successfully" },
     });
   });
+
+  it.each(["pg", "sqlite"] as const)(
+    "runs RabbitMQ from .env and points Graphoria at it (%s)",
+    (database) => {
+      const { services, volumes } = compose(database, { rabbitmq: true });
+
+      expect(services.rabbitmq!.image).toBe("rabbitmq:4-management");
+      expect(services.rabbitmq!.environment).toEqual({
+        RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER}",
+        RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD}",
+      });
+      expect(services.rabbitmq!.ports).toEqual([
+        "${RABBITMQ_PORT}:5672",
+        "${RABBITMQ_MANAGEMENT_PORT}:15672",
+      ]);
+      expect(services.rabbitmq!.volumes).toContain("rabbitmq-data:/var/lib/rabbitmq");
+      expect(services.rabbitmq!.healthcheck?.test).toBeDefined();
+      expect(services.graphoria!.environment).toMatchObject({
+        RABBITMQ_HOST: "rabbitmq",
+        RABBITMQ_PORT: "5672",
+      });
+      expect(services.graphoria!.depends_on).toMatchObject({
+        rabbitmq: { condition: "service_healthy" },
+      });
+      expect(Object.keys(volumes).sort()).toEqual(["db-data", "rabbitmq-data"]);
+    },
+  );
+
+  it("leaves the broker out by default", () => {
+    expect(compose("pg").services.rabbitmq).toBeUndefined();
+  });
+
+  it.each(["pg", "sqlite"] as const)(
+    "runs Redis from .env and points Graphoria at it (%s)",
+    (database) => {
+      const { services, volumes } = compose(database, { redis: true });
+
+      expect(services.redis!.image).toBe("redis:8");
+      expect(services.redis!.ports).toEqual(["6379:6379"]);
+      expect(services.redis!.volumes).toContain("redis-data:/data");
+      expect(services.redis!.healthcheck?.test).toBeDefined();
+      expect(services.graphoria!.environment).toMatchObject({
+        REDIS_URL: "redis://redis:6379",
+      });
+      expect(services.graphoria!.depends_on).toMatchObject({
+        redis: { condition: "service_healthy" },
+      });
+      expect(Object.keys(volumes).sort()).toEqual(["db-data", "redis-data"]);
+    },
+  );
+
+  it("leaves Redis out by default", () => {
+    expect(compose("pg").services.redis).toBeUndefined();
+  });
+
+  it.each([
+    { database: "pg" as const, engine: "postgres@dbgate-plugin-postgres", port: "5432" },
+    { database: "mysql" as const, engine: "mysql@dbgate-plugin-mysql", port: "3306" },
+    { database: "mssql" as const, engine: "mssql@dbgate-plugin-mssql", port: "1433" },
+  ])("points dbgate at the $database service", ({ database, engine, port }) => {
+    const { services, volumes } = compose(database, { dataTools: true });
+
+    expect(services.dbgate!.image).toBe("dbgate/dbgate");
+    expect(services.dbgate!.ports).toEqual(["${DBGATE_PORT}:3000"]);
+    expect(services.dbgate!.volumes).toContain("dbgate-data:/root/.dbgate");
+    expect(services.dbgate!.environment).toEqual({
+      CONNECTIONS: "db",
+      LABEL_db: expect.any(String),
+      ENGINE_db: engine,
+      SERVER_db: "db",
+      PORT_db: port,
+      USER_db: "${DB_USER}",
+      PASSWORD_db: "${DB_PASSWORD}",
+    });
+    expect(services.dbgate!.depends_on).toEqual({ db: { condition: "service_healthy" } });
+    expect(Object.keys(volumes).sort()).toEqual(["db-data", "dbgate-data"]);
+  });
+
+  it("opens the SQLite file dbgate shares with Graphoria", () => {
+    const { services, volumes } = compose("sqlite", { dataTools: true });
+
+    expect(services.dbgate!.environment).toEqual({
+      CONNECTIONS: "db",
+      LABEL_db: "SQLite",
+      ENGINE_db: "sqlite@dbgate-plugin-sqlite",
+      FILE_db: "/app/data/shop.db",
+    });
+    expect(services.dbgate!.volumes).toContain("db-data:/app/data");
+    expect(services.dbgate!.depends_on).toEqual({ graphoria: { condition: "service_healthy" } });
+    expect(Object.keys(volumes).sort()).toEqual(["db-data", "dbgate-data"]);
+  });
+
+  it("adds Redis Commander only alongside Redis", () => {
+    const withRedis = compose("pg", { dataTools: true, redis: true }).services["redis-commander"];
+    expect(withRedis!.image).toBe("rediscommander/redis-commander:latest");
+    expect(withRedis!.ports).toEqual(["${REDIS_COMMANDER_PORT}:8081"]);
+    expect(withRedis!.environment).toEqual({ REDIS_HOSTS: "local:redis:6379" });
+    expect(withRedis!.depends_on).toEqual({ redis: { condition: "service_healthy" } });
+
+    expect(compose("pg", { dataTools: true }).services["redis-commander"]).toBeUndefined();
+  });
+
+  it("leaves the data tools out by default", () => {
+    expect(compose("pg").services.dbgate).toBeUndefined();
+    expect(compose("pg").services["redis-commander"]).toBeUndefined();
+    expect(Object.keys(compose("pg").volumes)).toEqual(["db-data"]);
+  });
+
+  it.each(["pg", "sqlite"] as const)(
+    "runs RabbitMQ and Redis together and waits on both (%s)",
+    (database) => {
+      const { services, volumes } = compose(database, { rabbitmq: true, redis: true });
+
+      expect(services.rabbitmq!.image).toBe("rabbitmq:4-management");
+      expect(services.redis!.image).toBe("redis:8");
+      expect(services.graphoria!.environment).toMatchObject({
+        RABBITMQ_HOST: "rabbitmq",
+        RABBITMQ_PORT: "5672",
+        REDIS_URL: "redis://redis:6379",
+      });
+      expect(services.graphoria!.depends_on).toMatchObject({
+        rabbitmq: { condition: "service_healthy" },
+        redis: { condition: "service_healthy" },
+      });
+      expect(Object.keys(volumes).sort()).toEqual(["db-data", "rabbitmq-data", "redis-data"]);
+    },
+  );
+
+  it.each(ENGINES)("sets each %s service apart with a blank line", (database) => {
+    for (const patch of [{}, { rabbitmq: true, redis: true, dataTools: true }]) {
+      // A service's last, indented line followed straight by the next service.
+      expect(renderWith(patch, database)["docker-compose.yml"]).not.toMatch(
+        /\n {4}.*\n {2}[a-z-]+:\n/,
+      );
+    }
+  });
 });
 
 describe("renderProject graphoria.ts", () => {
@@ -201,15 +437,27 @@ describe("renderProject graphoria.ts", () => {
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
   afterEach(() => {
-    for (const key of ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]) {
+    for (const key of [
+      "DB_HOST",
+      "DB_PORT",
+      "DB_USER",
+      "DB_PASSWORD",
+      "DB_NAME",
+      "RABBITMQ_HOST",
+      "RABBITMQ_PORT",
+      "RABBITMQ_USER",
+      "RABBITMQ_PASSWORD",
+      "RABBITMQ_VHOST",
+    ]) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
     }
   });
 
-  const load = async (database: DatabaseType) => {
-    const path = join(dir, `${database}.graphoria.ts`);
-    await writeFile(path, render(database)["graphoria.ts"]!);
+  let seq = 0;
+  const load = async (database: DatabaseType, patch: Partial<ProjectValues> = {}) => {
+    const path = join(dir, `${database}-${seq++}.graphoria.ts`);
+    await writeFile(path, renderWith({ ...patch }, database)["graphoria.ts"]!);
     const module = await import(path);
     return module.default as (helpers: object) => unknown;
   };
@@ -220,6 +468,14 @@ describe("renderProject graphoria.ts", () => {
     process.env.DB_USER = "someone";
     process.env.DB_PASSWORD = "Pa55word.x";
     process.env.DB_NAME = "shop";
+  };
+
+  const setRabbitEnv = () => {
+    process.env.RABBITMQ_HOST = "rabbit.internal";
+    process.env.RABBITMQ_PORT = "5672";
+    process.env.RABBITMQ_USER = "graphoria";
+    process.env.RABBITMQ_PASSWORD = "rabbit-pass";
+    process.env.RABBITMQ_VHOST = "/";
   };
 
   it.each(SERVER_ENGINES)("reads the %s connection from the environment", async (database) => {
@@ -260,6 +516,71 @@ describe("renderProject graphoria.ts", () => {
     const configure = await load("pg");
 
     expect(() => configure({})).toThrow("DB_PASSWORD is not set");
+  });
+
+  it("declares a RabbitMQ queue with a publisher and a subscriber", async () => {
+    setEnv();
+    setRabbitEnv();
+    const { queues } = ConfigurationZod.parse((await load("pg", { rabbitmq: true }))({}));
+    const entry = queues![0]!;
+
+    expect(entry).toMatchObject({ type: "rabbitmq", name: "events" });
+    expect(entry.connection).toEqual({
+      hostname: "rabbit.internal",
+      port: 5672,
+      username: "graphoria",
+      password: "rabbit-pass",
+      vhost: "/",
+    });
+    expect(entry.exchanges).toEqual([
+      {
+        name: "books",
+        type: "topic",
+        options: { durable: true, autoDelete: false },
+        publishers: [
+          {
+            name: "bookAdded",
+            resolverName: "events_bookAdded",
+            routingKey: "book.added",
+            options: { persistent: true },
+          },
+        ],
+      },
+    ]);
+    expect(entry.queues![0]).toMatchObject({
+      name: "onBookAdded",
+      bindings: [{ exchange: "books", pattern: "book.*" }],
+    });
+    expect(typeof entry.queues![0]!.handler).toBe("function");
+  });
+
+  it("enables the AI agent only when asked", async () => {
+    setEnv();
+
+    expect(ConfigurationZod.parse((await load("pg", { ai: true }))({})).ai.enabled).toBe(true);
+    expect(ConfigurationZod.parse((await load("pg", {}))({})).ai.enabled).toBe(false);
+  });
+
+  it.each([
+    { rabbitmq: true },
+    { ai: true },
+    { rabbitmq: true, ai: true },
+    { redis: true },
+    { rabbitmq: true, ai: true, redis: true },
+  ])("still parses with %j", async (patch) => {
+    setEnv();
+    setRabbitEnv();
+
+    const configure = await load("pg", patch);
+    expect(() => ConfigurationZod.parse(configure({}))).not.toThrow();
+  });
+
+  it.each(ENGINES)("sets the %s config's blocks apart with a blank line", (database) => {
+    expect(render(database)["graphoria.ts"]).toContain("};\n\nexport default");
+
+    const queued = renderWith({ frontend: true, rabbitmq: true }, database)["graphoria.ts"]!;
+    expect(queued).toContain("};\n\n// The body of POST /rest/add-book");
+    expect(queued).toContain("});\n\nexport default");
   });
 });
 
@@ -341,6 +662,25 @@ describe("renderProject with the frontend", () => {
     expect(pkg.dependencies["gql.tada"]).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
+  it("adds the queue client packages only with RabbitMQ", () => {
+    const plain = JSON.parse(renderWeb("pg")["package.json"]!);
+    const queued = JSON.parse(
+      renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)["package.json"]!,
+    );
+
+    expect(plain.dependencies).not.toHaveProperty("graphql-ws");
+    expect(plain.dependencies).not.toHaveProperty("@urql/core");
+    expect(queued.dependencies["graphql-ws"]).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(queued.dependencies["@urql/core"]).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("keeps the frontend packages out without the frontend", () => {
+    const pkg = JSON.parse(renderWith({ rabbitmq: true })["package.json"]!);
+
+    expect(pkg.dependencies).not.toHaveProperty("graphql-ws");
+    expect(pkg.dependencies).not.toHaveProperty("urql");
+  });
+
   it("prints the schemas in dev and generates the types from them", () => {
     const pkg = JSON.parse(renderWeb("pg")["package.json"]!);
 
@@ -408,6 +748,25 @@ describe("renderProject with the frontend", () => {
     expect(frontend).toContain("preferGetMethod: false");
   });
 
+  it("opens the websocket and forwards subscriptions, only with RabbitMQ", () => {
+    const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
+      "web/frontend.tsx"
+    ]!;
+    const plain = renderWeb("pg")["web/frontend.tsx"]!;
+
+    for (const marker of [
+      'import { subscriptionExchange } from "@urql/core"',
+      'import { createClient as createWSClient } from "graphql-ws"',
+      "subscriptionExchange({",
+      'url: `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/graphql`',
+      'query: request.query ?? ""',
+    ]) {
+      expect(queued).toContain(marker);
+    }
+    expect(plain).not.toContain("subscriptionExchange");
+    expect(plain).not.toContain("graphql-ws");
+  });
+
   it("types the queries from the generated introspection", () => {
     expect(renderWeb("pg")["web/graphql.ts"]).toContain(
       'import type { introspection } from "./graphql-env.d.ts";',
@@ -425,6 +784,71 @@ describe("renderProject with the frontend", () => {
     }
   });
 
+  it("adds the book form and refreshes on the queue event, only with RabbitMQ", () => {
+    const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
+      "web/App.tsx"
+    ]!;
+    const plain = renderWeb("pg")["web/App.tsx"]!;
+
+    for (const marker of [
+      "const BookAddedSubscription = graphql(",
+      "events_onBookAdded {",
+      "const [subscription] = useSubscription({ query: BookAddedSubscription })",
+      'reexecute({ requestPolicy: "network-only" })',
+      'fetch("/rest/add-book"',
+      "Add book",
+    ]) {
+      expect(queued).toContain(marker);
+    }
+    for (const marker of ["useSubscription", "events_onBookAdded", "/rest/add-book"]) {
+      expect(plain).not.toContain(marker);
+    }
+  });
+
+  it.each(ENGINES)("queries the %s seed in the queue frontend too", (database) => {
+    const app = renderProject({ ...values(database), frontend: true, rabbitmq: true }, versions)[
+      "web/App.tsx"
+    ]!;
+    const schema = SCHEMAS[database];
+
+    expect(app).toContain(`${genResolverName(schema, "authors", "table")}(`);
+    expect(app).toContain(`${genResolverName(schema, "books", "table")}(`);
+  });
+
+  it("imports the operation helper only for the queue frontend", () => {
+    const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
+      "graphoria.ts"
+    ]!;
+    const plain = renderWeb("pg")["graphoria.ts"]!;
+
+    expect(queued).toContain('import { operation, z } from "@graphoria/server/config";');
+    expect(plain).not.toContain("import { operation");
+  });
+
+  it("emits no operations without the frontend", () => {
+    expect(renderWith({ rabbitmq: true })["graphoria.ts"]).not.toContain("operation(");
+  });
+
+  it.each(ENGINES)("runs the %s insert and publishes the queued event", (database) => {
+    const config = renderProject({ ...values(database), frontend: true, rabbitmq: true }, versions)[
+      "graphoria.ts"
+    ]!;
+
+    expect(config).toContain("addBook: operation(");
+    expect(config).toContain('queues.sendMessage("events_bookAdded"');
+    expect(config).toContain('path: "/add-book"');
+    expect(config).toContain('method: "POST"');
+    expect(config).toContain(
+      database === "pg"
+        ? "VALUES ($1, $2, $3)"
+        : database === "mysql"
+          ? "VALUES (?, ?, ?)"
+          : database === "mssql"
+            ? "@publishedYear"
+            : ".run(input.title",
+    );
+  });
+
   describe("graphoria.ts", () => {
     let dir: string;
 
@@ -435,20 +859,43 @@ describe("renderProject with the frontend", () => {
       process.env.DB_USER = "someone";
       process.env.DB_PASSWORD = "Pa55word.x";
       process.env.DB_NAME = "shop";
+      process.env.RABBITMQ_HOST = "rabbit.internal";
+      process.env.RABBITMQ_PORT = "5672";
+      process.env.RABBITMQ_USER = "graphoria";
+      process.env.RABBITMQ_PASSWORD = "rabbit-pass";
+      process.env.RABBITMQ_VHOST = "/";
     });
 
     afterAll(async () => {
-      for (const key of ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]) {
+      for (const key of [
+        "DB_HOST",
+        "DB_PORT",
+        "DB_USER",
+        "DB_PASSWORD",
+        "DB_NAME",
+        "RABBITMQ_HOST",
+        "RABBITMQ_PORT",
+        "RABBITMQ_USER",
+        "RABBITMQ_PASSWORD",
+        "RABBITMQ_VHOST",
+      ]) {
         delete process.env[key];
       }
       await rm(dir, { recursive: true, force: true });
     });
 
-    const parse = async (frontend: boolean, database: DatabaseType) => {
-      const path = join(dir, `${database}-${frontend}.graphoria.ts`);
+    let seq = 0;
+    const parse = async (
+      frontend: boolean,
+      database: DatabaseType,
+      patch: Partial<ProjectValues> = {},
+    ) => {
+      const path = join(dir, `${database}-${frontend}-${seq++}.graphoria.ts`);
       await writeFile(
         path,
-        renderProject({ ...values(database), frontend }, versions)["graphoria.ts"]!,
+        renderProject({ ...values(database), frontend, ...patch }, versions)[
+          "graphoria.ts"
+        ]!.replaceAll('"@graphoria/server/config"', JSON.stringify(CONFIG_SOURCE)),
       );
       const configure = (await import(path)).default as (helpers: object) => unknown;
       return ConfigurationZod.parse(configure({}));
@@ -472,6 +919,51 @@ describe("renderProject with the frontend", () => {
     it("grants nothing without the frontend", async () => {
       expect((await parse(false, "pg")).auth.permissions).toEqual({});
     });
+
+    it("keeps the anonymous grant on one line without --rabbitmq or --ai", () => {
+      const config = renderWeb("pg")["graphoria.ts"]!;
+
+      expect(config).toContain('anonymous: { tables: ["public_authors", "public_books"] },');
+      expect(config).not.toContain("anonymous: {\n");
+    });
+
+    it("says what else the grant opens to anyone", () => {
+      const config = renderWith({ frontend: true, rabbitmq: true, ai: true })["graphoria.ts"]!;
+
+      expect(config).toContain(
+        "// Anyone can also add books through addBook and use the events queue.",
+      );
+      expect(config).toContain(
+        "// Anyone can also ask the AI agent, which calls your LLM provider.",
+      );
+      expect(renderWeb("pg")["graphoria.ts"]).not.toContain("Anyone can also");
+    });
+
+    it.each([
+      [
+        { rabbitmq: true, ai: true },
+        { queues: ["events"], ai: true, operations: ["addBook"] },
+      ],
+      [{ rabbitmq: true }, { queues: ["events"], operations: ["addBook"] }],
+      [{ redis: true }, {}],
+      [{}, {}],
+    ])("extends the anonymous grant for %j", async (patch, expected) => {
+      const { auth } = await parse(true, "pg", patch);
+
+      expect(auth.permissions.anonymous).toMatchObject(expected);
+    });
+
+    it.each(SERVER_ENGINES)(
+      "parses the %s config with the add-book operation",
+      async (database) => {
+        const configuration = await parse(true, database, { rabbitmq: true });
+
+        expect(configuration.operations.addBook!.rest).toMatchObject({
+          path: "/add-book",
+          method: "POST",
+        });
+      },
+    );
   });
 });
 

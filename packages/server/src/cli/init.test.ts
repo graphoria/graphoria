@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { InitArgs } from "./initArgs";
+import type { InitAnswers } from "./initTemplates";
 
 import {
   collectAnswers,
@@ -11,9 +12,11 @@ import {
   generatePassword,
   generateSecret,
   isPortFree,
+  nextSteps,
   passwordError,
   portWarning,
   projectName,
+  recreateCommand,
   sampleQuery,
 } from "./init";
 
@@ -45,7 +48,17 @@ describe("collectAnswers", () => {
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
     expect(answers.dbPort).toBe(5432);
     expect(answers.frontend).toBe(false);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n"]);
+    expect(io.fallbacks).toEqual([
+      "pg",
+      "app",
+      answers.dbPassword,
+      "5432",
+      "n",
+      "n",
+      "n",
+      "n",
+      "n",
+    ]);
     expect(io.said).toEqual([]);
   });
 
@@ -65,6 +78,10 @@ describe("collectAnswers", () => {
       dbName: "shop",
       dbPassword: "S3cret.pass",
       dbPort: 13306,
+      rabbitmq: false,
+      ai: false,
+      redis: false,
+      dataTools: false,
       frontend: false,
     });
   });
@@ -75,7 +92,15 @@ describe("collectAnswers", () => {
 
     expect(answers.database).toBe("mssql");
     expect(answers.dbPort).toBe(1433);
-    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n"]);
+    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n", "n", "n", "n", "n"]);
+  });
+
+  it("skips the name and port questions when --db-name and --db-port answered them", () => {
+    const io = prompter([]);
+    const answers = collectAnswers({ ...ARGS, dbName: "shop", dbPort: 15432 }, io.ask, io.say);
+
+    expect(answers).toMatchObject({ dbName: "shop", dbPort: 15432 });
+    expect(io.fallbacks).toEqual(["pg", answers.dbPassword, "n", "n", "n", "n", "n"]);
   });
 
   it.each([
@@ -117,7 +142,7 @@ describe("collectAnswers", () => {
     const io = prompter([...answers]);
 
     expect(collectAnswers(ARGS, io.ask, io.say)).toMatchObject(want);
-    expect(io.fallbacks).toHaveLength(6);
+    expect(io.fallbacks).toHaveLength(10);
     expect(io.said).toHaveLength(1);
   });
 
@@ -128,23 +153,23 @@ describe("collectAnswers", () => {
   });
 
   it.each(["y", "yes", "Y", "YES", " Yes "])("adds the frontend on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", answer]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", answer]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
   });
 
   it.each(["", "n", "no", "N", "No"])("leaves the frontend out on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", answer]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", answer]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(false);
     expect(io.said).toEqual([]);
   });
 
   it("asks the frontend question again after another answer, saying why", () => {
-    const io = prompter(["pg", "shop", "pw", "15432", "maybe", "y"]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", "maybe", "y"]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
-    expect(io.fallbacks).toHaveLength(6);
+    expect(io.fallbacks).toHaveLength(10);
     expect(io.said).toHaveLength(1);
   });
 
@@ -153,7 +178,7 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, frontend }, io.ask, io.say);
 
     expect(answers.frontend).toBe(frontend);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432"]);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n", "n"]);
   });
 
   it("asks neither a password nor a port for SQLite, which has no server", () => {
@@ -165,9 +190,53 @@ describe("collectAnswers", () => {
       dbName: "app",
       dbPassword: "",
       dbPort: 0,
+      rabbitmq: false,
+      ai: false,
+      redis: false,
+      dataTools: false,
       frontend: false,
     });
-    expect(io.fallbacks).toEqual(["app", "n"]);
+    expect(io.fallbacks).toEqual(["app", "n", "n", "n", "n", "n"]);
+  });
+
+  it.each([
+    ["y", "yes"],
+    ["Y", "no"],
+  ])("adds RabbitMQ and the AI agent on %p", (rabbitAnswer, aiAnswer) => {
+    const io = prompter(["pg", "shop", "pw", "15432", rabbitAnswer, aiAnswer]);
+    const answers = collectAnswers(ARGS, io.ask, io.say);
+
+    expect(answers.rabbitmq).toBe(true);
+    expect(answers.ai).toBe(aiAnswer === "yes");
+  });
+
+  it.each([true, false])("skips the RabbitMQ question when --rabbitmq is %p", (rabbitmq) => {
+    const io = prompter(["pg", "shop", null, "15432", "n"]);
+    const answers = collectAnswers({ ...ARGS, rabbitmq }, io.ask, io.say);
+
+    expect(answers.rabbitmq).toBe(rabbitmq);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n", "n"]);
+  });
+
+  it.each([true, false])("skips the AI question when --ai is %p", (ai) => {
+    const io = prompter(["pg", "shop", "pw", "15432", "n"]);
+    const answers = collectAnswers({ ...ARGS, ai }, io.ask, io.say);
+
+    expect(answers.ai).toBe(ai);
+  });
+
+  it.each([true, false])("skips the Redis question when --redis is %p", (redis) => {
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n"]);
+    const answers = collectAnswers({ ...ARGS, redis }, io.ask, io.say);
+
+    expect(answers.redis).toBe(redis);
+  });
+
+  it.each([true, false])("skips the data-tools question when --data-tools is %p", (dataTools) => {
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n"]);
+    const answers = collectAnswers({ ...ARGS, dataTools }, io.ask, io.say);
+
+    expect(answers.dataTools).toBe(dataTools);
   });
 });
 
@@ -259,16 +328,29 @@ describe("findConflicts", () => {
 describe("portWarning", () => {
   const busy = new Set([5432, 5433]);
   const isFree = (port: number) => !busy.has(port);
+  const db = { service: "database", envVar: "DB_PORT" };
 
   it("says nothing when the port is free", () => {
-    expect(portWarning(6000, isFree)).toBeUndefined();
+    expect(portWarning(6000, db, isFree)).toBeUndefined();
   });
 
   it("names the next free port when the port is taken", () => {
-    const warning = portWarning(5432, isFree);
+    const warning = portWarning(5432, db, isFree);
 
     expect(warning).toContain("5432");
     expect(warning).toContain("5434");
+    expect(warning).toContain("DB_PORT");
+  });
+
+  it("names the service and variable it is warning about", () => {
+    const warning = portWarning(
+      5672,
+      { service: "RabbitMQ", envVar: "RABBITMQ_PORT" },
+      () => false,
+    );
+
+    expect(warning).toContain("RabbitMQ");
+    expect(warning).toContain("RABBITMQ_PORT");
   });
 });
 
@@ -290,5 +372,65 @@ describe("sampleQuery", () => {
     ["sqlite", "{ main_authors { name main_books { title } } }"],
   ] as const)("uses the %s schema's field names", (database, query) => {
     expect(sampleQuery({ database, dbName: "shop" })).toBe(query);
+  });
+});
+
+const ANSWERS: InitAnswers = {
+  database: "pg",
+  dbName: "app",
+  dbPassword: "S3cret.pass",
+  dbPort: 5432,
+  rabbitmq: false,
+  ai: false,
+  redis: false,
+  dataTools: false,
+  frontend: false,
+};
+
+describe("recreateCommand", () => {
+  it("turns every choice into a flag, with --yes so nothing is asked", () => {
+    expect(
+      recreateCommand(
+        { ...ANSWERS, rabbitmq: true, ai: true, redis: true, dataTools: true, frontend: true },
+        true,
+      ),
+    ).toBe(
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --redis --data-tools --frontend",
+    );
+  });
+
+  it("leaves out the port SQLite does not have", () => {
+    expect(recreateCommand({ ...ANSWERS, database: "sqlite", dbPort: 0 }, true)).toBe(
+      "bunx graphoria init --yes --database sqlite --db-name app",
+    );
+  });
+
+  it("adds --no-install when the install was skipped", () => {
+    expect(recreateCommand(ANSWERS, false)).toBe(
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-install",
+    );
+  });
+
+  it("never carries a password", () => {
+    expect(recreateCommand(ANSWERS, true)).not.toContain(ANSWERS.dbPassword);
+  });
+});
+
+describe("nextSteps", () => {
+  it("closes with the command that recreates the answers", () => {
+    expect(nextSteps(ANSWERS, true)).toContain(
+      "Recreate this setup in a new directory without prompts (the secrets are regenerated):\n  bunx graphoria init --yes --database pg --db-name app --db-port 5432",
+    );
+  });
+
+  it("names Redis Commander only when Redis brings it along", () => {
+    expect(nextSteps({ ...ANSWERS, dataTools: true }, true)).toContain(
+      "dbgate explores the database at http://localhost:9000",
+    );
+    expect(nextSteps({ ...ANSWERS, dataTools: true }, true)).not.toContain("Redis Commander");
+
+    expect(nextSteps({ ...ANSWERS, dataTools: true, redis: true }, true)).toContain(
+      "Redis Commander inspects Redis at http://localhost:8081.",
+    );
   });
 });

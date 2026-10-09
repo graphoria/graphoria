@@ -8,8 +8,18 @@ import type { InitArgs } from "./initArgs";
 import type { InitAnswers } from "./initTemplates";
 
 import { version } from "../../package.json";
-import { DATABASE_TYPES, isDatabaseType, parseInitArgs } from "./initArgs";
-import { ENGINES, FRONTEND_FILES, PROJECT_FILES, renderProject, seedSchema } from "./initTemplates";
+import { DATABASE_TYPES, dbNameError, isDatabaseType, parseInitArgs, portError } from "./initArgs";
+import {
+  DBGATE_PORT,
+  ENGINES,
+  FRONTEND_FILES,
+  PROJECT_FILES,
+  RABBITMQ_MANAGEMENT_PORT,
+  RABBITMQ_PORT,
+  REDIS_COMMANDER_PORT,
+  renderProject,
+  seedSchema,
+} from "./initTemplates";
 
 type Ask = (question: string, fallback: string) => string | null;
 type Say = (line: string) => void;
@@ -39,8 +49,6 @@ export const projectName = (dir: string): string =>
 export const findConflicts = (dir: string, paths: readonly string[]): string[] =>
   paths.filter((path) => existsSync(join(dir, path)));
 
-const DB_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
-
 // `$` is expanded by both Bun's .env loader and Compose, `#` starts a comment,
 // and a leading `-` reads as a flag to sqlcmd in the SQL Server healthcheck.
 const PASSWORD = /^[A-Za-z0-9._~!@%^*+=:?-]+$/;
@@ -62,13 +70,6 @@ export const passwordError = (database: DatabaseType, password: string): string 
     }
   }
   return undefined;
-};
-
-const portError = (answer: string) => {
-  const port = Number(answer);
-  return /^\d+$/.test(answer) && port >= 1 && port <= 65535
-    ? undefined
-    : "Use a port number from 1 to 65535.";
 };
 
 const question = (
@@ -94,11 +95,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       isDatabaseType(answer) ? undefined : `Choose one of ${DATABASE_TYPES.join(", ")}.`,
     ) as DatabaseType);
 
-  const dbName = question(ask, say, "Database name", "app", (answer) =>
-    DB_NAME.test(answer)
-      ? undefined
-      : "Use lowercase letters, digits and _, not starting with a digit, up to 63 characters.",
-  );
+  const dbName = args.dbName ?? question(ask, say, "Database name", "app", dbNameError);
 
   // A SQLite project has no database server: no password, and no port to publish.
   const dbPassword =
@@ -111,7 +108,8 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
   const dbPort =
     database === "sqlite"
       ? 0
-      : Number(
+      : (args.dbPort ??
+        Number(
           question(
             ask,
             say,
@@ -119,7 +117,18 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
             String(ENGINES[database].port),
             portError,
           ),
-        );
+        ));
+
+  const yesNo = (answer: string) => (/^(y(es)?|no?)$/i.test(answer) ? undefined : "Answer y or n.");
+  const rabbitmq =
+    args.rabbitmq ?? /^y(es)?$/i.test(question(ask, say, "Add RabbitMQ? (y/N)", "n", yesNo));
+  const ai =
+    args.ai ?? /^y(es)?$/i.test(question(ask, say, "Enable the AI agent? (y/N)", "n", yesNo));
+  const redis = args.redis ?? /^y(es)?$/i.test(question(ask, say, "Add Redis? (y/N)", "n", yesNo));
+
+  const dataTools =
+    args.dataTools ??
+    /^y(es)?$/i.test(question(ask, say, "Add data inspection tools? (y/N)", "n", yesNo));
 
   const frontend =
     args.frontend ??
@@ -129,7 +138,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       ),
     );
 
-  return { database, dbName, dbPassword, dbPort, frontend };
+  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, redis, dataTools, frontend };
 };
 
 export const isPortFree = (port: number): boolean => {
@@ -143,13 +152,14 @@ export const isPortFree = (port: number): boolean => {
 
 export const portWarning = (
   port: number,
+  describe: { service: string; envVar: string },
   isFree: (port: number) => boolean = isPortFree,
 ): string | undefined => {
   if (isFree(port)) return undefined;
   let free = port + 1;
   while (free <= 65535 && !isFree(free)) free++;
   const suggestion = free <= 65535 ? ` such as ${free}` : "";
-  return `Port ${port} is in use on this host, so Docker Compose cannot publish the database on it. Set DB_PORT in .env to a free port${suggestion} before \`docker compose up\`.`;
+  return `Port ${port} is in use on this host, so Docker Compose cannot publish the ${describe.service} on it. Set ${describe.envVar} in .env to a free port${suggestion} before \`docker compose up\`.`;
 };
 
 export const sampleQuery = (answers: Pick<InitAnswers, "database" | "dbName">): string => {
@@ -157,7 +167,21 @@ export const sampleQuery = (answers: Pick<InitAnswers, "database" | "dbName">): 
   return `{ ${schema}_authors { name ${schema}_books { title } } }`;
 };
 
-const nextSteps = (answers: InitAnswers, installed: boolean) => {
+export const recreateCommand = (answers: InitAnswers, installed: boolean): string =>
+  [
+    "bunx graphoria init --yes",
+    `--database ${answers.database}`,
+    `--db-name ${answers.dbName}`,
+    ...(answers.database === "sqlite" ? [] : [`--db-port ${answers.dbPort}`]),
+    ...(answers.rabbitmq ? ["--rabbitmq"] : []),
+    ...(answers.ai ? ["--ai"] : []),
+    ...(answers.redis ? ["--redis"] : []),
+    ...(answers.dataTools ? ["--data-tools"] : []),
+    ...(answers.frontend ? ["--frontend"] : []),
+    ...(installed ? [] : ["--no-install"]),
+  ].join(" ");
+
+export const nextSteps = (answers: InitAnswers, installed: boolean) => {
   const open = answers.frontend
     ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
     : "  then open http://localhost:3000/graphiql";
@@ -188,6 +212,32 @@ const nextSteps = (answers: InitAnswers, installed: boolean) => {
 
   return [
     ...run,
+    ...(answers.rabbitmq
+      ? [
+          "",
+          `RabbitMQ management UI: http://localhost:${RABBITMQ_MANAGEMENT_PORT} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
+          "Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.",
+        ]
+      : []),
+    ...(answers.ai
+      ? [
+          "",
+          "The AI agent answers /rest/ai and GraphiQL's ask field.",
+          "Ollama must run on the host, so use bun run dev, not docker compose up.",
+        ]
+      : []),
+    ...(answers.redis
+      ? ["", "Redis serves the cache and the auth token store (REDIS_URL and CACHE_STORE in .env)."]
+      : []),
+    ...(answers.dataTools
+      ? [
+          "",
+          `dbgate explores the database at http://localhost:${DBGATE_PORT} once \`docker compose up\` runs it.`,
+          ...(answers.redis
+            ? [`Redis Commander inspects Redis at http://localhost:${REDIS_COMMANDER_PORT}.`]
+            : []),
+        ]
+      : []),
     ...(answers.frontend
       ? [
           "",
@@ -198,11 +248,14 @@ const nextSteps = (answers: InitAnswers, installed: boolean) => {
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try: ${sampleQuery(answers)}`,
+    "",
+    "Recreate this setup in a new directory without prompts (the secrets are regenerated):",
+    `  ${recreateCommand(answers, installed)}`,
   ].join("\n");
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--redis] [--data-tools] [--frontend] [--no-install]";
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
@@ -226,12 +279,40 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   refuseExisting([...PROJECT_FILES, "bun.lock"]);
   const answers = collectAnswers(args, args.yes ? () => null : prompt, console.log);
   if (answers.frontend) refuseExisting(FRONTEND_FILES);
-  const warning = answers.database === "sqlite" ? undefined : portWarning(answers.dbPort);
-  if (warning) console.warn(warning);
+  const warnings = [
+    answers.database === "sqlite"
+      ? undefined
+      : portWarning(answers.dbPort, { service: "database", envVar: "DB_PORT" }),
+    answers.rabbitmq
+      ? portWarning(RABBITMQ_PORT, { service: "RabbitMQ", envVar: "RABBITMQ_PORT" })
+      : undefined,
+    answers.rabbitmq
+      ? portWarning(RABBITMQ_MANAGEMENT_PORT, {
+          service: "RabbitMQ management UI",
+          envVar: "RABBITMQ_MANAGEMENT_PORT",
+        })
+      : undefined,
+    answers.dataTools
+      ? portWarning(DBGATE_PORT, { service: "dbgate", envVar: "DBGATE_PORT" })
+      : undefined,
+    answers.dataTools && answers.redis
+      ? portWarning(REDIS_COMMANDER_PORT, {
+          service: "Redis Commander",
+          envVar: "REDIS_COMMANDER_PORT",
+        })
+      : undefined,
+  ];
+  for (const warning of warnings) if (warning) console.warn(warning);
 
   const name = projectName(dir);
   const files = renderProject(
-    { ...answers, name, adminSecret: generateSecret(), jwtSecret: generateSecret() },
+    {
+      ...answers,
+      name,
+      adminSecret: generateSecret(),
+      jwtSecret: generateSecret(),
+      rabbitmqPassword: generatePassword(),
+    },
     { graphoria: version, bun: Bun.version },
   );
 

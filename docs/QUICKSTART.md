@@ -61,7 +61,7 @@ Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the 
 
 Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, `main_` on SQLite, and the database name on MySQL (`app_authors` with the default name).
 
-`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command.
+`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--redis` adds Redis for the cache and the auth token store, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time.
 
 ### Add a React frontend with `--frontend`
 
@@ -73,9 +73,11 @@ Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` ans
 | `web/graphql.ts`                                    | [gql.tada](https://gql-tada.0no.co/), which types each query from the schema.                                           |
 | `web/styles.css`, `bunfig.toml`                     | Tailwind CSS, which Bun builds through `bun-plugin-tailwind`.                                                           |
 
+With `--rabbitmq` too, the page gains an add-book form; submitting POSTs `/rest/add-book`, the operation inserts the row and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list.
+
 Five files change too: `graphoria.ts` opens the seed to anonymous reads (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
 
-The app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off.
+The app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API. With `--rabbitmq` the grant also lets anyone add books through `addBook` and publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off.
 
 The query types come from the schema, which `bun run dev` prints to `.graphoria/schemas/`. Once it has, run:
 
@@ -84,6 +86,55 @@ bun run types
 ```
 
 It writes `web/graphql-env.d.ts`; commit that file. Until it exists the app still runs, but `tsc` reports errors in `web/`. After a change to the tables, restart `bun run dev` and run `bun run types` again.
+
+### Add a RabbitMQ broker with `--rabbitmq`
+
+Answer yes to `Add RabbitMQ?`, or pass `--rabbitmq` (`--no-rabbitmq` answers no, and so does `--yes` alone). The project then gets:
+
+| File                 | What it holds                                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `package.json`       | `@graphoria/queues` as a dependency.                                                                                                       |
+| `.env`               | The broker settings: `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_MANAGEMENT_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_VHOST`. |
+| `docker-compose.yml` | A `rabbitmq` service (with its `rabbitmq-data` volume) that Graphoria waits on.                                                            |
+| `graphoria.ts`       | A `queues` entry with a demo publisher and subscriber.                                                                                     |
+
+The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription; with `--frontend` too, the add-book form POSTs `/rest/add-book`, the operation inserts the row and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
+
+### Add Redis with `--redis`
+
+Answer yes to `Add Redis?`, or pass `--redis` (`--no-redis` answers no, and so does `--yes` alone). The project then gets:
+
+| File                 | What it holds                                                             |
+| -------------------- | ------------------------------------------------------------------------- |
+| `.env`               | `REDIS_URL=redis://localhost:6379` and `CACHE_STORE=redis`.               |
+| `docker-compose.yml` | A `redis` service (with its `redis-data` volume) that Graphoria waits on. |
+
+The auth token store always uses `REDIS_URL`, and `CACHE_STORE=redis` moves the cache off the in-memory store. In Docker Compose the server is pointed at the `redis` service, while `bun run dev` reaches Redis on `localhost:6379`.
+
+### Browse the data with `--data-tools`
+
+Answer yes to `Add data inspection tools?`, or pass `--data-tools` (`--no-data-tools` answers no, and so does `--yes` alone). The project then gets:
+
+| File                 | What it holds                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| `.env`               | `DBGATE_PORT=9000`, plus `REDIS_COMMANDER_PORT=8081` when Redis is in the project. |
+| `docker-compose.yml` | A `dbgate` service (with its `dbgate-data` volume) wired to the database.          |
+
+[dbgate](https://dbgate.org) browses tables and runs SQL in a browser. It connects with the same credentials Compose already gives the database, so there is nothing to fill in: `docker compose up -d` and open `http://localhost:9000` (set `DBGATE_PORT` in `.env` to move it). On SQLite it shares the `db-data` volume and opens the file Graphoria seeds. It needs Docker Compose, so it is not part of a host-only `bun run dev`.
+
+With `--redis` too, the project also gets a `redis-commander` service (image `rediscommander/redis-commander`) pointed at the Redis service, at `http://localhost:8081` (`REDIS_COMMANDER_PORT`). It is added only when Redis is in the project, since it has nothing to inspect otherwise.
+
+### Enable the AI agent with `--ai`
+
+Answer yes to `Enable the AI agent?`, or pass `--ai` (`--no-ai` answers no, and so does `--yes` alone). The project then gets:
+
+| File           | What it holds                                                                                |
+| -------------- | -------------------------------------------------------------------------------------------- |
+| `package.json` | `@graphoria/ai` as a dependency.                                                             |
+| `.env`         | `LLM_PROVIDER=ollama` and `OLLAMA_HOST=http://localhost:11434`, plus commented alternatives. |
+| `graphoria.ts` | `ai: { enabled: true }`.                                                                     |
+
+The agent answers `/rest/ai` and GraphiQL's `ask`. Ollama must be running on the host, so `--ai` works with `bun run dev`, not `docker compose up`.
 
 The rest of this guide sets a project up by hand, against a database you already run.
 

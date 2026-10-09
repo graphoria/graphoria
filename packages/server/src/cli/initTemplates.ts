@@ -5,10 +5,19 @@ export type InitAnswers = {
   dbName: string;
   dbPassword: string;
   dbPort: number;
+  rabbitmq: boolean;
+  ai: boolean;
+  redis: boolean;
+  dataTools: boolean;
   frontend: boolean;
 };
 
-export type ProjectValues = InitAnswers & { name: string; adminSecret: string; jwtSecret: string };
+export type ProjectValues = InitAnswers & {
+  name: string;
+  adminSecret: string;
+  jwtSecret: string;
+  rabbitmqPassword: string;
+};
 
 export type Versions = { graphoria: string; bun: string };
 
@@ -34,6 +43,23 @@ export const ENGINES: Record<ServerEngine, Engine> = {
     data: "/var/opt/mssql",
   },
 };
+
+// dbgate names its engine as `<driver>@<plugin>`.
+const DBGATE_ENGINES: Record<ServerEngine, string> = {
+  pg: "postgres@dbgate-plugin-postgres",
+  mysql: "mysql@dbgate-plugin-mysql",
+  mssql: "mssql@dbgate-plugin-mssql",
+};
+
+export const RABBITMQ_PORT = 5672;
+export const RABBITMQ_MANAGEMENT_PORT = 15672;
+
+// The host port dbgate's single-page app is published on; it listens on 3000
+// inside its own container, which Graphoria already took on the host.
+export const DBGATE_PORT = 9000;
+
+// Redis Commander's own default port.
+export const REDIS_COMMANDER_PORT = 8081;
 
 export const PROJECT_FILES = [
   "package.json",
@@ -77,7 +103,14 @@ const FRONTEND_DEPENDENCIES = {
 
 const FRONTEND_DEV_DEPENDENCIES = { "@types/react": "19.3.0", "@types/react-dom": "19.3.0" };
 
-const packageJson = ({ name, frontend }: ProjectValues, { graphoria }: Versions) =>
+// The queue demo's websocket subscription client; urql core already rides
+// along as urql's dependency, declared here because App.tsx imports it.
+const FRONTEND_QUEUE_DEPENDENCIES = {
+  "@urql/core": "6.0.3",
+  "graphql-ws": "6.3.0",
+};
+
+const packageJson = ({ name, rabbitmq, ai, frontend }: ProjectValues, { graphoria }: Versions) =>
   JSON.stringify(
     {
       name,
@@ -92,7 +125,10 @@ const packageJson = ({ name, frontend }: ProjectValues, { graphoria }: Versions)
         : { dev: "bun --watch index.ts", start: "bun index.ts" },
       dependencies: {
         "@graphoria/server": `^${graphoria}`,
+        ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
+        ...(ai && { "@graphoria/ai": `^${graphoria}` }),
         ...(frontend && FRONTEND_DEPENDENCIES),
+        ...(frontend && rabbitmq && FRONTEND_QUEUE_DEPENDENCIES),
       },
       devDependencies: {
         "@types/bun": "latest",
@@ -166,22 +202,117 @@ const SQLITE_CONNECTION = `      connection: { filename: env("DB_FILE") },
 
 const anonymousGrant = (values: ProjectValues) => {
   const schema = seedSchema(values);
+  const permission =
+    values.rabbitmq || values.ai
+      ? `{
+        tables: ["${schema}_authors", "${schema}_books"],
+${values.rabbitmq ? '        queues: ["events"],\n' : ""}${values.rabbitmq && values.frontend ? '        operations: ["addBook"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      }`
+      : `{ tables: ["${schema}_authors", "${schema}_books"] }`;
   return `  // The frontend has no login, so anyone can read these two tables without a
   // secret, in the app and in GraphiQL alike. Tables are read-only in the
   // generated API.
-  auth: {
+${values.rabbitmq ? "  // Anyone can also add books through addBook and use the events queue.\n" : ""}${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provider.\n" : ""}  auth: {
     enabled: false,
     database: "main",
     permissions: {
-      anonymous: { tables: ["${schema}_authors", "${schema}_books"] },
+      anonymous: ${permission},
     },
   },
 `;
 };
 
-const graphoriaConfig = (
-  values: ProjectValues,
-) => `import type { ConfigurationFn } from "@graphoria/server/config";
+const QUEUE_CONFIG = `  queues: [
+    {
+      type: "rabbitmq",
+      name: "events",
+      enabled: true,
+      autoSetup: true,
+      connection: {
+        hostname: env("RABBITMQ_HOST"),
+        port: Number(env("RABBITMQ_PORT")),
+        username: env("RABBITMQ_USER"),
+        password: env("RABBITMQ_PASSWORD"),
+        vhost: env("RABBITMQ_VHOST"),
+      },
+      // The publisher is a mutation (events_bookAdded); the subscriber is a
+      // subscription (events_onBookAdded) and consumes the queue.
+      publishers: {
+        bookAdded: { topic: "books", routingKey: "book.added", persistent: true },
+      },
+      subscribers: {
+        onBookAdded: {
+          topic: "books",
+          pattern: "book.*",
+          handler: (message) => {
+            console.log("[events] book added:", message);
+          },
+        },
+      },
+      topics: {
+        books: { type: "topic", durable: true },
+      },
+    },
+  ],
+`;
+
+// Insert statements per engine, interpolated into the addBook handler below.
+const ADD_BOOK_INSERT: Record<DatabaseType, string> = {
+  pg: `        await databases.main.unsafe(
+          \`INSERT INTO books (title, published_year, author_id) VALUES ($1, $2, $3)\`,
+          [input.title, input.publishedYear, input.authorId],
+        );`,
+  mysql: `        await databases.main.unsafe(
+          \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)\`,
+          [input.title, input.publishedYear, input.authorId],
+        );`,
+  mssql: `        await databases.main
+          .request()
+          .input("title", input.title)
+          .input("publishedYear", input.publishedYear)
+          .input("authorId", input.authorId)
+          .query(
+            \`INSERT INTO books (title, published_year, author_id) VALUES (@title, @publishedYear, @authorId)\`,
+          );`,
+  sqlite: `        databases.main
+          .query(
+            \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)\`,
+          )
+          .run(input.title, input.publishedYear, input.authorId);`,
+};
+
+const ADD_BOOK_OPERATION = (values: ProjectValues) => `  operations: {
+    // The frontend posts a new book here; after the insert, the handler publishes
+    // events_bookAdded, the queued event the frontend's subscription watches.
+    addBook: operation({
+      input: addBookInput,
+      rest: {
+        path: "/add-book",
+        method: "POST",
+        body: addBookInput,
+      },
+      handler: async ({ databases, queues }, input) => {
+${ADD_BOOK_INSERT[values.database]}
+        queues.sendMessage("events_bookAdded", {
+          title: input.title,
+          publishedYear: input.publishedYear,
+          authorId: input.authorId,
+        });
+        return input;
+      },
+    }),
+  },
+`;
+
+const AI_CONFIG = `  ai: {
+    enabled: true,
+  },
+`;
+
+const graphoriaConfig = (values: ProjectValues) => `${
+  values.frontend && values.rabbitmq
+    ? 'import { operation, z } from "@graphoria/server/config";\n'
+    : ""
+}import type { ConfigurationFn } from "@graphoria/server/config";
 
 // Bun loads these from .env; in Docker Compose they come from the environment.
 const env = (name: string) => {
@@ -190,7 +321,18 @@ const env = (name: string) => {
   return value;
 };
 
-export default (() => ({
+${
+  values.frontend && values.rabbitmq
+    ? `// The body of POST /rest/add-book and of the addBook GraphQL mutation.
+const addBookInput = z.object({
+  title: z.string().min(1),
+  publishedYear: z.number().int(),
+  authorId: z.number().int(),
+});
+
+`
+    : ""
+}export default (() => ({
   name: ${JSON.stringify(values.name)},
   version: "1.0.0",
   databases: [
@@ -200,7 +342,7 @@ export default (() => ({
       enabled: true,
 ${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
   ],
-${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.frontend && values.rabbitmq ? ADD_BOOK_OPERATION(values) : ""}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -243,6 +385,41 @@ console.log(\`GraphiQL → http://localhost:\${server.port}\${prefixes.graphiql}
 console.log(\`Scalar   → http://localhost:\${server.port}\${prefixes.scalar}\`);
 `;
 
+const rabbitmqEnv = (values: ProjectValues) =>
+  values.rabbitmq
+    ? `RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_MANAGEMENT_PORT=15672
+RABBITMQ_USER=graphoria
+RABBITMQ_PASSWORD=${values.rabbitmqPassword}
+RABBITMQ_VHOST=/
+`
+    : "";
+
+const aiEnv = (values: ProjectValues) =>
+  values.ai
+    ? `LLM_PROVIDER=ollama
+OLLAMA_HOST=http://localhost:11434
+# OPENAI_API_KEY=
+# ANTHROPIC_API_KEY=
+# DEEPSEEK_API_KEY=
+# LLM_MODEL=
+`
+    : "";
+
+const redisEnv = (values: ProjectValues) =>
+  values.redis
+    ? `REDIS_URL=redis://localhost:6379
+CACHE_STORE=redis
+`
+    : "";
+
+const dataToolsEnv = (values: ProjectValues) =>
+  values.dataTools
+    ? `DBGATE_PORT=${DBGATE_PORT}
+${values.redis ? `REDIS_COMMANDER_PORT=${REDIS_COMMANDER_PORT}\n` : ""}`
+    : "";
+
 const sqliteDotEnv = (
   values: ProjectValues,
 ) => `# Secrets and the database file, read by Bun on the host and by Docker Compose.
@@ -250,7 +427,7 @@ const sqliteDotEnv = (
 ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
-`;
+${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -263,7 +440,7 @@ DB_PORT=${values.dbPort}
 DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
-`;
+${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -409,9 +586,98 @@ const DB_SERVICES: Record<ServerEngine, string> = {
   mssql: MSSQL_SERVICES,
 };
 
+const RABBITMQ_SERVICE = `  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: \${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: \${RABBITMQ_PASSWORD}
+    ports:
+      - "\${RABBITMQ_PORT}:5672"
+      - "\${RABBITMQ_MANAGEMENT_PORT}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+`;
+
+const REDIS_SERVICE = `  redis:
+    image: redis:8
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+`;
+
+// dbgate reads one connection per `_<id>` suffix; `CONNECTIONS` lists the ids.
+// It listens on 3000 inside its container, published on DBGATE_PORT.
+const DBGATE_SERVICE = (database: ServerEngine) => `  dbgate:
+    image: dbgate/dbgate
+    restart: always
+    ports:
+      - "\${DBGATE_PORT}:3000"
+    volumes:
+      - dbgate-data:/root/.dbgate
+    environment:
+      CONNECTIONS: db
+      LABEL_db: ${ENGINES[database].label}
+      ENGINE_db: ${DBGATE_ENGINES[database]}
+      SERVER_db: db
+      PORT_db: "${ENGINES[database].port}"
+      USER_db: \${DB_USER}
+      PASSWORD_db: \${DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+`;
+
+// No server to point at: dbgate opens the file Graphoria seeds, so it shares
+// the volume and waits for the app to create it.
+const DBGATE_SQLITE_SERVICE = (dbName: string) => `  dbgate:
+    image: dbgate/dbgate
+    restart: always
+    ports:
+      - "\${DBGATE_PORT}:3000"
+    volumes:
+      - dbgate-data:/root/.dbgate
+      - db-data:/app/data
+    environment:
+      CONNECTIONS: db
+      LABEL_db: SQLite
+      ENGINE_db: sqlite@dbgate-plugin-sqlite
+      FILE_db: /app/data/${dbName}.db
+    depends_on:
+      graphoria:
+        condition: service_healthy
+`;
+
+// REDIS_HOSTS is `label:host:port`; the seed Redis has no password.
+const REDIS_COMMANDER_SERVICE = `  redis-commander:
+    image: rediscommander/redis-commander:latest
+    restart: always
+    ports:
+      - "\${REDIS_COMMANDER_PORT}:8081"
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+`;
+
 const sqliteCompose = ({
   name,
   dbName,
+  rabbitmq,
+  redis,
+  dataTools,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -419,7 +685,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -427,19 +693,19 @@ services:
     env_file: .env
     environment:
       # On the volume, not in the image: the file outlives a rebuild.
-      DB_FILE: data/${dbName}.db
+      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
     ports:
       - "3000:3000"
     volumes:
-      - db-data:/app/data
+      - db-data:/app/data${rabbitmq || redis ? `\n    depends_on:${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}` : ""}
 
 volumes:
   db-data:
-`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}`;
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database } = values;
+  const { name, database, rabbitmq, redis, dataTools } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -447,7 +713,6 @@ const dockerCompose = (values: ProjectValues) => {
         condition: service_completed_successfully`
       : `      db:
         condition: service_healthy`;
-
   return `# ${name}: ${engine.label} and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -456,7 +721,7 @@ const dockerCompose = (values: ProjectValues) => {
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${DB_SERVICES[database]}
-  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -465,16 +730,16 @@ ${DB_SERVICES[database]}
     environment:
       # Inside Compose the database is the \`db\` service on its own port.
       DB_HOST: db
-      DB_PORT: "${engine.port}"
+      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
     ports:
       - "3000:3000"
     # Graphoria connects once at boot, with no retry.
     depends_on:
-${dependency}
+${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}
 
 volumes:
   db-data:
-`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}`;
 };
 
 const PG_SEED = `-- Runs once, when the Postgres volume is first created. \`docker compose down -v\` resets it.
@@ -622,7 +887,9 @@ const indexHtml = ({ name }: ProjectValues) => `<!doctype html>
 </html>
 `;
 
-const FRONTEND_TSX = `import { StrictMode } from "react";
+const frontendTsx = (values: ProjectValues) => {
+  if (!values.rabbitmq) {
+    return `import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Client, Provider, cacheExchange, fetchExchange } from "urql";
 
@@ -651,9 +918,183 @@ if (import.meta.hot) {
   createRoot(root).render(app);
 }
 `;
+  }
+
+  return `import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { Client, Provider, cacheExchange, fetchExchange } from "urql";
+import { subscriptionExchange } from "@urql/core";
+import { createClient as createWSClient } from "graphql-ws";
+
+import { App } from "./App.tsx";
+
+// Graphoria upgrades GET /graphql to its websocket; the queued book-added
+// events arrive through the events_onBookAdded subscription.
+const wsClient = createWSClient({
+  url: \`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/graphql\`,
+});
+
+const client = new Client({
+  url: "/graphql",
+  // Graphoria answers queries over POST; GET /graphql is its websocket.
+  preferGetMethod: false,
+  exchanges: [
+    cacheExchange,
+    fetchExchange,
+    subscriptionExchange({
+      forwardSubscription: (request) => ({
+        subscribe: (sink) => ({
+          unsubscribe: wsClient.subscribe(
+            { query: request.query ?? "", variables: request.variables },
+            sink,
+          ),
+        }),
+      }),
+    }),
+  ],
+});
+
+const app = (
+  <StrictMode>
+    <Provider value={client}>
+      <App />
+    </Provider>
+  </StrictMode>
+);
+
+const root = document.getElementById("root")!;
+if (import.meta.hot) {
+  // Hot reload keeps one React root across updates.
+  (import.meta.hot.data.root ??= createRoot(root)).render(app);
+} else {
+  createRoot(root).render(app);
+}
+`;
+};
 
 const appTsx = (values: ProjectValues) => {
   const schema = seedSchema(values);
+
+  if (values.rabbitmq) {
+    return `import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { useQuery, useSubscription } from "urql";
+
+import { graphql } from "./graphql.ts";
+
+const AuthorsQuery = graphql(\`
+  query Authors {
+    ${schema}_authors(orderBy: [{ id: ASC }]) {
+      id
+      name
+      ${schema}_books(orderBy: [{ published_year: ASC }]) {
+        id
+        title
+        published_year
+      }
+    }
+  }
+\`);
+
+// A message is an event, not a state: its arrival just re-fetches the list.
+const BookAddedSubscription = graphql(\`
+  subscription OnBookAdded {
+    events_onBookAdded {
+      id
+      message
+    }
+  }
+\`);
+
+export function App() {
+  const [{ data, fetching, error }, reexecute] = useQuery({ query: AuthorsQuery });
+  const [subscription] = useSubscription({ query: BookAddedSubscription });
+
+  useEffect(() => {
+    if (subscription.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscription.data, reexecute]);
+
+  const [title, setTitle] = useState("");
+  const [year, setYear] = useState("");
+  const [authorId, setAuthorId] = useState("");
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch("/rest/add-book", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, publishedYear: Number(year), authorId: Number(authorId) }),
+    });
+    if (!response.ok) return;
+    // The list refreshes when the queued book-added event arrives.
+    setTitle("");
+    setYear("");
+  };
+
+  return (
+    <main className="mx-auto max-w-2xl p-8 font-sans">
+      <h1 className="mb-6 text-3xl font-bold">Authors</h1>
+      <form className="mb-8 space-y-2" onSubmit={submit}>
+        <input
+          className="block w-full rounded border border-gray-300 p-2"
+          placeholder="Title"
+          required
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+        />
+        <input
+          className="block w-full rounded border border-gray-300 p-2"
+          placeholder="Year"
+          required
+          type="number"
+          value={year}
+          onChange={(event) => setYear(event.target.value)}
+        />
+        <select
+          className="block w-full rounded border border-gray-300 p-2"
+          required
+          value={authorId}
+          onChange={(event) => setAuthorId(event.target.value)}
+        >
+          <option value="">Pick an author…</option>
+          {data?.${schema}_authors.map((author) => (
+            <option key={author.id} value={author.id}>
+              {author.name}
+            </option>
+          ))}
+        </select>
+        <button
+          className="rounded bg-black px-4 py-2 text-white"
+          type="submit"
+        >
+          Add book
+        </button>
+      </form>
+      {fetching && <p className="text-gray-500">Loading…</p>}
+      {error && <p className="text-red-600">{error.message}</p>}
+      <ul className="space-y-6">
+        {data?.${schema}_authors.map((author) => (
+          <li key={author.id}>
+            <h2 className="text-xl font-semibold">{author.name}</h2>
+            <ul className="mt-2 list-disc pl-6">
+              {author.${schema}_books?.map(
+                (book) =>
+                  book && (
+                    <li key={book.id}>
+                      {book.title} <span className="text-gray-500">({book.published_year})</span>
+                    </li>
+                  ),
+              )}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+`;
+  }
+
   return `import { useQuery } from "urql";
 
 import { graphql } from "./graphql.ts";
@@ -714,7 +1155,7 @@ export const graphql = initGraphQLTada<{ introspection: introspection }>();
 const frontendFiles = (values: ProjectValues): Record<(typeof FRONTEND_FILES)[number], string> => ({
   "bunfig.toml": BUNFIG,
   "web/index.html": indexHtml(values),
-  "web/frontend.tsx": FRONTEND_TSX,
+  "web/frontend.tsx": frontendTsx(values),
   "web/App.tsx": appTsx(values),
   "web/graphql.ts": GRAPHQL_TS,
   "web/styles.css": `@import "tailwindcss";\n`,
