@@ -7,6 +7,7 @@ export type InitAnswers = {
   dbPort: number;
   rabbitmq: boolean;
   ai: boolean;
+  redis: boolean;
   frontend: boolean;
 };
 
@@ -390,6 +391,13 @@ OLLAMA_HOST=http://localhost:11434
 `
     : "";
 
+const redisEnv = (values: ProjectValues) =>
+  values.redis
+    ? `REDIS_URL=redis://localhost:6379
+CACHE_STORE=redis
+`
+    : "";
+
 const sqliteDotEnv = (
   values: ProjectValues,
 ) => `# Secrets and the database file, read by Bun on the host and by Docker Compose.
@@ -397,7 +405,7 @@ const sqliteDotEnv = (
 ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
-${rabbitmqEnv(values)}${aiEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -410,7 +418,7 @@ DB_PORT=${values.dbPort}
 DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
-${rabbitmqEnv(values)}${aiEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -574,10 +582,24 @@ const RABBITMQ_SERVICE = `  rabbitmq:
       start_period: 20s
 `;
 
+const REDIS_SERVICE = `  redis:
+    image: redis:8
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+`;
+
 const sqliteCompose = ({
   name,
   dbName,
   rabbitmq,
+  redis,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -585,7 +607,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${rabbitmq ? RABBITMQ_SERVICE : ""}  graphoria:
+${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -593,19 +615,19 @@ ${rabbitmq ? RABBITMQ_SERVICE : ""}  graphoria:
     env_file: .env
     environment:
       # On the volume, not in the image: the file outlives a rebuild.
-      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}
+      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
     ports:
       - "3000:3000"
     volumes:
-      - db-data:/app/data${rabbitmq ? `\n    depends_on:\n      rabbitmq:\n        condition: service_healthy` : ""}
+      - db-data:/app/data${rabbitmq || redis ? `\n    depends_on:${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}` : ""}
 
 volumes:
   db-data:
-${rabbitmq ? "  rabbitmq-data:\n" : ""}`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}`;
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database, rabbitmq } = values;
+  const { name, database, rabbitmq, redis } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -620,7 +642,7 @@ const dockerCompose = (values: ProjectValues) => {
 # Then open http://localhost:3000/graphiql. Credentials come from .env. The
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${DB_SERVICES[database]}${rabbitmq ? RABBITMQ_SERVICE : ""}  graphoria:
+${DB_SERVICES[database]}${rabbitmq ? RABBITMQ_SERVICE : ""}${redis ? REDIS_SERVICE : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -629,16 +651,16 @@ ${DB_SERVICES[database]}${rabbitmq ? RABBITMQ_SERVICE : ""}  graphoria:
     environment:
       # Inside Compose the database is the \`db\` service on its own port.
       DB_HOST: db
-      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}
+      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
     ports:
       - "3000:3000"
     # Graphoria connects once at boot, with no retry.
     depends_on:
-${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}
+${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}
 
 volumes:
   db-data:
-${rabbitmq ? "  rabbitmq-data:\n" : ""}`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}`;
 };
 
 const PG_SEED = `-- Runs once, when the Postgres volume is first created. \`docker compose down -v\` resets it.

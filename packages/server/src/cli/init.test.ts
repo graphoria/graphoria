@@ -45,7 +45,7 @@ describe("collectAnswers", () => {
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
     expect(answers.dbPort).toBe(5432);
     expect(answers.frontend).toBe(false);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n"]);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n", "n"]);
     expect(io.said).toEqual([]);
   });
 
@@ -67,6 +67,7 @@ describe("collectAnswers", () => {
       dbPort: 13306,
       rabbitmq: false,
       ai: false,
+      redis: false,
       frontend: false,
     });
   });
@@ -77,7 +78,7 @@ describe("collectAnswers", () => {
 
     expect(answers.database).toBe("mssql");
     expect(answers.dbPort).toBe(1433);
-    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n", "n", "n"]);
+    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n", "n", "n", "n"]);
   });
 
   it.each([
@@ -119,7 +120,7 @@ describe("collectAnswers", () => {
     const io = prompter([...answers]);
 
     expect(collectAnswers(ARGS, io.ask, io.say)).toMatchObject(want);
-    expect(io.fallbacks).toHaveLength(8);
+    expect(io.fallbacks).toHaveLength(9);
     expect(io.said).toHaveLength(1);
   });
 
@@ -130,23 +131,23 @@ describe("collectAnswers", () => {
   });
 
   it.each(["y", "yes", "Y", "YES", " Yes "])("adds the frontend on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", answer]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", answer]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
   });
 
   it.each(["", "n", "no", "N", "No"])("leaves the frontend out on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", answer]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", answer]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(false);
     expect(io.said).toEqual([]);
   });
 
   it("asks the frontend question again after another answer, saying why", () => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "maybe", "y"]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "maybe", "y"]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
-    expect(io.fallbacks).toHaveLength(8);
+    expect(io.fallbacks).toHaveLength(9);
     expect(io.said).toHaveLength(1);
   });
 
@@ -155,7 +156,7 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, frontend }, io.ask, io.say);
 
     expect(answers.frontend).toBe(frontend);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n"]);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n"]);
   });
 
   it("asks neither a password nor a port for SQLite, which has no server", () => {
@@ -169,9 +170,10 @@ describe("collectAnswers", () => {
       dbPort: 0,
       rabbitmq: false,
       ai: false,
+      redis: false,
       frontend: false,
     });
-    expect(io.fallbacks).toEqual(["app", "n", "n", "n"]);
+    expect(io.fallbacks).toEqual(["app", "n", "n", "n", "n"]);
   });
 
   it.each([
@@ -190,7 +192,7 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, rabbitmq }, io.ask, io.say);
 
     expect(answers.rabbitmq).toBe(rabbitmq);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n"]);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n"]);
   });
 
   it.each([true, false])("skips the AI question when --ai is %p", (ai) => {
@@ -198,6 +200,13 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, ai }, io.ask, io.say);
 
     expect(answers.ai).toBe(ai);
+  });
+
+  it.each([true, false])("skips the Redis question when --redis is %p", (redis) => {
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n"]);
+    const answers = collectAnswers({ ...ARGS, redis }, io.ask, io.say);
+
+    expect(answers.redis).toBe(redis);
   });
 });
 

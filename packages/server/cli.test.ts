@@ -235,6 +235,55 @@ describe("cli init", () => {
     expect(result.stdout.toString()).toContain("/rest/ai");
   });
 
+  it("scaffolds Redis for the cache and auth token store with --redis", async () => {
+    const { cwd, result } = await init(["--yes", "--redis", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    const values = await env(cwd);
+    expect(values.REDIS_URL).toBe("redis://localhost:6379");
+    expect(values.CACHE_STORE).toBe("redis");
+    const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
+    expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "redis"]);
+    expect((await readdir(cwd)).sort()).toEqual(FILES);
+    expect(result.stdout.toString()).toContain("auth token store");
+  });
+
+  it("scaffolds every feature together with --rabbitmq --ai --redis --frontend", async () => {
+    const { cwd, result } = await init([
+      "--yes",
+      "--rabbitmq",
+      "--ai",
+      "--redis",
+      "--frontend",
+      "--no-install",
+    ]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    const pkg = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+    expect(Object.keys(pkg.dependencies).sort()).toEqual([
+      "@graphoria/ai",
+      "@graphoria/queues",
+      "@graphoria/server",
+      "@urql/core",
+      "bun-plugin-tailwind",
+      "gql.tada",
+      "graphql-ws",
+      "react",
+      "react-dom",
+      "tailwindcss",
+      "urql",
+    ]);
+    const values = await env(cwd);
+    expect(values.RABBITMQ_HOST).toBe("localhost");
+    expect(values.LLM_PROVIDER).toBe("ollama");
+    expect(values.REDIS_URL).toBe("redis://localhost:6379");
+    expect(values.CACHE_STORE).toBe("redis");
+    const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
+    expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq", "redis"]);
+  });
+
   it("writes nothing when a frontend file it would create exists", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
     cwds.push(cwd);

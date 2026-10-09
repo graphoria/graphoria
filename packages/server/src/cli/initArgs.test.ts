@@ -38,6 +38,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("ai");
   });
 
+  it("answers the Redis question with --redis or --no-redis", () => {
+    expect(parseInitArgs(["--redis"]).redis).toBe(true);
+    expect(parseInitArgs(["--no-redis"]).redis).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("redis");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

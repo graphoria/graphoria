@@ -7,6 +7,7 @@ export type InitArgs = {
   database?: DatabaseType;
   rabbitmq?: boolean;
   ai?: boolean;
+  redis?: boolean;
   frontend?: boolean;
   install: boolean;
 };
@@ -24,6 +25,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       database: { type: "string", short: "d" },
       rabbitmq: { type: "boolean" },
       ai: { type: "boolean" },
+      redis: { type: "boolean" },
       frontend: { type: "boolean" },
       install: { type: "boolean", default: true },
     },
@@ -40,6 +42,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values.database !== undefined && { database: values.database }),
     ...(values.rabbitmq !== undefined && { rabbitmq: values.rabbitmq }),
     ...(values.ai !== undefined && { ai: values.ai }),
+    ...(values.redis !== undefined && { redis: values.redis }),
     ...(values.frontend !== undefined && { frontend: values.frontend }),
     install: values.install,
   };

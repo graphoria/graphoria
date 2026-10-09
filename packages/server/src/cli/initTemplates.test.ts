@@ -20,6 +20,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   dbPort: 15432,
   rabbitmq: false,
   ai: false,
+  redis: false,
   frontend: false,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
@@ -144,6 +145,28 @@ describe("renderProject .env", () => {
       expect(render(database)[".env"]).not.toContain("LLM_PROVIDER");
     },
   );
+
+  it.each(["pg", "sqlite"] as const)(
+    "points the cache and auth token store at Redis for %s",
+    (database) => {
+      const lines = renderWith({ redis: true }, database)[".env"]!.split("\n");
+
+      expect(lines).toContain("REDIS_URL=redis://localhost:6379");
+      expect(lines).toContain("CACHE_STORE=redis");
+      expect(render(database)[".env"]).not.toContain("REDIS_URL");
+      expect(render(database)[".env"]).not.toContain("CACHE_STORE");
+    },
+  );
+
+  it("adds every feature's settings together without overlap", () => {
+    const lines = renderWith({ rabbitmq: true, ai: true, redis: true })[".env"]!.split("\n");
+
+    expect(lines).toContain("DB_HOST=localhost");
+    expect(lines).toContain("RABBITMQ_HOST=localhost");
+    expect(lines).toContain("LLM_PROVIDER=ollama");
+    expect(lines).toContain("REDIS_URL=redis://localhost:6379");
+    expect(lines).toContain("CACHE_STORE=redis");
+  });
 });
 
 describe("renderProject docker-compose.yml", () => {
@@ -159,7 +182,13 @@ describe("renderProject docker-compose.yml", () => {
     depends_on?: Record<string, { condition: string }>;
   };
   type Compose = {
-    services: { db: Service; graphoria: Service; "db-init"?: Service; rabbitmq?: Service };
+    services: {
+      db: Service;
+      graphoria: Service;
+      "db-init"?: Service;
+      rabbitmq?: Service;
+      redis?: Service;
+    };
     volumes: Record<string, unknown>;
   };
   const compose = (database: DatabaseType, patch: Partial<ProjectValues> = {}) =>
@@ -262,6 +291,49 @@ describe("renderProject docker-compose.yml", () => {
   it("leaves the broker out by default", () => {
     expect(compose("pg").services.rabbitmq).toBeUndefined();
   });
+
+  it.each(["pg", "sqlite"] as const)(
+    "runs Redis from .env and points Graphoria at it (%s)",
+    (database) => {
+      const { services, volumes } = compose(database, { redis: true });
+
+      expect(services.redis!.image).toBe("redis:8");
+      expect(services.redis!.ports).toEqual(["6379:6379"]);
+      expect(services.redis!.volumes).toContain("redis-data:/data");
+      expect(services.redis!.healthcheck?.test).toBeDefined();
+      expect(services.graphoria!.environment).toMatchObject({
+        REDIS_URL: "redis://redis:6379",
+      });
+      expect(services.graphoria!.depends_on).toMatchObject({
+        redis: { condition: "service_healthy" },
+      });
+      expect(Object.keys(volumes).sort()).toEqual(["db-data", "redis-data"]);
+    },
+  );
+
+  it("leaves Redis out by default", () => {
+    expect(compose("pg").services.redis).toBeUndefined();
+  });
+
+  it.each(["pg", "sqlite"] as const)(
+    "runs RabbitMQ and Redis together and waits on both (%s)",
+    (database) => {
+      const { services, volumes } = compose(database, { rabbitmq: true, redis: true });
+
+      expect(services.rabbitmq!.image).toBe("rabbitmq:4-management");
+      expect(services.redis!.image).toBe("redis:8");
+      expect(services.graphoria!.environment).toMatchObject({
+        RABBITMQ_HOST: "rabbitmq",
+        RABBITMQ_PORT: "5672",
+        REDIS_URL: "redis://redis:6379",
+      });
+      expect(services.graphoria!.depends_on).toMatchObject({
+        rabbitmq: { condition: "service_healthy" },
+        redis: { condition: "service_healthy" },
+      });
+      expect(Object.keys(volumes).sort()).toEqual(["db-data", "rabbitmq-data", "redis-data"]);
+    },
+  );
 });
 
 describe("renderProject graphoria.ts", () => {
@@ -399,16 +471,19 @@ describe("renderProject graphoria.ts", () => {
     expect(ConfigurationZod.parse((await load("pg", {}))({})).ai.enabled).toBe(false);
   });
 
-  it.each([{ rabbitmq: true }, { ai: true }, { rabbitmq: true, ai: true }])(
-    "still parses with %j",
-    async (patch) => {
-      setEnv();
-      setRabbitEnv();
+  it.each([
+    { rabbitmq: true },
+    { ai: true },
+    { rabbitmq: true, ai: true },
+    { redis: true },
+    { rabbitmq: true, ai: true, redis: true },
+  ])("still parses with %j", async (patch) => {
+    setEnv();
+    setRabbitEnv();
 
-      const configure = await load("pg", patch);
-      expect(() => ConfigurationZod.parse(configure({}))).not.toThrow();
-    },
-  );
+    const configure = await load("pg", patch);
+    expect(() => ConfigurationZod.parse(configure({}))).not.toThrow();
+  });
 });
 
 describe("renderProject seed.sql", () => {
@@ -760,6 +835,7 @@ describe("renderProject with the frontend", () => {
         { queues: ["events"], ai: true, operations: ["addBook"] },
       ],
       [{ rabbitmq: true }, { queues: ["events"], operations: ["addBook"] }],
+      [{ redis: true }, {}],
       [{}, {}],
     ])("extends the anonymous grant for %j", async (patch, expected) => {
       const { auth } = await parse(true, "pg", patch);

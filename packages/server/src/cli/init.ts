@@ -134,6 +134,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
     args.rabbitmq ?? /^y(es)?$/i.test(question(ask, say, "Add RabbitMQ? (y/N)", "n", yesNo));
   const ai =
     args.ai ?? /^y(es)?$/i.test(question(ask, say, "Enable the AI agent? (y/N)", "n", yesNo));
+  const redis = args.redis ?? /^y(es)?$/i.test(question(ask, say, "Add Redis? (y/N)", "n", yesNo));
 
   const frontend =
     args.frontend ??
@@ -143,7 +144,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       ),
     );
 
-  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, frontend };
+  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, redis, frontend };
 };
 
 export const isPortFree = (port: number): boolean => {
@@ -217,6 +218,9 @@ const nextSteps = (answers: InitAnswers, installed: boolean) => {
           "Ollama must run on the host, so use bun run dev, not docker compose up.",
         ]
       : []),
+    ...(answers.redis
+      ? ["", "Redis serves the cache and the auth token store (REDIS_URL and CACHE_STORE in .env)."]
+      : []),
     ...(answers.frontend
       ? [
           "",
@@ -231,7 +235,7 @@ const nextSteps = (answers: InitAnswers, installed: boolean) => {
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--rabbitmq] [--ai] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--rabbitmq] [--ai] [--redis] [--frontend] [--no-install]";
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
