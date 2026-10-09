@@ -5,6 +5,8 @@ import type { DatabaseType } from "../config";
 export type InitArgs = {
   yes: boolean;
   database?: DatabaseType;
+  rabbitmq?: boolean;
+  ai?: boolean;
   frontend?: boolean;
   install: boolean;
 };
@@ -20,6 +22,8 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     options: {
       yes: { type: "boolean", short: "y", default: false },
       database: { type: "string", short: "d" },
+      rabbitmq: { type: "boolean" },
+      ai: { type: "boolean" },
       frontend: { type: "boolean" },
       install: { type: "boolean", default: true },
     },
@@ -34,6 +38,8 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
   return {
     yes: values.yes,
     ...(values.database !== undefined && { database: values.database }),
+    ...(values.rabbitmq !== undefined && { rabbitmq: values.rabbitmq }),
+    ...(values.ai !== undefined && { ai: values.ai }),
     ...(values.frontend !== undefined && { frontend: values.frontend }),
     install: values.install,
   };

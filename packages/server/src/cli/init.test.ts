@@ -45,7 +45,7 @@ describe("collectAnswers", () => {
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
     expect(answers.dbPort).toBe(5432);
     expect(answers.frontend).toBe(false);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n"]);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n"]);
     expect(io.said).toEqual([]);
   });
 
@@ -65,6 +65,8 @@ describe("collectAnswers", () => {
       dbName: "shop",
       dbPassword: "S3cret.pass",
       dbPort: 13306,
+      rabbitmq: false,
+      ai: false,
       frontend: false,
     });
   });
@@ -75,7 +77,7 @@ describe("collectAnswers", () => {
 
     expect(answers.database).toBe("mssql");
     expect(answers.dbPort).toBe(1433);
-    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n"]);
+    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n", "n", "n"]);
   });
 
   it.each([
@@ -117,7 +119,7 @@ describe("collectAnswers", () => {
     const io = prompter([...answers]);
 
     expect(collectAnswers(ARGS, io.ask, io.say)).toMatchObject(want);
-    expect(io.fallbacks).toHaveLength(6);
+    expect(io.fallbacks).toHaveLength(8);
     expect(io.said).toHaveLength(1);
   });
 
@@ -128,23 +130,23 @@ describe("collectAnswers", () => {
   });
 
   it.each(["y", "yes", "Y", "YES", " Yes "])("adds the frontend on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", answer]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", answer]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
   });
 
   it.each(["", "n", "no", "N", "No"])("leaves the frontend out on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", answer]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", answer]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(false);
     expect(io.said).toEqual([]);
   });
 
   it("asks the frontend question again after another answer, saying why", () => {
-    const io = prompter(["pg", "shop", "pw", "15432", "maybe", "y"]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "maybe", "y"]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
-    expect(io.fallbacks).toHaveLength(6);
+    expect(io.fallbacks).toHaveLength(8);
     expect(io.said).toHaveLength(1);
   });
 
@@ -153,7 +155,7 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, frontend }, io.ask, io.say);
 
     expect(answers.frontend).toBe(frontend);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432"]);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n"]);
   });
 
   it("asks neither a password nor a port for SQLite, which has no server", () => {
@@ -165,9 +167,37 @@ describe("collectAnswers", () => {
       dbName: "app",
       dbPassword: "",
       dbPort: 0,
+      rabbitmq: false,
+      ai: false,
       frontend: false,
     });
-    expect(io.fallbacks).toEqual(["app", "n"]);
+    expect(io.fallbacks).toEqual(["app", "n", "n", "n"]);
+  });
+
+  it.each([
+    ["y", "yes"],
+    ["Y", "no"],
+  ])("adds RabbitMQ and the AI agent on %p", (rabbitAnswer, aiAnswer) => {
+    const io = prompter(["pg", "shop", "pw", "15432", rabbitAnswer, aiAnswer]);
+    const answers = collectAnswers(ARGS, io.ask, io.say);
+
+    expect(answers.rabbitmq).toBe(true);
+    expect(answers.ai).toBe(aiAnswer === "yes");
+  });
+
+  it.each([true, false])("skips the RabbitMQ question when --rabbitmq is %p", (rabbitmq) => {
+    const io = prompter(["pg", "shop", null, "15432", "n"]);
+    const answers = collectAnswers({ ...ARGS, rabbitmq }, io.ask, io.say);
+
+    expect(answers.rabbitmq).toBe(rabbitmq);
+    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n"]);
+  });
+
+  it.each([true, false])("skips the AI question when --ai is %p", (ai) => {
+    const io = prompter(["pg", "shop", "pw", "15432", "n"]);
+    const answers = collectAnswers({ ...ARGS, ai }, io.ask, io.say);
+
+    expect(answers.ai).toBe(ai);
   });
 });
 
@@ -259,16 +289,29 @@ describe("findConflicts", () => {
 describe("portWarning", () => {
   const busy = new Set([5432, 5433]);
   const isFree = (port: number) => !busy.has(port);
+  const db = { service: "database", envVar: "DB_PORT" };
 
   it("says nothing when the port is free", () => {
-    expect(portWarning(6000, isFree)).toBeUndefined();
+    expect(portWarning(6000, db, isFree)).toBeUndefined();
   });
 
   it("names the next free port when the port is taken", () => {
-    const warning = portWarning(5432, isFree);
+    const warning = portWarning(5432, db, isFree);
 
     expect(warning).toContain("5432");
     expect(warning).toContain("5434");
+    expect(warning).toContain("DB_PORT");
+  });
+
+  it("names the service and variable it is warning about", () => {
+    const warning = portWarning(
+      5672,
+      { service: "RabbitMQ", envVar: "RABBITMQ_PORT" },
+      () => false,
+    );
+
+    expect(warning).toContain("RabbitMQ");
+    expect(warning).toContain("RABBITMQ_PORT");
   });
 });
 

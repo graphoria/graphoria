@@ -5,10 +5,17 @@ export type InitAnswers = {
   dbName: string;
   dbPassword: string;
   dbPort: number;
+  rabbitmq: boolean;
+  ai: boolean;
   frontend: boolean;
 };
 
-export type ProjectValues = InitAnswers & { name: string; adminSecret: string; jwtSecret: string };
+export type ProjectValues = InitAnswers & {
+  name: string;
+  adminSecret: string;
+  jwtSecret: string;
+  rabbitmqPassword: string;
+};
 
 export type Versions = { graphoria: string; bun: string };
 
@@ -34,6 +41,9 @@ export const ENGINES: Record<ServerEngine, Engine> = {
     data: "/var/opt/mssql",
   },
 };
+
+export const RABBITMQ_PORT = 5672;
+export const RABBITMQ_MANAGEMENT_PORT = 15672;
 
 export const PROJECT_FILES = [
   "package.json",
@@ -77,7 +87,7 @@ const FRONTEND_DEPENDENCIES = {
 
 const FRONTEND_DEV_DEPENDENCIES = { "@types/react": "19.3.0", "@types/react-dom": "19.3.0" };
 
-const packageJson = ({ name, frontend }: ProjectValues, { graphoria }: Versions) =>
+const packageJson = ({ name, rabbitmq, ai, frontend }: ProjectValues, { graphoria }: Versions) =>
   JSON.stringify(
     {
       name,
@@ -92,6 +102,8 @@ const packageJson = ({ name, frontend }: ProjectValues, { graphoria }: Versions)
         : { dev: "bun --watch index.ts", start: "bun index.ts" },
       dependencies: {
         "@graphoria/server": `^${graphoria}`,
+        ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
+        ...(ai && { "@graphoria/ai": `^${graphoria}` }),
         ...(frontend && FRONTEND_DEPENDENCIES),
       },
       devDependencies: {
@@ -166,6 +178,12 @@ const SQLITE_CONNECTION = `      connection: { filename: env("DB_FILE") },
 
 const anonymousGrant = (values: ProjectValues) => {
   const schema = seedSchema(values);
+  const permission =
+    values.rabbitmq || values.ai
+      ? `{
+        tables: ["${schema}_authors", "${schema}_books"],
+${values.rabbitmq ? '        queues: ["events"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      }`
+      : `{ tables: ["${schema}_authors", "${schema}_books"] }`;
   return `  // The frontend has no login, so anyone can read these two tables without a
   // secret, in the app and in GraphiQL alike. Tables are read-only in the
   // generated API.
@@ -173,11 +191,50 @@ const anonymousGrant = (values: ProjectValues) => {
     enabled: false,
     database: "main",
     permissions: {
-      anonymous: { tables: ["${schema}_authors", "${schema}_books"] },
+      anonymous: ${permission},
     },
   },
 `;
 };
+
+const QUEUE_CONFIG = `  queues: [
+    {
+      type: "rabbitmq",
+      name: "events",
+      enabled: true,
+      autoSetup: true,
+      connection: {
+        hostname: env("RABBITMQ_HOST"),
+        port: Number(env("RABBITMQ_PORT")),
+        username: env("RABBITMQ_USER"),
+        password: env("RABBITMQ_PASSWORD"),
+        vhost: env("RABBITMQ_VHOST"),
+      },
+      // The publisher is a mutation (events_bookAdded); the subscriber is a
+      // subscription (events_onBookAdded) and consumes the queue.
+      publishers: {
+        bookAdded: { topic: "books", routingKey: "book.added", persistent: true },
+      },
+      subscribers: {
+        onBookAdded: {
+          topic: "books",
+          pattern: "book.*",
+          handler: (message) => {
+            console.log("[events] book added:", message);
+          },
+        },
+      },
+      topics: {
+        books: { type: "topic", durable: true },
+      },
+    },
+  ],
+`;
+
+const AI_CONFIG = `  ai: {
+    enabled: true,
+  },
+`;
 
 const graphoriaConfig = (
   values: ProjectValues,
@@ -200,7 +257,7 @@ export default (() => ({
       enabled: true,
 ${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
   ],
-${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -243,6 +300,28 @@ console.log(\`GraphiQL → http://localhost:\${server.port}\${prefixes.graphiql}
 console.log(\`Scalar   → http://localhost:\${server.port}\${prefixes.scalar}\`);
 `;
 
+const rabbitmqEnv = (values: ProjectValues) =>
+  values.rabbitmq
+    ? `RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_MANAGEMENT_PORT=15672
+RABBITMQ_USER=graphoria
+RABBITMQ_PASSWORD=${values.rabbitmqPassword}
+RABBITMQ_VHOST=/
+`
+    : "";
+
+const aiEnv = (values: ProjectValues) =>
+  values.ai
+    ? `LLM_PROVIDER=ollama
+OLLAMA_HOST=http://localhost:11434
+# OPENAI_API_KEY=
+# ANTHROPIC_API_KEY=
+# DEEPSEEK_API_KEY=
+# LLM_MODEL=
+`
+    : "";
+
 const sqliteDotEnv = (
   values: ProjectValues,
 ) => `# Secrets and the database file, read by Bun on the host and by Docker Compose.
@@ -250,7 +329,7 @@ const sqliteDotEnv = (
 ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
-`;
+${rabbitmqEnv(values)}${aiEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -263,7 +342,7 @@ DB_PORT=${values.dbPort}
 DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
-`;
+${rabbitmqEnv(values)}${aiEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -409,9 +488,28 @@ const DB_SERVICES: Record<ServerEngine, string> = {
   mssql: MSSQL_SERVICES,
 };
 
+const RABBITMQ_SERVICE = `  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: \${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: \${RABBITMQ_PASSWORD}
+    ports:
+      - "\${RABBITMQ_PORT}:5672"
+      - "\${RABBITMQ_MANAGEMENT_PORT}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+`;
+
 const sqliteCompose = ({
   name,
   dbName,
+  rabbitmq,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -419,7 +517,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-  graphoria:
+${rabbitmq ? RABBITMQ_SERVICE : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -427,19 +525,19 @@ services:
     env_file: .env
     environment:
       # On the volume, not in the image: the file outlives a rebuild.
-      DB_FILE: data/${dbName}.db
+      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}
     ports:
       - "3000:3000"
     volumes:
-      - db-data:/app/data
+      - db-data:/app/data${rabbitmq ? `\n    depends_on:\n      rabbitmq:\n        condition: service_healthy` : ""}
 
 volumes:
   db-data:
-`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}`;
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database } = values;
+  const { name, database, rabbitmq } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -447,7 +545,6 @@ const dockerCompose = (values: ProjectValues) => {
         condition: service_completed_successfully`
       : `      db:
         condition: service_healthy`;
-
   return `# ${name}: ${engine.label} and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -455,8 +552,7 @@ const dockerCompose = (values: ProjectValues) => {
 # Then open http://localhost:3000/graphiql. Credentials come from .env. The
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${DB_SERVICES[database]}
-  graphoria:
+${DB_SERVICES[database]}${rabbitmq ? RABBITMQ_SERVICE : ""}  graphoria:
     build: .
     # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
     init: true
@@ -465,16 +561,16 @@ ${DB_SERVICES[database]}
     environment:
       # Inside Compose the database is the \`db\` service on its own port.
       DB_HOST: db
-      DB_PORT: "${engine.port}"
+      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}
     ports:
       - "3000:3000"
     # Graphoria connects once at boot, with no retry.
     depends_on:
-${dependency}
+${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}
 
 volumes:
   db-data:
-`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}`;
 };
 
 const PG_SEED = `-- Runs once, when the Postgres volume is first created. \`docker compose down -v\` resets it.

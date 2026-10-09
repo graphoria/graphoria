@@ -29,6 +29,15 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("frontend");
   });
 
+  it("answers the RabbitMQ and AI questions with --rabbitmq/--no-rabbitmq and --ai/--no-ai", () => {
+    expect(parseInitArgs(["--rabbitmq"]).rabbitmq).toBe(true);
+    expect(parseInitArgs(["--no-rabbitmq"]).rabbitmq).toBe(false);
+    expect(parseInitArgs(["--ai"]).ai).toBe(true);
+    expect(parseInitArgs(["--no-ai"]).ai).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("rabbitmq");
+    expect(parseInitArgs([])).not.toHaveProperty("ai");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

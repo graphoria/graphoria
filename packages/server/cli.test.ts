@@ -186,6 +186,29 @@ describe("cli init", () => {
     expect(result.stdout.toString()).toContain("bun run types");
   });
 
+  it("scaffolds RabbitMQ and the AI agent with --rabbitmq --ai", async () => {
+    const { cwd, result } = await init(["--yes", "--rabbitmq", "--ai", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    const pkg = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+    expect(pkg.dependencies).toEqual({
+      "@graphoria/server": `^${version}`,
+      "@graphoria/queues": `^${version}`,
+      "@graphoria/ai": `^${version}`,
+    });
+    const values = await env(cwd);
+    expect(values.RABBITMQ_HOST).toBe("localhost");
+    expect(values.RABBITMQ_MANAGEMENT_PORT).toBe("15672");
+    expect(values.RABBITMQ_VHOST).toBe("/");
+    expect(values.RABBITMQ_PASSWORD).toMatch(/^[A-Za-z0-9]{16}$/);
+    const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
+    expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq"]);
+    expect((await readdir(cwd)).sort()).toEqual(FILES);
+    expect(result.stdout.toString()).toContain("http://localhost:15672");
+    expect(result.stdout.toString()).toContain("/rest/ai");
+  });
+
   it("writes nothing when a frontend file it would create exists", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
     cwds.push(cwd);

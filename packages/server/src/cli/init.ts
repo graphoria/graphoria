@@ -9,7 +9,15 @@ import type { InitAnswers } from "./initTemplates";
 
 import { version } from "../../package.json";
 import { DATABASE_TYPES, isDatabaseType, parseInitArgs } from "./initArgs";
-import { ENGINES, FRONTEND_FILES, PROJECT_FILES, renderProject, seedSchema } from "./initTemplates";
+import {
+  ENGINES,
+  FRONTEND_FILES,
+  PROJECT_FILES,
+  RABBITMQ_MANAGEMENT_PORT,
+  RABBITMQ_PORT,
+  renderProject,
+  seedSchema,
+} from "./initTemplates";
 
 type Ask = (question: string, fallback: string) => string | null;
 type Say = (line: string) => void;
@@ -121,6 +129,12 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
           ),
         );
 
+  const yesNo = (answer: string) => (/^(y(es)?|no?)$/i.test(answer) ? undefined : "Answer y or n.");
+  const rabbitmq =
+    args.rabbitmq ?? /^y(es)?$/i.test(question(ask, say, "Add RabbitMQ? (y/N)", "n", yesNo));
+  const ai =
+    args.ai ?? /^y(es)?$/i.test(question(ask, say, "Enable the AI agent? (y/N)", "n", yesNo));
+
   const frontend =
     args.frontend ??
     /^y(es)?$/i.test(
@@ -129,7 +143,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       ),
     );
 
-  return { database, dbName, dbPassword, dbPort, frontend };
+  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, frontend };
 };
 
 export const isPortFree = (port: number): boolean => {
@@ -143,13 +157,14 @@ export const isPortFree = (port: number): boolean => {
 
 export const portWarning = (
   port: number,
+  describe: { service: string; envVar: string },
   isFree: (port: number) => boolean = isPortFree,
 ): string | undefined => {
   if (isFree(port)) return undefined;
   let free = port + 1;
   while (free <= 65535 && !isFree(free)) free++;
   const suggestion = free <= 65535 ? ` such as ${free}` : "";
-  return `Port ${port} is in use on this host, so Docker Compose cannot publish the database on it. Set DB_PORT in .env to a free port${suggestion} before \`docker compose up\`.`;
+  return `Port ${port} is in use on this host, so Docker Compose cannot publish the ${describe.service} on it. Set ${describe.envVar} in .env to a free port${suggestion} before \`docker compose up\`.`;
 };
 
 export const sampleQuery = (answers: Pick<InitAnswers, "database" | "dbName">): string => {
@@ -188,6 +203,20 @@ const nextSteps = (answers: InitAnswers, installed: boolean) => {
 
   return [
     ...run,
+    ...(answers.rabbitmq
+      ? [
+          "",
+          `RabbitMQ management UI: http://localhost:${RABBITMQ_MANAGEMENT_PORT} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
+          "Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.",
+        ]
+      : []),
+    ...(answers.ai
+      ? [
+          "",
+          "The AI agent answers /rest/ai and GraphiQL's ask field.",
+          "Ollama must run on the host, so use bun run dev, not docker compose up.",
+        ]
+      : []),
     ...(answers.frontend
       ? [
           "",
@@ -202,7 +231,7 @@ const nextSteps = (answers: InitAnswers, installed: boolean) => {
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--rabbitmq] [--ai] [--frontend] [--no-install]";
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
@@ -226,12 +255,31 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   refuseExisting([...PROJECT_FILES, "bun.lock"]);
   const answers = collectAnswers(args, args.yes ? () => null : prompt, console.log);
   if (answers.frontend) refuseExisting(FRONTEND_FILES);
-  const warning = answers.database === "sqlite" ? undefined : portWarning(answers.dbPort);
-  if (warning) console.warn(warning);
+  const warnings = [
+    answers.database === "sqlite"
+      ? undefined
+      : portWarning(answers.dbPort, { service: "database", envVar: "DB_PORT" }),
+    answers.rabbitmq
+      ? portWarning(RABBITMQ_PORT, { service: "RabbitMQ", envVar: "RABBITMQ_PORT" })
+      : undefined,
+    answers.rabbitmq
+      ? portWarning(RABBITMQ_MANAGEMENT_PORT, {
+          service: "RabbitMQ management UI",
+          envVar: "RABBITMQ_MANAGEMENT_PORT",
+        })
+      : undefined,
+  ];
+  for (const warning of warnings) if (warning) console.warn(warning);
 
   const name = projectName(dir);
   const files = renderProject(
-    { ...answers, name, adminSecret: generateSecret(), jwtSecret: generateSecret() },
+    {
+      ...answers,
+      name,
+      adminSecret: generateSecret(),
+      jwtSecret: generateSecret(),
+      rabbitmqPassword: generatePassword(),
+    },
     { graphoria: version, bun: Bun.version },
   );
 

@@ -18,7 +18,10 @@ const values = (database: DatabaseType): ProjectValues => ({
   dbName: "shop",
   dbPassword: "Pa55word.x",
   dbPort: 15432,
+  rabbitmq: false,
+  ai: false,
   frontend: false,
+  rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
 });
@@ -26,6 +29,9 @@ const values = (database: DatabaseType): ProjectValues => ({
 const versions = { graphoria: "0.6.0", bun: "1.4.2" };
 
 const render = (database: DatabaseType) => renderProject(values(database), versions);
+
+const renderWith = (patch: Partial<ProjectValues>, database: DatabaseType = "pg") =>
+  renderProject({ ...values(database), ...patch }, versions);
 
 const ENGINES: DatabaseType[] = ["pg", "mysql", "mssql", "sqlite"];
 const SERVER_ENGINES: DatabaseType[] = ["pg", "mysql", "mssql"];
@@ -83,6 +89,20 @@ describe("renderProject package.json", () => {
     expect(pkg.devDependencies.typescript).toBe("^6.0.0");
     expect(pkg.scripts).toEqual({ dev: "bun --watch index.ts", start: "bun index.ts" });
   });
+
+  it.each([
+    [{}, {}],
+    [{ rabbitmq: true }, { "@graphoria/queues": "^0.6.0" }],
+    [{ ai: true }, { "@graphoria/ai": "^0.6.0" }],
+    [
+      { rabbitmq: true, ai: true },
+      { "@graphoria/queues": "^0.6.0", "@graphoria/ai": "^0.6.0" },
+    ],
+  ] as const)("adds the adapter packages for %j", (patch, expected) => {
+    const pkg = JSON.parse(renderWith(patch as Partial<ProjectValues>)["package.json"]!);
+
+    expect(pkg.dependencies).toEqual({ "@graphoria/server": "^0.6.0", ...expected });
+  });
 });
 
 describe("renderProject .env", () => {
@@ -101,6 +121,29 @@ describe("renderProject .env", () => {
     expect(lines).toContain("DB_PASSWORD=Pa55word.x");
     expect(lines).toContain("DB_NAME=shop");
   });
+
+  it("adds the RabbitMQ settings, with a generated password", () => {
+    const lines = renderWith({ rabbitmq: true })[".env"]!.split("\n");
+
+    expect(lines).toContain("RABBITMQ_HOST=localhost");
+    expect(lines).toContain("RABBITMQ_PORT=5672");
+    expect(lines).toContain("RABBITMQ_MANAGEMENT_PORT=15672");
+    expect(lines).toContain("RABBITMQ_USER=graphoria");
+    expect(lines).toContain("RABBITMQ_PASSWORD=rabbit-pass");
+    expect(lines).toContain("RABBITMQ_VHOST=/");
+    expect(render("pg")[".env"]).not.toContain("RABBITMQ_");
+  });
+
+  it.each(["pg", "sqlite"] as const)(
+    "adds the LLM settings, keeping Ollama on localhost for %s",
+    (database) => {
+      const lines = renderWith({ ai: true }, database)[".env"]!.split("\n");
+
+      expect(lines).toContain("LLM_PROVIDER=ollama");
+      expect(lines).toContain("OLLAMA_HOST=http://localhost:11434");
+      expect(render(database)[".env"]).not.toContain("LLM_PROVIDER");
+    },
+  );
 });
 
 describe("renderProject docker-compose.yml", () => {
@@ -116,11 +159,11 @@ describe("renderProject docker-compose.yml", () => {
     depends_on?: Record<string, { condition: string }>;
   };
   type Compose = {
-    services: { db: Service; graphoria: Service; "db-init"?: Service };
+    services: { db: Service; graphoria: Service; "db-init"?: Service; rabbitmq?: Service };
     volumes: Record<string, unknown>;
   };
-  const compose = (database: DatabaseType) =>
-    Bun.YAML.parse(render(database)["docker-compose.yml"]!) as Compose;
+  const compose = (database: DatabaseType, patch: Partial<ProjectValues> = {}) =>
+    Bun.YAML.parse(renderWith(patch, database)["docker-compose.yml"]!) as Compose;
 
   it.each([
     {
@@ -188,6 +231,37 @@ describe("renderProject docker-compose.yml", () => {
       "db-init": { condition: "service_completed_successfully" },
     });
   });
+
+  it.each(["pg", "sqlite"] as const)(
+    "runs RabbitMQ from .env and points Graphoria at it (%s)",
+    (database) => {
+      const { services, volumes } = compose(database, { rabbitmq: true });
+
+      expect(services.rabbitmq!.image).toBe("rabbitmq:4-management");
+      expect(services.rabbitmq!.environment).toEqual({
+        RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER}",
+        RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD}",
+      });
+      expect(services.rabbitmq!.ports).toEqual([
+        "${RABBITMQ_PORT}:5672",
+        "${RABBITMQ_MANAGEMENT_PORT}:15672",
+      ]);
+      expect(services.rabbitmq!.volumes).toContain("rabbitmq-data:/var/lib/rabbitmq");
+      expect(services.rabbitmq!.healthcheck?.test).toBeDefined();
+      expect(services.graphoria!.environment).toMatchObject({
+        RABBITMQ_HOST: "rabbitmq",
+        RABBITMQ_PORT: "5672",
+      });
+      expect(services.graphoria!.depends_on).toMatchObject({
+        rabbitmq: { condition: "service_healthy" },
+      });
+      expect(Object.keys(volumes).sort()).toEqual(["db-data", "rabbitmq-data"]);
+    },
+  );
+
+  it("leaves the broker out by default", () => {
+    expect(compose("pg").services.rabbitmq).toBeUndefined();
+  });
 });
 
 describe("renderProject graphoria.ts", () => {
@@ -201,15 +275,27 @@ describe("renderProject graphoria.ts", () => {
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
   afterEach(() => {
-    for (const key of ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]) {
+    for (const key of [
+      "DB_HOST",
+      "DB_PORT",
+      "DB_USER",
+      "DB_PASSWORD",
+      "DB_NAME",
+      "RABBITMQ_HOST",
+      "RABBITMQ_PORT",
+      "RABBITMQ_USER",
+      "RABBITMQ_PASSWORD",
+      "RABBITMQ_VHOST",
+    ]) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
     }
   });
 
-  const load = async (database: DatabaseType) => {
-    const path = join(dir, `${database}.graphoria.ts`);
-    await writeFile(path, render(database)["graphoria.ts"]!);
+  let seq = 0;
+  const load = async (database: DatabaseType, patch: Partial<ProjectValues> = {}) => {
+    const path = join(dir, `${database}-${seq++}.graphoria.ts`);
+    await writeFile(path, renderWith({ ...patch }, database)["graphoria.ts"]!);
     const module = await import(path);
     return module.default as (helpers: object) => unknown;
   };
@@ -220,6 +306,14 @@ describe("renderProject graphoria.ts", () => {
     process.env.DB_USER = "someone";
     process.env.DB_PASSWORD = "Pa55word.x";
     process.env.DB_NAME = "shop";
+  };
+
+  const setRabbitEnv = () => {
+    process.env.RABBITMQ_HOST = "rabbit.internal";
+    process.env.RABBITMQ_PORT = "5672";
+    process.env.RABBITMQ_USER = "graphoria";
+    process.env.RABBITMQ_PASSWORD = "rabbit-pass";
+    process.env.RABBITMQ_VHOST = "/";
   };
 
   it.each(SERVER_ENGINES)("reads the %s connection from the environment", async (database) => {
@@ -261,6 +355,60 @@ describe("renderProject graphoria.ts", () => {
 
     expect(() => configure({})).toThrow("DB_PASSWORD is not set");
   });
+
+  it("declares a RabbitMQ queue with a publisher and a subscriber", async () => {
+    setEnv();
+    setRabbitEnv();
+    const { queues } = ConfigurationZod.parse((await load("pg", { rabbitmq: true }))({}));
+    const entry = queues![0]!;
+
+    expect(entry).toMatchObject({ type: "rabbitmq", name: "events" });
+    expect(entry.connection).toEqual({
+      hostname: "rabbit.internal",
+      port: 5672,
+      username: "graphoria",
+      password: "rabbit-pass",
+      vhost: "/",
+    });
+    expect(entry.exchanges).toEqual([
+      {
+        name: "books",
+        type: "topic",
+        options: { durable: true, autoDelete: false },
+        publishers: [
+          {
+            name: "bookAdded",
+            resolverName: "events_bookAdded",
+            routingKey: "book.added",
+            options: { persistent: true },
+          },
+        ],
+      },
+    ]);
+    expect(entry.queues![0]).toMatchObject({
+      name: "onBookAdded",
+      bindings: [{ exchange: "books", pattern: "book.*" }],
+    });
+    expect(typeof entry.queues![0]!.handler).toBe("function");
+  });
+
+  it("enables the AI agent only when asked", async () => {
+    setEnv();
+
+    expect(ConfigurationZod.parse((await load("pg", { ai: true }))({})).ai.enabled).toBe(true);
+    expect(ConfigurationZod.parse((await load("pg", {}))({})).ai.enabled).toBe(false);
+  });
+
+  it.each([{ rabbitmq: true }, { ai: true }, { rabbitmq: true, ai: true }])(
+    "still parses with %j",
+    async (patch) => {
+      setEnv();
+      setRabbitEnv();
+
+      const configure = await load("pg", patch);
+      expect(() => ConfigurationZod.parse(configure({}))).not.toThrow();
+    },
+  );
 });
 
 describe("renderProject seed.sql", () => {
@@ -435,20 +583,41 @@ describe("renderProject with the frontend", () => {
       process.env.DB_USER = "someone";
       process.env.DB_PASSWORD = "Pa55word.x";
       process.env.DB_NAME = "shop";
+      process.env.RABBITMQ_HOST = "rabbit.internal";
+      process.env.RABBITMQ_PORT = "5672";
+      process.env.RABBITMQ_USER = "graphoria";
+      process.env.RABBITMQ_PASSWORD = "rabbit-pass";
+      process.env.RABBITMQ_VHOST = "/";
     });
 
     afterAll(async () => {
-      for (const key of ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]) {
+      for (const key of [
+        "DB_HOST",
+        "DB_PORT",
+        "DB_USER",
+        "DB_PASSWORD",
+        "DB_NAME",
+        "RABBITMQ_HOST",
+        "RABBITMQ_PORT",
+        "RABBITMQ_USER",
+        "RABBITMQ_PASSWORD",
+        "RABBITMQ_VHOST",
+      ]) {
         delete process.env[key];
       }
       await rm(dir, { recursive: true, force: true });
     });
 
-    const parse = async (frontend: boolean, database: DatabaseType) => {
-      const path = join(dir, `${database}-${frontend}.graphoria.ts`);
+    let seq = 0;
+    const parse = async (
+      frontend: boolean,
+      database: DatabaseType,
+      patch: Partial<ProjectValues> = {},
+    ) => {
+      const path = join(dir, `${database}-${frontend}-${seq++}.graphoria.ts`);
       await writeFile(
         path,
-        renderProject({ ...values(database), frontend }, versions)["graphoria.ts"]!,
+        renderProject({ ...values(database), frontend, ...patch }, versions)["graphoria.ts"]!,
       );
       const configure = (await import(path)).default as (helpers: object) => unknown;
       return ConfigurationZod.parse(configure({}));
@@ -471,6 +640,25 @@ describe("renderProject with the frontend", () => {
 
     it("grants nothing without the frontend", async () => {
       expect((await parse(false, "pg")).auth.permissions).toEqual({});
+    });
+
+    it("keeps the anonymous grant on one line without --rabbitmq or --ai", () => {
+      const config = renderWeb("pg")["graphoria.ts"]!;
+
+      expect(config).toContain('anonymous: { tables: ["public_authors", "public_books"] },');
+      expect(config).not.toContain("anonymous: {\n");
+    });
+
+    it.each([
+      [
+        { rabbitmq: true, ai: true },
+        { queues: ["events"], ai: true },
+      ],
+      [{}, {}],
+    ])("extends the anonymous grant for %j", async (patch, expected) => {
+      const { auth } = await parse(true, "pg", patch);
+
+      expect(auth.permissions.anonymous).toMatchObject(expected);
     });
   });
 });
