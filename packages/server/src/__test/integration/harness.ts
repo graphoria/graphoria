@@ -225,6 +225,8 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
 
   const { server, prefixes, shutdown } = await createBunServer({
     port: 0,
+    // baseConfig declares Redis, from the compose stack, as the `redis` store.
+    authStore: "redis",
     ...env,
     configuration: { ...baseConfig(engine), ...config } as never,
   });

@@ -1,4 +1,5 @@
 import type { Env } from "../types/env";
+import type { TokenRepository } from "./tokenRepository";
 import type { TokenService, TokenStrategy } from "./types";
 
 import { createJWTService } from "./jwt";
@@ -20,6 +21,7 @@ export const createTokenService = (
   env: Env,
   strategy: TokenStrategy = "jwt",
   keyRequired = true,
+  tokenRepository?: TokenRepository,
 ): TokenService => {
   switch (strategy) {
     case "jwt": {
@@ -31,7 +33,7 @@ export const createTokenService = (
         }
         warnNoKey(strategy, "JWT_SECRET");
       }
-      return createJWTService(env);
+      return createJWTService(env, tokenRepository);
     }
     case "paseto_local": {
       if (env.paseto.localKeys.length === 0) {
@@ -42,7 +44,7 @@ export const createTokenService = (
         }
         warnNoKey(strategy, "PASETO_LOCAL_KEY");
       }
-      return createPASETOService(env, "local");
+      return createPASETOService(env, "local", tokenRepository);
     }
     case "paseto_public": {
       if (keyRequired && (!env.paseto.secretKey || env.paseto.publicKeys.length === 0)) {
@@ -54,7 +56,7 @@ export const createTokenService = (
       if (!keyRequired && env.paseto.publicKeys.length === 0) {
         warnNoKey(strategy, "PASETO_PUBLIC_KEY");
       }
-      return createPASETOService(env, "public");
+      return createPASETOService(env, "public", tokenRepository);
     }
   }
 };

@@ -1,5 +1,9 @@
+import type { Configuration } from "../types/configuration";
+
 import { parseDurationToMs } from "./duration";
+import { MEMORY_STORE } from "../config/types/cache";
 import { logger } from "../logging";
+import { redisUrlOf } from "../singletons/cache/stores";
 import { closeRedisClient, createRedisClient } from "../utils/redis";
 
 export type TokenRepository = {
@@ -126,4 +130,81 @@ export const createTokenRepository = (redisUrl: string): TokenRepository => {
   ) as unknown as TokenRepositoryClient[];
 
   return createTokenRepositoryWithClient(createShardedTokenRepositoryClient(clients));
+};
+
+type MemoryRecord = { fields: Record<string, string>; expiresAt?: number };
+
+// Swept at most this often, on a write: an expired record is otherwise dropped
+// only when its own key is read again.
+const MEMORY_SWEEP_MS = 60_000;
+
+/**
+ * JTI records kept in this process, for AUTH_STORE=memory. Another worker or
+ * replica never sees them, and a restart forgets them all.
+ */
+export const createMemoryTokenRepositoryClient = (
+  now: () => number = Date.now,
+  records = new Map<string, MemoryRecord>(),
+): TokenRepositoryClient => {
+  let sweptAt = now();
+
+  const live = (key: string) => {
+    const record = records.get(key);
+    if (record?.expiresAt !== undefined && record.expiresAt <= now()) {
+      records.delete(key);
+      return undefined;
+    }
+    return record;
+  };
+
+  const sweep = () => {
+    if (now() - sweptAt < MEMORY_SWEEP_MS) return;
+    sweptAt = now();
+    for (const key of records.keys()) live(key);
+  };
+
+  return {
+    hset: async (key, fields) => {
+      sweep();
+      const record = live(key) ?? { fields: {} };
+      Object.assign(record.fields, fields);
+      records.set(key, record);
+    },
+    hmget: async (key, fields) => {
+      const record = live(key);
+      return fields.map((field) => record?.fields[field] ?? null);
+    },
+    expire: async (key, seconds) => {
+      const record = live(key);
+      if (record) record.expiresAt = now() + seconds * 1000;
+    },
+    close: () => records.clear(),
+  };
+};
+
+export const createMemoryTokenRepository = (): TokenRepository =>
+  createTokenRepositoryWithClient(createMemoryTokenRepositoryClient());
+
+const AUTH_STORE_REQUIRED =
+  "AUTH_STORE is required when auth is enabled: set it to memory (revocations stay in this process and are lost on restart) or to a redis store declared in caches.stores (shared by every process)";
+
+/**
+ * The token store AUTH_STORE names, required by the server when auth is on.
+ * With auth off, or in the in-process engine (which passes `required: false`),
+ * an unset AUTH_STORE keeps tokens in the process, while a set one is honoured:
+ * a server that only verifies tokens another deployment issues then sees the
+ * revocations that deployment records.
+ */
+export const createConfiguredTokenRepository = (
+  authEnabled: boolean,
+  authStore: string | undefined,
+  caches: Configuration["caches"],
+  required = true,
+): TokenRepository => {
+  if (authStore === undefined) {
+    if (authEnabled && required) throw new Error(AUTH_STORE_REQUIRED);
+    return createMemoryTokenRepository();
+  }
+  if (authStore === MEMORY_STORE) return createMemoryTokenRepository();
+  return createTokenRepository(redisUrlOf(caches, "AUTH_STORE", authStore));
 };

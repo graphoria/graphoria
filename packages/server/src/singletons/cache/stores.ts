@@ -44,6 +44,17 @@ const lruOptions = (cache: OperationCacheConfig, ttl: number | undefined): LruOp
   return options as LruOptions;
 };
 
+/** The URL of the Redis store an env variable names; throws when caches.stores lacks it. */
+export const redisUrlOf = (declared: Caches, variable: string, name: string): string => {
+  const store = Object.hasOwn(declared.stores, name) ? declared.stores[name] : undefined;
+  if (!store) {
+    throw new Error(
+      `${variable}=${name} names no store: declare it in caches.stores, or set ${variable}=${MEMORY_STORE}`,
+    );
+  }
+  return store.url;
+};
+
 /** The store an operation's responses are kept in: its own `stores`, else the default chain. */
 export const buildCacheStore = (operationName: string, cache: OperationCacheConfig): CacheStore => {
   const chain = cache.stores ?? caches.default;

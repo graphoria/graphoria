@@ -5,7 +5,7 @@ import type { CacheStore } from "./types";
 import { LruCacheStore } from "./lruCacheStore";
 import { RedisCacheStore } from "./redisCacheStore";
 import { closeCacheRedisClient } from "./redisClient";
-import { buildCacheStore, getCaches, setCaches } from "./stores";
+import { buildCacheStore, getCaches, redisUrlOf, setCaches } from "./stores";
 import { TieredCacheStore } from "./tieredCacheStore";
 
 // Clients connect on their first command, so no Redis has to listen here.
@@ -84,5 +84,25 @@ describe("buildCacheStore memory ttl", () => {
     setCaches({ default: ["memory", "shared"], stores: { shared: timed(undefined) } });
 
     expect(await served(buildCacheStore("op", { max: 10 }))).toBe("v");
+  });
+});
+
+describe("redisUrlOf", () => {
+  const declared = { default: ["memory"], stores: { shared } };
+
+  it("reads the URL of a declared store", () => {
+    expect(redisUrlOf(declared, "AUTH_STORE", "shared")).toBe(shared.url);
+  });
+
+  it("names the variable and the store it lacks", () => {
+    expect(() => redisUrlOf(declared, "RATE_LIMIT_STORE", "nope")).toThrow(
+      "RATE_LIMIT_STORE=nope names no store: declare it in caches.stores, or set RATE_LIMIT_STORE=memory",
+    );
+  });
+
+  it("finds no store among the names Object.prototype lends", () => {
+    expect(() => redisUrlOf(declared, "AUTH_STORE", "toString")).toThrow(
+      "AUTH_STORE=toString names no store",
+    );
   });
 });

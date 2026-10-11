@@ -447,3 +447,15 @@ describe("EnvZod AI_TIMEOUT_MS", () => {
     expect(() => EnvZod.parse({ ...baseEnv, AI_TIMEOUT_MS: "-1" })).toThrow();
   });
 });
+
+describe("EnvZod AUTH_STORE", () => {
+  const baseEnv = { ADMIN_SECRET: "x", JWT_SECRET: "y" };
+
+  it("leaves authStore undefined when AUTH_STORE is unset", () => {
+    expect(EnvZod.parse(baseEnv).authStore).toBeUndefined();
+  });
+
+  it("reads AUTH_STORE", () => {
+    expect(EnvZod.parse({ ...baseEnv, AUTH_STORE: "tokens" }).authStore).toBe("tokens");
+  });
+});

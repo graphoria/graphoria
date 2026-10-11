@@ -10,6 +10,7 @@ import type { Env } from "./types/env";
 import type { SessionContext } from "./utils/sessionVariables";
 
 import { createTokenService } from "./authentication";
+import { createConfiguredTokenRepository } from "./authentication/tokenRepository";
 import { analyzeConfiguration, loadConfiguration } from "./configuration";
 import { buildExecute } from "./configuration/gql/buildExecute";
 import { websocketHandlerFactory } from "./configuration/gql/handleGraphQLSubscriptionFactory";
@@ -132,7 +133,7 @@ const generatePrefixes = (options: Env) => ({
  * the AI surfaces. Shared by {@link createGraphQLServer} (which adds routes) and
  * {@link createGraphQLEngine} (which adds in-process execution).
  */
-const bootAnalyzedConfiguration = async (env: Env) => {
+const bootAnalyzedConfiguration = async (env: Env, authStoreRequired: boolean) => {
   // Inject custom logger before any subsystem creates one
   if (env.logger) {
     configureLogging(env.logger);
@@ -173,6 +174,15 @@ const bootAnalyzedConfiguration = async (env: Env) => {
     ? ConfigurationZod.parse(await loadConfiguration(env.configuration))
     : ConfigurationZod.parse(env.configuration);
 
+  // AUTH_STORE needs only the configuration, so a store it misnames refuses boot
+  // before anything connects.
+  const tokenRepository = createConfiguredTokenRepository(
+    Boolean(projectConfiguration.auth?.enabled),
+    env.authStore,
+    projectConfiguration.caches,
+    authStoreRequired,
+  );
+
   // Initialize databases (using pre-calculated enabledDatabases from parsing)
   await instantiateDatabasesConnections(
     projectConfiguration.enabledDatabases,
@@ -207,7 +217,7 @@ const bootAnalyzedConfiguration = async (env: Env) => {
   // Only auth (login, refresh) and the console (its session cookie) sign tokens;
   // with both off, a missing key just means bearer tokens are ignored.
   const keyRequired = Boolean(projectConfiguration.auth?.enabled) || env.console.enabled;
-  setTokenService(createTokenService(env, tokenStrategy, keyRequired));
+  setTokenService(createTokenService(env, tokenStrategy, keyRequired, tokenRepository));
 
   // Analyze configuration
   const analyzedConfiguration = await analyzeConfiguration(projectConfiguration, env);
@@ -253,7 +263,7 @@ const startAgent = async (env: Env, ai: Configuration["ai"]) => {
  *   The configured token strategy's keys are required when auth or the
  *   console is enabled.
  * @returns `{ execute, roles, close, logger }` — call `close()` to release
- *   database connections.
+ *   the database connections, the cache's Redis pools and the token store.
  *
  * @example
  * ```ts
@@ -274,8 +284,9 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
     ...options,
   };
 
+  // The engine verifies no token, so AUTH_STORE stays optional.
   const { projectConfiguration, analyzedConfiguration, aiSurfaces } =
-    await bootAnalyzedConfiguration(optionsWithDefaults);
+    await bootAnalyzedConfiguration(optionsWithDefaults, false);
 
   // No route here takes a scoped credential, so no role check comes first.
   if (aiSurfaces.agent) await startAgent(optionsWithDefaults, projectConfiguration.ai);
@@ -283,7 +294,11 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
   return {
     execute: buildExecute(analyzedConfiguration.roles, env.superadmin.role),
     roles: Object.keys(analyzedConfiguration.roles),
-    close: disconnectDatabases,
+    close: async () => {
+      await disconnectDatabases();
+      closeCacheRedisClient();
+      getTokenService().close();
+    },
     logger,
   };
 };
@@ -310,7 +325,7 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
  */
 const createGraphQLServer = async (env: Env) => {
   const { projectConfiguration, analyzedConfiguration, aiSurfaces } =
-    await bootAnalyzedConfiguration(env);
+    await bootAnalyzedConfiguration(env, true);
 
   assertScopedRoles(env, analyzedConfiguration.roles, aiSurfaces);
 

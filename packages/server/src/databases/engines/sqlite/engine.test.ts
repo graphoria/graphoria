@@ -62,6 +62,8 @@ beforeAll(async () => {
 
   engine = await createGraphQLEngine({
     dbConnectRetryMs: 0,
+    // The config declares no store, so an inherited one would refuse the boot.
+    authStore: "memory",
     ai: { ...env.ai, enabled: undefined, graphqlEnabled: true, timeoutMs: 60_000 },
     configuration: {
       name: "sqlite-engine-test",
@@ -319,5 +321,49 @@ describe("sqlite engine, the agent", () => {
     } finally {
       setProvider(null);
     }
+  });
+});
+
+describe("engine close", () => {
+  it("releases the cache Redis pools and the token service's clients", async () => {
+    const { createGraphQLEngine } = await import("../../../index");
+    const { getTokenService, setTokenService } = await import("../../../singletons/authentication");
+    const { CACHE_REDIS_POOL_SIZE, closeCacheRedisClient, getCacheRedisClient } =
+      await import("../../../singletons/cache/redisClient");
+
+    const closing = await createGraphQLEngine({
+      dbConnectRetryMs: 0,
+      // The config declares no store, so an inherited one would refuse the boot.
+      authStore: "memory",
+      configuration: {
+        name: "sqlite-engine-close",
+        version: "1.0.0",
+        databases: [
+          { name: "default", enabled: true, type: "sqlite", connection: { filename: ":memory:" } },
+        ],
+      } as never,
+    });
+
+    // Clients connect on their first command, so no Redis has to listen here.
+    const url = "redis://127.0.0.1:6395";
+    const pool = () =>
+      Array.from({ length: CACHE_REDIS_POOL_SIZE }, () => getCacheRedisClient(url));
+    const pooled = pool();
+    const service = getTokenService();
+    let tokenClosed = 0;
+    setTokenService({
+      ...service,
+      close: () => {
+        tokenClosed++;
+        service.close();
+      },
+    });
+
+    await closing.close();
+
+    expect(tokenClosed).toBe(1);
+    // A pool closed and cleared hands out new clients; an open one hands out the same four.
+    expect(pool().filter((client) => pooled.includes(client))).toEqual([]);
+    closeCacheRedisClient();
   });
 });
