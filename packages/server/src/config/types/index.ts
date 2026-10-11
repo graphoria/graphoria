@@ -47,6 +47,10 @@ export {
   OperationsZod,
 } from "./operation";
 
+export type { CacheStoreConfig, CachesConfig } from "./cache";
+
+export { CacheStoreConfigZod, CachesZod, RedisCacheStoreConfigZod } from "./cache";
+
 // Cron types
 export type { CronTickCallback, CronJobConfig } from "./cron";
 

@@ -88,10 +88,8 @@ export const buildApiRoutes = (
           cacheOptions.allowStale = routeConfig.cache.allowStale;
         if (routeConfig.cache.updateAgeOnGet !== undefined)
           cacheOptions.updateAgeOnGet = routeConfig.cache.updateAgeOnGet;
-        if (routeConfig.cache.updateAgeOnHas !== undefined)
-          cacheOptions.updateAgeOnHas = routeConfig.cache.updateAgeOnHas;
-        if (routeConfig.cache.ttlAutopurge !== undefined)
-          cacheOptions.ttlAutopurge = routeConfig.cache.ttlAutopurge;
+        cacheOptions.updateAgeOnHas = routeConfig.cache.updateAgeOnHas ?? false;
+        cacheOptions.ttlAutopurge = routeConfig.cache.ttlAutopurge ?? true;
 
         // LRUCache.Options requires at least one of max/maxSize/ttl. Caller is
         // responsible for setting one; the cast bridges the structural gap.
