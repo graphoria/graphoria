@@ -18,13 +18,13 @@ and `@graphoria/server` from npm, with `@graphoria/queues` next to it when the c
 queues. The process writes nothing to local disk, so any replica can answer any request and a
 replaced container loses nothing. The state lives elsewhere:
 
-| Component             | Holds                                                                                      | Needed when                        |
-| --------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------- |
-| Your project image    | Configuration and code                                                                     | Always                             |
-| Database(s)           | Your data; with auth on, the users table (schema `auth` by default)                        | Always                             |
-| Redis                 | Refresh-token rotation and revoked tokens; with `CACHE_STORE=redis`, cache and rate limits | Auth on, or `CACHE_STORE=redis`    |
-| RabbitMQ / Kafka      | Queue messages                                                                             | A `queues` entry in `graphoria.ts` |
-| Reverse proxy/gateway | The TLS certificate                                                                        | Always: the server speaks HTTP     |
+| Component             | Holds                                                                                                     | Needed when                                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Your project image    | Configuration and code                                                                                    | Always                                                      |
+| Database(s)           | Your data; with auth on, the users table (schema `auth` by default)                                       | Always                                                      |
+| Redis                 | The `redis` stores in `caches.stores`: REST cache, rate limits, refresh-token rotation and revoked tokens | A cache chain, `AUTH_STORE` or `RATE_LIMIT_STORE` names one |
+| RabbitMQ / Kafka      | Queue messages                                                                                            | A `queues` entry in `graphoria.ts`                          |
+| Reverse proxy/gateway | The TLS certificate                                                                                       | Always: the server speaks HTTP                              |
 
 ## The image
 
@@ -52,20 +52,20 @@ directory: keep it off in the image, or point `SCHEMAS_OUTPUT_DIR` at a writable
 Environment variables configure the server. They are read once at startup, so a change takes a
 restart, a rolling one on a fleet. The ones a deployment sets:
 
-| Variable                            | Default                  | Means                                                                                                          |
-| ----------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `ADMIN_SECRET`                      | — (required)             | Bypasses RBAC. The server does not start without it                                                            |
-| `JWT_SECRET`                        | —                        | Signs tokens under the default `jwt` strategy. Required with auth or the console on; PASETO takes its own keys |
-| `NODE_ENV`                          | `DEVELOPMENT`            | `production`, lowercase, for JSON logs at `info`                                                               |
-| `PORT`                              | `3000`                   | Listen port, on every interface                                                                                |
-| `PREFIX`                            | —                        | Path prefix for every route, the health endpoints included                                                     |
-| `REDIS_URL`                         | `redis://localhost:6379` | See [Redis](#redis)                                                                                            |
-| `CACHE_STORE`                       | `memory`                 | `redis` shares the REST cache and the rate limits across processes                                             |
-| `RATE_LIMIT_TRUST_PROXY`            | `false`                  | Take the client address from `X-Forwarded-For` — see [The client address](#the-client-address)                 |
-| `SHUTDOWN_TIMEOUT_MS`               | `8000`                   | Drain time on SIGTERM — see [Graceful shutdown](#graceful-shutdown)                                            |
-| `DB_CONNECT_RETRY_MS`               | `60000`                  | How long boot waits for a database it cannot reach                                                             |
-| `METRICS_ENABLED`, `METRICS_SECRET` | `false`, —               | Prometheus `/metrics` — see [Metrics](./OBSERVABILITY.md#metrics)                                              |
-| `CONSOLE_ENABLED`                   | `false`                  | The [admin console](./CONSOLE.md) at `/_console`                                                               |
+| Variable                            | Default       | Means                                                                                                                  |
+| ----------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_SECRET`                      | — (required)  | Bypasses RBAC. The server does not start without it                                                                    |
+| `JWT_SECRET`                        | —             | Signs tokens under the default `jwt` strategy. Required with auth or the console on; PASETO takes its own keys         |
+| `NODE_ENV`                          | `DEVELOPMENT` | `production`, lowercase, for JSON logs at `info`                                                                       |
+| `PORT`                              | `3000`        | Listen port, on every interface                                                                                        |
+| `PREFIX`                            | —             | Path prefix for every route, the health endpoints included                                                             |
+| `AUTH_STORE`                        | —             | Required with auth on, optional with auth off: `memory`, or a `redis` store from `caches.stores` — see [Redis](#redis) |
+| `RATE_LIMIT_STORE`                  | `memory`      | A `redis` store from `caches.stores` shares the rate limits across processes                                           |
+| `RATE_LIMIT_TRUST_PROXY`            | `false`       | Take the client address from `X-Forwarded-For` — see [The client address](#the-client-address)                         |
+| `SHUTDOWN_TIMEOUT_MS`               | `8000`        | Drain time on SIGTERM — see [Graceful shutdown](#graceful-shutdown)                                                    |
+| `DB_CONNECT_RETRY_MS`               | `60000`       | How long boot waits for a database it cannot reach                                                                     |
+| `METRICS_ENABLED`, `METRICS_SECRET` | `false`, —    | Prometheus `/metrics` — see [Metrics](./OBSERVABILITY.md#metrics)                                                      |
+| `CONSOLE_ENABLED`                   | `false`       | The [admin console](./CONSOLE.md) at `/_console`                                                                       |
 
 Everything else is in [`.env.example`](../.env.example).
 [Configuring for production](./LIMITS.md#configuring-for-production) covers the limits worth turning
@@ -200,7 +200,7 @@ window: see [Waiting for the database at boot](./CONFIGURATION.md#waiting-for-th
 
 Whichever way you get more than one process, some state stays per process:
 
-- **Rate limits.** The memory store counts per process; `CACHE_STORE=redis` makes one bucket. See
+- **Rate limits.** The memory store counts per process; `RATE_LIMIT_STORE` naming a Redis store makes one bucket. See
   [the in-memory rate limiter](./SECURITY_MODEL.md#the-in-memory-rate-limiter-does-not-span-workers).
 - **Console logout** revokes the session in the process that served it only; the cookie stays
   valid elsewhere until it expires. See
@@ -252,26 +252,30 @@ API needs ([Out of scope](./SECURITY_MODEL.md#out-of-scope)).
 
 What Redis holds, and what happens when it goes away:
 
-| When                | Holds                                   | While Redis is down                                                            | After Redis loses its data                                                         |
-| ------------------- | --------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| Auth on             | Refresh-token rotation, revoked tokens  | **Fails closed**: a valid bearer token is served as `anonymous`; refresh fails | Revoked tokens verify again; a used refresh token can be replayed until it expires |
-| `CACHE_STORE=redis` | The REST cache, the rate-limit counters | **Fails open**: answers uncached and unlimited                                 | Cache and counters start empty                                                     |
+| When                                         | Holds                                   | While Redis is down                                                            | After Redis loses its data                                                         |
+| -------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `AUTH_STORE` names it                        | Refresh-token rotation, revoked tokens  | **Fails closed**: a valid bearer token is served as `anonymous`; refresh fails | Revoked tokens verify again; a used refresh token can be replayed until it expires |
+| A cache chain or `RATE_LIMIT_STORE` names it | The REST cache, the rate-limit counters | **Fails open**: answers uncached and unlimited                                 | Cache and counters start empty                                                     |
 
 Console sessions and subscriptions are not in Redis.
 
-- **Readiness.** With auth on or `CACHE_STORE=redis`, `/health/ready` includes a Redis `PING`, so a
-  Redis outage takes every replica out of rotation at once. Give Redis the availability you give
-  the database.
-- **Failover.** Graphoria takes one `REDIS_URL` and speaks neither Sentinel nor Cluster. For
+- **Readiness.** `/health/ready` sends a `PING` to every Redis store in use — a cached operation's chain, `AUTH_STORE`, `RATE_LIMIT_STORE` while a limit is set — one check per store, so a Redis outage takes every replica out of rotation at once. Give Redis the availability you give the database.
+- **Failover.** Each store takes one `url`, and Graphoria speaks neither Sentinel nor Cluster. For
   failover, point it at an endpoint that follows the primary under one hostname. The clients
   reconnect on their own, with a backoff from 1 to 30 seconds
   ([Recovery](./OBSERVABILITY.md#recovery)).
-- **Scripting.** With `CACHE_STORE=redis`, the cache writes and tracks its entries with a Lua
+- **Scripting.** A Redis store in a cache chain writes and tracks its entries with a Lua
   script (`EVAL`). Redis and Valkey allow it by default; behind a service that blocks scripting,
   nothing is cached and each write logs `cache set failed`.
 - **Persistence.** Turn on AOF so a Redis restart keeps the revocations. If the data is lost
   anyway, replace `JWT_SECRET` (or the PASETO keys) without keeping the old value in the list: every
   token issued before becomes invalid, and every user signs in again.
+- **Cache and tokens apart.** Cached responses fill Redis. Under an eviction policy that can drop
+  keys with a TTL, they can push out revocation records, and a revoked token then verifies again.
+  Point `AUTH_STORE` at a store on a Redis that does not evict, apart from the cache's.
+- **`AUTH_STORE=memory`.** Revocations and used refresh tokens stay in the process that saw them:
+  other workers and replicas never learn of a logout, and a restart forgets them all
+  ([why](./SECURITY_MODEL.md#auth_storememory-keeps-revocations-in-one-process)).
 - **One per deployment.** Two deployments sharing one Redis
   [can serve each other's cached rows](./SECURITY_MODEL.md#two-deployments-sharing-one-redis-can-serve-each-others-rows).
   Give each its own Redis, or its own database number in the URL.
@@ -344,8 +348,9 @@ detail.
 - **Containers** hold nothing: rebuild the image from git and the pinned versions, and redeploy.
 - **The database** is the system of record, the users table included (schema `auth` by default).
   Back it up with the engine's own tools; restoring it restores the accounts.
-- **Redis** holds token state. After restoring an older copy, or starting empty, tokens revoked
-  since then verify again — replace `JWT_SECRET` as in [Redis](#redis). The cache and the
+- **A Redis token store** (`AUTH_STORE` naming one) holds token state. With `AUTH_STORE=memory`
+  nothing survives a restart. After restoring an older Redis copy, or starting it empty, tokens
+  revoked since then verify again — replace `JWT_SECRET` as in [Redis](#redis). The cache and the
   rate-limit counters need no backup.
 - **Console sessions** are tokens signed with the token key: nothing to back up, and changing the
   key signs everyone out.
@@ -366,6 +371,9 @@ Before applying it:
 - `gatewayClassName` is the GatewayClass your Gateway API implementation installs.
 - `graphoria-tls` is a `kubernetes.io/tls` Secret with the certificate for `api.example.com`, from
   your certificate issuer or `kubectl create secret tls graphoria-tls --cert <crt> --key <key>`.
+- With auth on, add `AUTH_STORE` to the Secret, naming a `redis` store your `graphoria.ts`
+  declares: with two replicas, `memory` would keep each one's logouts to itself. `RATE_LIMIT_STORE`
+  naming one makes one rate-limit bucket across them ([Redis](#redis)).
 
 ```yaml
 apiVersion: v1

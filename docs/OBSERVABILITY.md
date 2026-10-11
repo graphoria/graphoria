@@ -22,18 +22,18 @@ restarting a server because its database is down does not bring the database bac
 
 **Readiness** checks, side by side and each bounded at 2 seconds:
 
-| `kind`              | `name`                  | Checked when                           | How                                                             |
-| ------------------- | ----------------------- | -------------------------------------- | --------------------------------------------------------------- |
-| `database`          | the database's `name`   | always, one check per enabled database | `SELECT 1` on its pool                                          |
-| `redis`             | —                       | `auth.enabled`, or `CACHE_STORE=redis` | `PING`                                                          |
-| `rabbitmq`, `kafka` | the queue config's name | always, one check per enabled queue    | The connection state its reconnecting manager keeps. No traffic |
+| `kind`              | `name`                  | Checked when                                                                                                            | How                                                             |
+| ------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `database`          | the database's `name`   | always, one check per enabled database                                                                                  | `SELECT 1` on its pool                                          |
+| `redis`             | the store's name        | one check per `redis` store a cached operation's chain, `AUTH_STORE` or `RATE_LIMIT_STORE` (while a limit is set) names | `PING`                                                          |
+| `rabbitmq`, `kafka` | the queue config's name | always, one check per enabled queue                                                                                     | The connection state its reconnecting manager keeps. No traffic |
 
 ```json
 {
   "status": "unavailable",
   "checks": [
     { "kind": "database", "name": "main", "ok": false },
-    { "kind": "redis", "ok": true },
+    { "kind": "redis", "name": "redis", "ok": true },
     { "kind": "rabbitmq", "name": "events", "ok": true }
   ]
 }
