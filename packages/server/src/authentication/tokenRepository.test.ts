@@ -14,9 +14,10 @@ type FakeClient = TokenRepositoryClient & {
   store: Map<string, Record<string, string>>;
   ttls: Map<string, number>;
   closes: number;
+  pings: number;
 };
 
-const createFakeClient = (): FakeClient => {
+const createFakeClient = (answer = "PONG"): FakeClient => {
   const store = new Map<string, Record<string, string>>();
   const ttls = new Map<string, number>();
 
@@ -24,6 +25,7 @@ const createFakeClient = (): FakeClient => {
     store,
     ttls,
     closes: 0,
+    pings: 0,
     hset: async (key, fields) => {
       const existing = store.get(key) ?? {};
       store.set(key, { ...existing, ...fields });
@@ -37,6 +39,10 @@ const createFakeClient = (): FakeClient => {
     },
     close: () => {
       client.closes++;
+    },
+    ping: async () => {
+      client.pings++;
+      return answer;
     },
   };
   return client;
@@ -105,6 +111,9 @@ describe("tokenRepository", () => {
         throw new Error("redis down");
       },
       close: () => {},
+      ping: async () => {
+        throw new Error("redis down");
+      },
     };
     const failRepo = createTokenRepositoryWithClient(throwingClient);
     expect(await failRepo.isRevoked("any")).toBe(true);
@@ -127,6 +136,7 @@ describe("tokenRepository", () => {
       },
       expire: async () => {},
       close: () => {},
+      ping: async () => "PONG",
     };
     const failRepo = createTokenRepositoryWithClient(throwingClient);
     expect(await failRepo.checkRefresh("any")).toEqual({ isUsed: true, isRevoked: true });
@@ -136,6 +146,11 @@ describe("tokenRepository", () => {
     repo.close();
 
     expect(client.closes).toBe(1);
+  });
+
+  it("answers a ping only while its client answers PONG", async () => {
+    expect(await repo.ping()).toBe(true);
+    expect(await createTokenRepositoryWithClient(createFakeClient("LOADING")).ping()).toBe(false);
   });
 
   describe("createShardedTokenRepositoryClient", () => {
@@ -164,6 +179,14 @@ describe("tokenRepository", () => {
       expect(used.length).toBeGreaterThan(1);
     });
 
+    it("pings every client, and answers PONG only when each one does", async () => {
+      const clients = [createFakeClient(), createFakeClient("LOADING"), createFakeClient()];
+
+      expect(await createShardedTokenRepositoryClient(clients).ping()).toBe("LOADING");
+      expect(clients.map((candidate) => candidate.pings)).toEqual([1, 1, 1]);
+      expect(await createShardedTokenRepositoryClient([createFakeClient()]).ping()).toBe("PONG");
+    });
+
     it("closes every client", () => {
       const clients = [createFakeClient(), createFakeClient()];
 
@@ -175,6 +198,10 @@ describe("tokenRepository", () => {
 });
 
 describe("memory token repository", () => {
+  it("always answers a ping: nothing stands between it and the process", async () => {
+    expect(await createMemoryTokenRepository().ping()).toBe(true);
+  });
+
   const clocked = () => {
     const clock = { now: 0 };
     const records = new Map();

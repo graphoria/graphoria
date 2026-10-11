@@ -79,3 +79,24 @@ export const buildCacheStore = (operationName: string, cache: OperationCacheConf
   // A one-store chain keeps its bare store, so it runs exactly the code it ran before chains.
   return stores.length === 1 ? stores[0]! : new TieredCacheStore(stores, chain);
 };
+
+/**
+ * The declared stores something reads: a cached REST operation's chain, the token
+ * store, or the rate limiter's. The in-process store is never listed.
+ */
+export const storesInUse = (
+  configuration: Configuration,
+  authStore: string | undefined,
+  rateLimitStore: string | undefined,
+): string[] => {
+  const used = new Set<string>();
+  for (const { cache, rest } of Object.values(configuration.operations)) {
+    // Only REST operations are built, so a cache on one without `rest` reads no store.
+    if (!cache || !rest) continue;
+    for (const name of cache.stores ?? configuration.caches.default) used.add(name);
+  }
+  if (authStore !== undefined) used.add(authStore);
+  if (rateLimitStore !== undefined) used.add(rateLimitStore);
+  used.delete(MEMORY_STORE);
+  return [...used];
+};

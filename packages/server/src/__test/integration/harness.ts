@@ -25,7 +25,6 @@ import { seedEngine } from "./seed";
 // server is imported dynamically inside `withServer` rather than at the top.
 process.env["ADMIN_SECRET"] ??= "integration-admin-secret";
 process.env["JWT_SECRET"] ??= "integration-jwt-secret-integration-jwt-secret";
-process.env["REDIS_URL"] ??= REDIS_URL;
 process.env["LOG_LEVEL"] ??= "silent";
 
 // The PASETO strategies validate their keys when the token service is built, so
@@ -35,11 +34,6 @@ const pasetoPublicKeys = generateKeys("public") as { secretKey: string; publicKe
 process.env["PASETO_LOCAL_KEY"] ??= generateKeys("local") as string;
 process.env["PASETO_SECRET_KEY"] ??= pasetoPublicKeys.secretKey;
 process.env["PASETO_PUBLIC_KEY"] ??= pasetoPublicKeys.publicKey;
-
-// Redis is part of the compose stack, so the integration suite exercises the
-// Redis cache store rather than the in-memory one. Only operations that declare
-// a `cache` block ever construct it.
-process.env["CACHE_STORE"] ??= "redis";
 
 // Every boot would otherwise add its own SIGTERM / SIGINT listeners to the test
 // process; the suites that need them opt in through `env.shutdown`.

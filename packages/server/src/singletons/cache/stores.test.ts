@@ -2,10 +2,11 @@ import { afterEach, describe, expect, it } from "bun:test";
 
 import type { CacheStore } from "./types";
 
+import { ConfigurationZod } from "../../types/zod/configuration";
 import { LruCacheStore } from "./lruCacheStore";
 import { RedisCacheStore } from "./redisCacheStore";
 import { closeCacheRedisClient } from "./redisClient";
-import { buildCacheStore, getCaches, redisUrlOf, setCaches } from "./stores";
+import { buildCacheStore, getCaches, redisUrlOf, setCaches, storesInUse } from "./stores";
 import { TieredCacheStore } from "./tieredCacheStore";
 
 // Clients connect on their first command, so no Redis has to listen here.
@@ -104,5 +105,48 @@ describe("redisUrlOf", () => {
     expect(() => redisUrlOf(declared, "AUTH_STORE", "toString")).toThrow(
       "AUTH_STORE=toString names no store",
     );
+  });
+});
+
+describe("storesInUse", () => {
+  const tokens = { type: "redis" as const, url: "redis://127.0.0.1:6394" };
+  const configuration = (operations: Record<string, unknown>) =>
+    ConfigurationZod.parse({
+      name: "t",
+      version: "1",
+      caches: { default: ["memory", "shared"], stores: { shared, tokens } },
+      operations,
+    });
+
+  const rest = { path: "/list", method: "GET" };
+
+  it("lists the default chain's stores only while a cached REST operation reads it", () => {
+    expect(storesInUse(configuration({}), undefined, undefined)).toEqual([]);
+    expect(
+      storesInUse(
+        configuration({ list: { query: "{ ping }", rest, cache: { ttl: 1_000 } } }),
+        undefined,
+        undefined,
+      ),
+    ).toEqual(["shared"]);
+  });
+
+  it("skips a cached operation that has no REST route, which gets no store", () => {
+    const operations = { list: { query: "{ ping }", cache: { ttl: 1_000 } } };
+
+    expect(storesInUse(configuration(operations), undefined, undefined)).toEqual([]);
+  });
+
+  it("lists an operation's own stores", () => {
+    const operations = {
+      list: { query: "{ ping }", rest, cache: { ttl: 1_000, stores: ["tokens"] } },
+    };
+
+    expect(storesInUse(configuration(operations), undefined, undefined)).toEqual(["tokens"]);
+  });
+
+  it("adds the stores the token store and the rate limiter name, never memory", () => {
+    expect(storesInUse(configuration({}), "tokens", "shared")).toEqual(["tokens", "shared"]);
+    expect(storesInUse(configuration({}), "memory", "memory")).toEqual([]);
   });
 });

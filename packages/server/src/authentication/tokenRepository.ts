@@ -14,6 +14,8 @@ export type TokenRepository = {
   isRevoked(jti: string): Promise<boolean>;
   /** Both flags in one round trip — the refresh rotation reads them together. */
   checkRefresh(jti: string): Promise<{ isUsed: boolean; isRevoked: boolean }>;
+  /** Readiness: whether every connection the store holds answers. */
+  ping(): Promise<boolean>;
   close(): void;
 };
 
@@ -21,6 +23,7 @@ export type TokenRepositoryClient = {
   hset(key: string, fields: Record<string, string>): Promise<unknown>;
   hmget(key: string, fields: string[]): Promise<(string | null)[]>;
   expire(key: string, seconds: number): Promise<unknown>;
+  ping(): Promise<string>;
   close(): void;
 };
 
@@ -91,6 +94,7 @@ export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): 
     revoke,
     isRevoked,
     checkRefresh,
+    ping: async () => (await client.ping()) === "PONG",
     close: () => closeRedisClient(client),
   };
 };
@@ -115,6 +119,10 @@ export const createShardedTokenRepositoryClient = (
     hset: (key, fields) => clientFor(key).hset(key, fields),
     hmget: (key, fields) => clientFor(key).hmget(key, fields),
     expire: (key, seconds) => clientFor(key).expire(key, seconds),
+    ping: async () =>
+      (await Promise.all(clients.map((pooled) => pooled.ping()))).find(
+        (answer) => answer !== "PONG",
+      ) ?? "PONG",
     close: () => {
       for (const pooled of clients) closeRedisClient(pooled);
     },
@@ -178,6 +186,7 @@ export const createMemoryTokenRepositoryClient = (
       const record = live(key);
       if (record) record.expiresAt = now() + seconds * 1000;
     },
+    ping: async () => "PONG",
     close: () => records.clear(),
   };
 };

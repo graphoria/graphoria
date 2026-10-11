@@ -459,3 +459,23 @@ describe("EnvZod AUTH_STORE", () => {
     expect(EnvZod.parse({ ...baseEnv, AUTH_STORE: "tokens" }).authStore).toBe("tokens");
   });
 });
+
+describe("EnvZod stores", () => {
+  const baseEnv = { ADMIN_SECRET: "x", JWT_SECRET: "y" };
+
+  it("counts rate limits in this process by default", () => {
+    expect(EnvZod.parse(baseEnv).rateLimit.store).toBe("memory");
+  });
+
+  it("reads RATE_LIMIT_STORE", () => {
+    expect(EnvZod.parse({ ...baseEnv, RATE_LIMIT_STORE: "shared" }).rateLimit.store).toBe("shared");
+  });
+
+  it("flags a leftover CACHE_STORE and reads no Redis URL", () => {
+    const env = EnvZod.parse({ ...baseEnv, CACHE_STORE: "redis", REDIS_URL: "redis://x:6379" });
+
+    expect(env.leftoverCacheStore).toBe(true);
+    expect(env).not.toHaveProperty("cache");
+    expect(EnvZod.parse(baseEnv).leftoverCacheStore).toBe(false);
+  });
+});

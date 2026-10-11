@@ -11,6 +11,7 @@ import type { SessionContext } from "./utils/sessionVariables";
 
 import { createTokenService } from "./authentication";
 import { createConfiguredTokenRepository } from "./authentication/tokenRepository";
+import { MEMORY_STORE } from "./config/types/cache";
 import { analyzeConfiguration, loadConfiguration } from "./configuration";
 import { buildExecute } from "./configuration/gql/buildExecute";
 import { websocketHandlerFactory } from "./configuration/gql/handleGraphQLSubscriptionFactory";
@@ -33,6 +34,7 @@ import {
   instantiateDatabasesConnections,
   pingConnection,
 } from "./singletons/databases";
+import { redisUrlOf, storesInUse } from "./singletons/cache";
 import { closeCacheRedisClient, getCacheRedisClient } from "./singletons/cache/redisClient";
 import { env } from "./singletons/env";
 import { setQueryTimeoutMs } from "./singletons/queryTimeout";
@@ -131,9 +133,13 @@ const generatePrefixes = (options: Env) => ({
  * Boot the request-independent core: load + validate configuration, connect
  * databases, select the token service, build the per-role schemas, and resolve
  * the AI surfaces. Shared by {@link createGraphQLServer} (which adds routes) and
- * {@link createGraphQLEngine} (which adds in-process execution).
+ * {@link createGraphQLEngine} (which adds in-process execution). Only the
+ * server passes `rateLimitStore`: the engine limits nothing.
  */
-const bootAnalyzedConfiguration = async (env: Env, authStoreRequired: boolean) => {
+const bootAnalyzedConfiguration = async (
+  env: Env,
+  { authStoreRequired, rateLimitStore }: { authStoreRequired: boolean; rateLimitStore?: string },
+) => {
   // Inject custom logger before any subsystem creates one
   if (env.logger) {
     configureLogging(env.logger);
@@ -142,6 +148,12 @@ const bootAnalyzedConfiguration = async (env: Env, authStoreRequired: boolean) =
   if (env.maxQueryDepth === 0) {
     logger("graphoria").warn(
       "MAX_QUERY_DEPTH=0 disables the query depth limit; one deeply nested query can exhaust the server",
+    );
+  }
+
+  if (env.leftoverCacheStore) {
+    logger("graphoria").warn(
+      "CACHE_STORE is no longer read: the REST cache follows caches in graphoria.ts, and the rate limits follow RATE_LIMIT_STORE",
     );
   }
 
@@ -174,14 +186,19 @@ const bootAnalyzedConfiguration = async (env: Env, authStoreRequired: boolean) =
     ? ConfigurationZod.parse(await loadConfiguration(env.configuration))
     : ConfigurationZod.parse(env.configuration);
 
-  // AUTH_STORE needs only the configuration, so a store it misnames refuses boot
-  // before anything connects.
+  // The stores the env names need only the configuration, so a misnamed one
+  // refuses boot before anything connects. The rate-limit store is resolved even
+  // with no limit set, so the typo fails now rather than once a limit is configured.
   const tokenRepository = createConfiguredTokenRepository(
     Boolean(projectConfiguration.auth?.enabled),
     env.authStore,
     projectConfiguration.caches,
     authStoreRequired,
   );
+  const rateLimitRedisUrl =
+    rateLimitStore === undefined || rateLimitStore === MEMORY_STORE
+      ? undefined
+      : redisUrlOf(projectConfiguration.caches, "RATE_LIMIT_STORE", rateLimitStore);
 
   // Initialize databases (using pre-calculated enabledDatabases from parsing)
   await instantiateDatabasesConnections(
@@ -226,6 +243,8 @@ const bootAnalyzedConfiguration = async (env: Env, authStoreRequired: boolean) =
     projectConfiguration,
     analyzedConfiguration,
     aiSurfaces: resolveAISurfaces(env, projectConfiguration.ai),
+    tokenRepository,
+    rateLimitRedisUrl,
   };
 };
 
@@ -286,7 +305,7 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
 
   // The engine verifies no token, so AUTH_STORE stays optional.
   const { projectConfiguration, analyzedConfiguration, aiSurfaces } =
-    await bootAnalyzedConfiguration(optionsWithDefaults, false);
+    await bootAnalyzedConfiguration(optionsWithDefaults, { authStoreRequired: false });
 
   // No route here takes a scoped credential, so no role check comes first.
   if (aiSurfaces.agent) await startAgent(optionsWithDefaults, projectConfiguration.ai);
@@ -324,8 +343,16 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
  *   named-logger factory.
  */
 const createGraphQLServer = async (env: Env) => {
-  const { projectConfiguration, analyzedConfiguration, aiSurfaces } =
-    await bootAnalyzedConfiguration(env, true);
+  const {
+    projectConfiguration,
+    analyzedConfiguration,
+    aiSurfaces,
+    tokenRepository,
+    rateLimitRedisUrl,
+  } = await bootAnalyzedConfiguration(env, {
+    authStoreRequired: true,
+    rateLimitStore: env.rateLimit.store,
+  });
 
   assertScopedRoles(env, analyzedConfiguration.roles, aiSurfaces);
 
@@ -371,8 +398,8 @@ const createGraphQLServer = async (env: Env) => {
     anonymousRole: env.anonymousRole,
     permissions: projectConfiguration.auth?.permissions,
     store: () =>
-      env.cache.store === "redis"
-        ? createRedisRateLimitStore(getCacheRedisClient(env.cache.redisUrl))
+      rateLimitRedisUrl
+        ? createRedisRateLimitStore(getCacheRedisClient(rateLimitRedisUrl))
         : createMemoryRateLimitStore(),
   });
 
@@ -463,9 +490,18 @@ const createGraphQLServer = async (env: Env) => {
   routes[prefixes.graphiql] = () => html(graphiqlFile);
   routes[prefixes.scalar] = () => html(scalarFile);
 
-  // Probes for an orchestrator: no auth, no rate limit. Redis is a dependency
-  // only where something reads it — the token repository or the redis cache.
-  const redisInUse = projectConfiguration.auth?.enabled || env.cache.store === "redis";
+  // Probes for an orchestrator: no auth, no rate limit. A Redis store is a
+  // dependency only where something reads it.
+  const redisStores = storesInUse(
+    projectConfiguration,
+    env.authStore,
+    rateLimiter ? env.rateLimit.store : undefined,
+  );
+  for (const name of Object.keys(projectConfiguration.caches.stores)) {
+    if (!redisStores.includes(name)) {
+      logger("graphoria").warn({ store: name }, "cache store is declared but nothing reads it");
+    }
+  }
   Object.assign(
     routes,
     createHealthRoutes({
@@ -482,15 +518,19 @@ const createGraphQLServer = async (env: Env) => {
             return true;
           },
         })),
-        ...(redisInUse
-          ? [
-              {
-                kind: "redis",
-                probe: async () =>
-                  (await getCacheRedisClient(env.cache.redisUrl).ping()) === "PONG",
-              },
-            ]
-          : []),
+        ...redisStores.map((name) => ({
+          kind: "redis",
+          name,
+          // The token store answers on the connections it holds, rather than on a
+          // cache pool opened only to probe it.
+          probe:
+            name === env.authStore
+              ? () => tokenRepository.ping()
+              : async () =>
+                  (await getCacheRedisClient(
+                    projectConfiguration.caches.stores[name]!.url,
+                  ).ping()) === "PONG",
+        })),
         ...(queueManager?.connections() ?? []).map(({ type, name, connected }) => ({
           kind: type,
           name,

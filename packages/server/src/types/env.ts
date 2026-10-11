@@ -28,8 +28,8 @@ export const EnvZod = z
     PASETO_PUBLIC_KEY: secretList,
     AUTH_STRATEGY: z.enum(["jwt", "paseto_local", "paseto_public"]).optional(),
     AUTH_STORE: z.string().optional(),
-    REDIS_URL: z.string().default("redis://localhost:6379"),
-    CACHE_STORE: z.enum(["memory", "redis"]).default("memory"),
+    // No longer read: parsed only so boot can warn a deployment that still sets it.
+    CACHE_STORE: z.string().optional(),
     REST_API_PREFIX: z.string().default("/rest"),
     GRAPHQL_API_ENDPOINT: z.string().default("/graphql"),
     ADMIN_SECRET_HEADER: z.string().default("x-admin-secret"),
@@ -74,6 +74,7 @@ export const EnvZod = z
     RATE_LIMIT_ANONYMOUS_MAX: z.coerce.number().int().min(0).default(0),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
     RATE_LIMIT_TRUST_PROXY: z.stringbool().default(false),
+    RATE_LIMIT_STORE: z.string().default("memory"),
     AI_ENABLED: z.stringbool().optional(),
     AI_GRAPHQL_ENABLED: z.stringbool().default(true),
     AI_REST_ENABLED: z.stringbool().default(true),
@@ -135,11 +136,9 @@ export const EnvZod = z
       anonymousMax: env.RATE_LIMIT_ANONYMOUS_MAX,
       windowMs: env.RATE_LIMIT_WINDOW_MS,
       trustProxy: env.RATE_LIMIT_TRUST_PROXY,
+      store: env.RATE_LIMIT_STORE,
     },
-    cache: {
-      store: env.CACHE_STORE,
-      redisUrl: env.REDIS_URL,
-    },
+    leftoverCacheStore: env.CACHE_STORE !== undefined,
     schemas: {
       print: env.PRINT_SCHEMAS,
       outputDir: env.SCHEMAS_OUTPUT_DIR,

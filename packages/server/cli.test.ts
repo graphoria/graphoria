@@ -53,7 +53,15 @@ const startCli = async (
   { detached = false, config = configPath } = {},
 ) => {
   const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "--config", config, ...args], {
-    env: { ...process.env, ADMIN_SECRET: "cli-test", JWT_SECRET: "cli-test", PORT: "0" },
+    env: {
+      ...process.env,
+      ADMIN_SECRET: "cli-test",
+      JWT_SECRET: "cli-test",
+      PORT: "0",
+      // The config declares no store, so an inherited one would refuse the boot.
+      AUTH_STORE: "memory",
+      RATE_LIMIT_STORE: "memory",
+    },
     stdout: "pipe",
     stderr: "inherit",
     detached,
@@ -426,7 +434,15 @@ describe("standalone SIGTERM", () => {
     const server = Bun.spawn(
       ["bun", join(import.meta.dir, "standalone.ts"), "--config", configPath],
       {
-        env: { ...process.env, ADMIN_SECRET: "cli-test", JWT_SECRET: "cli-test", PORT: "0" },
+        env: {
+          ...process.env,
+          ADMIN_SECRET: "cli-test",
+          JWT_SECRET: "cli-test",
+          PORT: "0",
+          // The config declares no store, so an inherited one would refuse the boot.
+          AUTH_STORE: "memory",
+          RATE_LIMIT_STORE: "memory",
+        },
         stdout: "pipe",
         stderr: "inherit",
       },
@@ -490,6 +506,9 @@ describe("signal during boot", () => {
         CONFIGURATION: unreachable,
         DB_CONNECT_RETRY_MS: "30000",
         LOG_LEVEL: "info",
+        // The config declares no store, so an inherited one would refuse the boot.
+        AUTH_STORE: "memory",
+        RATE_LIMIT_STORE: "memory",
         ...env,
       },
       stdout: "pipe",

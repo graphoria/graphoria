@@ -32,8 +32,9 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-// Both knobs are always passed, so neither the ambient AUTH_STORE nor JWT_SECRET matters. A boot
-// sets the process-wide query timeout, so it gets 0, which is its value before any boot.
+// AUTH_STORE, RATE_LIMIT_STORE and the JWT secret are always passed, so the ambient ones never
+// matter. A boot sets the process-wide query timeout, so it gets 0, which is its value before any
+// boot.
 const bootOptions = async (
   authEnabled: boolean,
   authStore: string | undefined,
@@ -45,6 +46,7 @@ const bootOptions = async (
     dbConnectRetryMs: 0,
     queryTimeoutMs: 0,
     authStore,
+    rateLimit: { ...env.rateLimit, store: "memory" },
     jwt: { ...env.jwt, secrets: ["auth-store-boot-test"] },
     configuration: {
       name: "auth-store-boot-test",
