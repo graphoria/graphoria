@@ -202,16 +202,20 @@ const SQLITE_CONNECTION = `      connection: { filename: env("DB_FILE") },
 
 const anonymousGrant = (values: ProjectValues) => {
   const schema = seedSchema(values);
+  const operations = [
+    ...(values.redis ? ['"books"'] : []),
+    ...(values.frontend && values.rabbitmq ? ['"addBook"'] : []),
+  ];
   const permission =
-    values.rabbitmq || values.ai
+    values.rabbitmq || values.ai || values.redis
       ? `{
         tables: ["${schema}_authors", "${schema}_books"],
-${values.rabbitmq ? '        queues: ["events"],\n' : ""}${values.rabbitmq && values.frontend ? '        operations: ["addBook"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      }`
+${values.rabbitmq ? '        queues: ["events"],\n' : ""}${operations.length > 0 ? `        operations: [${operations.join(", ")}],\n` : ""}${values.ai ? "        ai: true,\n" : ""}      }`
       : `{ tables: ["${schema}_authors", "${schema}_books"] }`;
   return `  // The frontend has no login, so anyone can read these two tables without a
   // secret, in the app and in GraphiQL alike. Tables are read-only in the
   // generated API.
-${values.rabbitmq ? "  // Anyone can also add books through addBook and use the events queue.\n" : ""}${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provider.\n" : ""}  auth: {
+${values.redis ? "  // Anyone can also read the cached GET /rest/books.\n" : ""}${values.rabbitmq ? "  // Anyone can also add books through addBook and use the events queue.\n" : ""}${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provider.\n" : ""}  auth: {
     enabled: false,
     database: "main",
     permissions: {
@@ -280,8 +284,9 @@ const ADD_BOOK_INSERT: Record<DatabaseType, string> = {
           .run(input.title, input.publishedYear, input.authorId);`,
 };
 
-const ADD_BOOK_OPERATION = (values: ProjectValues) => `  operations: {
-    // The frontend posts a new book here; after the insert, the handler publishes
+const ADD_BOOK_OPERATION = (
+  values: ProjectValues,
+) => `    // The frontend posts a new book here; after the insert, the handler publishes
     // events_bookAdded, the queued event the frontend's subscription watches.
     addBook: operation({
       input: addBookInput,
@@ -300,11 +305,38 @@ ${ADD_BOOK_INSERT[values.database]}
         return input;
       },
     }),
-  },
 `;
+
+const BOOKS_OPERATION = (
+  values: ProjectValues,
+) => `    // GET /rest/books answers from this process first, then from Redis, and runs
+    // the query again once the entry is 10 seconds old.${values.frontend ? "" : " Call it with the admin secret."}
+    books: {
+      query: "query { ${seedSchema(values)}_books(orderBy: { published_year: DESC }) { id title published_year } }",
+      rest: { path: "/books", method: "GET" },
+      cache: { ttl: 10_000, max: 100 },
+    },
+`;
+
+const operationsConfig = (values: ProjectValues) => {
+  const entries = `${values.redis ? BOOKS_OPERATION(values) : ""}${
+    values.frontend && values.rabbitmq ? ADD_BOOK_OPERATION(values) : ""
+  }`;
+  return entries ? `  operations: {\n${entries}  },\n` : "";
+};
 
 const AI_CONFIG = `  ai: {
     enabled: true,
+  },
+`;
+
+const CACHES_CONFIG = `  // A cached operation answers from this process first, then from Redis.
+  // AUTH_STORE and RATE_LIMIT_STORE in .env point at the same store.
+  caches: {
+    default: ["memory", "redis"],
+    stores: {
+      redis: { type: "redis", url: env("REDIS_URL") },
+    },
   },
 `;
 
@@ -342,7 +374,7 @@ const addBookInput = z.object({
       enabled: true,
 ${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
   ],
-${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.frontend && values.rabbitmq ? ADD_BOOK_OPERATION(values) : ""}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -410,7 +442,8 @@ OLLAMA_HOST=http://localhost:11434
 const redisEnv = (values: ProjectValues) =>
   values.redis
     ? `REDIS_URL=redis://localhost:6379
-CACHE_STORE=redis
+AUTH_STORE=redis
+RATE_LIMIT_STORE=redis
 `
     : "";
 

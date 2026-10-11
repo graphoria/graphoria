@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { DatabaseType } from "../config";
 
 import { genResolverName } from "../databases/transformers/genResolverName";
+import { storesInUse } from "../singletons/cache";
 import { ConfigurationZod } from "../types/zod/configuration";
 import { FRONTEND_FILES, PROJECT_FILES, renderProject, type ProjectValues } from "./initTemplates";
 
@@ -151,14 +152,16 @@ describe("renderProject .env", () => {
   );
 
   it.each(["pg", "sqlite"] as const)(
-    "points the cache and auth token store at Redis for %s",
+    "points the cache, the rate limits and the auth token store at Redis for %s",
     (database) => {
       const lines = renderWith({ redis: true }, database)[".env"]!.split("\n");
 
       expect(lines).toContain("REDIS_URL=redis://localhost:6379");
-      expect(lines).toContain("CACHE_STORE=redis");
+      expect(lines).toContain("AUTH_STORE=redis");
+      expect(lines).toContain("RATE_LIMIT_STORE=redis");
+      expect(lines.some((line) => line.startsWith("CACHE_STORE"))).toBe(false);
       expect(render(database)[".env"]).not.toContain("REDIS_URL");
-      expect(render(database)[".env"]).not.toContain("CACHE_STORE");
+      expect(render(database)[".env"]).not.toContain("_STORE=");
     },
   );
 
@@ -189,7 +192,8 @@ describe("renderProject .env", () => {
     expect(lines).toContain("RABBITMQ_HOST=localhost");
     expect(lines).toContain("LLM_PROVIDER=ollama");
     expect(lines).toContain("REDIS_URL=redis://localhost:6379");
-    expect(lines).toContain("CACHE_STORE=redis");
+    expect(lines).toContain("AUTH_STORE=redis");
+    expect(lines).toContain("RATE_LIMIT_STORE=redis");
     expect(lines).toContain("DBGATE_PORT=9000");
     expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
   });
@@ -448,6 +452,7 @@ describe("renderProject graphoria.ts", () => {
       "RABBITMQ_USER",
       "RABBITMQ_PASSWORD",
       "RABBITMQ_VHOST",
+      "REDIS_URL",
     ]) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
@@ -468,6 +473,7 @@ describe("renderProject graphoria.ts", () => {
     process.env.DB_USER = "someone";
     process.env.DB_PASSWORD = "Pa55word.x";
     process.env.DB_NAME = "shop";
+    process.env.REDIS_URL = "redis://cache.internal:6379";
   };
 
   const setRabbitEnv = () => {
@@ -559,6 +565,34 @@ describe("renderProject graphoria.ts", () => {
 
     expect(ConfigurationZod.parse((await load("pg", { ai: true }))({})).ai.enabled).toBe(true);
     expect(ConfigurationZod.parse((await load("pg", {}))({})).ai.enabled).toBe(false);
+  });
+
+  it("declares the redis store behind the in-process one", async () => {
+    setEnv();
+
+    expect(ConfigurationZod.parse((await load("pg", { redis: true }))({})).caches).toEqual({
+      default: ["memory", "redis"],
+      stores: { redis: { type: "redis", url: "redis://cache.internal:6379" } },
+    });
+    expect(ConfigurationZod.parse((await load("pg"))({})).caches).toEqual({
+      default: ["memory"],
+      stores: {},
+    });
+  });
+
+  it("caches GET /rest/books in the redis store with --redis", async () => {
+    setEnv();
+    const configuration = ConfigurationZod.parse((await load("pg", { redis: true }))({}));
+
+    expect(configuration.operations.books).toMatchObject({
+      rest: { path: "/books", method: "GET" },
+      cache: { ttl: 10_000, max: 100 },
+    });
+    expect(storesInUse(configuration, undefined, undefined)).toEqual(["redis"]);
+  });
+
+  it("emits no operations without --redis or the frontend", () => {
+    expect(render("pg")["graphoria.ts"]).not.toContain("operations:");
   });
 
   it.each([
@@ -784,6 +818,15 @@ describe("renderProject with the frontend", () => {
     }
   });
 
+  it.each(ENGINES)(
+    "queries the %s seed's books in the cached operation with --redis",
+    (database) => {
+      const config = renderProject({ ...values(database), redis: true }, versions)["graphoria.ts"]!;
+
+      expect(config).toContain(`${genResolverName(SCHEMAS[database], "books", "table")}(`);
+    },
+  );
+
   it("adds the book form and refreshes on the queue event, only with RabbitMQ", () => {
     const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
       "web/App.tsx"
@@ -864,6 +907,7 @@ describe("renderProject with the frontend", () => {
       process.env.RABBITMQ_USER = "graphoria";
       process.env.RABBITMQ_PASSWORD = "rabbit-pass";
       process.env.RABBITMQ_VHOST = "/";
+      process.env.REDIS_URL = "redis://cache.internal:6379";
     });
 
     afterAll(async () => {
@@ -878,6 +922,7 @@ describe("renderProject with the frontend", () => {
         "RABBITMQ_USER",
         "RABBITMQ_PASSWORD",
         "RABBITMQ_VHOST",
+        "REDIS_URL",
       ]) {
         delete process.env[key];
       }
@@ -916,8 +961,8 @@ describe("renderProject with the frontend", () => {
       },
     );
 
-    it("grants nothing without the frontend", async () => {
-      expect((await parse(false, "pg")).auth.permissions).toEqual({});
+    it.each([{}, { redis: true }])("grants nothing without the frontend for %j", async (patch) => {
+      expect((await parse(false, "pg", patch)).auth.permissions).toEqual({});
     });
 
     it("keeps the anonymous grant on one line without --rabbitmq or --ai", () => {
@@ -945,12 +990,15 @@ describe("renderProject with the frontend", () => {
         { queues: ["events"], ai: true, operations: ["addBook"] },
       ],
       [{ rabbitmq: true }, { queues: ["events"], operations: ["addBook"] }],
-      [{ redis: true }, {}],
+      [{ redis: true }, { operations: ["books"] }],
       [{}, {}],
     ])("extends the anonymous grant for %j", async (patch, expected) => {
       const { auth } = await parse(true, "pg", patch);
 
       expect(auth.permissions.anonymous).toMatchObject(expected);
+      if (!("operations" in expected)) {
+        expect(auth.permissions.anonymous.operations ?? []).toEqual([]);
+      }
     });
 
     it.each(SERVER_ENGINES)(
@@ -964,6 +1012,15 @@ describe("renderProject with the frontend", () => {
         });
       },
     );
+
+    it("puts books and addBook in one operations block, and grants anonymous both", async () => {
+      const configuration = await parse(true, "pg", { rabbitmq: true, redis: true });
+
+      expect(Object.keys(configuration.operations)).toEqual(["books", "addBook"]);
+      expect(configuration.auth.permissions.anonymous).toMatchObject({
+        operations: ["books", "addBook"],
+      });
+    });
   });
 });
 
