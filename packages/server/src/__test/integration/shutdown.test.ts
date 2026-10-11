@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { StartedServer } from "./harness";
 
+import { REDIS_URL } from "./config";
 import { integrationEnabled, startServer } from "./harness";
 
 /**
@@ -56,7 +57,8 @@ describe.skipIf(!integrationEnabled)("graceful shutdown", () => {
       const port = started.context.server.port;
       const ready = await Bun.fetch(`http://localhost:${port}/health/ready`);
       expect(ready.status).toBe(200);
-      const redis = getCacheRedisClient();
+      const redis = getCacheRedisClient(REDIS_URL);
+      await redis.ping();
       expect(redis.connected).toBe(true);
 
       const socket = await openSocket(started);

@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 import type { RedisCacheStore as RedisCacheStoreType } from "../../singletons/cache";
 import type { getCacheRedisClient } from "../../singletons/cache/redisClient";
 
+import { REDIS_URL } from "./config";
 import { integrationEnabled } from "./harness";
 
 describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
@@ -10,10 +11,11 @@ describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
   let client: ReturnType<typeof getCacheRedisClient>;
   const created: RedisCacheStoreType[] = [];
 
-  // `singletons/cache` parses the env at load; the harness import sets it first.
+  // `singletons/cache` loads the logger, which reads LOG_LEVEL once, at load; the
+  // harness import sets it first.
   beforeAll(async () => {
     ({ RedisCacheStore } = await import("../../singletons/cache"));
-    client = (await import("../../singletons/cache/redisClient")).getCacheRedisClient();
+    client = (await import("../../singletons/cache/redisClient")).getCacheRedisClient(REDIS_URL);
   });
 
   afterEach(async () => {
@@ -22,7 +24,7 @@ describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
 
   const store = (name: string, ttlMs?: number, pruneIntervalMs?: number) => {
     const operation = `redisCacheStore-${name}-${crypto.randomUUID()}`;
-    const cache = new RedisCacheStore(operation, ttlMs, pruneIntervalMs);
+    const cache = new RedisCacheStore(operation, REDIS_URL, ttlMs, pruneIntervalMs);
     created.push(cache);
     const prefix = `cache:${operation}:`;
 

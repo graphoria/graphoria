@@ -357,7 +357,7 @@ const createGraphQLServer = async (env: Env) => {
     permissions: projectConfiguration.auth?.permissions,
     store: () =>
       env.cache.store === "redis"
-        ? createRedisRateLimitStore(getCacheRedisClient())
+        ? createRedisRateLimitStore(getCacheRedisClient(env.cache.redisUrl))
         : createMemoryRateLimitStore(),
   });
 
@@ -468,7 +468,13 @@ const createGraphQLServer = async (env: Env) => {
           },
         })),
         ...(redisInUse
-          ? [{ kind: "redis", probe: async () => (await getCacheRedisClient().ping()) === "PONG" }]
+          ? [
+              {
+                kind: "redis",
+                probe: async () =>
+                  (await getCacheRedisClient(env.cache.redisUrl).ping()) === "PONG",
+              },
+            ]
           : []),
         ...(queueManager?.connections() ?? []).map(({ type, name, connected }) => ({
           kind: type,

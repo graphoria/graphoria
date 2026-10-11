@@ -71,13 +71,13 @@ export class RedisCacheStore implements CacheStore {
   // A `SCRIPT FLUSH` or server restart clears it — the NOSCRIPT fallback reloads.
   private scriptSha: string | null = null;
 
-  constructor(operationName: string, ttlMs?: number, pruneIntervalMs = 1_000) {
+  constructor(operationName: string, url: string, ttlMs?: number, pruneIntervalMs = 1_000) {
     this.prefix = `cache:${operationName}:`;
     this.trackingKey = `${this.prefix}__keys`;
     this.expiryKey = `${this.prefix}__expiry`;
     this.ttlSeconds = ttlMs ? Math.ceil(ttlMs / 1000) : undefined;
     this.pruneIntervalMs = pruneIntervalMs;
-    this.client = getCacheRedisClient();
+    this.client = getCacheRedisClient(url);
   }
 
   // The entry key is a 64-bit Bun.hash; a collision would serve another

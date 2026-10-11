@@ -1,27 +1,42 @@
 import { describe, expect, it } from "bun:test";
 
-process.env.ADMIN_SECRET ??= "test-admin";
-process.env.JWT_SECRET ??= "test-jwt";
+import { CACHE_REDIS_POOL_SIZE, closeCacheRedisClient, getCacheRedisClient } from "./redisClient";
 
-const { CACHE_REDIS_POOL_SIZE, closeCacheRedisClient, getCacheRedisClient } =
-  await import("./redisClient");
+// Clients connect on their first command, so no Redis has to listen here.
+const FIRST_URL = "redis://127.0.0.1:6390";
+const SECOND_URL = "redis://127.0.0.1:6391";
 
 describe("getCacheRedisClient", () => {
-  it("round-robins a fixed-size pool of clients", () => {
-    const first = getCacheRedisClient();
-    const rest = Array.from({ length: CACHE_REDIS_POOL_SIZE - 1 }, () => getCacheRedisClient());
+  it("round-robins a fixed-size pool of clients for a URL", () => {
+    const first = getCacheRedisClient(FIRST_URL);
+    const rest = Array.from({ length: CACHE_REDIS_POOL_SIZE - 1 }, () =>
+      getCacheRedisClient(FIRST_URL),
+    );
 
     expect(new Set([first, ...rest]).size).toBe(CACHE_REDIS_POOL_SIZE);
-    expect(getCacheRedisClient()).toBe(first);
+    expect(getCacheRedisClient(FIRST_URL)).toBe(first);
     closeCacheRedisClient();
   });
 
-  it("recreates the whole pool after close", () => {
-    const first = getCacheRedisClient();
+  it("keeps a separate pool for each URL", () => {
+    const first = getCacheRedisClient(FIRST_URL);
+    const second = Array.from({ length: CACHE_REDIS_POOL_SIZE }, () =>
+      getCacheRedisClient(SECOND_URL),
+    );
+
+    expect(second).not.toContain(first);
+    closeCacheRedisClient();
+  });
+
+  it("recreates every pool after close", () => {
+    const wholePool = (url: string) =>
+      Array.from({ length: CACHE_REDIS_POOL_SIZE }, () => getCacheRedisClient(url));
+    const before = [...wholePool(FIRST_URL), ...wholePool(SECOND_URL)];
 
     closeCacheRedisClient();
 
-    expect(getCacheRedisClient()).not.toBe(first);
+    const after = [...wholePool(FIRST_URL), ...wholePool(SECOND_URL)];
+    expect(after.some((client) => before.includes(client))).toBe(false);
     closeCacheRedisClient();
   });
 });

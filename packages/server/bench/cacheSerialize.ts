@@ -26,6 +26,9 @@ import { summarize } from "./stats";
 process.env.ADMIN_SECRET ??= "bench-admin-secret";
 process.env.JWT_SECRET ??= "bench-jwt-secret";
 
+// The test stack's Redis (docker-compose.test.yml); REDIS_URL overrides it.
+const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:56379";
+
 export const OPERATIONS = {
   hit: "cacheSerializeHit",
   hitLarge: "cacheSerializeHitLarge",
@@ -144,7 +147,7 @@ export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
     // offline. TTL 100 ms rounds up to a 1 s expiry; the sleep lands past it.
     const buildStore = async (): Promise<CacheStore> => {
       const { RedisCacheStore } = await import("../src/singletons/cache/redisCacheStore");
-      const built = new RedisCacheStore(`${operation}-${crypto.randomUUID()}`, 100);
+      const built = new RedisCacheStore(`${operation}-${crypto.randomUUID()}`, REDIS_URL, 100);
       await built.clear();
       for (let index = 0; index < 100; index += 1) {
         await built.set(`key-${index}`, `value-${index}`);

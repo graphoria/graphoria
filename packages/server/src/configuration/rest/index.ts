@@ -69,7 +69,10 @@ export const buildApiRoutes = (
 
     if (routeConfig.cache) {
       if (env.cache.store === "redis") {
-        registerCache(routeKey, new RedisCacheStore(routeKey, routeConfig.cache.ttl));
+        registerCache(
+          routeKey,
+          new RedisCacheStore(routeKey, env.cache.redisUrl, routeConfig.cache.ttl),
+        );
       } else {
         const cacheOptions: Partial<LruOptions> = {};
 
