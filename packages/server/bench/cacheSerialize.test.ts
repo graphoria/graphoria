@@ -30,6 +30,8 @@ describe("scenario suite", () => {
   it("covers the redis scenarios", async () => {
     expect((await buildScenarios("redis")).map((candidate) => candidate.name)).toEqual([
       "redis-hit",
+      "tiered-hit",
+      "tiered-promote",
       "redis-miss",
       "redis-due-members",
       "redis-concurrent",
