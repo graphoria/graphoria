@@ -4,12 +4,13 @@ import { beforeAll, describe, expect, it } from "bun:test";
 // in, so the variables are set before the dynamic import below.
 process.env.ADMIN_SECRET ??= "test-admin-secret";
 process.env.JWT_SECRET ??= "test-jwt-secret";
-process.env.CACHE_STORE = "memory";
 
 let buildScenarios: typeof import("./cacheSerialize").buildScenarios;
 
 beforeAll(async () => {
   ({ buildScenarios } = await import("./cacheSerialize"));
+  // The scenarios build their chains from the caches already set; start from none.
+  (await import("../src/singletons/cache")).setCaches(null);
 });
 
 const scenario = async (name: string) =>

@@ -140,6 +140,8 @@ const baseConfig = (engine: DatabaseType): ConfigurationInput => ({
             connection: { ...CONNECTIONS[engine] },
           },
   ],
+  // The suite reads its REST caches from Redis rather than the in-process store.
+  caches: { default: ["redis"], stores: { redis: { type: "redis", url: REDIS_URL } } },
   auth: {
     enabled: false,
     database: "",

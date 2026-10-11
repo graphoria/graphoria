@@ -239,7 +239,7 @@ const operationsFor = (engine: DatabaseType) => {
         ${tasks}(orderBy: [{ id: ASC }]) { id user_id }
       }`,
       rest: { path: "/cached-tasks", method: "GET" as const },
-      cache: { ttl: 600_000, max: 100 },
+      cache: { ttl: 600_000 },
     },
   };
 };

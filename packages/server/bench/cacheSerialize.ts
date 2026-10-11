@@ -64,8 +64,8 @@ const LARGE_TEXT = JSON.stringify(LARGE_ENVELOPE);
 const fakeReq = { method: "GET" } as never;
 
 /**
- * The store each cached scenario runs against is the `CACHE_STORE` the env
- * singleton parsed; `store` only picks the suite. `main` sets the variable first.
+ * The store each cached scenario reads is the chain `main` sets; `store` only
+ * picks the suite, so listing a suite stays offline.
  */
 export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
   const { handleRESTRequestFactory } =
@@ -261,8 +261,13 @@ const main = async () => {
   );
   logger("benchmark").level = "debug";
 
-  process.env.CACHE_STORE = store;
-  if (store === "redis") process.env.REDIS_URL ??= "redis://127.0.0.1:56379";
+  // Every cached scenario reads one store: the in-process one, or Redis alone.
+  const { setCaches } = await import("../src/singletons/cache");
+  setCaches(
+    store === "redis"
+      ? { default: ["redis"], stores: { redis: { type: "redis", url: REDIS_URL } } }
+      : null,
+  );
 
   const results: Result[] = [];
   try {

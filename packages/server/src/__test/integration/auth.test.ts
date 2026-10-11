@@ -303,6 +303,12 @@ describe.skipIf(!integrationEnabled)("auth · redis", () => {
       return body.data.app_tasks[0]!;
     };
 
+    it("builds its cache from the Redis store the configuration declares", async () => {
+      const { RedisCacheStore, getCache } = await import("../../singletons/cache");
+
+      expect(getCache(OPERATION)).toBeInstanceOf(RedisCacheStore);
+    });
+
     it("serves the second read from Redis and drops it on invalidation", async () => {
       const { InvalidationHelper } = await import("../../singletons/cache");
 
