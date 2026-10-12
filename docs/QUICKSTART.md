@@ -23,7 +23,8 @@ bunx graphoria init
 
 | File                                          | What it holds                                                                                                                                                  |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `graphoria.ts`                                | The configuration. It reads the database connection from the environment.                                                                                      |
+| `graphoria.ts`                                | The configuration. It reads the database connection from the environment, and declares `addBook`: `POST /rest/add-book`, with the admin secret.                |
+| `repository.ts`                               | The [typed repository](./OPERATIONS.md#typed-repositories) `addBook` stores a book through; it answers the stored row, `id` included.                          |
 | `index.ts`                                    | The entry point.                                                                                                                                               |
 | `.env`                                        | A random `ADMIN_SECRET` and `JWT_SECRET`, and the database settings (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`); on SQLite, `DB_FILE` instead. |
 | `docker-compose.yml`                          | The database and Graphoria. On SQLite it's Graphoria alone, with the file on a volume; otherwise the database's port is published on your machine too.         |
@@ -65,7 +66,7 @@ Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server
 
 ### Add a React frontend with `--frontend`
 
-Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books:
+Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books and adds new ones through `addBook`:
 
 | File                                                | What it holds                                                                                                           |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -73,11 +74,11 @@ Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` ans
 | `web/graphql.ts`                                    | [gql.tada](https://gql-tada.0no.co/), which types each query from the schema.                                           |
 | `web/styles.css`, `bunfig.toml`                     | Tailwind CSS, which Bun builds through `bun-plugin-tailwind`.                                                           |
 
-With `--rabbitmq` too, the page gains an add-book form; submitting POSTs `/rest/add-book`, the operation inserts the row and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list. The insert lives in `repository.ts`, a [typed repository](./OPERATIONS.md#typed-repositories) on the `main` database: the handler calls `repository.main.books.add`, which answers the stored row, `id` included, and the operation answers it too.
+Its add-book form POSTs `/rest/add-book`, and the app fetches the list again once the operation answers with the stored row. With `--rabbitmq` too, the operation also publishes `events_bookAdded` after the insert, and the app refetches the list when `events_onBookAdded` delivers it instead.
 
-Five files change too: `graphoria.ts` opens the seed to anonymous reads (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
+Five files change too: `graphoria.ts` opens the seed and `addBook` to anonymous callers (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
 
-The app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API. With `--redis` the grant also lets anyone read `GET /rest/books`, with `--rabbitmq` add books through `addBook` and publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off.
+The app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API, but the grant also lets anyone add books through `addBook`, with `--redis` read `GET /rest/books`, with `--rabbitmq` publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off.
 
 The query types come from the schema, which `bun run dev` prints to `.graphoria/schemas/`. Once it has, run:
 
@@ -98,7 +99,7 @@ Answer yes to `Add RabbitMQ?`, or pass `--rabbitmq` (`--no-rabbitmq` answers no,
 | `docker-compose.yml` | A `rabbitmq` service (with its `rabbitmq-data` volume) that Graphoria waits on.                                                            |
 | `graphoria.ts`       | A `queues` entry with a demo publisher and subscriber.                                                                                     |
 
-The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription; with `--frontend` too, the add-book form POSTs `/rest/add-book`, the operation inserts the row through `repository.ts` and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
+The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription, and `addBook` publishes `events_bookAdded` after each insert; with `--frontend` too, the app subscribes to `events_onBookAdded` and refetches the list. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
 
 ### Add Redis with `--redis`
 

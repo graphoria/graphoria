@@ -134,6 +134,7 @@ describe("cli init", () => {
     "graphoria.ts",
     "index.ts",
     "package.json",
+    "repository.ts",
     "seed.sql",
     "tsconfig.json",
   ];
@@ -203,7 +204,6 @@ describe("cli init", () => {
       [
         ...FILES,
         "bunfig.toml",
-        "repository.ts",
         "web",
         "web/App.tsx",
         "web/frontend.tsx",
@@ -319,15 +319,7 @@ describe("cli init", () => {
     cwds.push(cwd);
     await writeFile(join(cwd, "repository.ts"), "mine");
     const result = Bun.spawnSync(
-      [
-        "bun",
-        join(import.meta.dir, "cli.ts"),
-        "init",
-        "--yes",
-        "--frontend",
-        "--rabbitmq",
-        "--no-install",
-      ],
+      ["bun", join(import.meta.dir, "cli.ts"), "init", "--yes", "--no-install"],
       { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
     );
 

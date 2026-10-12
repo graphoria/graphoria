@@ -34,6 +34,24 @@ const values = (database: DatabaseType): ProjectValues => ({
 
 const versions = { graphoria: "0.6.0", bun: "1.4.2" };
 
+// Writes what a generated config loads, into its own directory: graphoria.ts
+// imports ./repository, which differs per engine, and both import the config
+// helpers from CONFIG_SOURCE. Returns the path of graphoria.ts.
+const writeProject = async (
+  project: string,
+  files: Record<string, string>,
+  names = ["graphoria.ts", "repository.ts"],
+) => {
+  await mkdir(project, { recursive: true });
+  for (const name of names) {
+    await writeFile(
+      join(project, name),
+      files[name]!.replaceAll('"@graphoria/server/config"', JSON.stringify(CONFIG_SOURCE)),
+    );
+  }
+  return join(project, "graphoria.ts");
+};
+
 const render = (database: DatabaseType) => renderProject(values(database), versions);
 
 const renderWith = (patch: Partial<ProjectValues>, database: DatabaseType = "pg") =>
@@ -51,12 +69,13 @@ const PATHS = [
   "graphoria.ts",
   "index.ts",
   "package.json",
+  "repository.ts",
   "seed.sql",
   "tsconfig.json",
 ];
 
 describe("renderProject paths", () => {
-  it.each(ENGINES)("renders the same ten files for %s", (database) => {
+  it.each(ENGINES)("renders the same eleven files for %s", (database) => {
     expect(Object.keys(render(database)).sort()).toEqual(PATHS);
   });
 
@@ -461,8 +480,7 @@ describe("renderProject graphoria.ts", () => {
 
   let seq = 0;
   const load = async (database: DatabaseType, patch: Partial<ProjectValues> = {}) => {
-    const path = join(dir, `${database}-${seq++}.graphoria.ts`);
-    await writeFile(path, renderWith({ ...patch }, database)["graphoria.ts"]!);
+    const path = await writeProject(join(dir, `${database}-${seq++}`), renderWith(patch, database));
     const module = await import(path);
     return module.default as (helpers: object) => unknown;
   };
@@ -591,8 +609,15 @@ describe("renderProject graphoria.ts", () => {
     expect(storesInUse(configuration, undefined, undefined)).toEqual(["redis"]);
   });
 
-  it("emits no operations without --redis or the frontend", () => {
-    expect(render("pg")["graphoria.ts"]).not.toContain("operations:");
+  it.each(SERVER_ENGINES)("adds the add-book operation to the %s scaffold", async (database) => {
+    setEnv();
+    const configuration = ConfigurationZod.parse((await load(database))({}));
+
+    expect(Object.keys(configuration.operations)).toEqual(["addBook"]);
+    expect(configuration.operations.addBook!.rest).toMatchObject({
+      path: "/add-book",
+      method: "POST",
+    });
   });
 
   it.each([
@@ -610,11 +635,10 @@ describe("renderProject graphoria.ts", () => {
   });
 
   it.each(ENGINES)("sets the %s config's blocks apart with a blank line", (database) => {
-    expect(render(database)["graphoria.ts"]).toContain("};\n\nexport default");
+    const config = render(database)["graphoria.ts"]!;
 
-    const queued = renderWith({ frontend: true, rabbitmq: true }, database)["graphoria.ts"]!;
-    expect(queued).toContain("};\n\n// The body of POST /rest/add-book");
-    expect(queued).toContain("});\n\nexport default");
+    expect(config).toContain("};\n\n// The body of POST /rest/add-book");
+    expect(config).toContain("});\n\nexport default");
   });
 });
 
@@ -651,22 +675,13 @@ describe("renderProject with the frontend", () => {
   // The seed's schema, which prefixes its field names: a MySQL schema is its database.
   const SCHEMAS = { pg: "public", mysql: "shop", mssql: "dbo", sqlite: "main" } as const;
 
-  it.each(ENGINES)("renders sixteen files for %s", (database) => {
+  it.each(ENGINES)("renders seventeen files for %s", (database) => {
     expect(Object.keys(renderWeb(database)).sort()).toEqual([...PATHS, ...WEB_PATHS].sort());
   });
 
   it("lists the added files in FRONTEND_FILES", () => {
     expect(Array.from<string>(FRONTEND_FILES).sort()).toEqual(WEB_PATHS);
   });
-
-  it.each(ENGINES)(
-    "adds repository.ts for the add-book operation with --rabbitmq for %s",
-    (database) => {
-      expect(Object.keys(renderWith({ frontend: true, rabbitmq: true }, database)).sort()).toEqual(
-        [...PATHS, ...WEB_PATHS, "repository.ts"].sort(),
-      );
-    },
-  );
 
   it("pins React and Tailwind to the playgrounds' versions", async () => {
     const playgrounds = JSON.parse(await readFile(PLAYGROUNDS, "utf8"));
@@ -836,23 +851,26 @@ describe("renderProject with the frontend", () => {
     },
   );
 
-  it("adds the book form and refreshes on the queue event, only with RabbitMQ", () => {
+  it("adds the book form to every frontend, refreshing on the queue event or after the POST", () => {
     const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
       "web/App.tsx"
     ]!;
     const plain = renderWeb("pg")["web/App.tsx"]!;
 
+    for (const app of [queued, plain]) {
+      expect(app).toContain('fetch("/rest/add-book"');
+      expect(app).toContain("Add book");
+    }
     for (const marker of [
       "const BookAddedSubscription = graphql(",
       "events_onBookAdded {",
       "const [subscription] = useSubscription({ query: BookAddedSubscription })",
-      'reexecute({ requestPolicy: "network-only" })',
-      'fetch("/rest/add-book"',
-      "Add book",
+      'if (subscription.data) reexecute({ requestPolicy: "network-only" });',
     ]) {
       expect(queued).toContain(marker);
     }
-    for (const marker of ["useSubscription", "events_onBookAdded", "/rest/add-book"]) {
+    expect(plain).toContain('reexecute({ requestPolicy: "network-only" });');
+    for (const marker of ["useSubscription", "events_onBookAdded"]) {
       expect(plain).not.toContain(marker);
     }
   });
@@ -865,20 +883,6 @@ describe("renderProject with the frontend", () => {
 
     expect(app).toContain(`${genResolverName(schema, "authors", "table")}(`);
     expect(app).toContain(`${genResolverName(schema, "books", "table")}(`);
-  });
-
-  it("imports the operation helper only for the queue frontend", () => {
-    const queued = renderProject({ ...values("pg"), frontend: true, rabbitmq: true }, versions)[
-      "graphoria.ts"
-    ]!;
-    const plain = renderWeb("pg")["graphoria.ts"]!;
-
-    expect(queued).toContain('import { operation, z } from "@graphoria/server/config";');
-    expect(plain).not.toContain("import { operation");
-  });
-
-  it("emits no operations without the frontend", () => {
-    expect(renderWith({ rabbitmq: true })["graphoria.ts"]).not.toContain("operation(");
   });
 
   it.each(ENGINES)(
@@ -944,26 +948,16 @@ describe("renderProject with the frontend", () => {
     });
 
     let seq = 0;
-    // Each config gets its own directory: with the add-book operation it imports
-    // ./repository, which differs per engine.
     const parse = async (
       frontend: boolean,
       database: DatabaseType,
       patch: Partial<ProjectValues> = {},
     ) => {
-      const project = join(dir, `${database}-${frontend}-${seq++}`);
-      await mkdir(project);
-      const files = renderProject({ ...values(database), frontend, ...patch }, versions);
-      for (const name of ["graphoria.ts", "repository.ts"]) {
-        if (files[name] === undefined) continue;
-        await writeFile(
-          join(project, name),
-          files[name].replaceAll('"@graphoria/server/config"', JSON.stringify(CONFIG_SOURCE)),
-        );
-      }
-      const configure = (await import(join(project, "graphoria.ts"))).default as (
-        helpers: object,
-      ) => unknown;
+      const path = await writeProject(
+        join(dir, `${database}-${frontend}-${seq++}`),
+        renderProject({ ...values(database), frontend, ...patch }, versions),
+      );
+      const configure = (await import(path)).default as (helpers: object) => unknown;
       return ConfigurationZod.parse(configure({}));
     };
 
@@ -986,13 +980,6 @@ describe("renderProject with the frontend", () => {
       expect((await parse(false, "pg", patch)).auth.permissions).toEqual({});
     });
 
-    it("keeps the anonymous grant on one line without --rabbitmq or --ai", () => {
-      const config = renderWeb("pg")["graphoria.ts"]!;
-
-      expect(config).toContain('anonymous: { tables: ["public_authors", "public_books"] },');
-      expect(config).not.toContain("anonymous: {\n");
-    });
-
     it("says what else the grant opens to anyone", () => {
       const config = renderWith({ frontend: true, rabbitmq: true, ai: true })["graphoria.ts"]!;
 
@@ -1002,7 +989,9 @@ describe("renderProject with the frontend", () => {
       expect(config).toContain(
         "// Anyone can also ask the AI agent, which calls your LLM provider.",
       );
-      expect(renderWeb("pg")["graphoria.ts"]).not.toContain("Anyone can also");
+      expect(renderWeb("pg")["graphoria.ts"]).toContain(
+        "// Anyone can also add books through addBook.\n",
+      );
     });
 
     it.each([
@@ -1011,15 +1000,12 @@ describe("renderProject with the frontend", () => {
         { queues: ["events"], ai: true, operations: ["addBook"] },
       ],
       [{ rabbitmq: true }, { queues: ["events"], operations: ["addBook"] }],
-      [{ redis: true }, { operations: ["books"] }],
-      [{}, {}],
+      [{ redis: true }, { operations: ["books", "addBook"] }],
+      [{}, { operations: ["addBook"] }],
     ])("extends the anonymous grant for %j", async (patch, expected) => {
       const { auth } = await parse(true, "pg", patch);
 
       expect(auth.permissions.anonymous).toMatchObject(expected);
-      if (!("operations" in expected)) {
-        expect(auth.permissions.anonymous.operations ?? []).toEqual([]);
-      }
     });
 
     it.each(SERVER_ENGINES)(
@@ -1062,6 +1048,29 @@ describe("renderProject with the frontend", () => {
       expect(answer).toEqual(stored);
       expect(added).toEqual([book]);
       expect(sent).toEqual([["events_bookAdded", book]]);
+    });
+
+    it("adds a book through the repository and answers the stored row without RabbitMQ", async () => {
+      const { operations } = await parse(true, "pg");
+      const book = { title: "Kindred", publishedYear: 1979, authorId: 2 };
+      const stored = { id: 7, ...book };
+      const added: unknown[] = [];
+      const repository = {
+        main: {
+          books: {
+            add: async (input: unknown) => {
+              added.push(input);
+              return stored;
+            },
+          },
+        },
+      };
+
+      // No queues at all: the handler must not reach for a broker it lacks.
+      const answer = await operations.addBook!.handler!({ repository } as never, book);
+
+      expect(answer).toEqual(stored);
+      expect(added).toEqual([book]);
     });
 
     it("declares the stored row, id included, as addBook's output", async () => {
@@ -1142,13 +1151,13 @@ describe("renderProject for SQLite", () => {
     });
 
     const load = async (frontend: boolean) => {
-      const path = join(dir, `sqlite-${frontend}.graphoria.ts`);
-      await writeFile(
-        path,
-        renderProject({ ...values("sqlite"), frontend }, versions)["graphoria.ts"]!,
+      const project = join(dir, `sqlite-${frontend}`);
+      const path = await writeProject(
+        project,
+        renderProject({ ...values("sqlite"), frontend }, versions),
+        ["graphoria.ts", "repository.ts", "seed.sql"],
       );
-      await writeFile(join(dir, "seed.sql"), files["seed.sql"]!);
-      process.env.DB_FILE = join(dir, "shop.db");
+      process.env.DB_FILE = join(project, "shop.db");
       return ConfigurationZod.parse(((await import(path)).default as (h: object) => unknown)({}));
     };
 
@@ -1158,9 +1167,9 @@ describe("renderProject for SQLite", () => {
       const db = configuration.databases[0]!;
 
       expect(db.type).toBe("sqlite");
-      expect(db.connection).toEqual({ filename: join(dir, "shop.db") });
+      expect(db.connection).toEqual({ filename: join(dir, "sqlite-false", "shop.db") });
 
-      const connection = new Database(join(dir, "shop.db"), { create: true });
+      const connection = new Database(join(dir, "sqlite-false", "shop.db"), { create: true });
       try {
         await db.onConnect!(connection as never, db as never);
         await db.onConnect!(connection as never, db as never);
@@ -1183,32 +1192,9 @@ describe("renderProject for SQLite", () => {
 
     it("adds a book through the repository and answers the stored row", async () => {
       const { Database } = await import("bun:sqlite");
-      const project = join(dir, "add-book");
-      await mkdir(project);
-      const rendered = renderProject(
-        { ...values("sqlite"), frontend: true, rabbitmq: true },
-        versions,
-      );
-      for (const name of ["graphoria.ts", "repository.ts", "seed.sql"]) {
-        await writeFile(
-          join(project, name),
-          rendered[name]!.replaceAll('"@graphoria/server/config"', JSON.stringify(CONFIG_SOURCE)),
-        );
-      }
-      const rabbit = {
-        RABBITMQ_HOST: "rabbit.internal",
-        RABBITMQ_PORT: "5672",
-        RABBITMQ_USER: "graphoria",
-        RABBITMQ_PASSWORD: "rabbit-pass",
-        RABBITMQ_VHOST: "/",
-      };
-      Object.assign(process.env, rabbit, { DB_FILE: join(project, "shop.db") });
-      const connection = new Database(join(project, "shop.db"), { create: true });
+      const db = (await load(false)).databases[0]!;
+      const connection = new Database(join(dir, "sqlite-false", "shop.db"), { create: true });
       try {
-        const configure = (await import(join(project, "graphoria.ts"))).default as (
-          helpers: object,
-        ) => unknown;
-        const db = ConfigurationZod.parse(configure({})).databases[0]!;
         await db.onConnect!(connection as never, db as never);
         const repository = db.repository!(connection as never) as {
           books: { add(book: object): Promise<unknown> };
@@ -1220,7 +1206,6 @@ describe("renderProject for SQLite", () => {
         expect(connection.query("SELECT COUNT(*) AS n FROM books").get()).toEqual({ n: 7 });
       } finally {
         connection.close();
-        for (const key of Object.keys(rabbit)) delete process.env[key];
       }
     });
   });
@@ -1249,7 +1234,10 @@ describe("renderProject types the add-book operation", () => {
       }
     };
     const everything = { frontend: true, rabbitmq: true, redis: true, ai: true };
-    for (const database of ENGINES) await write(database, renderWith(everything, database));
+    for (const database of ENGINES) {
+      await write(database, renderWith(everything, database));
+      await write(`${database}-plain`, renderWith({}, database));
+    }
     await write("typo", renderWith(everything), (text) =>
       text.replace("repository.main.books.add(", "repository.main.books.ad("),
     );

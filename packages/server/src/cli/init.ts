@@ -18,7 +18,6 @@ import {
   RABBITMQ_PORT,
   REDIS_COMMANDER_PORT,
   renderProject,
-  REPOSITORY_FILE,
   seedSchema,
 } from "./initTemplates";
 
@@ -283,7 +282,6 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   refuseExisting([...PROJECT_FILES, "bun.lock"]);
   const answers = collectAnswers(args, args.yes ? () => null : prompt, console.log);
   if (answers.frontend) refuseExisting(FRONTEND_FILES);
-  if (answers.frontend && answers.rabbitmq) refuseExisting([REPOSITORY_FILE]);
   const warnings = [
     answers.database === "sqlite"
       ? undefined
