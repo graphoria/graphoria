@@ -53,6 +53,9 @@ Readiness turns back to `200` on the first probe after the dependency answers ag
 - **Databases** open a fresh connection on the next statement. No restart is needed.
 - **Redis** clients reconnect on their own. That includes outages long enough to exhaust the Redis
   client's own retries, after which Graphoria keeps reconnecting with a backoff from 1 to 30 seconds.
+  Meanwhile a cache or rate-limit command fails at once rather than waiting for the reconnect, so
+  its fallback answers the request; a token-store command waits up to a second for the connection
+  before it fails closed (see [Redis](./DEPLOYMENT.md#redis)).
 - **Brokers** retry with the same backoff, capped at 30 seconds, so readiness can report a broker
   down for up to 30 seconds after it is back.
 

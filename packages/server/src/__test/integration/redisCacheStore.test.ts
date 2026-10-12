@@ -20,7 +20,14 @@ describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
   // harness import sets it first.
   beforeAll(async () => {
     ({ RedisCacheStore, buildCacheStore, setCaches } = await import("../../singletons/cache"));
-    client = (await import("../../singletons/cache/redisClient")).getCacheRedisClient(REDIS_URL);
+    const { CACHE_REDIS_POOL_SIZE, getCacheRedisClient } =
+      await import("../../singletons/cache/redisClient");
+    // A fresh client fails a command until its connection is up, so connect the
+    // whole pool the stores below draw from before the first test runs.
+    await Promise.all(
+      Array.from({ length: CACHE_REDIS_POOL_SIZE }, () => getCacheRedisClient(REDIS_URL).connect()),
+    );
+    client = getCacheRedisClient(REDIS_URL);
   });
 
   afterEach(async () => {

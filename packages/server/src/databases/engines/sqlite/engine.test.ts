@@ -344,7 +344,7 @@ describe("engine close", () => {
       } as never,
     });
 
-    // Clients connect on their first command, so no Redis has to listen here.
+    // Nothing listens here, and no test sends these clients a command.
     const url = "redis://127.0.0.1:6395";
     const pool = () =>
       Array.from({ length: CACHE_REDIS_POOL_SIZE }, () => getCacheRedisClient(url));

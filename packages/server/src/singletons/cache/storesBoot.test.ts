@@ -13,7 +13,7 @@ process.env.LOG_LEVEL ??= "silent";
  * reads, through the server boot that checks them.
  */
 
-// Clients connect on their first command, so no Redis has to listen here.
+// Nothing listens here, and no test sends these clients a command.
 const shared = { type: "redis" as const, url: "redis://127.0.0.1:6392" };
 const UNREAD = "cache store is declared but nothing reads it";
 

@@ -207,6 +207,7 @@ describe.skipIf(!integrationEnabled)("auth · redis", () => {
         const { closeRedisClient, createRedisClient } = await import("../../utils/redis");
         const redis = createRedisClient(REDIS_URL);
         try {
+          await redis.connect();
           expect(await redis.hmget(jti, ["isRevoked"])).toEqual(["true"]);
         } finally {
           closeRedisClient(redis);

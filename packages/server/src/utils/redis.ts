@@ -82,7 +82,14 @@ export const closeRedisClient = (client: { close(): void }) => {
 };
 
 export const createRedisClient = (url: string) => {
-  const client = new ValkeyClient(url);
+  // Bun's offline queue holds a command while the client is disconnected, for
+  // the whole reconnect (about 30 s), past any HTTP timeout. Without it the
+  // command fails at once, and its caller's fallback answers in time.
+  const client = new ValkeyClient(url, { enableOfflineQueue: false });
   keepRedisConnected(client);
+  // A command also fails while the client is still connecting, so connect now
+  // rather than on the first command. A failed attempt ends in onclose, which
+  // keepRedisConnected answers.
+  client.connect().catch(() => {});
   return client;
 };

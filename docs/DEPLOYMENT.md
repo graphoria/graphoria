@@ -263,10 +263,11 @@ Console sessions and subscriptions are not in Redis.
 - **Failover.** Each store takes one `url`, and Graphoria speaks neither Sentinel nor Cluster. For
   failover, point it at an endpoint that follows the primary under one hostname. The clients
   reconnect on their own, with a backoff from 1 to 30 seconds
-  ([Recovery](./OBSERVABILITY.md#recovery)).
+  ([Recovery](./OBSERVABILITY.md#recovery)). A token-store command waits up to a second for its
+  connection before it fails closed, so a failover done within that second signs no one out.
 - **Scripting.** A Redis store in a cache chain writes and tracks its entries with a Lua
   script (`EVAL`). Redis and Valkey allow it by default; behind a service that blocks scripting,
-  nothing is cached and each write logs `cache set failed`.
+  nothing is cached and `cache set failed` is logged, at most once every 10 seconds per operation.
 - **Persistence.** Turn on AOF so a Redis restart keeps the revocations. If the data is lost
   anyway, replace `JWT_SECRET` (or the PASETO keys) without keeping the old value in the list: every
   token issued before becomes invalid, and every user signs in again.

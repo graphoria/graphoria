@@ -249,7 +249,7 @@ Standard claims (`sub`, `role`, `iat`, `exp`, `jti`) are always available. Anyth
 
 ## Operational notes
 
-- **A Redis token store** fails closed: if Redis is unreachable, refresh attempts fail — the design choice favors security over availability. So does the revocation check on every access token, which serves the caller as `anonymous` until Redis answers again. The client reconnects on its own once Redis is back, however long the outage, and [`/health/ready`](./OBSERVABILITY.md#health-endpoints) reports Redis down meanwhile.
+- **A Redis token store** fails closed: if Redis is unreachable, refresh attempts fail — the design choice favors security over availability. So does the revocation check on every access token, which serves the caller as `anonymous` until Redis answers again. A command that finds the connection down first waits up to a second for it, so a restart or a failover that reconnects within that second fails no request. The client reconnects on its own once Redis is back, however long the outage, and [`/health/ready`](./OBSERVABILITY.md#health-endpoints) reports Redis down meanwhile.
 - **Argon2id** parameters are inherited from Bun's defaults (`m=65536, t=2, p=1`). To tune them, hash passwords explicitly with `Bun.password.hash(plain, { algorithm: "argon2id", memoryCost, timeCost })` before inserting.
 - **Token clock skew** is not currently configurable — the verifier rejects tokens whose `exp` is in the past or whose `nbf` is in the future, with no grace period.
 - **Audit log.** Every `auth_login` (success and failure, by username) and every `auth_logout` that revoked a token writes one record; passwords and tokens never appear in it. See [Audit log](../README.md#audit-log).

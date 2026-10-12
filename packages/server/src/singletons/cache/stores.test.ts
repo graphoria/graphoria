@@ -9,7 +9,7 @@ import { closeCacheRedisClient } from "./redisClient";
 import { buildCacheStore, getCaches, redisUrlOf, setCaches, storesInUse } from "./stores";
 import { TieredCacheStore } from "./tieredCacheStore";
 
-// Clients connect on their first command, so no Redis has to listen here.
+// Nothing listens here, and no test sends these clients a command.
 const shared = { type: "redis" as const, url: "redis://127.0.0.1:6392" };
 
 afterEach(() => {
@@ -48,7 +48,7 @@ describe("buildCacheStore memory ttl", () => {
     url,
     ...(ttl === undefined ? {} : { ttl }),
   });
-  // A Redis that never answers would hold a read of the expired entry, so the memory tier is read alone.
+  // The memory tier is read alone: nothing listens at the Redis URL.
   const served = async (store: CacheStore) => {
     const [memory]: CacheStore[] = Reflect.get(store, "stores");
     await memory!.set("k", "v");

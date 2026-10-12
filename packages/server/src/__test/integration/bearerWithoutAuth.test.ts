@@ -82,6 +82,7 @@ describe.skipIf(!integrationEnabled)("bearer tokens with auth off", () => {
       const { jti } = JSON.parse(Buffer.from(revoked.split(".")[1]!, "base64url").toString());
       const issuerStore = createTokenRepository(REDIS_URL);
       try {
+        // A fresh client is still connecting; the store waits for it.
         await issuerStore.revoke(jti, "5m");
       } finally {
         issuerStore.close();

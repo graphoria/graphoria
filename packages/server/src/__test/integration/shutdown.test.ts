@@ -57,8 +57,10 @@ describe.skipIf(!integrationEnabled)("graceful shutdown", () => {
       const port = started.context.server.port;
       const ready = await Bun.fetch(`http://localhost:${port}/health/ready`);
       expect(ready.status).toBe(200);
+      // Nothing in this config opens the cache pool at boot, and a fresh client
+      // fails a command until its connection is up.
       const redis = getCacheRedisClient(REDIS_URL);
-      await redis.ping();
+      await redis.connect();
       expect(redis.connected).toBe(true);
 
       const socket = await openSocket(started);

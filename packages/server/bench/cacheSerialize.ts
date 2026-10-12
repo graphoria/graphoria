@@ -300,6 +300,15 @@ const main = async () => {
       ? { default: ["redis"], stores: { redis: { type: "redis", url: REDIS_URL } } }
       : null,
   );
+  if (store === "redis") {
+    // A fresh client fails a command until its connection is up, so connect the
+    // whole pool the scenarios draw from before the first one runs.
+    const { CACHE_REDIS_POOL_SIZE, getCacheRedisClient } =
+      await import("../src/singletons/cache/redisClient");
+    await Promise.all(
+      Array.from({ length: CACHE_REDIS_POOL_SIZE }, () => getCacheRedisClient(REDIS_URL).connect()),
+    );
+  }
 
   const results: Result[] = [];
   try {

@@ -129,15 +129,56 @@ export const createShardedTokenRepositoryClient = (
   };
 };
 
+// Bun retries a dropped connection 50 ms later, doubling the delay, so this
+// covers a restart or a failover without holding a request past its timeout.
+export const TOKEN_STORE_RECONNECT_WAIT_MS = 1_000;
+const RECONNECT_POLL_MS = 10;
+
+/**
+ * createRedisClient fails a command at once while its connection is down, which
+ * the cache and the rate limiter answer without Redis. The token store fails
+ * closed instead, so a reconnect would serve every bearer token as revoked
+ * meanwhile: a command that finds the connection down runs once more when it is
+ * back, waiting at most `waitMs`. `ping` never waits, so readiness reports the
+ * connection as it is.
+ */
+export const retryAfterReconnect = (
+  client: TokenRepositoryClient & { readonly connected: boolean },
+  waitMs = TOKEN_STORE_RECONNECT_WAIT_MS,
+): TokenRepositoryClient => {
+  const run = async <T>(command: () => Promise<T>): Promise<T> => {
+    try {
+      return await command();
+    } catch (error) {
+      if (client.connected) throw error;
+      const deadline = performance.now() + waitMs;
+      while (!client.connected && performance.now() < deadline) {
+        await Bun.sleep(RECONNECT_POLL_MS);
+      }
+      return command();
+    }
+  };
+
+  return {
+    hset: (key, fields) => run(() => client.hset(key, fields)),
+    hmget: (key, fields) => run(() => client.hmget(key, fields)),
+    expire: (key, seconds) => run(() => client.expire(key, seconds)),
+    ping: () => client.ping(),
+    close: () => closeRedisClient(client),
+  };
+};
+
 export const createTokenRepository = (redisUrl: string): TokenRepository => {
   // Bun's RedisClient exposes the same hset/hmget/expire surface we need but
   // its declared types are wider than TokenRepositoryClient. The cast is the
   // structural-typing bridge and is intentional.
   const clients = Array.from({ length: TOKEN_REPOSITORY_POOL_SIZE }, () =>
     createRedisClient(redisUrl),
-  ) as unknown as TokenRepositoryClient[];
+  ) as unknown as Array<TokenRepositoryClient & { readonly connected: boolean }>;
 
-  return createTokenRepositoryWithClient(createShardedTokenRepositoryClient(clients));
+  return createTokenRepositoryWithClient(
+    createShardedTokenRepositoryClient(clients.map((client) => retryAfterReconnect(client))),
+  );
 };
 
 type MemoryRecord = { fields: Record<string, string>; expiresAt?: number };

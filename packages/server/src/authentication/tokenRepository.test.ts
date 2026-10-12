@@ -8,6 +8,7 @@ import {
   createMemoryTokenRepositoryClient,
   createShardedTokenRepositoryClient,
   createTokenRepositoryWithClient,
+  retryAfterReconnect,
 } from "./tokenRepository";
 
 type FakeClient = TokenRepositoryClient & {
@@ -197,6 +198,69 @@ describe("tokenRepository", () => {
   });
 });
 
+describe("retryAfterReconnect", () => {
+  // Like Bun's client with its offline queue off, a command fails at once while disconnected.
+  const createDroppedClient = (failure?: Error) => {
+    const state = { connected: false, commands: 0 };
+    const command = async <T>(answer: T): Promise<T> => {
+      state.commands++;
+      if (!state.connected) throw new Error("Connection closed");
+      if (failure) throw failure;
+      return answer;
+    };
+    const client: TokenRepositoryClient & { readonly connected: boolean } = {
+      get connected() {
+        return state.connected;
+      },
+      hset: () => command(1),
+      hmget: (_key, fields) => command(fields.map(() => null)),
+      expire: () => command(1),
+      ping: () => command("PONG"),
+      close: () => {},
+    };
+    return { client, state };
+  };
+
+  it("reads a JTI through a reconnect rather than failing closed", async () => {
+    const { client, state } = createDroppedClient();
+    setTimeout(() => (state.connected = true), 30);
+    const repository = createTokenRepositoryWithClient(retryAfterReconnect(client, 1_000));
+
+    expect(await repository.isRevoked("jti")).toBe(false);
+    expect(state.commands).toBe(2);
+  });
+
+  it("fails once the connection stays down past the wait", async () => {
+    const { client, state } = createDroppedClient();
+    const started = performance.now();
+
+    await expect(retryAfterReconnect(client, 50).hmget("jti", ["isRevoked"])).rejects.toThrow(
+      "Connection closed",
+    );
+    expect(performance.now() - started).toBeGreaterThanOrEqual(49);
+    expect(state.commands).toBe(2);
+  });
+
+  it("fails at once on an error from a live connection", async () => {
+    const { client, state } = createDroppedClient(new Error("WRONGTYPE"));
+    state.connected = true;
+
+    await expect(
+      retryAfterReconnect(client, 1_000).hset("jti", { isUsed: "true" }),
+    ).rejects.toThrow("WRONGTYPE");
+    expect(state.commands).toBe(1);
+  });
+
+  it("answers a ping without waiting", async () => {
+    const { client, state } = createDroppedClient();
+    const started = performance.now();
+
+    await expect(retryAfterReconnect(client, 1_000).ping()).rejects.toThrow("Connection closed");
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(state.commands).toBe(1);
+  });
+});
+
 describe("memory token repository", () => {
   it("always answers a ping: nothing stands between it and the process", async () => {
     expect(await createMemoryTokenRepository().ping()).toBe(true);
@@ -280,7 +344,7 @@ describe("memory token repository", () => {
 });
 
 describe("createConfiguredTokenRepository", () => {
-  // Clients connect on their first command, so no Redis has to listen here.
+  // Nothing listens here, and no test sends the Redis store a command.
   const caches = {
     default: ["memory"],
     stores: { tokens: { type: "redis" as const, url: "redis://127.0.0.1:6393" } },
@@ -331,7 +395,7 @@ describe("createConfiguredTokenRepository", () => {
     );
   });
 
-  it("builds a Redis repository for a declared store without connecting", () => {
+  it("builds a Redis repository for a declared store, and closes it", () => {
     expect(() => createConfiguredTokenRepository(true, "tokens", caches).close()).not.toThrow();
   });
 });

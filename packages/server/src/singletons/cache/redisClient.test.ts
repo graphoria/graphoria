@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { CACHE_REDIS_POOL_SIZE, closeCacheRedisClient, getCacheRedisClient } from "./redisClient";
 
-// Clients connect on their first command, so no Redis has to listen here.
+// Nothing listens here, and no test sends these clients a command.
 const FIRST_URL = "redis://127.0.0.1:6390";
 const SECOND_URL = "redis://127.0.0.1:6391";
 
