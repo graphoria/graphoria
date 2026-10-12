@@ -259,50 +259,111 @@ const QUEUE_CONFIG = `  queues: [
   ],
 `;
 
-// Insert statements per engine, interpolated into the addBook handler below.
-const ADD_BOOK_INSERT: Record<DatabaseType, string> = {
-  pg: `        await databases.main.unsafe(
-          \`INSERT INTO books (title, published_year, author_id) VALUES ($1, $2, $3)\`,
-          [input.title, input.publishedYear, input.authorId],
-        );`,
-  mysql: `        await databases.main.unsafe(
-          \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)\`,
-          [input.title, input.publishedYear, input.authorId],
-        );`,
-  mssql: `        await databases.main
-          .request()
-          .input("title", input.title)
-          .input("publishedYear", input.publishedYear)
-          .input("authorId", input.authorId)
-          .query(
-            \`INSERT INTO books (title, published_year, author_id) VALUES (@title, @publishedYear, @authorId)\`,
-          );`,
-  sqlite: `        databases.main
-          .query(
-            \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)\`,
-          )
-          .run(input.title, input.publishedYear, input.authorId);`,
+// The add-book operation's data access, which the scaffold writes to this file.
+export const REPOSITORY_FILE = "repository.ts";
+
+// Per engine: the name the factory gives the connection, and `add`, which
+// inserts a book and answers the stored row, id included.
+const REPOSITORY_ADD: Record<DatabaseType, { connection: string; add: string }> = {
+  pg: {
+    connection: "sql",
+    add: `    add: async (book: NewBook): Promise<Book> => {
+      const [row] = await sql\`
+        INSERT INTO books (title, published_year, author_id)
+        VALUES (\${book.title}, \${book.publishedYear}, \${book.authorId})
+        RETURNING id, title, published_year AS "publishedYear", author_id AS "authorId"
+      \`;
+      return row;
+    },`,
+  },
+  mysql: {
+    connection: "sql",
+    add: `    // MySQL has no RETURNING. LAST_INSERT_ID() answers for the connection that
+    // ran the insert, so the transaction keeps both statements on one.
+    add: (book: NewBook): Promise<Book> =>
+      sql.begin(async (tx): Promise<Book> => {
+        await tx\`
+          INSERT INTO books (title, published_year, author_id)
+          VALUES (\${book.title}, \${book.publishedYear}, \${book.authorId})
+        \`;
+        const [row] = await tx\`
+          SELECT id, title, published_year AS publishedYear, author_id AS authorId
+          FROM books WHERE id = LAST_INSERT_ID()
+        \`;
+        return row;
+      }),`,
+  },
+  mssql: {
+    connection: "pool",
+    add: `    add: async (book: NewBook): Promise<Book> => {
+      const { recordset } = await pool
+        .request()
+        .input("title", book.title)
+        .input("publishedYear", book.publishedYear)
+        .input("authorId", book.authorId)
+        .query<Book>(\`
+          INSERT INTO books (title, published_year, author_id)
+          OUTPUT INSERTED.id, INSERTED.title, INSERTED.published_year AS publishedYear,
+            INSERTED.author_id AS authorId
+          VALUES (@title, @publishedYear, @authorId)
+        \`);
+      return recordset[0]!;
+    },`,
+  },
+  sqlite: {
+    connection: "db",
+    add: `    add: async (book: NewBook): Promise<Book> =>
+      db
+        .query<Book, [string, number, number]>(
+          \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)
+           RETURNING id, title, published_year AS publishedYear, author_id AS authorId\`,
+        )
+        .get(book.title, book.publishedYear, book.authorId)!,`,
+  },
 };
 
-const ADD_BOOK_OPERATION = (
-  values: ProjectValues,
-) => `    // The frontend posts a new book here; after the insert, the handler publishes
-    // events_bookAdded, the queued event the frontend's subscription watches.
-    addBook: operation({
+const repository = ({ database }: ProjectValues) => {
+  const { connection, add } = REPOSITORY_ADD[database];
+  return `import type { CustomRepositoryFactory } from "@graphoria/server/config";
+
+// What the add-book form sends, and the row the database stores for it.
+export type NewBook = { title: string; publishedYear: number; authorId: number };
+export type Book = NewBook & { id: number };
+
+// The typed data access behind the operations in graphoria.ts, built once on
+// the "main" database's connection. \`satisfies\` types that connection for the
+// engine.
+export const createRepository = ((${connection}) => ({
+  books: {
+${add}
+  },
+})) satisfies CustomRepositoryFactory<"${database}">;
+
+// What operation.typed<Repository>() hands a handler as \`repository\`, keyed by
+// database name.
+export type Repository = { main: ReturnType<typeof createRepository> };
+`;
+};
+
+const ADD_BOOK_OPERATION = `    // The frontend posts a new book here. The handler stores it through the
+    // repository (repository.ts), publishes events_bookAdded, the queued event the
+    // frontend's subscription watches, and answers the stored row.
+    addBook: operation.typed<Repository>()({
       input: addBookInput,
+      output: book,
       rest: {
         path: "/add-book",
         method: "POST",
         body: addBookInput,
       },
-      handler: async ({ databases, queues }, input) => {
-${ADD_BOOK_INSERT[values.database]}
+      handler: async ({ repository, queues }, input) => {
+        const added = await repository.main.books.add(input);
         queues.sendMessage("events_bookAdded", {
           title: input.title,
           publishedYear: input.publishedYear,
           authorId: input.authorId,
         });
-        return input;
+        return added;
       },
     }),
 `;
@@ -320,7 +381,7 @@ const BOOKS_OPERATION = (
 
 const operationsConfig = (values: ProjectValues) => {
   const entries = `${values.redis ? BOOKS_OPERATION(values) : ""}${
-    values.frontend && values.rabbitmq ? ADD_BOOK_OPERATION(values) : ""
+    values.frontend && values.rabbitmq ? ADD_BOOK_OPERATION : ""
   }`;
   return entries ? `  operations: {\n${entries}  },\n` : "";
 };
@@ -340,12 +401,20 @@ const CACHES_CONFIG = `  // A cached operation answers from this process first, 
   },
 `;
 
+const REPOSITORY_ENTRY = `      // The typed data access in repository.ts, which addBook calls.
+      repository: createRepository,
+`;
+
 const graphoriaConfig = (values: ProjectValues) => `${
   values.frontend && values.rabbitmq
     ? 'import { operation, z } from "@graphoria/server/config";\n'
     : ""
 }import type { ConfigurationFn } from "@graphoria/server/config";
-
+${
+  values.frontend && values.rabbitmq
+    ? '\nimport { createRepository, type Repository } from "./repository";\n'
+    : ""
+}
 // Bun loads these from .env; in Docker Compose they come from the environment.
 const env = (name: string) => {
   const value = process.env[name];
@@ -362,6 +431,9 @@ const addBookInput = z.object({
   authorId: z.number().int(),
 });
 
+// What addBook answers: the row the database stored, id included.
+const book = addBookInput.extend({ id: z.number().int() });
+
 `
     : ""
 }export default (() => ({
@@ -372,7 +444,7 @@ const addBookInput = z.object({
       name: "main",
       type: "${values.database}",
       enabled: true,
-${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
+${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${values.frontend && values.rabbitmq ? REPOSITORY_ENTRY : ""}    },
   ],
 ${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
@@ -1209,4 +1281,5 @@ export const renderProject = (
   "docker-compose.yml": dockerCompose(values),
   "seed.sql": SEEDS[values.database],
   ...(values.frontend && frontendFiles(values)),
+  ...(values.frontend && values.rabbitmq && { [REPOSITORY_FILE]: repository(values) }),
 });

@@ -203,6 +203,7 @@ describe("cli init", () => {
       [
         ...FILES,
         "bunfig.toml",
+        "repository.ts",
         "web",
         "web/App.tsx",
         "web/frontend.tsx",
@@ -214,7 +215,7 @@ describe("cli init", () => {
     const pkg = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
     expect(pkg.dependencies["graphql-ws"]).toMatch(/^\d+\.\d+\.\d+$/);
     const config = await readFile(join(cwd, "graphoria.ts"), "utf8");
-    expect(config).toContain("addBook: operation(");
+    expect(config).toContain("addBook: operation.typed<Repository>()(");
     expect(config).toContain('queues.sendMessage("events_bookAdded"');
     expect(config).toContain('operations: ["addBook"]');
     expect(await readFile(join(cwd, "web", "App.tsx"), "utf8")).toContain("events_onBookAdded");
@@ -311,6 +312,29 @@ describe("cli init", () => {
     expect(result.stderr.toString()).toContain("web/App.tsx");
     expect((await readdir(cwd, { recursive: true })).sort()).toEqual(["web", "web/App.tsx"]);
     expect(await readFile(join(cwd, "web", "App.tsx"), "utf8")).toBe("mine");
+  });
+
+  it("writes nothing when the repository it would create exists", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await writeFile(join(cwd, "repository.ts"), "mine");
+    const result = Bun.spawnSync(
+      [
+        "bun",
+        join(import.meta.dir, "cli.ts"),
+        "init",
+        "--yes",
+        "--frontend",
+        "--rabbitmq",
+        "--no-install",
+      ],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("repository.ts");
+    expect(await readdir(cwd)).toEqual(["repository.ts"]);
+    expect(await readFile(join(cwd, "repository.ts"), "utf8")).toBe("mine");
   });
 
   it("reads the answers from stdin", async () => {

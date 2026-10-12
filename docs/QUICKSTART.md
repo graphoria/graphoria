@@ -73,7 +73,7 @@ Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` ans
 | `web/graphql.ts`                                    | [gql.tada](https://gql-tada.0no.co/), which types each query from the schema.                                           |
 | `web/styles.css`, `bunfig.toml`                     | Tailwind CSS, which Bun builds through `bun-plugin-tailwind`.                                                           |
 
-With `--rabbitmq` too, the page gains an add-book form; submitting POSTs `/rest/add-book`, the operation inserts the row and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list.
+With `--rabbitmq` too, the page gains an add-book form; submitting POSTs `/rest/add-book`, the operation inserts the row and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list. The insert lives in `repository.ts`, a [typed repository](./OPERATIONS.md#typed-repositories) on the `main` database: the handler calls `repository.main.books.add`, which answers the stored row, `id` included, and the operation answers it too.
 
 Five files change too: `graphoria.ts` opens the seed to anonymous reads (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
 
@@ -98,7 +98,7 @@ Answer yes to `Add RabbitMQ?`, or pass `--rabbitmq` (`--no-rabbitmq` answers no,
 | `docker-compose.yml` | A `rabbitmq` service (with its `rabbitmq-data` volume) that Graphoria waits on.                                                            |
 | `graphoria.ts`       | A `queues` entry with a demo publisher and subscriber.                                                                                     |
 
-The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription; with `--frontend` too, the add-book form POSTs `/rest/add-book`, the operation inserts the row and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
+The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription; with `--frontend` too, the add-book form POSTs `/rest/add-book`, the operation inserts the row through `repository.ts` and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
 
 ### Add Redis with `--redis`
 
