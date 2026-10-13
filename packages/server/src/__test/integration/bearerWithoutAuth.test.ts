@@ -3,13 +3,15 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { AuditEvent } from "../../logging/audit";
 import type { StartedServer } from "./harness";
 
-import { fieldName } from "./config";
+import { createTokenRepository } from "../../authentication/tokenRepository";
+import { REDIS_URL, fieldName } from "./config";
 import { integrationEnabled, startServer } from "./harness";
 import { EXPECTED_COUNTS } from "./seed";
 
 /**
  * With auth off, a bearer token is still verified when the token key is set: a
- * token issued elsewhere with the same key keeps its role.
+ * token issued elsewhere with the same key keeps its role, unless the store
+ * AUTH_STORE names records it revoked.
  *
  * Without a key there is nothing to verify against, so every bearer token is
  * anonymous, while the admin secret works as before. A key is still required
@@ -71,6 +73,25 @@ describe.skipIf(!integrationEnabled)("bearer tokens with auth off", () => {
 
       expect(response.errors).toBeUndefined();
       expect(response.data?.[projects]).toHaveLength(EXPECTED_COUNTS.projects);
+    });
+
+    // The harness sets AUTH_STORE=redis: the store the issuing deployment
+    // records its revocations in.
+    it("serves a token the token store records revoked as anonymous", async () => {
+      const revoked = await issueMemberToken();
+      const { jti } = JSON.parse(Buffer.from(revoked.split(".")[1]!, "base64url").toString());
+      const issuerStore = createTokenRepository(REDIS_URL);
+      try {
+        // A fresh client is still connecting; the store waits for it.
+        await issuerStore.revoke(jti, "5m");
+      } finally {
+        issuerStore.close();
+      }
+
+      const response = await started.context.gql(PROJECTS_QUERY, undefined, { token: revoked });
+
+      expect(response.errors?.length).toBeGreaterThan(0);
+      expect(response.data?.[projects]).toBeUndefined();
     });
 
     it("keeps a request without a token anonymous", async () => {

@@ -53,7 +53,15 @@ const startCli = async (
   { detached = false, config = configPath } = {},
 ) => {
   const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "--config", config, ...args], {
-    env: { ...process.env, ADMIN_SECRET: "cli-test", JWT_SECRET: "cli-test", PORT: "0" },
+    env: {
+      ...process.env,
+      ADMIN_SECRET: "cli-test",
+      JWT_SECRET: "cli-test",
+      PORT: "0",
+      // The config declares no store, so an inherited one would refuse the boot.
+      AUTH_STORE: "memory",
+      RATE_LIMIT_STORE: "memory",
+    },
     stdout: "pipe",
     stderr: "inherit",
     detached,
@@ -126,6 +134,7 @@ describe("cli init", () => {
     "graphoria.ts",
     "index.ts",
     "package.json",
+    "repository.ts",
     "seed.sql",
     "tsconfig.json",
   ];
@@ -206,7 +215,7 @@ describe("cli init", () => {
     const pkg = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
     expect(pkg.dependencies["graphql-ws"]).toMatch(/^\d+\.\d+\.\d+$/);
     const config = await readFile(join(cwd, "graphoria.ts"), "utf8");
-    expect(config).toContain("addBook: operation(");
+    expect(config).toContain("addBook: operation.typed<Repository>()(");
     expect(config).toContain('queues.sendMessage("events_bookAdded"');
     expect(config).toContain('operations: ["addBook"]');
     expect(await readFile(join(cwd, "web", "App.tsx"), "utf8")).toContain("events_onBookAdded");
@@ -235,18 +244,21 @@ describe("cli init", () => {
     expect(result.stdout.toString()).toContain("/rest/ai");
   });
 
-  it("scaffolds Redis for the cache and auth token store with --redis", async () => {
+  it("scaffolds Redis for the cache, the auth token store and the rate limits with --redis", async () => {
     const { cwd, result } = await init(["--yes", "--redis", "--no-install"]);
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
     const values = await env(cwd);
     expect(values.REDIS_URL).toBe("redis://localhost:6379");
-    expect(values.CACHE_STORE).toBe("redis");
+    expect(values.AUTH_STORE).toBe("redis");
+    expect(values.RATE_LIMIT_STORE).toBe("redis");
+    expect(values.CACHE_STORE).toBeUndefined();
     const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
     expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "redis"]);
     expect((await readdir(cwd)).sort()).toEqual(FILES);
     expect(result.stdout.toString()).toContain("auth token store");
+    expect(result.stdout.toString()).toContain("/rest/books");
   });
 
   it("scaffolds every feature together with --rabbitmq --ai --redis --frontend", async () => {
@@ -279,7 +291,9 @@ describe("cli init", () => {
     expect(values.RABBITMQ_HOST).toBe("localhost");
     expect(values.LLM_PROVIDER).toBe("ollama");
     expect(values.REDIS_URL).toBe("redis://localhost:6379");
-    expect(values.CACHE_STORE).toBe("redis");
+    expect(values.AUTH_STORE).toBe("redis");
+    expect(values.RATE_LIMIT_STORE).toBe("redis");
+    expect(values.CACHE_STORE).toBeUndefined();
     const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
     expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq", "redis"]);
   });
@@ -298,6 +312,21 @@ describe("cli init", () => {
     expect(result.stderr.toString()).toContain("web/App.tsx");
     expect((await readdir(cwd, { recursive: true })).sort()).toEqual(["web", "web/App.tsx"]);
     expect(await readFile(join(cwd, "web", "App.tsx"), "utf8")).toBe("mine");
+  });
+
+  it("writes nothing when the repository it would create exists", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await writeFile(join(cwd, "repository.ts"), "mine");
+    const result = Bun.spawnSync(
+      ["bun", join(import.meta.dir, "cli.ts"), "init", "--yes", "--no-install"],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("repository.ts");
+    expect(await readdir(cwd)).toEqual(["repository.ts"]);
+    expect(await readFile(join(cwd, "repository.ts"), "utf8")).toBe("mine");
   });
 
   it("reads the answers from stdin", async () => {
@@ -426,7 +455,15 @@ describe("standalone SIGTERM", () => {
     const server = Bun.spawn(
       ["bun", join(import.meta.dir, "standalone.ts"), "--config", configPath],
       {
-        env: { ...process.env, ADMIN_SECRET: "cli-test", JWT_SECRET: "cli-test", PORT: "0" },
+        env: {
+          ...process.env,
+          ADMIN_SECRET: "cli-test",
+          JWT_SECRET: "cli-test",
+          PORT: "0",
+          // The config declares no store, so an inherited one would refuse the boot.
+          AUTH_STORE: "memory",
+          RATE_LIMIT_STORE: "memory",
+        },
         stdout: "pipe",
         stderr: "inherit",
       },
@@ -490,6 +527,9 @@ describe("signal during boot", () => {
         CONFIGURATION: unreachable,
         DB_CONNECT_RETRY_MS: "30000",
         LOG_LEVEL: "info",
+        // The config declares no store, so an inherited one would refuse the boot.
+        AUTH_STORE: "memory",
+        RATE_LIMIT_STORE: "memory",
         ...env,
       },
       stdout: "pipe",

@@ -8,7 +8,7 @@ import type { TokenGenerationParameters, TokenOptions, TokenResponse, TokenServi
 
 import { parseDurationToSeconds } from "./duration";
 import { matchesAnySecret } from "./secrets";
-import { createTokenRepository } from "./tokenRepository";
+import { createMemoryTokenRepository } from "./tokenRepository";
 import { logger } from "../logging";
 
 // Audience constants to distinguish token types
@@ -29,7 +29,7 @@ export const createJWTService = (
   env: Env,
   tokenRepositoryOverride?: TokenRepository,
 ): TokenService => {
-  const tokenRepository = tokenRepositoryOverride ?? createTokenRepository(env.cache.redisUrl);
+  const tokenRepository = tokenRepositoryOverride ?? createMemoryTokenRepository();
   // First entry signs; every entry verifies, so a rotation can overlap.
   const jwtSecrets = env.jwt.secrets.map((secret) => new TextEncoder().encode(secret));
   const signingSecret = jwtSecrets[0];

@@ -2,7 +2,7 @@
 
 > **See also:** [Permissions & Access Control](./PERMISSIONS.md) | [Configuration](./CONFIGURATION.md)
 
-Graphoria ships with a complete authentication stack: a user table that lives in your database, password hashing with [argon2id](https://en.wikipedia.org/wiki/Argon2), token issuance and verification (JWT or PASETO), refresh-token rotation backed by Redis, and three built-in operations (`auth_login`, `auth_refresh`, `auth_logout`) that you can call from any client.
+Graphoria ships with a complete authentication stack: a user table that lives in your database, password hashing with [argon2id](https://en.wikipedia.org/wiki/Argon2), token issuance and verification (JWT or PASETO), refresh-token rotation backed by the [token store](#token-store), and three built-in operations (`auth_login`, `auth_refresh`, `auth_logout`) that you can call from any client.
 
 This guide covers each piece in the order you'll meet it.
 
@@ -48,6 +48,8 @@ export default (({ operation }) => ({
 `auth.autoCreateTables` defaults to `false`. With it off, Graphoria runs a no-row probe (`SELECT username FROM auth.user WHERE 1=0`) at startup and aborts boot with a clear error if the table is missing — apply your schema migrations first, or flip `autoCreateTables: true` for the pre-1.0 behavior of running `CREATE SCHEMA / TABLE IF NOT EXISTS` on every boot. Either way you still need to create your first user (see _Bootstrapping users_ below).
 
 The `permissions` map describes what each role is allowed to see. If a request arrives without a token, the role is `anonymous`. With a valid token, the role comes from the `role` column of the `user` table. With the admin secret header, the role is `superadmin` and bypasses all checks. Read [Permissions & Access Control](./PERMISSIONS.md) for the full filtering and column-level rules.
+
+Auth also needs `AUTH_STORE` set: the server refuses to boot without it. It names the [token store](#token-store), either `memory` or a Redis store declared under `caches.stores`.
 
 ## The user table
 
@@ -99,9 +101,21 @@ export default ({ operation }) => ({
 });
 ```
 
-Each strategy issues short-lived access tokens (`JWT_EXPIRES_IN`, default `5m`) and longer-lived refresh tokens (`JWT_RT_EXPIRES_IN`, default `7d`). Refresh tokens are single-use: the JTI is stored in Redis with the same TTL as the token itself, so a stolen refresh token can be replayed once at most before the legitimate user's next refresh invalidates it.
+Each strategy issues short-lived access tokens (`JWT_EXPIRES_IN`, default `5m`) and longer-lived refresh tokens (`JWT_RT_EXPIRES_IN`, default `7d`). Refresh tokens are single-use: the JTI is stored in the token store with the same TTL as the token itself, so a stolen refresh token can be replayed once at most before the legitimate user's next refresh invalidates it.
 
-The strategy's key is needed only when something signs tokens: login and refresh (`auth.enabled`) or the [console](./CONSOLE.md)'s session cookie (`CONSOLE_ENABLED`). With both off it can be left unset: the server logs a warning at boot and treats every bearer token as anonymous, while the admin secret and the scoped credentials work as before. With the key set, bearer tokens are verified even when auth is off, so a token issued elsewhere with the same key keeps its role — provided it has the shape Graphoria issues (`aud: "access"`, a `jti`) and Redis answers the revocation check.
+The strategy's key is needed only when something signs tokens: login and refresh (`auth.enabled`) or the [console](./CONSOLE.md)'s session cookie (`CONSOLE_ENABLED`). With both off it can be left unset: the server logs a warning at boot and treats every bearer token as anonymous, while the admin secret and the scoped credentials work as before. With the key set, bearer tokens are verified even when auth is off, so a token issued elsewhere with the same key keeps its role — provided it has the shape Graphoria issues (`aud: "access"`, a `jti`). With auth off `AUTH_STORE` is optional: unset, the server keeps no shared token store, so a revocation another deployment records does not reach it ([the trade-off](./SECURITY_MODEL.md#with-auth-off-and-no-auth_store-a-revocation-recorded-elsewhere-does-not-reach-this-server)); set to that deployment's store, the revocation check reads it.
+
+### Token store
+
+`AUTH_STORE` says where JTI records live. Boot refuses `auth.enabled` without it; with auth off it
+is optional, and a set one is still read:
+
+- `memory` keeps them in the process. There is nothing else to run, but another worker or replica
+  never sees a revocation, and a restart forgets them all
+  ([the trade-off](./SECURITY_MODEL.md#auth_storememory-keeps-revocations-in-one-process)).
+- The name of a `redis` store from [`caches.stores`](./CONFIGURATION.md#caches) shares them across
+  processes and, with AOF on, across restarts. Prefer a Redis that does not evict
+  ([why](./DEPLOYMENT.md#redis)).
 
 ### `jwt` (default)
 
@@ -166,11 +180,11 @@ mutation Refresh($refresh_token: String!) {
 }
 ```
 
-Validates the refresh token, marks its JTI as used in Redis, and issues a brand-new pair. Reusing a refresh token throws `"Token reuse detected"` — surface this in your client as a forced logout, since it usually means either an honest race or a stolen token.
+Validates the refresh token, marks its JTI as used in the token store, and issues a brand-new pair. Reusing a refresh token throws `"Token reuse detected"` — surface this in your client as a forced logout, since it usually means either an honest race or a stolen token.
 
 ### `auth_logout`
 
-Hard logout. Revokes the JTI of the access token used to make the request (read from the `Authorization` header) and the JTI of the refresh token cookie if present, then deletes the cookie. Any subsequent `verifyTokenAndGetSession` call for those JTIs returns the `anonymous` session, and any `auth_refresh` call for the revoked refresh token throws `"Token revoked"`. Revocation is recorded in the same Redis hash as the per-JTI replay-protection record, so it inherits the original token's TTL — there are no orphan keys.
+Hard logout. Revokes the JTI of the access token used to make the request (read from the `Authorization` header) and the JTI of the refresh token cookie if present, then deletes the cookie. Any subsequent `verifyTokenAndGetSession` call for those JTIs returns the `anonymous` session, and any `auth_refresh` call for the revoked refresh token throws `"Token revoked"`. Revocation is recorded in the same token-store record as the per-JTI replay protection, so it inherits the original token's TTL — there are no orphan keys.
 
 Tampered or expired refresh cookies are handled gracefully: the verify step swallows the error and the cookie is still cleared.
 
@@ -235,7 +249,7 @@ Standard claims (`sub`, `role`, `iat`, `exp`, `jti`) are always available. Anyth
 
 ## Operational notes
 
-- **Redis** is required for refresh-token rotation. If Redis is unreachable, refresh attempts fail closed — the design choice favors security over availability. So does the revocation check on every access token, which serves the caller as `anonymous` until Redis answers again. The client reconnects on its own once Redis is back, however long the outage, and [`/health/ready`](./OBSERVABILITY.md#health-endpoints) reports Redis down meanwhile.
+- **A Redis token store** fails closed: if Redis is unreachable, refresh attempts fail — the design choice favors security over availability. So does the revocation check on every access token, which serves the caller as `anonymous` until Redis answers again. A command that finds the connection down first waits up to a second for it, so a restart or a failover that reconnects within that second fails no request. The client reconnects on its own once Redis is back, however long the outage, and [`/health/ready`](./OBSERVABILITY.md#health-endpoints) reports Redis down meanwhile.
 - **Argon2id** parameters are inherited from Bun's defaults (`m=65536, t=2, p=1`). To tune them, hash passwords explicitly with `Bun.password.hash(plain, { algorithm: "argon2id", memoryCost, timeCost })` before inserting.
 - **Token clock skew** is not currently configurable — the verifier rejects tokens whose `exp` is in the past or whose `nbf` is in the future, with no grace period.
 - **Audit log.** Every `auth_login` (success and failure, by username) and every `auth_logout` that revoked a token writes one record; passwords and tokens never appear in it. See [Audit log](../README.md#audit-log).

@@ -482,6 +482,7 @@ describe("createMcpServer", () => {
         revoke: async () => {},
         isRevoked: async () => false,
         checkRefresh: async () => ({ isUsed: false, isRevoked: false }),
+        ping: async () => true,
         close: () => {},
       });
       const editorToken = await issuer.createToken({ sub: "boss@acme.test", role: "editor" });

@@ -10,7 +10,7 @@ import { createTcpProxy } from "./tcpProxy";
 /**
  * The server reaches its database through a proxy, so the test can take the
  * database away and give it back without stopping the container the other
- * suites share. Redis is checked too: the suite runs with `CACHE_STORE=redis`.
+ * suites share.
  */
 
 const ENGINE = "pg" as const;
@@ -57,9 +57,10 @@ describe.skipIf(!integrationEnabled)("health endpoints", () => {
       status: 200,
       body: {
         status: "ok",
+        // The harness's AUTH_STORE=redis: the token store is read with auth off too.
         checks: [
           { kind: "database", name: "default", ok: true },
-          { kind: "redis", ok: true },
+          { kind: "redis", name: "redis", ok: true },
         ],
       },
     });
@@ -73,7 +74,6 @@ describe.skipIf(!integrationEnabled)("health endpoints", () => {
     expect(status).toBe(503);
     expect(body.status).toBe("unavailable");
     expect(body.checks).toContainEqual({ kind: "database", name: "default", ok: false });
-    expect(body.checks).toContainEqual({ kind: "redis", ok: true });
     expect((await get("/health/live")).status).toBe(200);
   });
 
@@ -96,39 +96,72 @@ describe.skipIf(!integrationEnabled)("health endpoints", () => {
 });
 
 describe.skipIf(!integrationEnabled)("health · redis is checked only where it is used", () => {
-  const memoryCache = { cache: { store: "memory" as const, redisUrl: REDIS_URL } };
-
-  const kindsWith = async (options: Parameters<typeof startServer>[0]) => {
+  const readyWith = async (options: Parameters<typeof startServer>[0]) => {
     const started = await startServer(options);
     try {
-      return (await getFrom(started, "/health/ready")).body.checks.map((check) => check.kind);
+      return await getFrom(started, "/health/ready");
     } finally {
       await started.stop();
     }
   };
+  const checksWith = async (options: Parameters<typeof startServer>[0]) =>
+    (await readyWith(options)).body.checks.map((check) =>
+      check.name && check.kind === "redis" ? `${check.kind}:${check.name}` : check.kind,
+    );
 
-  it("skips redis with the memory cache and auth off", async () => {
-    expect(await kindsWith({ engine: ENGINE, skipSeed: true, env: memoryCache })).toEqual([
+  it("checks the store AUTH_STORE names with auth off too", async () => {
+    expect(await checksWith({ engine: ENGINE, skipSeed: true })).toEqual([
       "database",
+      "redis:redis",
     ]);
   });
 
-  it("checks redis with the memory cache when auth is on", async () => {
-    const kinds = await kindsWith({
+  it("skips redis when nothing reads it", async () => {
+    expect(
+      await checksWith({ engine: ENGINE, skipSeed: true, env: { authStore: undefined } }),
+    ).toEqual(["database"]);
+  });
+
+  const authOn = {
+    auth: {
+      enabled: true,
+      database: "default",
+      schema: "auth",
+      autoCreateTables: true,
+      permissions: { anonymous: { tables: "ALL" } },
+    },
+  };
+
+  it("checks the store AUTH_STORE names when auth is on", async () => {
+    const { body } = await readyWith({ engine: ENGINE, skipSeed: true, config: authOn as never });
+
+    expect(body.checks.map((check) => check.kind)).toEqual(["database", "redis"]);
+    expect(body.checks).toContainEqual({ kind: "redis", name: "redis", ok: true });
+  });
+
+  it("probes each store on its own URL and reports a dead one by name", async () => {
+    const { status, body } = await readyWith({
       engine: ENGINE,
-      skipSeed: true,
-      env: memoryCache,
       config: {
-        auth: {
-          enabled: true,
-          database: "default",
-          schema: "auth",
-          autoCreateTables: true,
-          permissions: { anonymous: { tables: "ALL" } },
+        caches: {
+          default: ["redis"],
+          stores: {
+            redis: { type: "redis", url: REDIS_URL },
+            dead: { type: "redis", url: "redis://127.0.0.1:1" },
+          },
+        },
+        operations: {
+          tasks: {
+            query: `query { app_tasks(limit: 1, orderBy: { id: ASC }) { id } }`,
+            rest: { path: "/tasks", method: "GET" },
+            cache: { ttl: 60_000, stores: ["redis", "dead"] },
+          },
         },
       } as never,
     });
 
-    expect(kinds).toEqual(["database", "redis"]);
+    expect(status).toBe(503);
+    expect(body.checks).toContainEqual({ kind: "redis", name: "redis", ok: true });
+    expect(body.checks).toContainEqual({ kind: "redis", name: "dead", ok: false });
   });
 });

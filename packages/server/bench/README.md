@@ -70,8 +70,17 @@ database. Scenarios:
 | `reference-stringify` | one `JSON.stringify` of the large payload, to read deltas against |
 | `reference-parse`     | one `JSON.parse` of the large payload, to read deltas against     |
 
-`--store=redis` runs `redis-hit` and `redis-miss` instead, and needs the test
-stack's Redis (`bun run test:integration:up`).
+`--store=redis` runs the Redis suite instead. It needs the test stack's Redis
+(`bun run test:integration:up`), or the one `REDIS_URL` names:
+
+| Scenario            | What it measures                                                       |
+| ------------------- | ---------------------------------------------------------------------- |
+| `redis-hit`         | a cache hit on the large payload, Redis store                          |
+| `tiered-hit`        | the same hit, served by `memory` in front of Redis                     |
+| `tiered-promote`    | a hit Redis serves and the chain copies into an emptied `memory`       |
+| `redis-miss`        | a cache miss on the large payload: query, stringify, store in Redis    |
+| `redis-due-members` | a write that prunes 100 expired entries from the operation's index     |
+| `redis-concurrent`  | 50 concurrent misses on the large payload; the query count is recorded |
 
 ```bash
 bun run packages/server/bench/cacheSerialize.ts --out=/tmp/cache-head

@@ -47,7 +47,7 @@ Create a `graphoria.ts` at the repo root (see [Quickstart](./docs/QUICKSTART.md)
 bun run dev
 ```
 
-For features that need Redis (refresh-token rotation, cache):
+For features that need Redis (a shared cache, or `AUTH_STORE` / `RATE_LIMIT_STORE` naming a Redis store; refresh-token rotation itself works with `AUTH_STORE=memory`):
 
 ```bash
 docker run -d --name graphoria-redis -p 6379:6379 redis:7

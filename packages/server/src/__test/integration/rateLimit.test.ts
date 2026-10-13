@@ -11,7 +11,7 @@ import { callMcpTool } from "./mcp";
 /**
  * The limiter is engine-agnostic — it never reaches the query builder — so one
  * engine proves it. Redis is the interesting half: the suite runs with
- * CACHE_STORE=redis, so these exercise the Lua bucket, not the memory one.
+ * RATE_LIMIT_STORE=redis, so these exercise the Lua bucket, not the memory one.
  */
 const describeIf = INTEGRATION_ENABLED ? describe : describe.skip;
 
@@ -23,6 +23,7 @@ const rateLimit = {
   anonymousMax: ANONYMOUS_MAX,
   windowMs: WINDOW_MS,
   trustProxy: false,
+  store: "redis",
 };
 
 const QUERY = "{ __typename }";

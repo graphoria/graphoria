@@ -85,13 +85,13 @@ The `graphoria` CLI supervises its server processes: it restarts one that crashe
 
 #### `createGraphQLEngine(env)`
 
-Run GraphQL queries in-process, without an HTTP server. Performs the same boot as `createBunServer` minus the route / websocket / queue / cron layer: no queue connects, and a publish from an operation handler answers `false`.
+Run GraphQL queries in-process, without an HTTP server. Performs the same boot as `createBunServer` minus the route / websocket / queue / cron layer: no queue connects, and a publish from an operation handler answers `false`. It does not require `AUTH_STORE`: with auth on and the variable unset, the `login`, `refresh` and `logout` mutations keep their records in the process.
 
 ```typescript
 async function createGraphQLEngine(env: Partial<Env>): Promise<{
   execute: Execute;
   roles: string[];
-  close: () => Promise<void>; // releases database connections
+  close: () => Promise<void>; // releases the database connections, Redis pools and token store
   logger: (name: string) => pino.Logger;
 }>;
 ```
@@ -324,13 +324,16 @@ type InferOperationInitData<T> // Extract TInitData from a TypedOperation
 
 #### Zod Schemas
 
-| Export                      | Description                   |
-| --------------------------- | ----------------------------- |
-| `OperationRestConfigZod`    | Zod schema for REST config    |
-| `OperationGraphQLConfigZod` | Zod schema for GraphQL config |
-| `OperationCacheConfigZod`   | Zod schema for cache config   |
-| `ServerConnectionZod`       | Schema for ServerConnection   |
-| `SQLiteConnectionZod`       | Schema for SQLiteConnection   |
+| Export                      | Description                     |
+| --------------------------- | ------------------------------- |
+| `OperationRestConfigZod`    | Zod schema for REST config      |
+| `OperationGraphQLConfigZod` | Zod schema for GraphQL config   |
+| `OperationCacheConfigZod`   | Zod schema for cache config     |
+| `CachesZod`                 | Schema for the `caches` block   |
+| `CacheStoreConfigZod`       | Schema for one store, by `type` |
+| `RedisCacheStoreConfigZod`  | Schema for a `redis` store      |
+| `ServerConnectionZod`       | Schema for ServerConnection     |
+| `SQLiteConnectionZod`       | Schema for SQLiteConnection     |
 
 ---
 

@@ -8,7 +8,7 @@ This guide gets you from zero to a running Graphoria server in about five minute
 
 - [Bun](https://bun.sh) **1.3.4** or newer
 - A database — PostgreSQL, MySQL or SQL Server running, or nothing at all with SQLite, which Graphoria opens as a file. The examples use PostgreSQL on `localhost:5432`.
-- Optional: [Redis](https://redis.io) (or Valkey) — only required if you enable authentication. The default URL is `redis://localhost:6379`.
+- Optional: [Redis](https://redis.io) (or Valkey), declared as a store under `caches.stores`, for a cache, token store or rate limits shared by every process.
 
 ## Scaffold a project with `bunx graphoria init`
 
@@ -23,7 +23,8 @@ bunx graphoria init
 
 | File                                          | What it holds                                                                                                                                                  |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `graphoria.ts`                                | The configuration. It reads the database connection from the environment.                                                                                      |
+| `graphoria.ts`                                | The configuration. It reads the database connection from the environment, and declares `addBook`: `POST /rest/add-book`, with the admin secret.                |
+| `repository.ts`                               | The [typed repository](./OPERATIONS.md#typed-repositories) `addBook` stores a book through; it answers the stored row, `id` included.                          |
 | `index.ts`                                    | The entry point.                                                                                                                                               |
 | `.env`                                        | A random `ADMIN_SECRET` and `JWT_SECRET`, and the database settings (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`); on SQLite, `DB_FILE` instead. |
 | `docker-compose.yml`                          | The database and Graphoria. On SQLite it's Graphoria alone, with the file on a volume; otherwise the database's port is published on your machine too.         |
@@ -61,11 +62,11 @@ Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the 
 
 Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, `main_` on SQLite, and the database name on MySQL (`app_authors` with the default name).
 
-`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--redis` adds Redis for the cache and the auth token store, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time.
+`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time.
 
 ### Add a React frontend with `--frontend`
 
-Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books:
+Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books and adds new ones through `addBook`:
 
 | File                                                | What it holds                                                                                                           |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -73,11 +74,11 @@ Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` ans
 | `web/graphql.ts`                                    | [gql.tada](https://gql-tada.0no.co/), which types each query from the schema.                                           |
 | `web/styles.css`, `bunfig.toml`                     | Tailwind CSS, which Bun builds through `bun-plugin-tailwind`.                                                           |
 
-With `--rabbitmq` too, the page gains an add-book form; submitting POSTs `/rest/add-book`, the operation inserts the row and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list.
+Its add-book form POSTs `/rest/add-book`, and the app fetches the list again once the operation answers with the stored row. With `--rabbitmq` too, the operation also publishes `events_bookAdded` after the insert, and the app refetches the list when `events_onBookAdded` delivers it instead.
 
-Five files change too: `graphoria.ts` opens the seed to anonymous reads (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
+Five files change too: `graphoria.ts` opens the seed and `addBook` to anonymous callers (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
 
-The app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API. With `--rabbitmq` the grant also lets anyone add books through `addBook` and publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off.
+The app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API, but the grant also lets anyone add books through `addBook`, with `--redis` read `GET /rest/books`, with `--rabbitmq` publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off.
 
 The query types come from the schema, which `bun run dev` prints to `.graphoria/schemas/`. Once it has, run:
 
@@ -98,18 +99,19 @@ Answer yes to `Add RabbitMQ?`, or pass `--rabbitmq` (`--no-rabbitmq` answers no,
 | `docker-compose.yml` | A `rabbitmq` service (with its `rabbitmq-data` volume) that Graphoria waits on.                                                            |
 | `graphoria.ts`       | A `queues` entry with a demo publisher and subscriber.                                                                                     |
 
-The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription; with `--frontend` too, the add-book form POSTs `/rest/add-book`, the operation inserts the row and publishes `events_bookAdded`, and the app subscribes to `events_onBookAdded` and refetches the list. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
+The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription, and `addBook` publishes `events_bookAdded` after each insert; with `--frontend` too, the app subscribes to `events_onBookAdded` and refetches the list. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
 
 ### Add Redis with `--redis`
 
 Answer yes to `Add Redis?`, or pass `--redis` (`--no-redis` answers no, and so does `--yes` alone). The project then gets:
 
-| File                 | What it holds                                                             |
-| -------------------- | ------------------------------------------------------------------------- |
-| `.env`               | `REDIS_URL=redis://localhost:6379` and `CACHE_STORE=redis`.               |
-| `docker-compose.yml` | A `redis` service (with its `redis-data` volume) that Graphoria waits on. |
+| File                 | What it holds                                                                                                                                |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.env`               | `REDIS_URL=redis://localhost:6379`, `AUTH_STORE=redis` and `RATE_LIMIT_STORE=redis`.                                                         |
+| `graphoria.ts`       | A `caches` block, with the `redis` store read behind each process's own copy, and a `books` operation that caches `GET /rest/books` in both. |
+| `docker-compose.yml` | A `redis` service (with its `redis-data` volume) that Graphoria waits on.                                                                    |
 
-The auth token store always uses `REDIS_URL`, and `CACHE_STORE=redis` moves the cache off the in-memory store. In Docker Compose the server is pointed at the `redis` service, while `bun run dev` reaches Redis on `localhost:6379`.
+`graphoria.ts` reads `REDIS_URL` into the `redis` store and caches `GET /rest/books` there: call it twice (with the admin secret, unless `--frontend` opened it to anonymous reads), and the second answer comes from the cache. `AUTH_STORE` points the token store at the same store, and `RATE_LIMIT_STORE` the rate limits once you turn a limit on. In Docker Compose the server is pointed at the `redis` service, while `bun run dev` reaches Redis on `localhost:6379`.
 
 ### Browse the data with `--data-tools`
 

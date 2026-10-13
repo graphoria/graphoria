@@ -9,6 +9,10 @@ const DELETE_BATCH = 1000;
 const PRUNE_BATCH = 100;
 // How often an entry without a TTL is checked for having been deleted.
 const RECHECK_MS = 3_600_000;
+// While Redis is down every request fails its read and its write at once, so
+// those log one line per interval, not one per request: the flood would
+// outlast the outage.
+const FAILURE_LOG_INTERVAL_MS = 10_000;
 
 // KEYS[1]: the set of cached keys. KEYS[2]: the sorted set of "<hash>:<key>"
 // members, scored by when to check the entry next. ARGV[1]: the entry prefix.
@@ -67,17 +71,18 @@ export class RedisCacheStore implements CacheStore {
   private lastPruneAt = 0;
   private client: ReturnType<typeof getCacheRedisClient>;
   private log = logger("redis-cache");
+  private lastFailureLogAt: number | undefined;
   // `SCRIPT LOAD` runs once per store; EVALSHA skips re-sending the script text.
   // A `SCRIPT FLUSH` or server restart clears it — the NOSCRIPT fallback reloads.
   private scriptSha: string | null = null;
 
-  constructor(operationName: string, ttlMs?: number, pruneIntervalMs = 1_000) {
+  constructor(operationName: string, url: string, ttlMs?: number, pruneIntervalMs = 1_000) {
     this.prefix = `cache:${operationName}:`;
     this.trackingKey = `${this.prefix}__keys`;
     this.expiryKey = `${this.prefix}__expiry`;
     this.ttlSeconds = ttlMs ? Math.ceil(ttlMs / 1000) : undefined;
     this.pruneIntervalMs = pruneIntervalMs;
-    this.client = getCacheRedisClient();
+    this.client = getCacheRedisClient(url);
   }
 
   // The entry key is a 64-bit Bun.hash; a collision would serve another
@@ -144,6 +149,18 @@ export class RedisCacheStore implements CacheStore {
     ]);
   }
 
+  private logRequestFailure(error: unknown, operation: string, message: string) {
+    const now = Date.now();
+    if (
+      this.lastFailureLogAt !== undefined &&
+      now - this.lastFailureLogAt < FAILURE_LOG_INTERVAL_MS
+    ) {
+      return;
+    }
+    this.lastFailureLogAt = now;
+    this.log.error({ err: error, operation }, message);
+  }
+
   async get(key: string): Promise<string | undefined> {
     try {
       const hash = this.hash(key);
@@ -151,7 +168,7 @@ export class RedisCacheStore implements CacheStore {
       if (raw === null) return undefined;
       return raw;
     } catch (error) {
-      this.log.error({ err: error, operation: "get" }, "cache get failed");
+      this.logRequestFailure(error, "get", "cache get failed");
       return undefined;
     }
   }
@@ -167,7 +184,7 @@ export class RedisCacheStore implements CacheStore {
       if (value === null) return undefined;
       return { value, etag: etag ?? undefined };
     } catch (error) {
-      this.log.error({ err: error, operation: "getWithEtag" }, "cache get failed");
+      this.logRequestFailure(error, "getWithEtag", "cache get failed");
       return undefined;
     }
   }
@@ -176,7 +193,7 @@ export class RedisCacheStore implements CacheStore {
     try {
       await this.runScript({ key, value });
     } catch (error) {
-      this.log.error({ err: error, operation: "set" }, "cache set failed");
+      this.logRequestFailure(error, "set", "cache set failed");
     }
   }
 
@@ -184,7 +201,7 @@ export class RedisCacheStore implements CacheStore {
     try {
       await this.runScript({ key, value, etag });
     } catch (error) {
-      this.log.error({ err: error, operation: "setWithEtag" }, "cache set failed");
+      this.logRequestFailure(error, "setWithEtag", "cache set failed");
     }
   }
 

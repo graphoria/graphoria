@@ -227,7 +227,10 @@ export const nextSteps = (answers: InitAnswers, installed: boolean) => {
         ]
       : []),
     ...(answers.redis
-      ? ["", "Redis serves the cache and the auth token store (REDIS_URL and CACHE_STORE in .env)."]
+      ? [
+          "",
+          "Redis caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.",
+        ]
       : []),
     ...(answers.dataTools
       ? [

@@ -22,18 +22,18 @@ restarting a server because its database is down does not bring the database bac
 
 **Readiness** checks, side by side and each bounded at 2 seconds:
 
-| `kind`              | `name`                  | Checked when                           | How                                                             |
-| ------------------- | ----------------------- | -------------------------------------- | --------------------------------------------------------------- |
-| `database`          | the database's `name`   | always, one check per enabled database | `SELECT 1` on its pool                                          |
-| `redis`             | —                       | `auth.enabled`, or `CACHE_STORE=redis` | `PING`                                                          |
-| `rabbitmq`, `kafka` | the queue config's name | always, one check per enabled queue    | The connection state its reconnecting manager keeps. No traffic |
+| `kind`              | `name`                  | Checked when                                                                                                            | How                                                             |
+| ------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `database`          | the database's `name`   | always, one check per enabled database                                                                                  | `SELECT 1` on its pool                                          |
+| `redis`             | the store's name        | one check per `redis` store a cached operation's chain, `AUTH_STORE` or `RATE_LIMIT_STORE` (while a limit is set) names | `PING`                                                          |
+| `rabbitmq`, `kafka` | the queue config's name | always, one check per enabled queue                                                                                     | The connection state its reconnecting manager keeps. No traffic |
 
 ```json
 {
   "status": "unavailable",
   "checks": [
     { "kind": "database", "name": "main", "ok": false },
-    { "kind": "redis", "ok": true },
+    { "kind": "redis", "name": "redis", "ok": true },
     { "kind": "rabbitmq", "name": "events", "ok": true }
   ]
 }
@@ -53,6 +53,9 @@ Readiness turns back to `200` on the first probe after the dependency answers ag
 - **Databases** open a fresh connection on the next statement. No restart is needed.
 - **Redis** clients reconnect on their own. That includes outages long enough to exhaust the Redis
   client's own retries, after which Graphoria keeps reconnecting with a backoff from 1 to 30 seconds.
+  Meanwhile a cache or rate-limit command fails at once rather than waiting for the reconnect, so
+  its fallback answers the request; a token-store command waits up to a second for the connection
+  before it fails closed (see [Redis](./DEPLOYMENT.md#redis)).
 - **Brokers** retry with the same backoff, capped at 30 seconds, so readiness can report a broker
   down for up to 30 seconds after it is back.
 
