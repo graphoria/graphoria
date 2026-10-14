@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { z } from "zod";
 
+import type { HandlerOperation } from "./operation";
+
 import { OperationZod } from "./operation";
 
 const query = "query { users { id } }";
@@ -43,5 +45,36 @@ describe("OperationZod input", () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.path).toEqual(["input"]);
+  });
+});
+
+describe("OperationZod cache", () => {
+  it("accepts a cache on a query operation", () => {
+    expect(OperationZod.safeParse({ query, cache: { ttl: 1_000 } }).success).toBe(true);
+  });
+
+  it("rejects a cache on a handler operation, whose response is never cached", () => {
+    const result = OperationZod.safeParse({ handler: async () => ({}), cache: { ttl: 1_000 } });
+
+    expect(result.success).toBe(false);
+    expect(result.error!.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["cache"],
+        message:
+          "Operation 'cache' applies to query operations only: a handler's response is never cached",
+      }),
+    );
+  });
+
+  // Type-checked too: the @ts-expect-error fails the build if a handler
+  // operation's type accepts a cache again, which only boot would reject.
+  it("types a cache on a handler operation as an error", () => {
+    const handlerOperation: HandlerOperation = {
+      handler: async () => ({}),
+      // @ts-expect-error a handler's response is never cached
+      cache: { ttl: 1_000 },
+    };
+
+    expect(OperationZod.safeParse(handlerOperation).success).toBe(false);
   });
 });

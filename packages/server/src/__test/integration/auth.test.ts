@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { TokenStrategy } from "../../authentication/types";
 import type { IntegrationContext, StartedServer } from "./harness";
 
+import { REDIS_URL } from "./config";
 import { integrationEnabled, startServer } from "./harness";
 
 /**
@@ -194,6 +195,25 @@ describe.skipIf(!integrationEnabled)("auth · redis", () => {
         });
       });
 
+      it("keeps a revocation in the Redis store AUTH_STORE names", async () => {
+        const { token, cookie } = await login();
+        const { getTokenService } = await import("../../singletons/authentication");
+        const { jti } = await getTokenService().verifyToken(token.access_token, {
+          audience: "access",
+        });
+
+        await gql(`mutation { auth_logout }`, undefined, { token: token.access_token, cookie });
+
+        const { closeRedisClient, createRedisClient } = await import("../../utils/redis");
+        const redis = createRedisClient(REDIS_URL);
+        try {
+          await redis.connect();
+          expect(await redis.hmget(jti, ["isRevoked"])).toEqual(["true"]);
+        } finally {
+          closeRedisClient(redis);
+        }
+      });
+
       it("refuses to refresh with a cookie revoked by logout", async () => {
         const { token, cookie } = await login();
 
@@ -302,6 +322,12 @@ describe.skipIf(!integrationEnabled)("auth · redis", () => {
       };
       return body.data.app_tasks[0]!;
     };
+
+    it("builds its cache from the Redis store the configuration declares", async () => {
+      const { RedisCacheStore, getCache } = await import("../../singletons/cache");
+
+      expect(getCache(OPERATION)).toBeInstanceOf(RedisCacheStore);
+    });
 
     it("serves the second read from Redis and drops it on invalidation", async () => {
       const { InvalidationHelper } = await import("../../singletons/cache");

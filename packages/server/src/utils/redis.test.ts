@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { RevivableRedisClient } from "./redis";
 
-import { closeRedisClient, keepRedisConnected } from "./redis";
+import { closeRedisClient, createRedisClient, keepRedisConnected } from "./redis";
 
 const createFakeClient = (outcomes: Array<"ok" | "fail">) => {
   const client: RevivableRedisClient & { connects: number } = {
@@ -117,6 +117,50 @@ describe("keepRedisConnected", () => {
     client.onclose!(new Error("Connection closed"));
 
     expect(timers.pending[0]!.unref).toBe(true);
+  });
+});
+
+describe("createRedisClient", () => {
+  // A port nothing listens on: bound once, then released.
+  const closedPort = () => {
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const { port } = listener;
+    listener.stop(true);
+    return port;
+  };
+
+  it("fails a command at once while the server is unreachable", async () => {
+    const client = createRedisClient(`redis://127.0.0.1:${closedPort()}`);
+    try {
+      const started = performance.now();
+      await expect(client.get("key")).rejects.toThrow();
+      expect(performance.now() - started).toBeLessThan(1000);
+    } finally {
+      closeRedisClient(client);
+    }
+  });
+
+  it("connects as soon as it is created, before any command", async () => {
+    let accepted = 0;
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          accepted++;
+        },
+        data() {},
+      },
+    });
+    const client = createRedisClient(`redis://127.0.0.1:${listener.port}`);
+    try {
+      for (let waited = 0; accepted === 0 && waited < 1000; waited += 10) await Bun.sleep(10);
+
+      expect(accepted).toBe(1);
+    } finally {
+      closeRedisClient(client);
+      listener.stop(true);
+    }
   });
 });
 

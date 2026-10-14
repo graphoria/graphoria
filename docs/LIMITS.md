@@ -186,7 +186,7 @@ and nobody else. `max: 0` on a role opts that role out.
 Four things to know before relying on it, all covered in full under
 [Rate limiting](./CONFIGURATION.md#rate-limiting):
 
-- **The store follows `CACHE_STORE`.** With `redis` every worker shares one bucket; with `memory`
+- **The store follows `RATE_LIMIT_STORE`.** Naming a Redis store, every worker shares one bucket; with `memory`
   each worker keeps its own, so **the effective limit in cluster mode is your ceiling times the
   worker count**. Redis is the correct configuration for cluster mode, and is never required.
 - **A Redis outage fails open**, with one warning per window. The alternative turns a cache blip into
@@ -284,7 +284,7 @@ RATE_LIMIT_ANONYMOUS_MAX=60
 MAX_QUERY_COST=100000
 ```
 
-Then, if you run in cluster mode, set `CACHE_STORE=redis` so the rate limit is one bucket rather than
+Then, if you run in cluster mode, point `RATE_LIMIT_STORE` at a Redis store so the rate limit is one bucket rather than
 one per worker.
 
 Raise rather than disable. Every one of these takes `0` to opt out, and `0` on any of them returns

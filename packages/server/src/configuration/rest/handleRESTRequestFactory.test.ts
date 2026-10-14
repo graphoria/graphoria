@@ -676,6 +676,45 @@ describe("handleRESTRequestFactory afterRequest (query operations)", () => {
     expect(second.status).toBe(304);
     expect(await second.text()).toBe("");
   });
+
+  it("serves a later store's hit with its etag and copies it into the store before it", async () => {
+    const { LruCacheStore, TieredCacheStore } = await import("../../singletons/cache");
+    let operatorCalls = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_tiered", {
+        query: "query { ping }",
+        rest: { path: "/q", method: "GET" },
+        cache: { ttl: 10_000, max: 10 },
+      }),
+      {
+        ...stubGqlWithData({ ping: true }),
+        operatorQuery: async () => {
+          operatorCalls++;
+          return { data: { ping: true } };
+        },
+      },
+    );
+
+    const first = new LruCacheStore({ max: 10 });
+    const second = new LruCacheStore({ max: 10 });
+    registerCache("op_tiered", new TieredCacheStore([first, second], ["first", "second"]));
+
+    // The miss writes both stores; emptying the first leaves the entry in the second only.
+    const miss = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(miss.headers.get("ETag")).not.toBe('"stored"');
+    const [key] = await second.keys();
+    await second.setWithEtag(key!, (await second.get(key!))!, '"stored"');
+    await first.clear();
+
+    const hit = await factory.handler(new URL("http://x/q"), "/q", "GET", fakeReq("GET"));
+    expect(hit.status).toBe(200);
+    expect(hit.headers.get("ETag")).toBe('"stored"');
+    expect(operatorCalls).toBe(1);
+
+    await Bun.sleep(0);
+    expect(await first.keys()).toHaveLength(1);
+  });
 });
 
 describe("handleRESTRequestFactory statement timeout", () => {

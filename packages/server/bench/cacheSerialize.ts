@@ -26,9 +26,14 @@ import { summarize } from "./stats";
 process.env.ADMIN_SECRET ??= "bench-admin-secret";
 process.env.JWT_SECRET ??= "bench-jwt-secret";
 
+// The test stack's Redis (docker-compose.test.yml); REDIS_URL overrides it.
+const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:56379";
+
 export const OPERATIONS = {
   hit: "cacheSerializeHit",
   hitLarge: "cacheSerializeHitLarge",
+  hitTiered: "cacheSerializeHitTiered",
+  promoteTiered: "cacheSerializePromoteTiered",
   miss: "cacheSerializeMiss",
   concurrent: "cacheSerializeConcurrent",
 } as const;
@@ -61,13 +66,15 @@ const LARGE_TEXT = JSON.stringify(LARGE_ENVELOPE);
 const fakeReq = { method: "GET" } as never;
 
 /**
- * The store each cached scenario runs against is the `CACHE_STORE` the env
- * singleton parsed; `store` only picks the suite. `main` sets the variable first.
+ * The store each cached scenario reads is the chain `main` sets, with `memory`
+ * in front for the two tiered ones; `store` only picks the suite, so listing a
+ * suite stays offline.
  */
 export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
   const { handleRESTRequestFactory } =
     await import("../src/configuration/rest/handleRESTRequestFactory");
-  const { getCache } = await import("../src/singletons/cache");
+  const { LruCacheStore, TieredCacheStore, getCache, getCaches, registerCache } =
+    await import("../src/singletons/cache");
 
   const cached = async (
     name: string,
@@ -76,6 +83,7 @@ export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
     expect: "hit" | "miss",
     ttl = 600_000,
     parallel = 1,
+    stores?: string[],
   ): Promise<Scenario> => {
     let executions = 0;
 
@@ -88,7 +96,7 @@ export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
               expect === "miss"
                 ? { path: "/q", method: "GET", queryParams: z.object({ i: z.string() }) }
                 : { path: "/q", method: "GET" },
-            cache: { ttl, max: 100 },
+            cache: { ttl, max: 100, ...(stores ? { stores } : {}) },
           },
         },
         remoteRESTApis: [],
@@ -136,6 +144,25 @@ export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
     };
   };
 
+  // A hit Redis serves and the chain copies into `memory`: the scenario empties
+  // its own `memory` store before every request. Offline, the store behind it is
+  // the in-process one, since `main` declared nothing.
+  const promoted = async (name: string, operation: string): Promise<Scenario> => {
+    const scenario = await cached(name, operation, LARGE, "hit");
+    const memory = new LruCacheStore({ max: 100 });
+    registerCache(
+      operation,
+      new TieredCacheStore([memory, getCache(operation)!], ["memory", "redis"]),
+    );
+    return {
+      ...scenario,
+      run: async () => {
+        await memory.clear();
+        return scenario.run();
+      },
+    };
+  };
+
   const dueMembers = (name: string, operation: string): Scenario => {
     let store: CacheStore | undefined;
     let request = 0;
@@ -144,7 +171,7 @@ export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
     // offline. TTL 100 ms rounds up to a 1 s expiry; the sleep lands past it.
     const buildStore = async (): Promise<CacheStore> => {
       const { RedisCacheStore } = await import("../src/singletons/cache/redisCacheStore");
-      const built = new RedisCacheStore(`${operation}-${crypto.randomUUID()}`, 100);
+      const built = new RedisCacheStore(`${operation}-${crypto.randomUUID()}`, REDIS_URL, 100);
       await built.clear();
       for (let index = 0; index < 100; index += 1) {
         await built.set(`key-${index}`, `value-${index}`);
@@ -166,6 +193,13 @@ export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
   if (store === "redis") {
     return [
       await cached("redis-hit", OPERATIONS.hitLarge, LARGE, "hit"),
+      // Memory in front of the stores `main` declared: Redis on a real run, none
+      // when the unit test lists the suite offline.
+      await cached("tiered-hit", OPERATIONS.hitTiered, LARGE, "hit", 600_000, 1, [
+        "memory",
+        ...Object.keys(getCaches().stores),
+      ]),
+      await promoted("tiered-promote", OPERATIONS.promoteTiered),
       await cached("redis-miss", OPERATIONS.miss, LARGE, "miss"),
       dueMembers("redis-due-members", "cacheSerializeDueMembers"),
       await cached("redis-concurrent", OPERATIONS.concurrent, LARGE, "miss", 600_000, 50),
@@ -258,8 +292,23 @@ const main = async () => {
   );
   logger("benchmark").level = "debug";
 
-  process.env.CACHE_STORE = store;
-  if (store === "redis") process.env.REDIS_URL ??= "redis://127.0.0.1:56379";
+  // The cached scenarios read one store, the in-process one or Redis alone; the
+  // two tiered ones put the in-process store in front of it.
+  const { setCaches } = await import("../src/singletons/cache");
+  setCaches(
+    store === "redis"
+      ? { default: ["redis"], stores: { redis: { type: "redis", url: REDIS_URL } } }
+      : null,
+  );
+  if (store === "redis") {
+    // A fresh client fails a command until its connection is up, so connect the
+    // whole pool the scenarios draw from before the first one runs.
+    const { CACHE_REDIS_POOL_SIZE, getCacheRedisClient } =
+      await import("../src/singletons/cache/redisClient");
+    await Promise.all(
+      Array.from({ length: CACHE_REDIS_POOL_SIZE }, () => getCacheRedisClient(REDIS_URL).connect()),
+    );
+  }
 
   const results: Result[] = [];
   try {

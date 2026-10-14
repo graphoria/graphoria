@@ -17,6 +17,7 @@ const noopRepository: TokenRepository = {
   revoke: async () => {},
   isRevoked: async () => false,
   checkRefresh: async () => ({ isUsed: false, isRevoked: false }),
+  ping: async () => true,
   close: () => {},
 };
 
@@ -39,7 +40,6 @@ const buildEnv = (sessionExpiresIn = "1h") =>
     },
     ai: { secrets: [AI_SECRET], mcp: { secrets: [] } },
     jwt: { secrets: ["console-jwt-secret"], expiresIn: "5m", rtExpiresIn: "7d" },
-    cache: { store: "memory", redisUrl: "redis://127.0.0.1:1" },
   }) as unknown as Env;
 
 const request = (cookie = "", body?: unknown) => {

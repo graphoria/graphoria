@@ -161,6 +161,8 @@ subscribers: {
 }
 ```
 
+It clears the operation's Redis stores for every process and its in-process copies where the message arrives; see [invalidation across processes](./CONFIGURATION.md#caches).
+
 A subscriber handles one message at a time on both brokers: RabbitMQ sends it the next message once the handler has finished with the last (a prefetch of one), and kafkajs runs one message at a time per consumer. A handler slower than the messages arrive leaves the rest waiting on the broker.
 
 If the handler returns or resolves without throwing, Graphoria acks the message. If it throws, RabbitMQ puts the message back on the queue once; when the redelivered message fails again, it is dropped, or dead-lettered if a policy gives the queue a dead-letter exchange. A failed message therefore reaches the handler, and the GraphQL subscription, twice: keep handlers idempotent. On Kafka, a handler that throws is logged and counted, and the offset is still committed: the message is not redelivered.

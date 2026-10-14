@@ -44,7 +44,6 @@ const fakeEnv = {
   },
   ai: { secrets: [], mcp: { secrets: [] } },
   jwt: { secrets: ["test-jwt-secret"], expiresIn: "5m", rtExpiresIn: "7d" },
-  cache: { store: "memory", redisUrl: "redis://127.0.0.1:1" },
   rateLimit: { max: 0, anonymousMax: 0, windowMs: 60_000, trustProxy: false },
 };
 
@@ -72,6 +71,7 @@ beforeAll(async () => {
     revoke: async () => {},
     isRevoked: async () => false,
     checkRefresh: async () => ({ isUsed: false, isRevoked: false }),
+    ping: async () => true,
     close: () => {},
   });
 

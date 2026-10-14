@@ -65,6 +65,7 @@ export const PROJECT_FILES = [
   "package.json",
   "tsconfig.json",
   "graphoria.ts",
+  "repository.ts",
   "index.ts",
   ".env",
   ".gitignore",
@@ -202,20 +203,19 @@ const SQLITE_CONNECTION = `      connection: { filename: env("DB_FILE") },
 
 const anonymousGrant = (values: ProjectValues) => {
   const schema = seedSchema(values);
-  const permission =
-    values.rabbitmq || values.ai
-      ? `{
-        tables: ["${schema}_authors", "${schema}_books"],
-${values.rabbitmq ? '        queues: ["events"],\n' : ""}${values.rabbitmq && values.frontend ? '        operations: ["addBook"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      }`
-      : `{ tables: ["${schema}_authors", "${schema}_books"] }`;
+  const operations = [...(values.redis ? ['"books"'] : []), '"addBook"'];
   return `  // The frontend has no login, so anyone can read these two tables without a
   // secret, in the app and in GraphiQL alike. Tables are read-only in the
   // generated API.
-${values.rabbitmq ? "  // Anyone can also add books through addBook and use the events queue.\n" : ""}${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provider.\n" : ""}  auth: {
+${values.redis ? "  // Anyone can also read the cached GET /rest/books.\n" : ""}  // Anyone can also add books through addBook${values.rabbitmq ? " and use the events queue" : ""}.
+${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provider.\n" : ""}  auth: {
     enabled: false,
     database: "main",
     permissions: {
-      anonymous: ${permission},
+      anonymous: {
+        tables: ["${schema}_authors", "${schema}_books"],
+${values.rabbitmq ? '        queues: ["events"],\n' : ""}        operations: [${operations.join(", ")}],
+${values.ai ? "        ai: true,\n" : ""}      },
     },
   },
 `;
@@ -255,52 +255,153 @@ const QUEUE_CONFIG = `  queues: [
   ],
 `;
 
-// Insert statements per engine, interpolated into the addBook handler below.
-const ADD_BOOK_INSERT: Record<DatabaseType, string> = {
-  pg: `        await databases.main.unsafe(
-          \`INSERT INTO books (title, published_year, author_id) VALUES ($1, $2, $3)\`,
-          [input.title, input.publishedYear, input.authorId],
-        );`,
-  mysql: `        await databases.main.unsafe(
-          \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)\`,
-          [input.title, input.publishedYear, input.authorId],
-        );`,
-  mssql: `        await databases.main
-          .request()
-          .input("title", input.title)
-          .input("publishedYear", input.publishedYear)
-          .input("authorId", input.authorId)
-          .query(
-            \`INSERT INTO books (title, published_year, author_id) VALUES (@title, @publishedYear, @authorId)\`,
-          );`,
-  sqlite: `        databases.main
-          .query(
-            \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)\`,
-          )
-          .run(input.title, input.publishedYear, input.authorId);`,
+// Per engine: the name the factory gives the connection, and `add`, which
+// inserts a book and answers the stored row, id included.
+const REPOSITORY_ADD: Record<DatabaseType, { connection: string; add: string }> = {
+  pg: {
+    connection: "sql",
+    add: `    add: async (book: NewBook): Promise<Book> => {
+      const [row] = await sql\`
+        INSERT INTO books (title, published_year, author_id)
+        VALUES (\${book.title}, \${book.publishedYear}, \${book.authorId})
+        RETURNING id, title, published_year AS "publishedYear", author_id AS "authorId"
+      \`;
+      return row;
+    },`,
+  },
+  mysql: {
+    connection: "sql",
+    add: `    // MySQL has no RETURNING. LAST_INSERT_ID() answers for the connection that
+    // ran the insert, so the transaction keeps both statements on one.
+    add: (book: NewBook): Promise<Book> =>
+      sql.begin(async (tx): Promise<Book> => {
+        await tx\`
+          INSERT INTO books (title, published_year, author_id)
+          VALUES (\${book.title}, \${book.publishedYear}, \${book.authorId})
+        \`;
+        const [row] = await tx\`
+          SELECT id, title, published_year AS publishedYear, author_id AS authorId
+          FROM books WHERE id = LAST_INSERT_ID()
+        \`;
+        return row;
+      }),`,
+  },
+  mssql: {
+    connection: "pool",
+    add: `    add: async (book: NewBook): Promise<Book> => {
+      const { recordset } = await pool
+        .request()
+        .input("title", book.title)
+        .input("publishedYear", book.publishedYear)
+        .input("authorId", book.authorId)
+        .query<Book>(\`
+          INSERT INTO books (title, published_year, author_id)
+          OUTPUT INSERTED.id, INSERTED.title, INSERTED.published_year AS publishedYear,
+            INSERTED.author_id AS authorId
+          VALUES (@title, @publishedYear, @authorId)
+        \`);
+      return recordset[0]!;
+    },`,
+  },
+  sqlite: {
+    connection: "db",
+    add: `    add: async (book: NewBook): Promise<Book> =>
+      db
+        .query<Book, [string, number, number]>(
+          \`INSERT INTO books (title, published_year, author_id) VALUES (?, ?, ?)
+           RETURNING id, title, published_year AS publishedYear, author_id AS authorId\`,
+        )
+        .get(book.title, book.publishedYear, book.authorId)!,`,
+  },
 };
 
-const ADD_BOOK_OPERATION = (values: ProjectValues) => `  operations: {
-    // The frontend posts a new book here; after the insert, the handler publishes
-    // events_bookAdded, the queued event the frontend's subscription watches.
-    addBook: operation({
-      input: addBookInput,
-      rest: {
-        path: "/add-book",
-        method: "POST",
-        body: addBookInput,
-      },
-      handler: async ({ databases, queues }, input) => {
-${ADD_BOOK_INSERT[values.database]}
+const repository = ({ database }: ProjectValues) => {
+  const { connection, add } = REPOSITORY_ADD[database];
+  return `import type { CustomRepositoryFactory } from "@graphoria/server/config";
+
+// What the add-book form sends, and the row the database stores for it.
+export type NewBook = { title: string; publishedYear: number; authorId: number };
+export type Book = NewBook & { id: number };
+
+// The typed data access behind the operations in graphoria.ts, built once on
+// the "main" database's connection. \`satisfies\` types that connection for the
+// engine.
+export const createRepository = ((${connection}) => ({
+  books: {
+${add}
+  },
+})) satisfies CustomRepositoryFactory<"${database}">;
+
+// What operation.typed<Repository>() hands a handler as \`repository\`, keyed by
+// database name.
+export type Repository = { main: ReturnType<typeof createRepository> };
+`;
+};
+
+// Who calls addBook, and what its handler does besides the insert.
+const addBookComment = ({ frontend, rabbitmq }: ProjectValues) => {
+  if (frontend && rabbitmq) {
+    return `    // The frontend posts a new book here. The handler stores it through the
+    // repository (repository.ts), publishes events_bookAdded, the queued event the
+    // frontend's subscription watches, and answers the stored row.
+`;
+  }
+  if (frontend) {
+    return `    // The frontend posts a new book here. The handler stores it through the
+    // repository (repository.ts) and answers the stored row.
+`;
+  }
+  if (rabbitmq) {
+    return `    // POST /rest/add-book, called with the admin secret. The handler stores the
+    // book through the repository (repository.ts), publishes events_bookAdded,
+    // the queued event events_onBookAdded consumes, and answers the stored row.
+`;
+  }
+  return `    // POST /rest/add-book, called with the admin secret. The handler stores the
+    // book through the repository (repository.ts) and answers the stored row.
+`;
+};
+
+const ADD_BOOK_HANDLER = `      handler: ({ repository }, input) => repository.main.books.add(input),
+`;
+
+const ADD_BOOK_HANDLER_QUEUED = `      handler: async ({ repository, queues }, input) => {
+        const added = await repository.main.books.add(input);
         queues.sendMessage("events_bookAdded", {
           title: input.title,
           publishedYear: input.publishedYear,
           authorId: input.authorId,
         });
-        return input;
+        return added;
       },
-    }),
-  },
+`;
+
+const ADD_BOOK_OPERATION = (
+  values: ProjectValues,
+) => `${addBookComment(values)}    addBook: operation.typed<Repository>()({
+      input: addBookInput,
+      output: book,
+      rest: {
+        path: "/add-book",
+        method: "POST",
+        body: addBookInput,
+      },
+${values.rabbitmq ? ADD_BOOK_HANDLER_QUEUED : ADD_BOOK_HANDLER}    }),
+`;
+
+const BOOKS_OPERATION = (
+  values: ProjectValues,
+) => `    // GET /rest/books answers from this process first, then from Redis, and runs
+    // the query again once the entry is 10 seconds old.${values.frontend ? "" : " Call it with the admin secret."}
+    books: {
+      query: "query { ${seedSchema(values)}_books(orderBy: { published_year: DESC }) { id title published_year } }",
+      rest: { path: "/books", method: "GET" },
+      cache: { ttl: 10_000, max: 100 },
+    },
+`;
+
+const operationsConfig = (values: ProjectValues) => `  operations: {
+${values.redis ? BOOKS_OPERATION(values) : ""}${ADD_BOOK_OPERATION(values)}  },
 `;
 
 const AI_CONFIG = `  ai: {
@@ -308,11 +409,26 @@ const AI_CONFIG = `  ai: {
   },
 `;
 
-const graphoriaConfig = (values: ProjectValues) => `${
-  values.frontend && values.rabbitmq
-    ? 'import { operation, z } from "@graphoria/server/config";\n'
-    : ""
-}import type { ConfigurationFn } from "@graphoria/server/config";
+const CACHES_CONFIG = `  // A cached operation answers from this process first, then from Redis.
+  // AUTH_STORE and RATE_LIMIT_STORE in .env point at the same store.
+  caches: {
+    default: ["memory", "redis"],
+    stores: {
+      redis: { type: "redis", url: env("REDIS_URL") },
+    },
+  },
+`;
+
+const REPOSITORY_ENTRY = `      // The typed data access in repository.ts, which addBook calls.
+      repository: createRepository,
+`;
+
+const graphoriaConfig = (
+  values: ProjectValues,
+) => `import { operation, z } from "@graphoria/server/config";
+import type { ConfigurationFn } from "@graphoria/server/config";
+
+import { createRepository, type Repository } from "./repository";
 
 // Bun loads these from .env; in Docker Compose they come from the environment.
 const env = (name: string) => {
@@ -321,18 +437,17 @@ const env = (name: string) => {
   return value;
 };
 
-${
-  values.frontend && values.rabbitmq
-    ? `// The body of POST /rest/add-book and of the addBook GraphQL mutation.
+// The body of POST /rest/add-book and of the addBook GraphQL mutation.
 const addBookInput = z.object({
   title: z.string().min(1),
   publishedYear: z.number().int(),
   authorId: z.number().int(),
 });
 
-`
-    : ""
-}export default (() => ({
+// What addBook answers: the row the database stored, id included.
+const book = addBookInput.extend({ id: z.number().int() });
+
+export default (() => ({
   name: ${JSON.stringify(values.name)},
   version: "1.0.0",
   databases: [
@@ -340,9 +455,9 @@ const addBookInput = z.object({
       name: "main",
       type: "${values.database}",
       enabled: true,
-${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}    },
+${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${REPOSITORY_ENTRY}    },
   ],
-${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.frontend && values.rabbitmq ? ADD_BOOK_OPERATION(values) : ""}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -410,7 +525,8 @@ OLLAMA_HOST=http://localhost:11434
 const redisEnv = (values: ProjectValues) =>
   values.redis
     ? `REDIS_URL=redis://localhost:6379
-CACHE_STORE=redis
+AUTH_STORE=redis
+RATE_LIMIT_STORE=redis
 `
     : "";
 
@@ -972,13 +1088,32 @@ if (import.meta.hot) {
 `;
 };
 
+// With RabbitMQ the list refreshes when the queued book-added event arrives.
+const BOOK_ADDED_SUBSCRIPTION = `
+// A message is an event, not a state: its arrival just re-fetches the list.
+const BookAddedSubscription = graphql(\`
+  subscription OnBookAdded {
+    events_onBookAdded {
+      id
+      message
+    }
+  }
+\`);
+`;
+
+const BOOK_ADDED_REFRESH = `  const [subscription] = useSubscription({ query: BookAddedSubscription });
+
+  useEffect(() => {
+    if (subscription.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscription.data, reexecute]);
+`;
+
 const appTsx = (values: ProjectValues) => {
   const schema = seedSchema(values);
 
-  if (values.rabbitmq) {
-    return `import { useEffect, useState } from "react";
+  return `import { ${values.rabbitmq ? "useEffect, " : ""}useState } from "react";
 import type { FormEvent } from "react";
-import { useQuery, useSubscription } from "urql";
+import { useQuery${values.rabbitmq ? ", useSubscription" : ""} } from "urql";
 
 import { graphql } from "./graphql.ts";
 
@@ -995,25 +1130,10 @@ const AuthorsQuery = graphql(\`
     }
   }
 \`);
-
-// A message is an event, not a state: its arrival just re-fetches the list.
-const BookAddedSubscription = graphql(\`
-  subscription OnBookAdded {
-    events_onBookAdded {
-      id
-      message
-    }
-  }
-\`);
-
+${values.rabbitmq ? BOOK_ADDED_SUBSCRIPTION : ""}
 export function App() {
   const [{ data, fetching, error }, reexecute] = useQuery({ query: AuthorsQuery });
-  const [subscription] = useSubscription({ query: BookAddedSubscription });
-
-  useEffect(() => {
-    if (subscription.data) reexecute({ requestPolicy: "network-only" });
-  }, [subscription.data, reexecute]);
-
+${values.rabbitmq ? BOOK_ADDED_REFRESH : ""}
   const [title, setTitle] = useState("");
   const [year, setYear] = useState("");
   const [authorId, setAuthorId] = useState("");
@@ -1026,8 +1146,11 @@ export function App() {
       body: JSON.stringify({ title, publishedYear: Number(year), authorId: Number(authorId) }),
     });
     if (!response.ok) return;
-    // The list refreshes when the queued book-added event arrives.
-    setTitle("");
+${
+  values.rabbitmq
+    ? "    // The list refreshes when the queued book-added event arrives.\n"
+    : '    // No queued event announces the book, so fetch the list again.\n    reexecute({ requestPolicy: "network-only" });\n'
+}    setTitle("");
     setYear("");
   };
 
@@ -1093,55 +1216,6 @@ export function App() {
   );
 }
 `;
-  }
-
-  return `import { useQuery } from "urql";
-
-import { graphql } from "./graphql.ts";
-
-const AuthorsQuery = graphql(\`
-  query Authors {
-    ${schema}_authors(orderBy: [{ id: ASC }]) {
-      id
-      name
-      ${schema}_books(orderBy: [{ published_year: ASC }]) {
-        id
-        title
-        published_year
-      }
-    }
-  }
-\`);
-
-export function App() {
-  const [{ data, fetching, error }] = useQuery({ query: AuthorsQuery });
-
-  return (
-    <main className="mx-auto max-w-2xl p-8 font-sans">
-      <h1 className="mb-6 text-3xl font-bold">Authors</h1>
-      {fetching && <p className="text-gray-500">Loading…</p>}
-      {error && <p className="text-red-600">{error.message}</p>}
-      <ul className="space-y-6">
-        {data?.${schema}_authors.map((author) => (
-          <li key={author.id}>
-            <h2 className="text-xl font-semibold">{author.name}</h2>
-            <ul className="mt-2 list-disc pl-6">
-              {author.${schema}_books?.map(
-                (book) =>
-                  book && (
-                    <li key={book.id}>
-                      {book.title} <span className="text-gray-500">({book.published_year})</span>
-                    </li>
-                  ),
-              )}
-            </ul>
-          </li>
-        ))}
-      </ul>
-    </main>
-  );
-}
-`;
 };
 
 const GRAPHQL_TS = `import { initGraphQLTada } from "gql.tada";
@@ -1168,6 +1242,7 @@ export const renderProject = (
   "package.json": packageJson(values, versions),
   "tsconfig.json": values.frontend ? TSCONFIG_FRONTEND : TSCONFIG,
   "graphoria.ts": graphoriaConfig(values),
+  "repository.ts": repository(values),
   "index.ts": values.frontend ? INDEX_FRONTEND : INDEX,
   ".env": dotEnv(values),
   ".gitignore": gitignore(values),

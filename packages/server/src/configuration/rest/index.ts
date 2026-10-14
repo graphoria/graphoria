@@ -1,7 +1,6 @@
 import { match } from "path-to-regexp";
 import z from "zod";
 
-import type { LRUCache } from "lru-cache";
 import type { MatchFunction } from "path-to-regexp";
 import type { AnalysisResult } from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
@@ -9,10 +8,7 @@ import type { Auth, Operations } from "../../types/configuration";
 import type { HandleGraphQLRequest } from "../gql/handleGraphQLRequestFactory";
 
 import { analyzeQuery } from "../../analyzeQuery";
-import { LruCacheStore, RedisCacheStore, registerCache } from "../../singletons/cache";
-import { env } from "../../singletons/env";
-
-type LruOptions = LRUCache.Options<string, string, unknown>;
+import { buildCacheStore, registerCache } from "../../singletons/cache";
 
 export type AuthOperation = "login" | "logout" | "refresh" | "me";
 
@@ -68,32 +64,7 @@ export const buildApiRoutes = (
     const testPath = match(routeConfig.rest!.path);
 
     if (routeConfig.cache) {
-      if (env.cache.store === "redis") {
-        registerCache(routeKey, new RedisCacheStore(routeKey, routeConfig.cache.ttl));
-      } else {
-        const cacheOptions: Partial<LruOptions> = {};
-
-        if (routeConfig.cache.max) cacheOptions.max = routeConfig.cache.max;
-        if (routeConfig.cache.maxSize) {
-          cacheOptions.maxSize = routeConfig.cache.maxSize;
-          // lru-cache needs every entry's size once maxSize is set. An entry is
-          // the response's JSON text, so its size is the text's length.
-          cacheOptions.sizeCalculation = (value: string) => value.length;
-        }
-        if (routeConfig.cache.ttl) cacheOptions.ttl = routeConfig.cache.ttl;
-        if (routeConfig.cache.allowStale !== undefined)
-          cacheOptions.allowStale = routeConfig.cache.allowStale;
-        if (routeConfig.cache.updateAgeOnGet !== undefined)
-          cacheOptions.updateAgeOnGet = routeConfig.cache.updateAgeOnGet;
-        if (routeConfig.cache.updateAgeOnHas !== undefined)
-          cacheOptions.updateAgeOnHas = routeConfig.cache.updateAgeOnHas;
-        if (routeConfig.cache.ttlAutopurge !== undefined)
-          cacheOptions.ttlAutopurge = routeConfig.cache.ttlAutopurge;
-
-        // LRUCache.Options requires at least one of max/maxSize/ttl. Caller is
-        // responsible for setting one; the cast bridges the structural gap.
-        registerCache(routeKey, new LruCacheStore(cacheOptions as LruOptions));
-      }
+      registerCache(routeKey, buildCacheStore(routeKey, routeConfig.cache));
     }
 
     operationsEnhanced[routeKey] = {
