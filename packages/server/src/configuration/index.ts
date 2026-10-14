@@ -24,6 +24,7 @@ import { collectCrossReferenceErrors } from "./crossReferences";
 import { getSchema, getSchemas } from "./getSchemas";
 import { generateOpenAPI } from "./rest/generateOpenAPI";
 import { resolveAISurfaces } from "../singletons/ai";
+import { setCaches } from "../singletons/cache";
 
 export const loadConfiguration = async (config: string): Promise<Configuration> => {
   try {
@@ -59,6 +60,9 @@ export const loadConfiguration = async (config: string): Promise<Configuration> 
 export const analyzeConfiguration = async (configuration: Configuration, options: Env) => {
   const log = logger("configuration");
   log.info("starting configuration analysis");
+
+  // buildApiRoutes reads it for every cached operation, once per role.
+  setCaches(configuration.caches);
 
   // Use pre-calculated enabledDatabases from configuration parsing
   const enabledDatabases = configuration.enabledDatabases;

@@ -8,7 +8,7 @@ import type { TokenGenerationParameters, TokenOptions, TokenResponse, TokenServi
 
 import { parseDurationToSeconds, toPasetoDuration } from "./duration";
 import { matchesAnySecret } from "./secrets";
-import { createTokenRepository } from "./tokenRepository";
+import { createMemoryTokenRepository } from "./tokenRepository";
 import { logger } from "../logging";
 
 // Audience constants to distinguish token types
@@ -42,7 +42,7 @@ export const createPASETOService = (
   mode: PasetoMode,
   tokenRepositoryOverride?: TokenRepository,
 ): TokenService => {
-  const tokenRepository = tokenRepositoryOverride ?? createTokenRepository(env.cache.redisUrl);
+  const tokenRepository = tokenRepositoryOverride ?? createMemoryTokenRepository();
 
   // In local mode the first key encrypts and every key decrypts. In public
   // mode the secret key signs and every public key verifies. Either way a

@@ -1,19 +1,33 @@
 import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 
-import type { RedisCacheStore as RedisCacheStoreType } from "../../singletons/cache";
+import type {
+  CacheStore as CacheStoreType,
+  RedisCacheStore as RedisCacheStoreType,
+} from "../../singletons/cache";
 import type { getCacheRedisClient } from "../../singletons/cache/redisClient";
 
+import { REDIS_URL } from "./config";
 import { integrationEnabled } from "./harness";
 
 describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
   let RedisCacheStore: typeof RedisCacheStoreType;
+  let buildCacheStore: typeof import("../../singletons/cache").buildCacheStore;
+  let setCaches: typeof import("../../singletons/cache").setCaches;
   let client: ReturnType<typeof getCacheRedisClient>;
   const created: RedisCacheStoreType[] = [];
 
-  // `singletons/cache` parses the env at load; the harness import sets it first.
+  // `singletons/cache` loads the logger, which reads LOG_LEVEL once, at load; the
+  // harness import sets it first.
   beforeAll(async () => {
-    ({ RedisCacheStore } = await import("../../singletons/cache"));
-    client = (await import("../../singletons/cache/redisClient")).getCacheRedisClient();
+    ({ RedisCacheStore, buildCacheStore, setCaches } = await import("../../singletons/cache"));
+    const { CACHE_REDIS_POOL_SIZE, getCacheRedisClient } =
+      await import("../../singletons/cache/redisClient");
+    // A fresh client fails a command until its connection is up, so connect the
+    // whole pool the stores below draw from before the first test runs.
+    await Promise.all(
+      Array.from({ length: CACHE_REDIS_POOL_SIZE }, () => getCacheRedisClient(REDIS_URL).connect()),
+    );
+    client = getCacheRedisClient(REDIS_URL);
   });
 
   afterEach(async () => {
@@ -22,7 +36,7 @@ describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
 
   const store = (name: string, ttlMs?: number, pruneIntervalMs?: number) => {
     const operation = `redisCacheStore-${name}-${crypto.randomUUID()}`;
-    const cache = new RedisCacheStore(operation, ttlMs, pruneIntervalMs);
+    const cache = new RedisCacheStore(operation, REDIS_URL, ttlMs, pruneIntervalMs);
     created.push(cache);
     const prefix = `cache:${operation}:`;
 
@@ -63,6 +77,101 @@ describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
 
     expect(await cache.get('{"k":1}')).toBe('{"data":1}');
     expect(await cache.keys()).toEqual(['{"k":1}']);
+  });
+
+  it("expires an entry after the store's ttl when the operation sets none", async () => {
+    setCaches({
+      default: ["redis"],
+      stores: { redis: { type: "redis", url: REDIS_URL, ttl: 5_000 } },
+    });
+    const operation = `redisCacheStore-store-ttl-${crypto.randomUUID()}`;
+    const cache = buildCacheStore(operation, {});
+
+    try {
+      await cache.set("k", "v");
+      const ttl = Number(
+        await client.send("PTTL", [`cache:${operation}:${Bun.hash("k").toString(36)}`]),
+      );
+
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(5_000);
+    } finally {
+      await cache.clear();
+      setCaches(null);
+    }
+  });
+
+  it("expires an entry after the operation's ttl when the store sets one too", async () => {
+    setCaches({
+      default: ["redis"],
+      stores: { redis: { type: "redis", url: REDIS_URL, ttl: 60_000 } },
+    });
+    const operation = `redisCacheStore-operation-ttl-${crypto.randomUUID()}`;
+    const cache = buildCacheStore(operation, { ttl: 5_000 });
+
+    try {
+      await cache.set("k", "v");
+      const ttl = Number(
+        await client.send("PTTL", [`cache:${operation}:${Bun.hash("k").toString(36)}`]),
+      );
+
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(5_000);
+    } finally {
+      await cache.clear();
+      setCaches(null);
+    }
+  });
+
+  describe("a memory store in front of Redis", () => {
+    const chain = (operation: string) => {
+      setCaches({
+        default: ["memory", "redis"],
+        stores: { redis: { type: "redis", url: REDIS_URL } },
+      });
+      const tiered = buildCacheStore(operation, { max: 10 });
+      const [memory]: CacheStoreType[] = Reflect.get(tiered, "stores");
+      return { tiered, memory: memory! };
+    };
+    const redisKey = (operation: string, key: string) =>
+      `cache:${operation}:${Bun.hash(key).toString(36)}`;
+
+    afterEach(() => setCaches(null));
+
+    it("serves from memory when the Redis entry is gone", async () => {
+      const operation = `redisCacheStore-memory-first-${crypto.randomUUID()}`;
+      const { tiered } = chain(operation);
+
+      try {
+        await tiered.set("k", "v");
+        expect(await client.del(redisKey(operation, "k"))).toBe(1);
+
+        expect(await tiered.get("k")).toBe("v");
+
+        // A Redis entry that differs shows memory is read first, not just consulted on a miss.
+        await new RedisCacheStore(operation, REDIS_URL).set("k", "redis");
+        expect(await tiered.get("k")).toBe("v");
+      } finally {
+        await tiered.clear();
+      }
+    });
+
+    it("serves a Redis-only entry and copies it up into memory", async () => {
+      const operation = `redisCacheStore-promote-${crypto.randomUUID()}`;
+      const { tiered, memory } = chain(operation);
+      const redisOnly = new RedisCacheStore(operation, REDIS_URL);
+
+      try {
+        await redisOnly.set("k", "v");
+        expect(await memory.get("k")).toBeUndefined();
+
+        expect(await tiered.get("k")).toBe("v");
+        await Bun.sleep(0);
+        expect(await memory.get("k")).toBe("v");
+      } finally {
+        await tiered.clear();
+      }
+    });
   });
 
   it("stops tracking an expired entry on the next write", async () => {

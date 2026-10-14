@@ -58,8 +58,10 @@ export const OperationCacheConfigZod = z.strictObject({
   ttl: z.number().int().positive().optional(),
   allowStale: z.boolean().optional(),
   updateAgeOnGet: z.boolean().optional(),
-  updateAgeOnHas: z.boolean().optional().default(false),
-  ttlAutopurge: z.boolean().optional().default(true),
+  updateAgeOnHas: z.boolean().optional(),
+  ttlAutopurge: z.boolean().optional(),
+  /** Stores this operation reads, fastest first, in place of `caches.default` */
+  stores: z.array(z.string()).min(1).optional(),
 });
 
 // ============================================================================
@@ -130,7 +132,12 @@ export const OperationZod = z
     {
       message: "Operation must have either 'query' or 'handler', but not both",
     },
-  );
+  )
+  .refine((operation) => operation.handler === undefined || operation.cache === undefined, {
+    message:
+      "Operation 'cache' applies to query operations only: a handler's response is never cached",
+    path: ["cache"],
+  });
 
 export type Operation = z.input<typeof OperationZod>;
 
@@ -282,6 +289,8 @@ export type HandlerOperation<
 > = BaseOperation<TInput, TOutput, TInitData> & {
   /** Query is not allowed with handler */
   query?: never;
+  /** Cache is not allowed with handler: a handler's response is never cached */
+  cache?: never;
   /** Custom handler function */
   handler: OperationHandler<TInput, TOutput, TRepository>;
 };

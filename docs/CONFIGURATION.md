@@ -57,6 +57,11 @@ type ConfigurationInput = {
   databases: AnyDatabaseConfig[];
   auth?: AuthConfig;
   operations?: Record<string, TypedOperation<any, any, any, any>>;
+  /** REST response cache: named stores and the chain cached operations read. See Caches. */
+  caches?: {
+    default?: string[]; // default ["memory"]
+    stores?: Record<string, { type: "redis"; url: string; ttl?: number }>;
+  };
   queues?: QueueConfig[];
   cron?: CronJobConfig[];
   /** External GraphQL schemas to merge in. See REMOTE_SCHEMAS.md. */
@@ -83,6 +88,12 @@ starting rather than letting it come up misconfigured.
 
 **Shape**, before anything connects: an unknown key is rejected, so a typo in a
 key name fails immediately instead of being dropped.
+
+The [`caches`](#caches) checks run in this pass too: every store a chain names is `memory` or
+declared, and appears once; a chain holds one store per Redis URL; the memory-only fields need
+`memory` in the chain, which then needs `max`, `maxSize` or `ttl`; and only query operations take
+`cache`. The store names the env sets are checked here as well: `AUTH_STORE`, which auth on requires,
+and `RATE_LIMIT_STORE` must be `memory` or a store `caches.stores` declares.
 
 **References**, once the databases have been introspected: every name the
 configuration points at is resolved against what exists, and any that resolve to
@@ -586,6 +597,8 @@ type AuthConfig = {
 };
 ```
 
+With auth on, the server also needs `AUTH_STORE`, which names the [token store](./AUTHENTICATION.md#token-store) (`memory`, or a Redis store declared under `caches.stores`).
+
 ### RolePermission
 
 ```typescript
@@ -610,12 +623,13 @@ type TablePermission = {
 
 Off by default. Nothing is limited until you set a ceiling, and no warning fires at boot to say so — read this section as the warning.
 
-| Variable                   | Type      | Default | Notes                                                       |
-| -------------------------- | --------- | ------- | ----------------------------------------------------------- |
-| `RATE_LIMIT_MAX`           | `number`  | `0`     | Requests per window for an authenticated caller. `0` is off |
-| `RATE_LIMIT_ANONYMOUS_MAX` | `number`  | `0`     | Same, for the anonymous role. `0` is off                    |
-| `RATE_LIMIT_WINDOW_MS`     | `number`  | `60000` | Window length in milliseconds                               |
-| `RATE_LIMIT_TRUST_PROXY`   | `boolean` | `false` | Read the client address from `X-Forwarded-For`              |
+| Variable                   | Type      | Default  | Notes                                                                                 |
+| -------------------------- | --------- | -------- | ------------------------------------------------------------------------------------- |
+| `RATE_LIMIT_MAX`           | `number`  | `0`      | Requests per window for an authenticated caller. `0` is off                           |
+| `RATE_LIMIT_ANONYMOUS_MAX` | `number`  | `0`      | Same, for the anonymous role. `0` is off                                              |
+| `RATE_LIMIT_WINDOW_MS`     | `number`  | `60000`  | Window length in milliseconds                                                         |
+| `RATE_LIMIT_TRUST_PROXY`   | `boolean` | `false`  | Read the client address from `X-Forwarded-For`                                        |
+| `RATE_LIMIT_STORE`         | `string`  | `memory` | `memory`, or a `redis` store from [`caches.stores`](#caches), shared by every process |
 
 A caller gets one token bucket across every endpoint — `/graphql` (queries and the websocket upgrade alike), `/rest/*` (the agent's `/rest/ai` included), `/mcp` and the console login — because what exhausts a server is total request volume, not volume on one route. An idle bucket refills to `max`, so a caller may burst `max` and then sustain `max` per window. Over budget is `429` with `Retry-After` in seconds.
 
@@ -636,7 +650,7 @@ Resolution runs role config → `RATE_LIMIT_ANONYMOUS_MAX` for the anonymous rol
 
 Four things to know before you rely on it:
 
-- **The store follows `CACHE_STORE`.** With `redis` the bucket lives in Redis and every worker shares it; with `memory` each worker keeps its own, so **the effective limit in cluster mode is your ceiling times the worker count**. Redis is the correct configuration for cluster mode. It is never required.
+- **The store follows `RATE_LIMIT_STORE`.** Name a Redis store from [`caches.stores`](#caches) and the bucket lives in Redis, shared by every worker; with `memory`, the default, each worker keeps its own, so **the effective limit in cluster mode is your ceiling times the worker count**. Redis is the correct configuration for cluster mode. It is never required.
 - **A Redis outage fails open.** Requests are served unlimited while the store is unreachable, and one warning per window says so. The alternative turns a cache blip into an outage.
 - **`RATE_LIMIT_TRUST_PROXY` is only as trustworthy as the proxy.** Turn it on and the client address comes from a header the caller can set; on a directly-exposed server that makes the limit decorative. Leave it off unless a proxy you control overwrites `X-Forwarded-For`.
 - **It does nothing about a distributed flood.** Per-caller buckets slow one host, not a botnet. That belongs at the edge.
@@ -786,9 +800,10 @@ type OperationGraphQLConfig = {
 
 ```typescript
 type OperationCacheConfig = {
+  stores?: string[]; // stores read in order, in place of caches.default
   max?: number;
   maxSize?: number; // total length of the cached JSON responses, in UTF-16 code units
-  ttl?: number; // milliseconds
+  ttl?: number; // milliseconds, in every store of the chain
   allowStale?: boolean;
   updateAgeOnGet?: boolean;
   updateAgeOnHas?: boolean;
@@ -796,8 +811,58 @@ type OperationCacheConfig = {
 };
 ```
 
-These fields configure the in-process store (`CACHE_STORE=memory`, the default). A response
-longer than `maxSize` is served but not cached. With `CACHE_STORE=redis`, only `ttl` applies.
+Only query operations take `cache`: on a handler operation it is a type error, and fails at boot.
+`ttl` applies to every store in the operation's chain. The other fields shape the in-process
+`memory` store, so they are rejected when the chain leaves `memory` out, and a chain with `memory`
+needs `max`, `maxSize` or `ttl`. A response longer than `maxSize` is served but not kept in
+`memory`. [`caches`](#caches) sets which stores the chain holds.
+
+---
+
+## Caches
+
+`caches` declares the stores REST operation responses are kept in, and the chain every cached
+operation reads unless it lists its own `stores`.
+
+```typescript
+caches: {
+  // Read in order: this process's copy first, then Redis. Default: ["memory"].
+  default: ["memory", "shared"],
+  stores: {
+    shared: { type: "redis", url: process.env.REDIS_URL! },
+    // For AUTH_STORE: a Redis that does not evict, apart from the cache's.
+    tokens: { type: "redis", url: process.env.TOKENS_REDIS_URL! },
+  },
+},
+```
+
+- **`memory`** is built in: an LRU in each process, shaped by the operation's own
+  [cache fields](#cache-configuration). It cannot be declared.
+- **A `redis` store** takes a `url` and an optional `ttl` in milliseconds, used by the operations
+  that set none. It also bounds those operations' `memory` copies in the same chain (the smallest
+  such `ttl`, when several stores set one). Every process pointed at it shares its entries.
+- **Reads** walk the chain in order. The first hit is served and copied into the stores before it,
+  never into the ones after it. **Writes** reach every store and finish before the response. A
+  store that fails is logged and skipped; it never fails a request.
+- **`AUTH_STORE`** and **`RATE_LIMIT_STORE`** name a store too, or `memory`. See
+  [the token store](./AUTHENTICATION.md#token-store) and [Rate limiting](#rate-limiting).
+
+Boot fails when a chain names a store that is neither `memory` nor declared, lists a store twice,
+or holds two stores on one Redis URL, since their entries would share keys. A store nothing reads
+logs a warning.
+
+**Staleness.** A copy into a faster store starts that store's TTL afresh. An entry can therefore be
+served as old as the sum of the chain's TTLs: `ttl: 60_000` with `memory` in front of Redis can
+serve data up to about two minutes old. A copy can also land just after an invalidation: a read
+that took the old entry from a later store a moment before puts it back into the faster one, where
+it stays until its `ttl` runs out, or until evicted when the operation sets no `ttl`. With `memory`
+first the window is microseconds; between two Redis stores it is a round trip.
+
+**Invalidation across processes.** [`cache.invalidate`](./QUEUES.md) clears the Redis stores for
+every process, but a process's `memory` copies only where the message arrives. A subscriber with
+no `queue` (RabbitMQ) or `group` (Kafka) gets its own per process, so each process clears its copies.
+With a named one, only the process that takes the message does, and the others serve their copy
+until its `ttl` runs out.
 
 ---
 

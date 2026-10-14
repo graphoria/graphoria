@@ -1,8 +1,10 @@
 import { z } from "zod";
 
 import { TokenStrategyZod } from "../../config";
+import { CachesZod, MEMORY_STORE } from "../../config/types/cache";
 import { AIZod } from "./ai";
 import { AuthZod } from "./auth";
+import { cacheIssues } from "./cache";
 import { TypedCronJobZod } from "./cron";
 import { DatabaseConnectionZod } from "./db";
 import { OperationsZod } from "./operation";
@@ -32,6 +34,8 @@ export const ConfigurationZod = z
     cron: z.array(TypedCronJobZod).optional().default([]),
     /** Operations - unified handlers for REST + GraphQL */
     operations: OperationsZod.optional().default({}),
+    /** REST response cache: the named stores and the chain cached operations read by default */
+    caches: CachesZod.optional().default(() => ({ default: [MEMORY_STORE], stores: {} })),
     /** Authentication configuration */
     auth: AuthZod,
     /** Remote GraphQL schemas to merge into the API */
@@ -52,6 +56,9 @@ export const ConfigurationZod = z
       path: ["auth", "database"],
     },
   )
+  .superRefine((data, ctx) => {
+    for (const issue of cacheIssues(data)) ctx.addIssue({ code: "custom", ...issue });
+  })
   .transform((data) => ({
     ...data,
     // Pre-calculate enabled databases during parsing

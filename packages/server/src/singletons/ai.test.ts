@@ -226,6 +226,9 @@ describe("AI surfaces boot — package discovery", () => {
   const bootOptions = (mcpEnabled: boolean | undefined) =>
     ({
       dbConnectRetryMs: 0,
+      // The config declares no store, so an inherited one would refuse the boot.
+      authStore: "memory",
+      rateLimit: { ...env.rateLimit, store: "memory" },
       ai: { ...env.ai, enabled: undefined, mcp: { ...env.ai.mcp, enabled: mcpEnabled } },
       configuration: {
         name: "ai-boot-test",

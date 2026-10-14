@@ -437,14 +437,30 @@ bun:sqlite runs a statement on the event loop and exposes no way to interrupt it
 
 Console session revocation is held in the process that served the logout. In cluster mode a
 logged-out cookie remains valid on other workers until it expires on its own, which is why
-`CONSOLE_SESSION_EXPIRES_IN` defaults to one hour. **Deliberate** — backing revocation with the
-Redis JTI store would make a dead cache take the console down.
+`CONSOLE_SESSION_EXPIRES_IN` defaults to one hour. **Deliberate** — backing revocation with a
+Redis token store would make a dead cache take the console down.
 
 ### The in-memory rate limiter does not span workers
 
-With `CACHE_STORE=redis` the limiter is shared and cluster-correct. Otherwise each worker keeps its
+With `RATE_LIMIT_STORE` naming a Redis store the limiter is shared and cluster-correct. Otherwise each worker keeps its
 own buckets, so the effective limit is the configured one multiplied by the worker count.
-**Deliberate**; set `CACHE_STORE=redis` in cluster mode.
+**Deliberate**; set `RATE_LIMIT_STORE` in cluster mode.
+
+### `AUTH_STORE=memory` keeps revocations in one process
+
+With `AUTH_STORE=memory`, a revocation and a refresh token's used flag live in the process that
+recorded them. Another worker or replica accepts the revoked token, and a stolen refresh token once
+more, until it expires (`JWT_RT_EXPIRES_IN`, default `7d`); a restart forgets every record.
+**Deliberate**, for one process in development. Boot refuses auth without `AUTH_STORE`, so the
+choice is always explicit.
+
+### With auth off and no `AUTH_STORE`, a revocation recorded elsewhere does not reach this server
+
+A server with auth off still verifies bearer tokens signed with its key. Without `AUTH_STORE`, the
+revocation check reads an empty store in the process, so a token that another deployment sharing
+the key revoked keeps verifying here until it expires. **Deliberate**: with auth off this server
+issues and revokes nothing itself, so it requires no token store. Point `AUTH_STORE` at the store
+that deployment uses wherever its revocations must hold here.
 
 ### Two deployments sharing one Redis can serve each other's rows
 

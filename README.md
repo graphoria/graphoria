@@ -170,7 +170,7 @@ Want to influence the roadmap? [Open an issue](https://github.com/graphoria/grap
 
 - [Bun](https://bun.sh) **1.3.4** or newer
 - A database — PostgreSQL, MySQL or SQL Server running, or nothing at all with SQLite, which Graphoria opens as a file. The examples use PostgreSQL on `localhost:5432`.
-- [Redis](https://redis.io) (or Valkey) — only required if you enable authentication. The default URL is `redis://localhost:6379`.
+- Optional: [Redis](https://redis.io) (or Valkey), declared as a store under `caches.stores`, for a cache, token store or rate limits shared by every process.
 
 Don't have Postgres/Redis handy? The [`examples/`](./examples) folder ships a `docker-compose.yml` that starts Postgres, Redis, and RabbitMQ with credentials matching the examples below:
 
@@ -198,6 +198,8 @@ Secrets are read from the environment, not passed as options. Bun auto-loads a `
 # .env
 ADMIN_SECRET=dev-admin-change-me
 JWT_SECRET=dev-secret-change-me
+# Required once auth is on (the config below enables it): memory, or a Redis store from caches.stores
+AUTH_STORE=memory
 ```
 
 See [`.env.example`](./.env.example) for every supported variable.
@@ -399,19 +401,19 @@ All paths are configurable via environment variables. Auth: `Authorization: Bear
 
 The variables you'll most likely touch for a first run. See [`.env.example`](./.env.example) for the full list.
 
-| Variable        | Default                           | Description                                                                                                                                                                               |
-| --------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ADMIN_SECRET`  | _(required)_                      | Master secret; sent in the admin header it bypasses RBAC. No default — the server won't boot without it. Comma-separated list to rotate.                                                  |
-| `JWT_SECRET`    | _(required with auth or console)_ | HMAC secret for signing tokens under the default `jwt` strategy. Comma-separated list to rotate: first signs, all verify. Unset with auth and the console off: bearer tokens are ignored. |
-| `PORT`          | `3000`                            | HTTP port the server listens on.                                                                                                                                                          |
-| `CACHE_STORE`   | `memory`                          | `memory` or `redis`. Use `redis` (and `REDIS_URL`) when auth is enabled.                                                                                                                  |
-| `REDIS_URL`     | `redis://localhost:6379`          | Redis/Valkey URL — required when authentication is enabled.                                                                                                                               |
-| `AUTH_STRATEGY` | `jwt`                             | `jwt`, `paseto_local`, or `paseto_public`.                                                                                                                                                |
+| Variable           | Default                           | Description                                                                                                                                                                               |
+| ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_SECRET`     | _(required)_                      | Master secret; sent in the admin header it bypasses RBAC. No default — the server won't boot without it. Comma-separated list to rotate.                                                  |
+| `JWT_SECRET`       | _(required with auth or console)_ | HMAC secret for signing tokens under the default `jwt` strategy. Comma-separated list to rotate: first signs, all verify. Unset with auth and the console off: bearer tokens are ignored. |
+| `PORT`             | `3000`                            | HTTP port the server listens on.                                                                                                                                                          |
+| `AUTH_STORE`       | —                                 | Required with auth on, optional with auth off: `memory`, or a `redis` store declared under `caches.stores` in `graphoria.ts`.                                                             |
+| `RATE_LIMIT_STORE` | `memory`                          | `memory`, or a `redis` store from `caches.stores` to share rate limits across processes.                                                                                                  |
+| `AUTH_STRATEGY`    | `jwt`                             | `jwt`, `paseto_local`, or `paseto_public`.                                                                                                                                                |
 
 ## Troubleshooting
 
 - **Server exits immediately on boot** — `ADMIN_SECRET` is unset. Add it to your `.env`.
-- **Auth requests fail / token errors** — Redis isn't reachable. Start it (`docker compose -f examples/docker-compose.yml up -d redis`) and check `REDIS_URL`.
+- **Auth requests fail / token errors** — the Redis store `AUTH_STORE` names isn't reachable. Start it (`docker compose -f examples/docker-compose.yml up -d redis`) and check its `url` under `caches.stores`.
 - **`Cannot connect to database`** — confirm the database is running and the `connection` block in `graphoria.ts` matches its host/port/credentials.
 
 ## Production Checklist
@@ -420,11 +422,11 @@ Before going to production:
 
 - [ ] Set a strong `ADMIN_SECRET` — it bypasses all RBAC.
 - [ ] Rotate `JWT_SECRET` (or the PASETO keys) — never use the dev default. Each accepts a comma-separated list so a rotation needs no cut-over; see [Rotating secrets](./docs/AUTHENTICATION.md#rotating-secrets).
-- [ ] Put Redis behind authentication — set a password and use `redis://user:pass@host:port` in `REDIS_URL`.
+- [ ] Put Redis behind authentication — set a password and use `redis://user:pass@host:port` as each Redis store's `url`.
 - [ ] Restrict CORS if you need to — every response allows any origin (`*`) and no variable narrows it. Replace the headers at your proxy, or set `CORS_ENABLED=false` when the frontend is served from the API's origin; see [CORS](./docs/DEPLOYMENT.md#cors).
 - [ ] Set `RATE_LIMIT_MAX` and `RATE_LIMIT_ANONYMOUS_MAX` — rate limiting ships **off**, and nothing warns you at boot.
 - [ ] Set `MAX_QUERY_COST` — the query cost budget also ships **off** with no boot warning. `100000` is the recommended starting value.
-- [ ] Set `CACHE_STORE=redis` if you run in cluster mode — with the memory store each worker keeps its own rate-limit bucket.
+- [ ] Point `AUTH_STORE` and `RATE_LIMIT_STORE` at a Redis store if you run more than one process — with `memory` each worker keeps its own revocations and rate-limit bucket.
 - [ ] Use a reverse proxy (nginx, Caddy) for TLS termination — see [Deployment](./docs/DEPLOYMENT.md#reverse-proxy-and-tls).
 - [ ] Pin your Graphoria version — `0.1.0`, not `^0.1.0` — until v1.0.
 

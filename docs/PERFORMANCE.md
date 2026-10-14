@@ -55,6 +55,11 @@ The cache key is built from the request path, method, variables, and the
 session's subject and role — so two users never share an entry, and neither do
 two roles.
 
+An operation reads the stores of its [cache chain](./CONFIGURATION.md#caches) in order. With
+`memory` in front of Redis, repeats are served from the process — under 2 µs per hit in
+`bench/cacheSerialize.ts`, against about 33 µs from Redis — and a new or restarted worker starts
+from Redis instead of the database. Every store holds a full copy of each response.
+
 **Known gap:** the key carries no deployment namespace. Two Graphoria
 deployments pointed at the same Redis instance, serving the same route paths,
 will read each other's entries. Give each deployment its own Redis database or

@@ -4,6 +4,7 @@ import { generateKeys } from "paseto-ts/v4";
 import type { TokenStrategy } from "./types";
 
 import { createTokenService } from ".";
+import { createMemoryTokenRepository } from "./tokenRepository";
 import { EnvZod } from "../types/env";
 import { logger } from "../logging";
 
@@ -231,4 +232,30 @@ describe("createTokenService when nothing signs tokens", () => {
       service.close();
     }
   });
+});
+
+describe("createTokenService token store", () => {
+  it.each(["jwt", "paseto_local", "paseto_public"] as const)(
+    "uses the token repository it is given under %s",
+    async (strategy) => {
+      const env = EnvZod.parse({
+        ADMIN_SECRET: adminSecret,
+        JWT_SECRET: "test-secret",
+        PASETO_LOCAL_KEY: localKey,
+        PASETO_SECRET_KEY: secretKey,
+        PASETO_PUBLIC_KEY: publicKey,
+      });
+      const revoked: string[] = [];
+      const repository = {
+        ...createMemoryTokenRepository(),
+        revoke: async (jti: string) => {
+          revoked.push(jti);
+        },
+      };
+
+      await createTokenService(env, strategy, true, repository).revoke("jti-1");
+
+      expect(revoked).toEqual(["jti-1"]);
+    },
+  );
 });
