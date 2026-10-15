@@ -93,7 +93,7 @@
     "pino": "^10.4.0",
     "pino-pretty": "^13.2.0",
     "sql-formatter": "15.9.0",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/mssql": "12.3.0"
