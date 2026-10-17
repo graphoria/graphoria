@@ -117,4 +117,18 @@ describe("SUPERADMIN_ROLE", () => {
 
     expect(await engine.execute(QUERY)).toEqual({ data: ROWS });
   });
+
+  // A file in a directory that does not exist fails to open at once, so only a
+  // check that runs before the connect can answer.
+  it.each(["createHandlers", "createGraphQLEngine"] as const)(
+    "is refused by %s when it is also ANONYMOUS_ROLE, before any database connects",
+    async (boot) => {
+      const index = await import("../index");
+      const options = await bootOptions("guest", {}, join(dir, "missing", "app.db"));
+
+      await expect(index[boot]({ ...options, anonymousRole: "guest" })).rejects.toThrow(
+        'SUPERADMIN_ROLE and ANONYMOUS_ROLE are both "guest"',
+      );
+    },
+  );
 });

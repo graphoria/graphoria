@@ -181,6 +181,12 @@ const bootAnalyzedConfiguration = async (
     throw new Error("Configuration is required to create the GraphQL server");
   }
 
+  if (env.superadmin.role === env.anonymousRole) {
+    throw new Error(
+      `SUPERADMIN_ROLE and ANONYMOUS_ROLE are both "${env.anonymousRole}": every caller without a credential would read as the full-access role`,
+    );
+  }
+
   // Load configuration if a path was given, otherwise validate the inline object
   const projectConfiguration: Configuration = isString(env.configuration)
     ? ConfigurationZod.parse(await loadConfiguration(env.configuration))
