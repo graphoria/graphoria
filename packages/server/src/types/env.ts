@@ -181,7 +181,7 @@ export const EnvZod = z
         endpoint: env.AI_MCP_ENDPOINT,
         requireAdminSecret: env.AI_MCP_REQUIRE_ADMIN_SECRET,
         secrets: env.AI_MCP_SECRET,
-        secretRole: env.AI_MCP_SECRET_ROLE ?? env.ANONYMOUS_ROLE,
+        secretRole: env.AI_MCP_SECRET_ROLE,
         maxQueryDepth: env.AI_MCP_MAX_QUERY_DEPTH,
         disabledTools: env.AI_MCP_DISABLED_TOOLS
           ? env.AI_MCP_DISABLED_TOOLS.split(",")
