@@ -1,6 +1,6 @@
 ## What changed
 
-<!-- What this PR does, in a couple of sentences. Link the issue or the plan task if there is one. -->
+<!-- What this PR does, in a couple of sentences. Link the issue if there is one. -->
 
 ## Why
 
