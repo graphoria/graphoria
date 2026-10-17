@@ -98,6 +98,8 @@ export const analyzeConfiguration = async (configuration: Configuration, options
   // A disabled queue neither connects nor serves fields; permissions may still name it.
   const enabledQueues = configuration.queues.filter((queue) => queue.enabled);
 
+  const superadminRole = options.superadmin.role;
+
   const sourcesByPermission = sourcesForEachRole(
     tables,
     storedProcedures,
@@ -105,7 +107,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     operationsWithRestEndpoints,
     {
       [options.anonymousRole]: {
-        tables: [],
+        tables: {},
         storedProcedures: [],
         queues: [],
         operations: [],
@@ -114,7 +116,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
         ai: false,
       },
       ...(configuration.auth.permissions ?? {}),
-      superadmin: {
+      [superadminRole]: {
         tables: "ALL",
         storedProcedures: "ALL",
         queues: "ALL",
@@ -128,14 +130,14 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     resolvedRemoteREST,
   );
 
-  const { superadmin, ...others } = sourcesByPermission;
+  const { [superadminRole]: superadmin, ...others } = sourcesByPermission;
 
   const aiSurfaces = resolveAISurfaces(options, configuration.ai);
 
   const superadminSchema = getSchema(superadmin, configuration.auth, null, aiSurfaces.ask);
 
   const schemas: Record<string, GetSchemaReturn> = {
-    superadmin: superadminSchema,
+    [superadminRole]: superadminSchema,
     ...getSchemas(others, configuration.auth, superadminSchema.handlers.gql, aiSurfaces.ask),
   };
 
@@ -173,7 +175,7 @@ export const analyzeConfiguration = async (configuration: Configuration, options
   return {
     databases: enabledDatabases,
     roles: schemas,
-    openapi: openapiFor("superadmin"),
+    openapi: openapiFor(superadminRole),
     openapiFor,
     queues: enabledQueues,
     auth: configuration.auth,

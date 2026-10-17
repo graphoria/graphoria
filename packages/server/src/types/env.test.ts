@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { scopedCredentialRole } from "../authentication/capabilities";
 import { EnvZod } from "./env";
 
 describe("EnvZod AUTH_STRATEGY", () => {
@@ -408,14 +409,25 @@ describe("EnvZod AI_SECRET_ROLE / AI_MCP_SECRET_ROLE", () => {
 
   it("reads the agent credential as the superadmin role and the MCP one as anonymous", () => {
     const env = EnvZod.parse(baseEnv);
-    expect(env.ai.secretRole).toBe("superadmin");
-    expect(env.ai.mcp.secretRole).toBe("anonymous");
+    expect(scopedCredentialRole(env, "ai")).toBe("superadmin");
+    expect(scopedCredentialRole(env, "mcp")).toBe("anonymous");
   });
 
   it("follows SUPERADMIN_ROLE and ANONYMOUS_ROLE when they are renamed", () => {
     const env = EnvZod.parse({ ...baseEnv, SUPERADMIN_ROLE: "root", ANONYMOUS_ROLE: "guest" });
-    expect(env.ai.secretRole).toBe("root");
-    expect(env.ai.mcp.secretRole).toBe("guest");
+    expect(scopedCredentialRole(env, "ai")).toBe("root");
+    expect(scopedCredentialRole(env, "mcp")).toBe("guest");
+  });
+
+  // createHandlers and createGraphQLEngine lay their options over the parsed env.
+  it("reads the agent credential as a superadmin role set after the parse", () => {
+    const env = { ...EnvZod.parse(baseEnv), superadmin: { role: "root" } };
+    expect(scopedCredentialRole(env, "ai")).toBe("root");
+  });
+
+  it("reads the MCP credential as an anonymous role set after the parse", () => {
+    const env = { ...EnvZod.parse(baseEnv), anonymousRole: "guest" };
+    expect(scopedCredentialRole(env, "mcp")).toBe("guest");
   });
 
   it("takes the roles it is given", () => {
