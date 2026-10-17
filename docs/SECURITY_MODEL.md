@@ -55,7 +55,9 @@ because it is a quickstart. Narrow it before exposing a port.
 credential that bypasses role-based access control entirely. Presenting it in the
 `x-admin-secret` header resolves the request to the superadmin role, whose schema is compiled from
 every table, stored procedure, operation, queue and remote source the configuration knows about,
-with no row filter and no column restriction.
+with no row filter and no column restriction. `SUPERADMIN_ROLE` names that role (default
+`superadmin`); a `permissions` entry under the same name is replaced by it, so the configuration
+cannot narrow it.
 
 It is also accepted, at the same strength, by:
 
