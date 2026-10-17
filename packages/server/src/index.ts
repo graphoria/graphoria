@@ -28,7 +28,7 @@ import {
   resolveAISurfaces,
 } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
-import { getCronJobs, instantiateCronJobs, stopCronJobs } from "./singletons/cron";
+import { instantiateCronJobs, stopCronJobs } from "./singletons/cron";
 import {
   databasesConnections,
   disconnectDatabases,
@@ -829,7 +829,7 @@ export async function createHandlers(options?: Partial<Env>) {
     timeoutMs: optionsWithDefaults.shutdown.timeoutMs,
     stopIntake: [
       { name: "websockets", run: () => closeWebsockets(1001, "server shutting down") },
-      { name: "cron", run: () => getCronJobs()?.stopAll() },
+      { name: "cron", run: stopCronJobs },
     ],
     // Queues close after the drain: a drained mutation can still publish.
     teardown: teardownSteps(() => getTokenService().close()),

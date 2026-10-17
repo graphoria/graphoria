@@ -59,7 +59,7 @@ handleSignals(Bun.serve(serverHandlers));
 
 `shutdown(server)` stops the server and releases everything the handlers opened, in this order:
 
-1. The listener closes, so new connections are refused. Every open websocket gets a `1001` close ("server shutting down"), and cron schedules no new run.
+1. The listener closes, so new connections are refused. Every open websocket gets a `1001` close ("server shutting down"), and cron schedules no new run; a later boot in the same process schedules its jobs again.
 2. Requests in flight get up to `SHUTDOWN_TIMEOUT_MS` (default `8000`) to finish. Past that, the connections left are reset.
 3. The queue connections close, then both Redis clients, then the database pools, and last the spans still queued are flushed. This teardown gets one second.
 

@@ -15,8 +15,8 @@ process.env.LOG_LEVEL ??= "silent";
 
 /**
  * A boot that fails once it has connected closes what it opened, with the
- * shutdown's own steps, and rejects with the error it failed on, so the
- * process can boot again.
+ * shutdown's own steps, and rejects with the error it failed on. After either,
+ * the process can boot again.
  */
 
 let dir: string;
@@ -205,5 +205,21 @@ describe("a boot that fails once it has connected", () => {
     }
     expect(getCronJobs()).toBeNull();
     expect(Object.keys(databasesConnections)).toEqual([]);
+  });
+});
+
+describe("a boot after a shutdown", () => {
+  it("schedules its own cron jobs", async () => {
+    const { createHandlers } = await import("./index");
+    const { getCronJobs } = await import("./singletons/cron");
+    const { shutdown } = await createHandlers(await bootOptions());
+
+    // No server listens, so there is nothing to drain.
+    await shutdown({ stop: async () => {}, pendingRequests: 0 });
+    expect(getCronJobs()).toBeNull();
+
+    await createHandlers(await bootOptions());
+
+    expect(getCronJobs()?.getAllJobs()).toHaveLength(1);
   });
 });
