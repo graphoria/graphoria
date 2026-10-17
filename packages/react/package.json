@@ -28,6 +28,7 @@
     "!src/**/*.test.tsx",
     "!src/__test/**",
     "dist",
+    "!dist/**/*.tsbuildinfo",
     "README.md",
     "LICENSE",
     "NOTICE"
