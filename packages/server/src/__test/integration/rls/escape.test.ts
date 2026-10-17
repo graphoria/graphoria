@@ -8,7 +8,7 @@ import { integrationEnabled } from "../harness";
 import { startRlsServer } from "./fixture";
 
 /**
- * Task 3.2 of the hardening plan: every assertion here is the same claim — a
+ * Escape attempts: every assertion here is the same claim — a
  * caller in one tenant never observes a row belonging to another, by any route.
  *
  * The fixture's `ana` is Acme user 1 and owns tasks 1 and 6. Umbrella's tasks

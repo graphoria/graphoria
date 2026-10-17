@@ -16,7 +16,7 @@ import { integrationEnabled } from "../harness";
 import { flushRedis, startRlsServer } from "./fixture";
 
 /**
- * Task 3.4 of the hardening plan, in two halves.
+ * Schema isolation, in two halves.
  *
  * The first asks whether the per-role schemas are real: a role that may not
  * read a table or a column must not have it in its compiled schema at all —
