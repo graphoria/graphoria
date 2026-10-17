@@ -311,7 +311,7 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
   if (aiSurfaces.agent) await startAgent(optionsWithDefaults, projectConfiguration.ai);
 
   return {
-    execute: buildExecute(analyzedConfiguration.roles, env.superadmin.role),
+    execute: buildExecute(analyzedConfiguration.roles, optionsWithDefaults.superadmin.role),
     roles: Object.keys(analyzedConfiguration.roles),
     close: async () => {
       await disconnectDatabases();

@@ -110,4 +110,11 @@ describe("SUPERADMIN_ROLE", () => {
       errors: [{ message: 'Cannot query field "main_items" on type "Query".' }],
     });
   });
+
+  it.each(["superadmin", "root"])("runs the engine's execute as %s by default", async (role) => {
+    const { createGraphQLEngine } = await import("../index");
+    const engine = await createGraphQLEngine(await bootOptions(role));
+
+    expect(await engine.execute(QUERY)).toEqual({ data: ROWS });
+  });
 });
