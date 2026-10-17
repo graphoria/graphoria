@@ -35,6 +35,6 @@
     "@graphoria/server": "0.6.0"
   },
   "engines": {
-    "bun": ">=1.3.4"
+    "bun": ">=1.4.2"
   }
 }

@@ -167,7 +167,7 @@ Want to influence the roadmap? [Open an issue](https://github.com/graphoria/grap
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) **1.3.4** or newer
+- [Bun](https://bun.sh) **1.4.2** or newer
 - A database — PostgreSQL, MySQL or SQL Server running, or nothing at all with SQLite, which Graphoria opens as a file. The examples use PostgreSQL on `localhost:5432`.
 - Optional: [Redis](https://redis.io) (or Valkey), declared as a store under `caches.stores`, for a cache, token store or rate limits shared by every process.
 
