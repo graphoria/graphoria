@@ -19,3 +19,9 @@ export const getCronJobs = () => cronJobs;
 export const setCronJobs = (jobs: StartCronJobsReturn | null) => {
   cronJobs = jobs;
 };
+
+/** Stops every job and forgets them, so the next `instantiateCronJobs` schedules its own. */
+export const stopCronJobs = () => {
+  cronJobs?.stopAll();
+  cronJobs = null;
+};

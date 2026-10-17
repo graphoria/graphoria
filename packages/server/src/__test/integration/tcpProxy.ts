@@ -4,6 +4,10 @@ import type { Server, Socket } from "node:net";
 
 export type TcpProxy = {
   port: number;
+  /** Connections relayed since the proxy was created. */
+  readonly accepted: number;
+  /** Relayed connections still open. */
+  readonly open: number;
   /** Refuses new connections and cuts every open one, as a stopped server would. */
   down: () => Promise<void>;
   /** Listens again on the same port. */
@@ -18,6 +22,8 @@ export type TcpProxy = {
  */
 export const createTcpProxy = async (target: { host: string; port: number }): Promise<TcpProxy> => {
   const sockets = new Set<Socket>();
+  const clients = new Set<Socket>();
+  let accepted = 0;
   let server: Server | null = null;
   let port = 0;
 
@@ -31,6 +37,9 @@ export const createTcpProxy = async (target: { host: string; port: number }): Pr
     new Promise<Server>((resolve, reject) => {
       const next = createServer((client) => {
         const upstream = createConnection(target.port, target.host);
+        accepted++;
+        clients.add(client);
+        client.on("close", () => clients.delete(client));
         track(client);
         track(upstream);
         client.on("close", () => upstream.destroy());
@@ -69,6 +78,12 @@ export const createTcpProxy = async (target: { host: string; port: number }): Pr
   return {
     get port() {
       return port;
+    },
+    get accepted() {
+      return accepted;
+    },
+    get open() {
+      return clients.size;
     },
     down,
     up,

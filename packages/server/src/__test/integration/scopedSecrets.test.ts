@@ -374,32 +374,26 @@ describe.skipIf(!integrationEnabled)("scoped credentials read as their configure
 describe.skipIf(!integrationEnabled)("boot with a scoped credential naming no role", () => {
   it("refuses to start on a ghost AI_SECRET_ROLE, and sets up no agent", async () => {
     const { env } = await import("../../singletons/env");
-    const { disconnectDatabases } = await import("../../singletons/databases");
     const { getAgent, resetAI } = await import("../../singletons/ai");
     // The servers booted above set the agent up; only this boot's own is in question.
     resetAI();
 
-    try {
-      await expect(
-        startServer({
-          engine: ENGINE,
-          skipSeed: true,
-          config: { ai: { enabled: true } } as never,
-          env: {
-            ai: {
-              ...env.ai,
-              enabled: true,
-              restEnabled: true,
-              secrets: ["ghost-agent-secret"],
-              secretRole: "ghost",
-            },
+    await expect(
+      startServer({
+        engine: ENGINE,
+        skipSeed: true,
+        config: { ai: { enabled: true } } as never,
+        env: {
+          ai: {
+            ...env.ai,
+            enabled: true,
+            restEnabled: true,
+            secrets: ["ghost-agent-secret"],
+            secretRole: "ghost",
           },
-        }),
-      ).rejects.toThrow('AI_SECRET_ROLE is "ghost", which is not a configured role');
-      expect(() => getAgent()).toThrow("AI agent is not enabled");
-    } finally {
-      // The boot connected the pool before it failed, and nothing else closes it.
-      await disconnectDatabases();
-    }
+        },
+      }),
+    ).rejects.toThrow('AI_SECRET_ROLE is "ghost", which is not a configured role');
+    expect(() => getAgent()).toThrow("AI agent is not enabled");
   });
 });
