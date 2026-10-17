@@ -223,6 +223,10 @@ const bootAnalyzedConfiguration = async (
   // The stores the env names need only the configuration, so a misnamed one
   // refuses boot before anything connects. The rate-limit store is resolved even
   // with no limit set, so the typo fails now rather than once a limit is configured.
+  const rateLimitRedisUrl =
+    rateLimitStore === undefined || rateLimitStore === MEMORY_STORE
+      ? undefined
+      : redisUrlOf(projectConfiguration.caches, "RATE_LIMIT_STORE", rateLimitStore);
   const tokenRepository = createConfiguredTokenRepository(
     Boolean(projectConfiguration.auth?.enabled),
     env.authStore,
@@ -231,11 +235,6 @@ const bootAnalyzedConfiguration = async (
   );
 
   try {
-    const rateLimitRedisUrl =
-      rateLimitStore === undefined || rateLimitStore === MEMORY_STORE
-        ? undefined
-        : redisUrlOf(projectConfiguration.caches, "RATE_LIMIT_STORE", rateLimitStore);
-
     // Initialize databases (using pre-calculated enabledDatabases from parsing)
     await instantiateDatabasesConnections(
       projectConfiguration.enabledDatabases,
