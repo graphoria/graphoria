@@ -14,10 +14,10 @@ what this policy is for.
 Graphoria is pre-1.0. Only the most recent published release receives security fixes; there are no
 backports to earlier `0.x` releases.
 
-| Version             | Supported          |
-| ------------------- | ------------------ |
-| Latest `0.1.x`      | :white_check_mark: |
-| Any earlier `0.1.x` | :x:                |
+| Version                  | Supported          |
+| ------------------------ | ------------------ |
+| Latest published release | :white_check_mark: |
+| Anything older           | :x:                |
 
 Once 1.0 ships, this table will be replaced with a supported-version window and a deprecation policy.
 
