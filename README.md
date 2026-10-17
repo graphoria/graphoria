@@ -156,13 +156,12 @@ flowchart TB
 
 What's actively being built or on the near-term roadmap:
 
-| Milestone                                                                             | Status      |
-| ------------------------------------------------------------------------------------- | ----------- |
-| **Website & documentation hub**                                                       | Planned     |
-| **Configuration stabilization** — single source of truth via Zod, final shape lock-in | In progress |
-| **`graphoria init` CLI** — scaffold a project with one command                        | Planned     |
-| **Official Docker images** — multi-arch, published to GHCR                            | Planned     |
-| **Rate limiting & throttling** — per-role, per-operation                              | Planned     |
+| Milestone                                                                             | Status                |
+| ------------------------------------------------------------------------------------- | --------------------- |
+| **Website & documentation hub**                                                       | Planned               |
+| **Configuration stabilization** — single source of truth via Zod, final shape lock-in | In progress           |
+| **Official Docker images** — multi-arch, published to GHCR                            | Deferred — on request |
+| **Per-operation rate limiting** — per-role limits already ship, off by default        | Planned               |
 
 Want to influence the roadmap? [Open an issue](https://github.com/graphoria/graphoria/issues) or upvote existing ones.
 
