@@ -11,6 +11,8 @@ export interface OpenAICompatConfig {
   /** Override for OpenAI-compatible endpoints (DeepSeek, Groq, Mistral, …). */
   baseURL?: string;
   temperature?: number;
+  /** Sent only when set: models and endpoints without reasoning reject the field. */
+  reasoningEffort?: OpenAI.ReasoningEffort;
 }
 
 function parseArgs(raw: string): Record<string, unknown> {
@@ -86,6 +88,7 @@ export function makeOpenAICompatible(cfg: OpenAICompatConfig): Provider {
           messages: toOpenAIMessages(messages),
           tools: toOpenAITools(tools),
           temperature,
+          reasoning_effort: cfg.reasoningEffort,
         },
         { signal },
       );

@@ -46,9 +46,9 @@ The provider, model, and credentials come from **environment variables**, not th
 | Variable             | Default                  | Description                                                                                                                                                                        |
 | -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LLM_PROVIDER`       | `ollama`                 | `ollama`, `openai`, `deepseek`, or `anthropic`                                                                                                                                     |
-| `LLM_MODEL`          | per-provider             | Overrides the provider's default model                                                                                                                                             |
+| `LLM_MODEL`          | per-provider             | Overrides the provider's default model, listed below                                                                                                                               |
 | `OPENAI_API_KEY`     | —                        | Required when `LLM_PROVIDER=openai`                                                                                                                                                |
-| `OPENAI_BASE_URL`    | —                        | Any OpenAI-compatible endpoint (Groq, Mistral, …)                                                                                                                                  |
+| `OPENAI_BASE_URL`    | —                        | An OpenAI-compatible endpoint (Groq, Mistral, …) that accepts `reasoning_effort`, see below                                                                                        |
 | `DEEPSEEK_API_KEY`   | —                        | Required when `LLM_PROVIDER=deepseek`                                                                                                                                              |
 | `ANTHROPIC_API_KEY`  | —                        | Required when `LLM_PROVIDER=anthropic`                                                                                                                                             |
 | `OLLAMA_HOST`        | `http://localhost:11434` | Ollama server URL                                                                                                                                                                  |
@@ -59,6 +59,17 @@ The provider, model, and credentials come from **environment variables**, not th
 | `AI_REST_ENABLED`    | `true`                   | `false` leaves the REST route unmounted                                                                                                                                            |
 | `AI_SECRET_ROLE`     | `SUPERADMIN_ROLE`        | The role `AI_SECRET` reads as; must be granted `ai` (checked at boot). Its session is `sub: "ai"` with no claims, so a `$session` row filter on that role matches nothing or fails |
 | `AI_TIMEOUT_MS`      | `60000`                  | Bound on each LLM call; `0` disables it (boot logs a warning)                                                                                                                      |
+
+Each provider's model when `LLM_MODEL` is unset:
+
+| `LLM_PROVIDER` | Default model      |
+| -------------- | ------------------ |
+| `ollama`       | `qwen3.5:2b`       |
+| `openai`       | `gpt-6-luna`       |
+| `deepseek`     | `deepseek-flash`   |
+| `anthropic`    | `claude-haiku-5-5` |
+
+The `openai` and `deepseek` providers send `reasoning_effort: "none"`: GPT-6 Luna calls tools over Chat Completions only with reasoning off, and DeepSeek's thinking mode, its default, would need each reply's reasoning sent back on every later call. A model picked with `LLM_MODEL`, or an endpoint behind `OPENAI_BASE_URL`, has to accept the field; models that predate reasoning may reject it. The `anthropic` provider sends no `temperature`: Claude Haiku 5.5 rejects any value but 1, and older Claude models use their own default.
 
 The `openai` and `@anthropic-ai/sdk` packages are **dependencies of `@graphoria/ai`**, loaded lazily only when their provider is selected. With the default Ollama provider, neither is needed.
 

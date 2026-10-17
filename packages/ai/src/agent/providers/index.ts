@@ -1,5 +1,13 @@
 import type { Provider } from "@graphoria/server";
 
+/** Each provider's model when `LLM_MODEL` is unset. */
+export const DEFAULT_MODELS = {
+  ollama: "qwen3.5:2b",
+  openai: "gpt-6-luna",
+  deepseek: "deepseek-flash",
+  anthropic: "claude-haiku-5-5",
+} as const;
+
 function requireEnv(key: string): string {
   const value = process.env[key];
   if (!value) {
@@ -23,7 +31,9 @@ const REGISTRY: Record<string, () => Promise<Provider>> = {
     return makeOpenAICompatible({
       apiKey: requireEnv("OPENAI_API_KEY"),
       baseURL: process.env.OPENAI_BASE_URL, // undefined → SDK default (api.openai.com)
-      model: process.env.LLM_MODEL ?? "gpt-4o-mini",
+      model: process.env.LLM_MODEL ?? DEFAULT_MODELS.openai,
+      // GPT-6 Luna calls tools over Chat Completions only with reasoning off.
+      reasoningEffort: "none",
     });
   },
 
@@ -32,7 +42,9 @@ const REGISTRY: Record<string, () => Promise<Provider>> = {
     return makeOpenAICompatible({
       apiKey: requireEnv("DEEPSEEK_API_KEY"),
       baseURL: "https://api.deepseek.com",
-      model: process.env.LLM_MODEL ?? "deepseek-chat",
+      model: process.env.LLM_MODEL ?? DEFAULT_MODELS.deepseek,
+      // Thinking mode, its default, needs each reply's reasoning sent back on every later call.
+      reasoningEffort: "none",
     });
   },
 
@@ -40,7 +52,7 @@ const REGISTRY: Record<string, () => Promise<Provider>> = {
     const { makeAnthropic } = await import("./anthropic");
     return makeAnthropic({
       apiKey: requireEnv("ANTHROPIC_API_KEY"),
-      model: process.env.LLM_MODEL ?? "claude-haiku-4-5-20251001",
+      model: process.env.LLM_MODEL ?? DEFAULT_MODELS.anthropic,
     });
   },
 };
