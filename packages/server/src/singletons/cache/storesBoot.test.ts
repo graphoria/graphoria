@@ -102,6 +102,21 @@ describe("RATE_LIMIT_STORE at boot", () => {
     );
   });
 
+  it("refuses a store caches.stores lacks before the token store connects", async () => {
+    const { createHandlers } = await import("../../index");
+    const redis = await import("../../utils/redis");
+    const connects = spyOn(redis, "createRedisClient");
+
+    try {
+      await expect(createHandlers(bootOptions("nope", { authStore: "shared" }))).rejects.toThrow(
+        "RATE_LIMIT_STORE=nope names no store",
+      );
+      expect(connects).not.toHaveBeenCalled();
+    } finally {
+      connects.mockRestore();
+    }
+  });
+
   it.each(["memory", "shared"])("boots with RATE_LIMIT_STORE=%s", async (store) => {
     const { createHandlers } = await import("../../index");
     const queues = await import("../queues");

@@ -1,3 +1,5 @@
+import type { Logger } from "./logging";
+
 import { logger } from "./logging";
 
 /**
@@ -35,6 +37,45 @@ const settlesWithin = async (promise: Promise<unknown>, ms: number) => {
   }
 };
 
+const runStep = async (log: Logger, step: ShutdownStep) => {
+  try {
+    await step.run();
+    log.info({ step: step.name }, "shutdown step done");
+    return true;
+  } catch (error) {
+    log.error({ err: error, step: step.name }, "shutdown step failed");
+    return false;
+  }
+};
+
+/**
+ * Runs `steps` in order, each one even after an earlier one failed, and stops
+ * waiting after `timeoutMs`: the steps left still run, and close what they find
+ * then. Resolves `true` when every step succeeded in time. The shutdown's
+ * teardown, and all a boot that fails has to do.
+ */
+export const runTeardown = async (
+  steps: ShutdownStep[],
+  timeoutMs = TEARDOWN_TIMEOUT_MS,
+): Promise<boolean> => {
+  const log = logger("shutdown");
+  let clean = true;
+  let pending: string | undefined;
+
+  const run = (async () => {
+    for (const step of steps) {
+      pending = step.name;
+      if (!(await runStep(log, step))) clean = false;
+    }
+  })();
+
+  if (!(await settlesWithin(run, timeoutMs))) {
+    log.error({ step: pending, timeoutMs }, "teardown timed out");
+    return false;
+  }
+  return clean;
+};
+
 /**
  * Returns `shutdown(server)`: stop intake, drain, tear down. It runs once; every
  * later call gets the first call's promise. Resolves `true` on a clean drain,
@@ -52,18 +93,10 @@ export const createShutdown = ({
   const run = async (server: ShutdownServer) => {
     let clean = true;
 
-    const runStep = async (step: ShutdownStep) => {
-      try {
-        await step.run();
-        log.info({ step: step.name }, "shutdown step done");
-      } catch (error) {
-        clean = false;
-        log.error({ err: error, step: step.name }, "shutdown step failed");
-      }
-    };
-
     const drain = server.stop();
-    for (const step of stopIntake) await runStep(step);
+    for (const step of stopIntake) {
+      if (!(await runStep(log, step))) clean = false;
+    }
 
     if (!(await settlesWithin(drain, timeoutMs))) {
       clean = false;
@@ -74,18 +107,7 @@ export const createShutdown = ({
       await server.stop(true);
     }
 
-    let pending: string | undefined;
-    const steps = (async () => {
-      for (const step of teardown) {
-        pending = step.name;
-        await runStep(step);
-      }
-    })();
-
-    if (!(await settlesWithin(steps, teardownTimeoutMs))) {
-      clean = false;
-      log.error({ step: pending, timeoutMs: teardownTimeoutMs }, "teardown timed out");
-    }
+    if (!(await runTeardown(teardown, teardownTimeoutMs))) clean = false;
 
     log.info({ clean }, "shutdown complete");
     return clean;

@@ -91,6 +91,49 @@ describe("instantiateQueues", () => {
     expect(kafka.cleanups()).toBe(1);
   });
 
+  it("closes the adapters it started when a later one fails to start", async () => {
+    const rabbitmq = fakeAdapter("rabbitmq");
+    const kafka: QueueAdapter = {
+      start: async () => {
+        throw new Error("kafka refused the client");
+      },
+    };
+
+    await expect(
+      queues.instantiateQueues([rabbitmqQueue, kafkaQueue], {
+        adapters: { rabbitmq: rabbitmq.adapter, kafka },
+      }),
+    ).rejects.toThrow("kafka refused the client");
+    expect(rabbitmq.cleanups()).toBe(1);
+  });
+
+  it("rejects within the teardown's second when a started adapter's cleanup hangs", async () => {
+    const rabbitmq: QueueAdapter = {
+      start: async () => ({
+        publisherMap: () => ({}),
+        sendMessage: async () => true,
+        connections: () => [],
+        cleanup: () => new Promise(() => {}),
+      }),
+    };
+    const kafka: QueueAdapter = {
+      start: async () => {
+        throw new Error("kafka refused the client");
+      },
+    };
+
+    // Not expect().rejects: it spins on a promise that never settles, past the test's timeout.
+    const outcome = await Promise.race([
+      queues.instantiateQueues([rabbitmqQueue, kafkaQueue], { adapters: { rabbitmq, kafka } }).then(
+        () => "resolved",
+        (error: Error) => error.message,
+      ),
+      Bun.sleep(2_000).then(() => "still cleaning up"),
+    ]);
+
+    expect(outcome).toBe("kafka refused the client");
+  });
+
   it("dispatches sendMessage to the adapter that owns the publisher", async () => {
     const rabbitmq = fakeAdapter("rabbitmq");
     const kafka = fakeAdapter("kafka");

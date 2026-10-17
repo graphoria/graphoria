@@ -5,6 +5,7 @@ import { isString } from "es-toolkit";
 
 import type { BunRequest } from "bun";
 import type { Capability } from "./authentication/capabilities";
+import type { ShutdownStep } from "./shutdown";
 import type { Configuration } from "./types/configuration";
 import type { Env } from "./types/env";
 import type { SessionContext } from "./utils/sessionVariables";
@@ -27,7 +28,7 @@ import {
   resolveAISurfaces,
 } from "./singletons/ai";
 import { getTokenService, setTokenService } from "./singletons/authentication";
-import { getCronJobs, instantiateCronJobs } from "./singletons/cron";
+import { instantiateCronJobs, stopCronJobs } from "./singletons/cron";
 import {
   databasesConnections,
   disconnectDatabases,
@@ -57,7 +58,12 @@ import { configureTracing, flushSpans } from "./observability/tracing";
 import { withHttpMetrics } from "./observability/httpMetrics";
 import { withHttpTracing } from "./observability/httpTracing";
 import { createMetricsRoute } from "./observability/metricsRoute";
-import { createShutdown, createSignalHandler, exitOnSignalDuringBoot } from "./shutdown";
+import {
+  createShutdown,
+  createSignalHandler,
+  exitOnSignalDuringBoot,
+  runTeardown,
+} from "./shutdown";
 
 // Re-export for consumers
 export { configureLogging };
@@ -130,6 +136,28 @@ const generatePrefixes = (options: Env) => ({
 });
 
 /**
+ * What a boot opens, in the order the shutdown closes it once the drain is
+ * over. The caller names the token store: until a boot sets the token service,
+ * `getTokenService()` is still the one before it.
+ */
+const teardownSteps = (closeTokenStore: () => unknown): ShutdownStep[] => [
+  { name: "queues", run: () => queueManager?.cleanup?.() },
+  { name: "cache redis", run: closeCacheRedisClient },
+  { name: "token redis", run: closeTokenStore },
+  { name: "databases", run: disconnectDatabases },
+  { name: "spans", run: flushSpans },
+];
+
+/**
+ * A boot that fails once its token store exists closes what it opened, as the
+ * shutdown would, cron first.
+ */
+const releaseFailedBoot = (closeTokenStore: () => unknown) => {
+  logger("graphoria").warn("boot failed, closing what it opened");
+  return runTeardown([{ name: "cron", run: stopCronJobs }, ...teardownSteps(closeTokenStore)]);
+};
+
+/**
  * Boot the request-independent core: load + validate configuration, connect
  * databases, select the token service, build the per-role schemas, and resolve
  * the AI surfaces. Shared by {@link createGraphQLServer} (which adds routes) and
@@ -195,63 +223,68 @@ const bootAnalyzedConfiguration = async (
   // The stores the env names need only the configuration, so a misnamed one
   // refuses boot before anything connects. The rate-limit store is resolved even
   // with no limit set, so the typo fails now rather than once a limit is configured.
+  const rateLimitRedisUrl =
+    rateLimitStore === undefined || rateLimitStore === MEMORY_STORE
+      ? undefined
+      : redisUrlOf(projectConfiguration.caches, "RATE_LIMIT_STORE", rateLimitStore);
   const tokenRepository = createConfiguredTokenRepository(
     Boolean(projectConfiguration.auth?.enabled),
     env.authStore,
     projectConfiguration.caches,
     authStoreRequired,
   );
-  const rateLimitRedisUrl =
-    rateLimitStore === undefined || rateLimitStore === MEMORY_STORE
-      ? undefined
-      : redisUrlOf(projectConfiguration.caches, "RATE_LIMIT_STORE", rateLimitStore);
 
-  // Initialize databases (using pre-calculated enabledDatabases from parsing)
-  await instantiateDatabasesConnections(
-    projectConfiguration.enabledDatabases,
-    env.dbConnectRetryMs,
-  );
-
-  // Initialize token service based on configured strategy. AUTH_STRATEGY env
-  // var overrides the configuration field when set, so per-deploy strategy
-  // selection (e.g. JWT in dev, PASETO in prod) works without rebuilding.
-  const tokenStrategy = env.authStrategy ?? projectConfiguration.tokenStrategy;
-  if (env.authStrategy && env.authStrategy !== projectConfiguration.tokenStrategy) {
-    logger("graphoria").info(
-      { authStrategy: env.authStrategy, configTokenStrategy: projectConfiguration.tokenStrategy },
-      "auth strategy override",
+  try {
+    // Initialize databases (using pre-calculated enabledDatabases from parsing)
+    await instantiateDatabasesConnections(
+      projectConfiguration.enabledDatabases,
+      env.dbConnectRetryMs,
     );
-  }
-  if (env.ai?.enabled !== undefined && env.ai.enabled !== projectConfiguration.ai.enabled) {
-    logger("graphoria").info(
-      { aiEnabled: env.ai.enabled, configAiEnabled: projectConfiguration.ai.enabled },
-      "ai override",
-    );
-  }
-  if (
-    env.ai?.mcp?.enabled !== undefined &&
-    env.ai.mcp.enabled !== projectConfiguration.ai.mcp.enabled
-  ) {
-    logger("graphoria").info(
-      { mcpEnabled: env.ai.mcp.enabled, configMcpEnabled: projectConfiguration.ai.mcp.enabled },
-      "mcp override",
-    );
-  }
-  // Only auth (login, refresh) and the console (its session cookie) sign tokens;
-  // with both off, a missing key just means bearer tokens are ignored.
-  const keyRequired = Boolean(projectConfiguration.auth?.enabled) || env.console.enabled;
-  setTokenService(createTokenService(env, tokenStrategy, keyRequired, tokenRepository));
 
-  // Analyze configuration
-  const analyzedConfiguration = await analyzeConfiguration(projectConfiguration, env);
+    // Initialize token service based on configured strategy. AUTH_STRATEGY env
+    // var overrides the configuration field when set, so per-deploy strategy
+    // selection (e.g. JWT in dev, PASETO in prod) works without rebuilding.
+    const tokenStrategy = env.authStrategy ?? projectConfiguration.tokenStrategy;
+    if (env.authStrategy && env.authStrategy !== projectConfiguration.tokenStrategy) {
+      logger("graphoria").info(
+        { authStrategy: env.authStrategy, configTokenStrategy: projectConfiguration.tokenStrategy },
+        "auth strategy override",
+      );
+    }
+    if (env.ai?.enabled !== undefined && env.ai.enabled !== projectConfiguration.ai.enabled) {
+      logger("graphoria").info(
+        { aiEnabled: env.ai.enabled, configAiEnabled: projectConfiguration.ai.enabled },
+        "ai override",
+      );
+    }
+    if (
+      env.ai?.mcp?.enabled !== undefined &&
+      env.ai.mcp.enabled !== projectConfiguration.ai.mcp.enabled
+    ) {
+      logger("graphoria").info(
+        { mcpEnabled: env.ai.mcp.enabled, configMcpEnabled: projectConfiguration.ai.mcp.enabled },
+        "mcp override",
+      );
+    }
+    // Only auth (login, refresh) and the console (its session cookie) sign tokens;
+    // with both off, a missing key just means bearer tokens are ignored.
+    const keyRequired = Boolean(projectConfiguration.auth?.enabled) || env.console.enabled;
+    setTokenService(createTokenService(env, tokenStrategy, keyRequired, tokenRepository));
 
-  return {
-    projectConfiguration,
-    analyzedConfiguration,
-    aiSurfaces: resolveAISurfaces(env, projectConfiguration.ai),
-    tokenRepository,
-    rateLimitRedisUrl,
-  };
+    // Analyze configuration
+    const analyzedConfiguration = await analyzeConfiguration(projectConfiguration, env);
+
+    return {
+      projectConfiguration,
+      analyzedConfiguration,
+      aiSurfaces: resolveAISurfaces(env, projectConfiguration.ai),
+      tokenRepository,
+      rateLimitRedisUrl,
+    };
+  } catch (error) {
+    await releaseFailedBoot(() => tokenRepository.close());
+    throw error;
+  }
 };
 
 /**
@@ -310,11 +343,16 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
   };
 
   // The engine verifies no token, so AUTH_STORE stays optional.
-  const { projectConfiguration, analyzedConfiguration, aiSurfaces } =
+  const { projectConfiguration, analyzedConfiguration, aiSurfaces, tokenRepository } =
     await bootAnalyzedConfiguration(optionsWithDefaults, { authStoreRequired: false });
 
   // No route here takes a scoped credential, so no role check comes first.
-  if (aiSurfaces.agent) await startAgent(optionsWithDefaults, projectConfiguration.ai);
+  try {
+    if (aiSurfaces.agent) await startAgent(optionsWithDefaults, projectConfiguration.ai);
+  } catch (error) {
+    await releaseFailedBoot(() => tokenRepository.close());
+    throw error;
+  }
 
   return {
     execute: buildExecute(analyzedConfiguration.roles, optionsWithDefaults.superadmin.role),
@@ -360,387 +398,394 @@ const createGraphQLServer = async (env: Env) => {
     rateLimitStore: env.rateLimit.store,
   });
 
-  assertScopedRoles(env, analyzedConfiguration.roles, aiSurfaces);
+  try {
+    assertScopedRoles(env, analyzedConfiguration.roles, aiSurfaces);
 
-  // Initialize queues
-  await instantiateQueues(analyzedConfiguration.queues);
+    // Initialize queues
+    await instantiateQueues(analyzedConfiguration.queues);
 
-  await instantiateCronJobs(
-    projectConfiguration.cron,
-    analyzedConfiguration.roles[env.superadmin.role].handlers.gql.handler,
-  );
-
-  // After the role check, so a boot it refuses leaves no agent behind.
-  if (aiSurfaces.agent) await startAgent(env, projectConfiguration.ai);
-
-  // Write schema in development
-  if (env.schemas.print) {
-    await writeSchema(analyzedConfiguration.roles, env.schemas.outputDir);
-  }
-
-  if (projectConfiguration.auth?.enabled) {
-    if (projectConfiguration.auth.autoCreateTables) {
-      await createAuthTables(projectConfiguration.auth);
-    } else {
-      await verifyAuthTablesExist(projectConfiguration.auth);
-    }
-  }
-
-  const prefixes = generatePrefixes(env);
-
-  const graphiqlFile = await renderPlayground("../playgrounds/graphiql/index.html", {
-    GRAPHQL_URL: prefixes.graphql,
-  });
-
-  const scalarFile = await renderPlayground("../playgrounds/scalar/index.html", {
-    OPENAPI_URL: prefixes.openapi,
-    REST_PREFIX: prefixes.rest,
-  });
-
-  const consoleHtml = await renderPlayground("../playgrounds/console/index.html", {});
-
-  const rateLimiter = createRateLimiter({
-    settings: env.rateLimit,
-    anonymousRole: env.anonymousRole,
-    permissions: projectConfiguration.auth?.permissions,
-    store: () =>
-      rateLimitRedisUrl
-        ? createRedisRateLimitStore(getCacheRedisClient(rateLimitRedisUrl))
-        : createMemoryRateLimitStore(),
-  });
-
-  const authorizeCapability = createCapabilityAuthorizer(env);
-
-  // Helper to get role-based handlers. A route that names a capability also
-  // accepts that capability's scoped credential in the admin-secret header; it
-  // stands in for the role `scopedCredentialRole` names, on that route and
-  // nowhere else.
-  const getRoleHandlers = async (
-    req: Request,
-    server?: Bun.Server<unknown>,
-    capability?: Capability,
-  ) => {
-    const adminSecretHeader = req.headers.get(env.admin.header);
-    const grant = capability ? authorizeCapability(adminSecretHeader, capability) : null;
-
-    const session: SessionContext =
-      capability && grant && !grant.superset
-        ? {
-            sub: capability,
-            role: scopedCredentialRole(env, capability),
-            authMethod: "admin_secret",
-          }
-        : await getTokenService().verifyTokenAndGetSession(
-            req.headers.get(env.authorizationHeader),
-            adminSecretHeader,
-          );
-
-    const ip = resolveClientAddress(req, server, env.rateLimit.trustProxy);
-
-    // The limit needs the role, and the role costs a token verification plus a
-    // revocation lookup — so it is spent here, once, rather than again inside a
-    // wrapper.
-    const limit = await rateLimiter?.check(session, ip);
-
-    const scope: Capability | "all" | undefined = grant
-      ? grant.superset
-        ? "all"
-        : capability
-      : undefined;
-
-    if (session.authMethod === "admin_secret") {
-      audit().emit({
-        action: "admin_secret.used",
-        actor: { type: "admin_secret", ...(scope ? { scope } : {}), ip },
-        target: { kind: "endpoint", method: req.method, path: new URL(req.url).pathname },
-      });
-    }
-
-    return {
-      role: session.role!,
-      session,
-      scope,
-      limit,
-      ...analyzedConfiguration.roles[session.role!].handlers,
-    };
-  };
-
-  /**
-   * For the entry points that have no session to key on: the websocket upgrade
-   * (the token arrives in `connection_init`, after the upgrade) and MCP's 405 answers. They
-   * are keyed by address against the anonymous ceiling.
-   */
-  const withRateLimit =
-    <T>(handler: (req: BunRequest, server: Bun.Server<unknown>) => T | Promise<T>) =>
-    async (req: BunRequest, server: Bun.Server<unknown>) => {
-      const limit = await rateLimiter?.check(
-        null,
-        resolveClientAddress(req, server, env.rateLimit.trustProxy),
-      );
-
-      if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
-
-      return handler(req, server);
-    };
-
-  // Create routes map with all handlers
-  const routes: RoutesMap = {};
-
-  // CORS preflight handler
-  if (env.enableCors) {
-    routes[`${env.prefix}/*`] = { OPTIONS: () => new S200(null) };
-  }
-
-  // Static routes
-  routes[prefixes.openapi] = () => new S200(analyzedConfiguration.openapi);
-  routes[prefixes.graphiql] = () => html(graphiqlFile);
-  routes[prefixes.scalar] = () => html(scalarFile);
-
-  // Probes for an orchestrator: no auth, no rate limit. A Redis store is a
-  // dependency only where something reads it.
-  const redisStores = storesInUse(
-    projectConfiguration,
-    env.authStore,
-    rateLimiter ? env.rateLimit.store : undefined,
-  );
-  for (const name of Object.keys(projectConfiguration.caches.stores)) {
-    if (!redisStores.includes(name)) {
-      logger("graphoria").warn({ store: name }, "cache store is declared but nothing reads it");
-    }
-  }
-  Object.assign(
-    routes,
-    createHealthRoutes({
-      basePath: prefixes.health,
-      timeoutMs: HEALTH_CHECK_TIMEOUT_MS,
-      checks: () => [
-        ...analyzedConfiguration.databases.map((database) => ({
-          kind: "database",
-          name: database.name,
-          probe: async () => {
-            const connection = databasesConnections[database.name];
-            if (!connection) return false;
-            await pingConnection(connection, database.type);
-            return true;
-          },
-        })),
-        ...redisStores.map((name) => ({
-          kind: "redis",
-          name,
-          // The token store answers on the connections it holds, rather than on a
-          // cache pool opened only to probe it.
-          probe:
-            name === env.authStore
-              ? () => tokenRepository.ping()
-              : async () =>
-                  (await getCacheRedisClient(
-                    projectConfiguration.caches.stores[name]!.url,
-                  ).ping()) === "PONG",
-        })),
-        ...(queueManager?.connections() ?? []).map(({ type, name, connected }) => ({
-          kind: type,
-          name,
-          probe: () => connected,
-        })),
-      ],
-    }),
-  );
-
-  // Prometheus exposition, opt-in via METRICS_ENABLED. Gated: the series name
-  // operations, roles and databases.
-  if (env.metrics.enabled) {
-    Object.assign(
-      routes,
-      createMetricsRoute({
-        path: prefixes.metrics,
-        secretHeader: env.admin.header,
-        authorize: (candidate) => authorizeCapability(candidate, "metrics"),
-        render: renderMetrics,
-      }),
+    await instantiateCronJobs(
+      projectConfiguration.cron,
+      analyzedConfiguration.roles[env.superadmin.role].handlers.gql.handler,
     );
-  }
 
-  // Console (admin UI + status APIs), opt-in via CONSOLE_ENABLED
-  if (env.console.enabled) {
-    const consoleHandler = () => html(consoleHtml);
-    routes[prefixes.console] = consoleHandler;
-    routes[`${prefixes.console}/`] = consoleHandler;
-    Object.assign(
-      routes,
-      consoleRoutesFactory({
-        env,
-        consolePath: prefixes.console,
-        prefixes,
-        projectConfiguration,
-        analyzedConfiguration,
-        tokenService: getTokenService(),
-        rateLimiter,
-      }),
-    );
-  }
+    // After the role check, so a boot it refuses leaves no agent behind.
+    if (aiSurfaces.agent) await startAgent(env, projectConfiguration.ai);
 
-  // GraphQL endpoint
-  routes[prefixes.graphql] = {
-    ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-    GET: withHttpTracing(
-      "graphql",
-      withHttpMetrics(
-        "graphql",
-        withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
-          try {
-            if (req.headers.get("upgrade") === "websocket") {
-              const success = server.upgrade(req, {
-                data: {},
-              });
-              return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
+    // Write schema in development
+    if (env.schemas.print) {
+      await writeSchema(analyzedConfiguration.roles, env.schemas.outputDir);
+    }
+
+    if (projectConfiguration.auth?.enabled) {
+      if (projectConfiguration.auth.autoCreateTables) {
+        await createAuthTables(projectConfiguration.auth);
+      } else {
+        await verifyAuthTablesExist(projectConfiguration.auth);
+      }
+    }
+
+    const prefixes = generatePrefixes(env);
+
+    const graphiqlFile = await renderPlayground("../playgrounds/graphiql/index.html", {
+      GRAPHQL_URL: prefixes.graphql,
+    });
+
+    const scalarFile = await renderPlayground("../playgrounds/scalar/index.html", {
+      OPENAPI_URL: prefixes.openapi,
+      REST_PREFIX: prefixes.rest,
+    });
+
+    const consoleHtml = await renderPlayground("../playgrounds/console/index.html", {});
+
+    const rateLimiter = createRateLimiter({
+      settings: env.rateLimit,
+      anonymousRole: env.anonymousRole,
+      permissions: projectConfiguration.auth?.permissions,
+      store: () =>
+        rateLimitRedisUrl
+          ? createRedisRateLimitStore(getCacheRedisClient(rateLimitRedisUrl))
+          : createMemoryRateLimitStore(),
+    });
+
+    const authorizeCapability = createCapabilityAuthorizer(env);
+
+    // Helper to get role-based handlers. A route that names a capability also
+    // accepts that capability's scoped credential in the admin-secret header; it
+    // stands in for the role `scopedCredentialRole` names, on that route and
+    // nowhere else.
+    const getRoleHandlers = async (
+      req: Request,
+      server?: Bun.Server<unknown>,
+      capability?: Capability,
+    ) => {
+      const adminSecretHeader = req.headers.get(env.admin.header);
+      const grant = capability ? authorizeCapability(adminSecretHeader, capability) : null;
+
+      const session: SessionContext =
+        capability && grant && !grant.superset
+          ? {
+              sub: capability,
+              role: scopedCredentialRole(env, capability),
+              authMethod: "admin_secret",
             }
-            return new S404({ error: "Not Found" });
+          : await getTokenService().verifyTokenAndGetSession(
+              req.headers.get(env.authorizationHeader),
+              adminSecretHeader,
+            );
+
+      const ip = resolveClientAddress(req, server, env.rateLimit.trustProxy);
+
+      // The limit needs the role, and the role costs a token verification plus a
+      // revocation lookup — so it is spent here, once, rather than again inside a
+      // wrapper.
+      const limit = await rateLimiter?.check(session, ip);
+
+      const scope: Capability | "all" | undefined = grant
+        ? grant.superset
+          ? "all"
+          : capability
+        : undefined;
+
+      if (session.authMethod === "admin_secret") {
+        audit().emit({
+          action: "admin_secret.used",
+          actor: { type: "admin_secret", ...(scope ? { scope } : {}), ip },
+          target: { kind: "endpoint", method: req.method, path: new URL(req.url).pathname },
+        });
+      }
+
+      return {
+        role: session.role!,
+        session,
+        scope,
+        limit,
+        ...analyzedConfiguration.roles[session.role!].handlers,
+      };
+    };
+
+    /**
+     * For the entry points that have no session to key on: the websocket upgrade
+     * (the token arrives in `connection_init`, after the upgrade) and MCP's 405 answers. They
+     * are keyed by address against the anonymous ceiling.
+     */
+    const withRateLimit =
+      <T>(handler: (req: BunRequest, server: Bun.Server<unknown>) => T | Promise<T>) =>
+      async (req: BunRequest, server: Bun.Server<unknown>) => {
+        const limit = await rateLimiter?.check(
+          null,
+          resolveClientAddress(req, server, env.rateLimit.trustProxy),
+        );
+
+        if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+        return handler(req, server);
+      };
+
+    // Create routes map with all handlers
+    const routes: RoutesMap = {};
+
+    // CORS preflight handler
+    if (env.enableCors) {
+      routes[`${env.prefix}/*`] = { OPTIONS: () => new S200(null) };
+    }
+
+    // Static routes
+    routes[prefixes.openapi] = () => new S200(analyzedConfiguration.openapi);
+    routes[prefixes.graphiql] = () => html(graphiqlFile);
+    routes[prefixes.scalar] = () => html(scalarFile);
+
+    // Probes for an orchestrator: no auth, no rate limit. A Redis store is a
+    // dependency only where something reads it.
+    const redisStores = storesInUse(
+      projectConfiguration,
+      env.authStore,
+      rateLimiter ? env.rateLimit.store : undefined,
+    );
+    for (const name of Object.keys(projectConfiguration.caches.stores)) {
+      if (!redisStores.includes(name)) {
+        logger("graphoria").warn({ store: name }, "cache store is declared but nothing reads it");
+      }
+    }
+    Object.assign(
+      routes,
+      createHealthRoutes({
+        basePath: prefixes.health,
+        timeoutMs: HEALTH_CHECK_TIMEOUT_MS,
+        checks: () => [
+          ...analyzedConfiguration.databases.map((database) => ({
+            kind: "database",
+            name: database.name,
+            probe: async () => {
+              const connection = databasesConnections[database.name];
+              if (!connection) return false;
+              await pingConnection(connection, database.type);
+              return true;
+            },
+          })),
+          ...redisStores.map((name) => ({
+            kind: "redis",
+            name,
+            // The token store answers on the connections it holds, rather than on a
+            // cache pool opened only to probe it.
+            probe:
+              name === env.authStore
+                ? () => tokenRepository.ping()
+                : async () =>
+                    (await getCacheRedisClient(
+                      projectConfiguration.caches.stores[name]!.url,
+                    ).ping()) === "PONG",
+          })),
+          ...(queueManager?.connections() ?? []).map(({ type, name, connected }) => ({
+            kind: type,
+            name,
+            probe: () => connected,
+          })),
+        ],
+      }),
+    );
+
+    // Prometheus exposition, opt-in via METRICS_ENABLED. Gated: the series name
+    // operations, roles and databases.
+    if (env.metrics.enabled) {
+      Object.assign(
+        routes,
+        createMetricsRoute({
+          path: prefixes.metrics,
+          secretHeader: env.admin.header,
+          authorize: (candidate) => authorizeCapability(candidate, "metrics"),
+          render: renderMetrics,
+        }),
+      );
+    }
+
+    // Console (admin UI + status APIs), opt-in via CONSOLE_ENABLED
+    if (env.console.enabled) {
+      const consoleHandler = () => html(consoleHtml);
+      routes[prefixes.console] = consoleHandler;
+      routes[`${prefixes.console}/`] = consoleHandler;
+      Object.assign(
+        routes,
+        consoleRoutesFactory({
+          env,
+          consolePath: prefixes.console,
+          prefixes,
+          projectConfiguration,
+          analyzedConfiguration,
+          tokenService: getTokenService(),
+          rateLimiter,
+        }),
+      );
+    }
+
+    // GraphQL endpoint
+    routes[prefixes.graphql] = {
+      ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
+      GET: withHttpTracing(
+        "graphql",
+        withHttpMetrics(
+          "graphql",
+          withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
+            try {
+              if (req.headers.get("upgrade") === "websocket") {
+                const success = server.upgrade(req, {
+                  data: {},
+                });
+                return success
+                  ? undefined
+                  : new Response("WebSocket upgrade error", { status: 400 });
+              }
+              return new S404({ error: "Not Found" });
+            } catch (error) {
+              return new S400({ errors: [{ message: (error as Error)?.message }] });
+            }
+          }),
+        ),
+      ),
+      POST: withHttpTracing(
+        "graphql",
+        withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
+          try {
+            const { gql, session, limit } = await getRoleHandlers(req, server);
+            if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+            const { query, variables } = await req.json();
+
+            if (gql.isIntrospectionQuery(query)) return new S200(gql.introspectionResult);
+
+            if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
+
+            const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
+
+            if (hasErrors)
+              return new S400({
+                errors: validationErrors.map((error) => ({
+                  message: error.message,
+                  locations: error.locations,
+                })),
+              });
+
+            return new S200(await gql.handler(query, variables, req, session));
           } catch (error) {
-            return new S400({ errors: [{ message: (error as Error)?.message }] });
+            const message = (error as Error)?.message;
+
+            if (message === "Invalid username or password") {
+              return new S401({ errors: [{ message }] });
+            } else {
+              return new S400({ errors: [{ message }] });
+            }
           }
         }),
       ),
-    ),
-    POST: withHttpTracing(
-      "graphql",
-      withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
-        try {
-          const { gql, session, limit } = await getRoleHandlers(req, server);
-          if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+    };
 
-          const { query, variables } = await req.json();
+    // The AI agent over REST, for the roles granted `ai`
+    if (aiSurfaces.rest) {
+      const aiPath = `${prefixes.rest}${projectConfiguration.ai.endpoint}`;
+      routes[aiPath] = {
+        ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
+        POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
+          try {
+            const { role, session, scope, limit } = await getRoleHandlers(req, server, "ai");
+            if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+            // A role without the grant sees no route, as it sees no `ask` field.
+            const roleSchema = analyzedConfiguration.roles[role];
+            if (!roleSchema?.entityOfRole.ai) return new S404({ error: "Not Found" });
 
-          if (gql.isIntrospectionQuery(query)) return new S200(gql.introspectionResult);
+            const { prompt } = await req.json();
+            if (typeof prompt !== "string" || prompt.length === 0)
+              return new S400({
+                errors: [{ message: "`prompt` (string) is required" }],
+              });
 
-          if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
-
-          const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
-
-          if (hasErrors)
-            return new S400({
-              errors: validationErrors.map((error) => ({
-                message: error.message,
-                locations: error.locations,
-              })),
+            audit().emit({
+              action: "ai.ask",
+              actor: { ...actorFromSession(session), ...(scope ? { scope } : {}) },
+              target: { kind: "ai", via: "rest" },
+              prompt,
             });
 
-          return new S200(await gql.handler(query, variables, req, session));
-        } catch (error) {
-          const message = (error as Error)?.message;
-
-          if (message === "Invalid username or password") {
-            return new S401({ errors: [{ message }] });
-          } else {
-            return new S400({ errors: [{ message }] });
+            return new S200({
+              answer: await getAgent()(prompt, { role: roleSchema, session, req }),
+            });
+          } catch (error) {
+            return new S400({ errors: [{ message: (error as Error)?.message }] });
           }
+        },
+      };
+    }
+
+    // MCP calls no LLM, so it does not wait on the agent being enabled. A POST runs
+    // as its caller, resolved like /graphql.
+    if (aiSurfaces.mcp) {
+      const mcpPath = `${env.prefix}${env.ai?.mcp?.endpoint ?? "/mcp"}`;
+      const aiPkg = await importAiPackage();
+      if (!aiPkg) throw new Error("ai.mcp.enabled requires @graphoria/ai (add it to dependencies)");
+
+      const mcpRoutes = aiPkg.createMCPRoutes(makeAiToolDeps(env), analyzedConfiguration.roles, {
+        name: projectConfiguration.name,
+        version: projectConfiguration.version,
+        maxQueryDepth: env.ai?.mcp?.maxQueryDepth ?? env.maxQueryDepth,
+        disabledTools: env.ai?.mcp?.disabledTools,
+        disabledResources: env.ai?.mcp?.disabledResources,
+        disabledPrompts: env.ai?.mcp?.disabledPrompts,
+        requireAdminSecret: env.ai?.mcp?.requireAdminSecret,
+        resolveCaller: (req, server) => getRoleHandlers(req, server, "mcp"),
+        openapiFor: analyzedConfiguration.openapiFor,
+      });
+
+      // POST spends the caller's own bucket inside resolveCaller; GET and DELETE
+      // answer 405 without resolving one, so they stay keyed by address.
+      routes[mcpPath] = {
+        POST: mcpRoutes.POST,
+        GET: withRateLimit(mcpRoutes.GET),
+        DELETE: withRateLimit(mcpRoutes.DELETE),
+      };
+    }
+
+    // REST API endpoint
+    routes[`${prefixes.rest}/*`] = withHttpTracing(
+      "rest",
+      withHttpMetrics("rest", async (req: BunRequest, server: Bun.Server<unknown>) => {
+        if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
+
+        try {
+          const { rest, session, limit } = await getRoleHandlers(req, server);
+          if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+          const urlParsed = new URL(req.url);
+
+          return await rest.handler(
+            urlParsed,
+            urlParsed.pathname.replace(prefixes.rest, ""),
+            req.method,
+            req,
+            session,
+          );
+        } catch {
+          return new S400({ errors: [{ message: "Bad request" }] });
         }
       }),
-    ),
-  };
+    );
 
-  // The AI agent over REST, for the roles granted `ai`
-  if (aiSurfaces.rest) {
-    const aiPath = `${prefixes.rest}${projectConfiguration.ai.endpoint}`;
-    routes[aiPath] = {
-      ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-      POST: async (req: BunRequest, server: Bun.Server<unknown>) => {
-        try {
-          const { role, session, scope, limit } = await getRoleHandlers(req, server, "ai");
-          if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
-          // A role without the grant sees no route, as it sees no `ask` field.
-          const roleSchema = analyzedConfiguration.roles[role];
-          if (!roleSchema?.entityOfRole.ai) return new S404({ error: "Not Found" });
+    // Create WebSocket handler
+    const { handler: websocketHandler, closeAll: closeWebsockets } = websocketHandlerFactory(
+      analyzedConfiguration.roles,
+      env.admin.header,
+    );
 
-          const { prompt } = await req.json();
-          if (typeof prompt !== "string" || prompt.length === 0)
-            return new S400({
-              errors: [{ message: "`prompt` (string) is required" }],
-            });
-
-          audit().emit({
-            action: "ai.ask",
-            actor: { ...actorFromSession(session), ...(scope ? { scope } : {}) },
-            target: { kind: "ai", via: "rest" },
-            prompt,
-          });
-
-          return new S200({
-            answer: await getAgent()(prompt, { role: roleSchema, session, req }),
-          });
-        } catch (error) {
-          return new S400({ errors: [{ message: (error as Error)?.message }] });
-        }
-      },
+    return {
+      websocketHandler,
+      closeWebsockets,
+      routes,
+      prefixes,
+      logger,
+      execute: buildExecute(analyzedConfiguration.roles, env.superadmin.role),
     };
+  } catch (error) {
+    await releaseFailedBoot(() => tokenRepository.close());
+    throw error;
   }
-
-  // MCP calls no LLM, so it does not wait on the agent being enabled. A POST runs
-  // as its caller, resolved like /graphql.
-  if (aiSurfaces.mcp) {
-    const mcpPath = `${env.prefix}${env.ai?.mcp?.endpoint ?? "/mcp"}`;
-    const aiPkg = await importAiPackage();
-    if (!aiPkg) throw new Error("ai.mcp.enabled requires @graphoria/ai (add it to dependencies)");
-
-    const mcpRoutes = aiPkg.createMCPRoutes(makeAiToolDeps(env), analyzedConfiguration.roles, {
-      name: projectConfiguration.name,
-      version: projectConfiguration.version,
-      maxQueryDepth: env.ai?.mcp?.maxQueryDepth ?? env.maxQueryDepth,
-      disabledTools: env.ai?.mcp?.disabledTools,
-      disabledResources: env.ai?.mcp?.disabledResources,
-      disabledPrompts: env.ai?.mcp?.disabledPrompts,
-      requireAdminSecret: env.ai?.mcp?.requireAdminSecret,
-      resolveCaller: (req, server) => getRoleHandlers(req, server, "mcp"),
-      openapiFor: analyzedConfiguration.openapiFor,
-    });
-
-    // POST spends the caller's own bucket inside resolveCaller; GET and DELETE
-    // answer 405 without resolving one, so they stay keyed by address.
-    routes[mcpPath] = {
-      POST: mcpRoutes.POST,
-      GET: withRateLimit(mcpRoutes.GET),
-      DELETE: withRateLimit(mcpRoutes.DELETE),
-    };
-  }
-
-  // REST API endpoint
-  routes[`${prefixes.rest}/*`] = withHttpTracing(
-    "rest",
-    withHttpMetrics("rest", async (req: BunRequest, server: Bun.Server<unknown>) => {
-      if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
-
-      try {
-        const { rest, session, limit } = await getRoleHandlers(req, server);
-        if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
-
-        const urlParsed = new URL(req.url);
-
-        return await rest.handler(
-          urlParsed,
-          urlParsed.pathname.replace(prefixes.rest, ""),
-          req.method,
-          req,
-          session,
-        );
-      } catch {
-        return new S400({ errors: [{ message: "Bad request" }] });
-      }
-    }),
-  );
-
-  // Create WebSocket handler
-  const { handler: websocketHandler, closeAll: closeWebsockets } = websocketHandlerFactory(
-    analyzedConfiguration.roles,
-    env.admin.header,
-  );
-
-  return {
-    websocketHandler,
-    closeWebsockets,
-    routes,
-    prefixes,
-    logger,
-    execute: buildExecute(analyzedConfiguration.roles, env.superadmin.role),
-  };
 };
 
 /**
@@ -783,16 +828,10 @@ export async function createHandlers(options?: Partial<Env>) {
     timeoutMs: optionsWithDefaults.shutdown.timeoutMs,
     stopIntake: [
       { name: "websockets", run: () => closeWebsockets(1001, "server shutting down") },
-      { name: "cron", run: () => getCronJobs()?.stopAll() },
+      { name: "cron", run: stopCronJobs },
     ],
     // Queues close after the drain: a drained mutation can still publish.
-    teardown: [
-      { name: "queues", run: () => queueManager?.cleanup?.() },
-      { name: "cache redis", run: closeCacheRedisClient },
-      { name: "token redis", run: () => getTokenService().close() },
-      { name: "databases", run: disconnectDatabases },
-      { name: "spans", run: flushSpans },
-    ],
+    teardown: teardownSteps(() => getTokenService().close()),
   });
 
   return {
@@ -851,7 +890,14 @@ export async function createBunServer(options?: Partial<Env>) {
     handleSignals,
   } = await createHandlers(options).finally(() => releaseBootSignals?.());
 
-  const server = serve(serverHandlers);
+  let server: ReturnType<typeof serve>;
+  try {
+    server = serve(serverHandlers);
+  } catch (error) {
+    // A port in use: the boot is done, so its token service holds the store.
+    await releaseFailedBoot(() => getTokenService().close());
+    throw error;
+  }
 
   if (resolved.shutdown.handleSignals) handleSignals(server);
 

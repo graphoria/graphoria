@@ -59,7 +59,7 @@ handleSignals(Bun.serve(serverHandlers));
 
 `shutdown(server)` stops the server and releases everything the handlers opened, in this order:
 
-1. The listener closes, so new connections are refused. Every open websocket gets a `1001` close ("server shutting down"), and cron schedules no new run.
+1. The listener closes, so new connections are refused. Every open websocket gets a `1001` close ("server shutting down"), and cron schedules no new run; a later boot in the same process schedules its jobs again.
 2. Requests in flight get up to `SHUTDOWN_TIMEOUT_MS` (default `8000`) to finish. Past that, the connections left are reset.
 3. The queue connections close, then both Redis clients, then the database pools, and last the spans still queued are flushed. This teardown gets one second.
 
@@ -80,6 +80,10 @@ process.on("SIGTERM", async () => {
 ```
 
 Until the server listens there is nothing to drain: a SIGTERM or SIGINT received while `createBunServer` is still booting — waiting for the database, say — exits `0` at once, and so does one sent to a `graphoria` CLI worker. `SHUTDOWN_HANDLE_SIGNALS=false` turns this off with the rest. `createHandlers` installs nothing during boot either; the signals stay yours.
+
+A boot that fails once it has started connecting closes what it opened first: cron stops, then the teardown of step 3 runs, with the same one second. `createBunServer`, `createHandlers` and `createGraphQLEngine` then reject with the error the boot failed on, so a process that catches it can boot again. For `createBunServer`, a port already in use counts too.
+
+Either teardown stops waiting after its second, not working: the steps left still run, and close what they find then, a later boot's connections included. After `teardown timed out` in the log, exit rather than boot again in the same process.
 
 The `graphoria` CLI supervises its server processes: it restarts one that crashes (after 1 s, doubling up to 30 s), stops at the 5th crash within 60 s with a non-zero exit, and on SIGTERM, SIGINT or SIGHUP stops every worker and exits `0` when all of them stopped cleanly.
 

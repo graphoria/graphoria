@@ -6,6 +6,7 @@ import { queryEventEmitter } from "../configuration/gql/handleGraphQLSubscriptio
 import { logger } from "../logging";
 import { incMetric } from "../observability/metrics";
 import { startSpan } from "../observability/tracing";
+import { runTeardown } from "../shutdown";
 import { InvalidationHelper } from "./cache/registry";
 
 export type { QueueConnectionStatus, QueueManager };
@@ -121,8 +122,17 @@ export const instantiateQueues = async (
   };
 
   const managers: QueueManager[] = [];
-  for (const [type, typeQueues] of groups) {
-    managers.push(await resolved[type]!.start(typeQueues, context));
+  try {
+    for (const [type, typeQueues] of groups) {
+      managers.push(await resolved[type]!.start(typeQueues, context));
+    }
+  } catch (error) {
+    // Not in queueManager yet, so no teardown would reach them: one runs here. A
+    // cleanup that fails or hangs must not replace or hold the error the start failed with.
+    await runTeardown(
+      managers.map((manager) => ({ name: "queues", run: () => manager.cleanup?.() })),
+    );
+    throw error;
   }
 
   queueManager = combineManagers(managers);

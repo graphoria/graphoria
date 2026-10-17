@@ -5,7 +5,8 @@ import type { ShutdownStep } from "./shutdown";
 
 process.env.LOG_LEVEL ??= "silent";
 
-const { createShutdown, createSignalHandler, exitOnSignalDuringBoot } = await import("./shutdown");
+const { createShutdown, createSignalHandler, exitOnSignalDuringBoot, runTeardown } =
+  await import("./shutdown");
 
 /** A server whose drain finishes only when the test says so, or when forced. */
 const fakeServer = () => {
@@ -130,6 +131,38 @@ describe("createShutdown", () => {
     const started = performance.now();
 
     expect(await shutdown(server)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe("runTeardown", () => {
+  it("runs every step in order and reports a clean run", async () => {
+    const { events, step } = recorder();
+
+    expect(await runTeardown([step("queues"), step("databases")])).toBe(true);
+    expect(events).toEqual(["queues", "databases"]);
+  });
+
+  it("keeps going after a step fails, and reports it", async () => {
+    const { events, step } = recorder();
+
+    const clean = await runTeardown([
+      step("queues", async () => {
+        throw new Error("broker gone");
+      }),
+      step("databases"),
+    ]);
+
+    expect(clean).toBe(false);
+    expect(events).toEqual(["queues", "databases"]);
+  });
+
+  it("gives up on a step that outlasts its cap, and reports it", async () => {
+    const started = performance.now();
+
+    expect(await runTeardown([{ name: "queues", run: () => new Promise(() => {}) }], 20)).toBe(
+      false,
+    );
     expect(performance.now() - started).toBeLessThan(500);
   });
 });
