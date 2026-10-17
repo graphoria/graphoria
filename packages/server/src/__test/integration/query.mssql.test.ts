@@ -5,7 +5,7 @@ import type { IntegrationContext, StartedServer } from "./harness";
 import { integrationEnabled, startServer } from "./harness";
 
 /**
- * Task 1.4 of the hardening plan, SQL Server half.
+ * SQL Server: same ground as query.pg.test.ts.
  *
  * Deliberate differences from the PostgreSQL suite, all engine facts:
  *   - `json_val` is nvarchar(max) — SQL Server has no JSON column type — so it

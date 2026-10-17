@@ -5,7 +5,7 @@ import type { IntegrationContext, StartedServer } from "./harness";
 import { integrationEnabled, startServer } from "./harness";
 
 /**
- * Task 1.4 of the hardening plan, MySQL half. Same ground as query.pg.test.ts,
+ * MySQL: same ground as query.pg.test.ts,
  * against the engine that until now could not run a single query carrying a
  * bound value: the shared builders emit `$n` and Bun's MySQL adapter binds `?`.
  *

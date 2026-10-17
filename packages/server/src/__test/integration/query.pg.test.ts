@@ -6,7 +6,7 @@ import { virtualColumnExpression, virtualColumnFunction } from "../../config/typ
 import { integrationEnabled, startServer } from "./harness";
 
 /**
- * Task 1.4 of the hardening plan, PostgreSQL half: assert on the rows the
+ * PostgreSQL: assert on the rows the
  * engine actually returns, not on the SQL string Graphoria generates. Several of
  * these cases were red when first written — the generated-SQL assertions in
  * databases/engines/postgresql/query/index.test.ts had been passing against
@@ -631,7 +631,7 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
   describe("stored procedures", () => {
     // The generated Mutation type carries stored procedures, queue publishers,
     // operations and remote fields only — Graphoria generates no insert/update/
-    // delete resolvers, so the plan's "every mutation path" reduces to this one.
+    // delete resolvers, so this is the only database mutation path to cover.
     it("exposes a stored function as a mutation field", async () => {
       const response = await gql<{ app_tasks_by_priority: boolean }>(
         `mutation { app_tasks_by_priority(min_priority: "4") }`,

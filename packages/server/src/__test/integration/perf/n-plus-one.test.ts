@@ -9,7 +9,7 @@ import { databaseAdapters } from "../../../databases/core/function-mapping";
 import { integrationEnabled, startServer } from "../harness";
 
 /**
- * Task 5.1 of the hardening plan: determine empirically how nested
+ * Determine empirically how nested
  * relationships resolve — one joined statement, one per level, or one per
  * parent row — and assert on the count of statements the database receives.
  *

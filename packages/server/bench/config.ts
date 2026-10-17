@@ -33,7 +33,7 @@ export const benchTable = (engine: BenchEngine, table: string) =>
   `${BENCH_SCHEMAS[engine]}.${table}`;
 
 /**
- * Row counts. The plan asks for 100k+ in the primary table; the parent levels
+ * Row counts: 100k rows in the primary table; the parent levels
  * are sized so the nested scenario has ten children per parent, the same shape
  * the N+1 audit measured.
  */

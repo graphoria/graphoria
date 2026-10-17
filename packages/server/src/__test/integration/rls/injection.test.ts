@@ -8,8 +8,7 @@ import { integrationEnabled } from "../harness";
 import { startRlsServer } from "./fixture";
 
 /**
- * Task 3.3 of the hardening plan: SQL metacharacters through every channel a
- * client controls.
+ * SQL metacharacters through every channel a client controls.
  *
  * The acceptance is threefold and each case checks all of it — no SQL error, no
  * unexpected row, and no schema change. The third is what separates this from

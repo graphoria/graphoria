@@ -7,7 +7,7 @@ import { REDIS_URL } from "./config";
 import { integrationEnabled, startServer } from "./harness";
 
 /**
- * Task 1.5 of the hardening plan: the auth and cache paths against real Redis,
+ * The auth and cache paths against real Redis,
  * not a Map-backed fake. The token repository is the only place Graphoria stores
  * state outside the database, and every claim that rests on it — refresh
  * rotation, replay detection, logout, fail-closed behaviour when Redis is gone —

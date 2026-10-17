@@ -8,8 +8,7 @@ import { REDIS_URL, fieldName } from "../config";
 import { startServer } from "../harness";
 
 /**
- * Task 3.1 of the hardening plan: the multi-tenant fixture the row-level
- * security suites run against.
+ * The multi-tenant fixture the row-level security suites run against.
  *
  * The seeded schema already carries two tenants with three users each
  * (`app.organizations` 1 and 2, `app.users` 1-3 and 4-6) and rows owned by each

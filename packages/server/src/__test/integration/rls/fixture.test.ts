@@ -7,7 +7,7 @@ import { integrationEnabled } from "../harness";
 import { RLS_USERS, startRlsServer } from "./fixture";
 
 /**
- * Acceptance for task 3.1: the fixture boots against all three engines and
+ * The fixture boots against all three engines and
  * every role in it can obtain a token. The escape and injection suites all rest
  * on this, so it is asserted once here rather than implicitly in each of them.
  */
