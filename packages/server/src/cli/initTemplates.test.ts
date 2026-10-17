@@ -447,6 +447,46 @@ describe("renderProject docker-compose.yml", () => {
       );
     }
   });
+
+  // The line above a key: these templates comment a setting right above it.
+  const commentAbove = (yaml: string, key: string) => {
+    const lines = yaml.split("\n");
+    return lines[lines.indexOf(key) - 1];
+  };
+
+  it.each(ENGINES)(
+    "comments the init as the starter does, without --frontend (%s)",
+    async (database) => {
+      const starter = await readFile(join(STARTER, "docker-compose.yml"), "utf8");
+      const yaml = renderWith({}, database)["docker-compose.yml"]!;
+
+      expect(commentAbove(yaml, "    init: true")).toBe(commentAbove(starter, "    init: true"));
+      expect(yaml).not.toContain("ignores SIGTERM");
+    },
+  );
+
+  it.each(ENGINES)("says the init covers the boot with --frontend (%s)", (database) => {
+    const yaml = renderWith({ frontend: true }, database)["docker-compose.yml"]!;
+
+    expect(commentAbove(yaml, "    init: true")).toBe(
+      "    # Keep it: until index.ts reaches handleSignals, Bun as PID 1 ignores SIGTERM.",
+    );
+  });
+
+  it.each(ENGINES)("never says the boot has no retry (%s)", (database) => {
+    for (const frontend of [false, true]) {
+      expect(renderWith({ frontend }, database)["docker-compose.yml"]).not.toContain("no retry");
+    }
+  });
+
+  it.each(["pg", "mysql", "mssql"] as const)(
+    "says the boot would retry the database (%s)",
+    (database) => {
+      expect(renderWith({}, database)["docker-compose.yml"]).toContain(
+        "    # Start once the database is ready. Boot would otherwise retry it for up to 60 s.\n    depends_on:\n",
+      );
+    },
+  );
 });
 
 describe("renderProject graphoria.ts", () => {

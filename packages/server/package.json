@@ -39,6 +39,8 @@
     "dist",
     "!dist/src/__test/**",
     "!dist/bench/**",
+    "!dist/**/*.test.*",
+    "!dist/**/*.tsbuildinfo",
     "cli.ts",
     "standalone.ts",
     "README.md",

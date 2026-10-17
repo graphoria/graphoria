@@ -38,7 +38,7 @@ All secrets and runtime knobs are set via environment variables. Bun auto-loads 
 
 See [`.env.example`](../.env.example) for the full list.
 
-See also: [Logging](#logging) in the README and `configureLogging` in the [API Reference](./API_REFERENCE.md).
+See also: [Logging](../README.md#logging) in the README and `configureLogging` in the [API Reference](./API_REFERENCE.md).
 
 ---
 

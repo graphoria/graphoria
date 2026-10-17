@@ -788,12 +788,18 @@ const REDIS_COMMANDER_SERVICE = `  redis-commander:
         condition: service_healthy
 `;
 
+const initComment = (frontend: boolean) =>
+  frontend
+    ? "# Keep it: until index.ts reaches handleSignals, Bun as PID 1 ignores SIGTERM."
+    : "# Not needed, and harmless: the server handles SIGTERM itself, even as PID 1.";
+
 const sqliteCompose = ({
   name,
   dbName,
   rabbitmq,
   redis,
   dataTools,
+  frontend,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -803,7 +809,7 @@ const sqliteCompose = ({
 services:
 ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
-    # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
+    ${initComment(frontend)}
     init: true
     restart: on-failure
     env_file: .env
@@ -821,7 +827,7 @@ ${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTo
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database, rabbitmq, redis, dataTools } = values;
+  const { name, database, rabbitmq, redis, dataTools, frontend } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -839,7 +845,7 @@ services:
 ${DB_SERVICES[database]}
 ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
-    # Bun as PID 1 ignores SIGTERM; the init forwards it, so \`stop\` is immediate.
+    ${initComment(frontend)}
     init: true
     restart: on-failure
     env_file: .env
@@ -849,7 +855,7 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
       DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
     ports:
       - "3000:3000"
-    # Graphoria connects once at boot, with no retry.
+    # Start once the database is ready. Boot would otherwise retry it for up to 60 s.
     depends_on:
 ${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}
 
