@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { parse, print } from "graphql";
 
+import { analyzeQuery } from ".";
+import { StoreMSSQL } from "../__test/dataset/store";
 import {
   ordDirectiveOptionalQuery,
   ordDirectiveRequiredQuery,
@@ -610,5 +613,34 @@ describe("Common", () => {
       ],
       fragments: [],
     });
+  });
+});
+
+describe("Meta fields", () => {
+  it("keeps root meta fields out of the fields and narrows the operation to them", () => {
+    const [operation] = analyzeQuery(
+      '{ __typename t: __type(name: "x") { name } dbo_products { product_id } }',
+      StoreMSSQL,
+    ).operations;
+
+    expect(operation!.fields.map((field) => field.name)).toEqual(["dbo_products"]);
+    expect(print(operation!.meta!)).toBe(
+      print(parse('{ __typename t: __type(name: "x") { name } }')),
+    );
+  });
+
+  it("carries the fragments a meta field may spread", () => {
+    const [operation] = analyzeQuery(
+      "query Q { __schema { types { ...T } } dbo_products { product_id } } fragment T on __Type { name }",
+      StoreMSSQL,
+    ).operations;
+
+    expect(print(operation!.meta!)).toBe(
+      print(parse("query Q { __schema { types { ...T } } } fragment T on __Type { name }")),
+    );
+  });
+
+  it("gives an operation that selects no meta field none", () => {
+    expect(prodQuery.operations[0]).not.toHaveProperty("meta");
   });
 });

@@ -1,5 +1,12 @@
 import { isString } from "es-toolkit";
-import { OverlappingFieldsCanBeMergedRule, parse, specifiedRules, validate } from "graphql";
+import {
+  execute,
+  Kind,
+  OverlappingFieldsCanBeMergedRule,
+  parse,
+  specifiedRules,
+  validate,
+} from "graphql";
 import { LRUCache } from "lru-cache";
 
 import type { BunRequest } from "bun";
@@ -236,6 +243,29 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     );
   };
 
+  // Keyed by an analysis's meta document, so per role and query text, and gone
+  // with the analysis. Only an operation that declares no variables answers
+  // every request alike.
+  const metaAnswers = new WeakMap<DocumentNode, Record<string, unknown>>();
+
+  const answerMetaFields = async (
+    document: DocumentNode,
+    variables: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    const cached = metaAnswers.get(document);
+    if (cached) return cached;
+
+    const result = await execute({ schema: entities.schema, document, variableValues: variables });
+    if (result.errors?.length) throw new Error(result.errors[0]!.message);
+
+    const data = result.data ?? {};
+    const [operation] = document.definitions;
+    if (operation?.kind === Kind.OPERATION_DEFINITION && !operation.variableDefinitions?.length) {
+      metaAnswers.set(document, data);
+    }
+    return data;
+  };
+
   const isIntrospectionAST = (document: DocumentNode): boolean =>
     document.definitions.some(
       (def) =>
@@ -428,6 +458,8 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
           // Returns an immutable ResolvedOperation — original operation is not mutated
           const resolved = resolveVariables(operation, variables, session);
 
+          const metaData = operation.meta ? await answerMetaFields(operation.meta, variables) : {};
+
           if (operation.operation === "query") {
             // Separate auth fields, remote schema fields, and table fields
             const authFields = resolved.fields.filter(
@@ -527,7 +559,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 { durationMs: (Bun.nanoseconds() - startTime) / 1e6 },
                 "graphql request completed (no table fields)",
               );
-              return { data: { ...authData, ...remoteData, ...aiData } };
+              return { data: { ...metaData, ...authData, ...remoteData, ...aiData } };
             }
 
             const tableQueryAnalysis = {
@@ -609,6 +641,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                   }
                 : {}),
               data: data.reduce((acc, curr) => Object.assign(acc, curr), {
+                ...metaData,
                 ...authData,
                 ...remoteData,
                 ...aiData,
@@ -643,7 +676,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             );
 
             return {
-              data: results,
+              data: { ...metaData, ...results },
             };
           }
 

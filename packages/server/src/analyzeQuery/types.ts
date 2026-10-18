@@ -1,4 +1,4 @@
-import type { GraphQLSchema } from "graphql";
+import type { DocumentNode, GraphQLSchema } from "graphql";
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
 import type { EntitySource } from "../types/resolver";
 
@@ -14,6 +14,11 @@ export interface OperationAnalysis {
   operation: "query" | "mutation" | "subscription";
   variables?: VariableDefinition[];
   fields: SelectionAnalysis[];
+  /**
+   * The operation narrowed to its root `__schema`, `__type` and `__typename`,
+   * which graphql-js answers from the role's schema. Absent when it selects none.
+   */
+  meta?: DocumentNode;
 }
 
 export interface FragmentAnalysis {

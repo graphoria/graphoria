@@ -11,6 +11,7 @@ import type {
 
 import { analyzeFragment } from "./analyzers/fragmentAnalyzer";
 import { analyzeOperation } from "./analyzers/operationAnalyzer";
+import { metaDocument } from "./metaFields";
 
 /**
  * Tag each top-level field with its source from the resolver registry
@@ -54,6 +55,8 @@ export function analyzeQuery(query: string, entities: EntitiesWithSchema): Analy
       if (operationAnalysis) {
         // Tag top-level fields with their source
         operationAnalysis.fields = tagFieldsWithSource(operationAnalysis.fields, entities);
+        const meta = metaDocument(ast, def);
+        if (meta) operationAnalysis.meta = meta;
         result.operations.push(operationAnalysis);
       }
     } else if (def.kind === "FragmentDefinition") {

@@ -1,0 +1,29 @@
+import { Kind } from "graphql";
+
+import type { DocumentNode, FieldNode, OperationDefinitionNode, SelectionNode } from "graphql";
+
+/** The meta fields. SQL never selects them: graphql-js answers the root ones. */
+export const META_FIELDS = new Set(["__schema", "__type", "__typename"]);
+
+const isMetaField = (selection: SelectionNode): selection is FieldNode =>
+  selection.kind === Kind.FIELD && META_FIELDS.has(selection.name.value);
+
+/**
+ * The operation narrowed to its root meta fields, beside the document's
+ * fragments, which those fields may spread. `undefined` when it selects none.
+ */
+export const metaDocument = (
+  document: DocumentNode,
+  operation: OperationDefinitionNode,
+): DocumentNode | undefined => {
+  const selections = operation.selectionSet.selections.filter(isMetaField);
+  if (selections.length === 0) return undefined;
+
+  return {
+    kind: Kind.DOCUMENT,
+    definitions: [
+      { ...operation, selectionSet: { ...operation.selectionSet, selections } },
+      ...document.definitions.filter((definition) => definition.kind === Kind.FRAGMENT_DEFINITION),
+    ],
+  };
+};
