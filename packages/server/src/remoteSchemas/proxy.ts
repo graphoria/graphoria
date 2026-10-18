@@ -93,6 +93,38 @@ const buildHeaders = (
 };
 
 /**
+ * The remote answers `__typename` with its own type names, which the merged
+ * schema serves prefixed. Walks the result along the selection, aliases
+ * included, renaming in place.
+ */
+const prefixTypenames = (
+  value: unknown,
+  selections: SelectionAnalysis[] | undefined,
+  toPrefixed: RemoteSchemaResolved["prefixMap"]["toPrefixed"],
+): void => {
+  if (!selections?.length || value === null || typeof value !== "object") return;
+
+  if (Array.isArray(value)) {
+    for (const item of value) prefixTypenames(item, selections, toPrefixed);
+    return;
+  }
+
+  const object = value as Record<string, unknown>;
+  for (const selection of selections) {
+    const key = selection.alias || selection.name;
+    const selected = object[key];
+
+    if (selection.name === "__typename") {
+      if (typeof selected === "string" && Object.hasOwn(toPrefixed, selected)) {
+        object[key] = toPrefixed[selected];
+      }
+    } else {
+      prefixTypenames(selected, selection.selections, toPrefixed);
+    }
+  }
+};
+
+/**
  * Execute a proxied GraphQL query/mutation against a remote schema endpoint.
  */
 export const proxyRemoteField = async (
@@ -152,7 +184,9 @@ export const proxyRemoteField = async (
     }
 
     // Extract the result for the original field name
-    return json.data?.[originalFieldName] ?? null;
+    const result = json.data?.[originalFieldName] ?? null;
+    prefixTypenames(result, field.selections, remoteSchema.prefixMap.toPrefixed);
+    return result;
   } catch (error) {
     span?.recordError(error);
     throw error;
