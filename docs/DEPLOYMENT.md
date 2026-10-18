@@ -277,9 +277,13 @@ Console sessions and subscriptions are not in Redis.
 - **`AUTH_STORE=memory`.** Revocations and used refresh tokens stay in the process that saw them:
   other workers and replicas never learn of a logout, and a restart forgets them all
   ([why](./SECURITY_MODEL.md#auth_storememory-keeps-revocations-in-one-process)).
-- **One per deployment.** Two deployments sharing one Redis
-  [can serve each other's cached rows](./SECURITY_MODEL.md#two-deployments-sharing-one-redis-can-serve-each-others-rows).
-  Give each its own Redis, or its own database number in the URL.
+- **One prefix per deployment.** Two deployments sharing one Redis
+  [can serve each other's cached rows](./SECURITY_MODEL.md#two-deployments-sharing-one-redis-can-serve-each-others-rows)
+  and share rate-limit buckets, unless each gives its stores a
+  [`prefix`](./CONFIGURATION.md#caches) of its own, or its own database number in the URL. Either
+  keeps their keys apart, not the deployments: each can still read and change the other's keys, and
+  a `FLUSHALL`, or a `FLUSHDB` on a database they share, forgets the other's revocations. Where one
+  must not reach the other, give each its own Redis.
 
 The URL forms, checked with Bun's Redis client:
 

@@ -113,9 +113,9 @@ is optional, and a set one is still read:
 - `memory` keeps them in the process. There is nothing else to run, but another worker or replica
   never sees a revocation, and a restart forgets them all
   ([the trade-off](./SECURITY_MODEL.md#auth_storememory-keeps-revocations-in-one-process)).
-- The name of a `redis` store from [`caches.stores`](./CONFIGURATION.md#caches) shares them across
-  processes and, with AOF on, across restarts. Prefer a Redis that does not evict
-  ([why](./DEPLOYMENT.md#redis)).
+- The name of a `redis` store from [`caches.stores`](./CONFIGURATION.md#caches) shares them with
+  every process whose store has the same `url` and `prefix` and, with AOF on, across restarts.
+  Prefer a Redis that does not evict ([why](./DEPLOYMENT.md#redis)).
 
 ### `jwt` (default)
 

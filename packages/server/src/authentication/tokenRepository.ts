@@ -3,7 +3,7 @@ import type { Configuration } from "../types/configuration";
 import { parseDurationToMs } from "./duration";
 import { MEMORY_STORE } from "../config/types/cache";
 import { logger } from "../logging";
-import { redisUrlOf } from "../singletons/cache/stores";
+import { redisStoreOf } from "../singletons/cache/stores";
 import { closeRedisClient, createRedisClient } from "../utils/redis";
 
 export type TokenRepository = {
@@ -263,5 +263,6 @@ export const createConfiguredTokenRepository = (
     return createMemoryTokenRepository();
   }
   if (authStore === MEMORY_STORE) return createMemoryTokenRepository();
-  return createTokenRepository(redisUrlOf(caches, "AUTH_STORE", authStore));
+  const { url, prefix } = redisStoreOf(caches, "AUTH_STORE", authStore);
+  return createTokenRepository(url, prefix);
 };

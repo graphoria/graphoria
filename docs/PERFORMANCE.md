@@ -60,10 +60,10 @@ An operation reads the stores of its [cache chain](./CONFIGURATION.md#caches) in
 `bench/cacheSerialize.ts`, against about 33 µs from Redis — and a new or restarted worker starts
 from Redis instead of the database. Every store holds a full copy of each response.
 
-**Known gap:** the key carries no deployment namespace. Two Graphoria
+**Two deployments, one Redis.** The key carries no deployment name. Two Graphoria
 deployments pointed at the same Redis instance, serving the same route paths,
-will read each other's entries. Give each deployment its own Redis database or
-instance.
+read each other's entries unless each gives its stores its own
+[`prefix`](./CONFIGURATION.md#caches).
 
 ## The measured numbers
 

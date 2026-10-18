@@ -23,6 +23,21 @@ describe("caches", () => {
     expect(ConfigurationZod.parse({ ...base, caches }).caches).toEqual(caches);
   });
 
+  it("keeps a redis store's prefix as written", () => {
+    const caches = {
+      default: ["memory", "shared"],
+      stores: { shared: { ...redis(), prefix: "app1:" } },
+    };
+
+    expect(ConfigurationZod.parse({ ...base, caches }).caches).toEqual(caches);
+  });
+
+  it.each(["", ":", ":app1", "app 1", "app*", "{app1}"])("rejects the prefix %p", (prefix) => {
+    expect(problems({ caches: { stores: { s: { ...redis(), prefix } } } })).toEqual([
+      "caches.stores.s.prefix: letters, digits, _, - and : only, not starting with :",
+    ]);
+  });
+
   it("rejects a store named memory", () => {
     expect(problems({ caches: { stores: { memory: redis() } } })).toEqual([
       'caches.stores.memory: "memory" is the built-in in-process store and cannot be declared',

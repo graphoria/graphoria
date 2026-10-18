@@ -6,7 +6,7 @@ import { ConfigurationZod } from "../../types/zod/configuration";
 import { LruCacheStore } from "./lruCacheStore";
 import { RedisCacheStore } from "./redisCacheStore";
 import { closeCacheRedisClient } from "./redisClient";
-import { buildCacheStore, getCaches, redisUrlOf, setCaches, storesInUse } from "./stores";
+import { buildCacheStore, getCaches, redisStoreOf, setCaches, storesInUse } from "./stores";
 import { TieredCacheStore } from "./tieredCacheStore";
 
 // Nothing listens here, and no test sends these clients a command.
@@ -27,6 +27,12 @@ describe("buildCacheStore", () => {
     setCaches({ default: ["shared"], stores: { shared } });
 
     expect(buildCacheStore("op", { ttl: 1_000 })).toBeInstanceOf(RedisCacheStore);
+  });
+
+  it("keys a Redis store's entries under its prefix", () => {
+    setCaches({ default: ["shared"], stores: { shared: { ...shared, prefix: "app1" } } });
+
+    expect(Reflect.get(buildCacheStore("op", { ttl: 1_000 }), "prefix")).toBe("app1:cache:op:");
   });
 
   it("chains a memory store in front of a Redis store for the default chain", () => {
@@ -88,21 +94,33 @@ describe("buildCacheStore memory ttl", () => {
   });
 });
 
-describe("redisUrlOf", () => {
-  const declared = { default: ["memory"], stores: { shared } };
+describe("redisStoreOf", () => {
+  const declared = {
+    default: ["memory"],
+    stores: {
+      shared,
+      prefixed: { ...shared, prefix: "app1" },
+      trailing: { ...shared, prefix: "app1::" },
+    },
+  };
 
-  it("reads the URL of a declared store", () => {
-    expect(redisUrlOf(declared, "AUTH_STORE", "shared")).toBe(shared.url);
+  it("reads the URL of a declared store, with no key prefix when it sets none", () => {
+    expect(redisStoreOf(declared, "AUTH_STORE", "shared")).toEqual({ url: shared.url, prefix: "" });
+  });
+
+  it("ends the key prefix with one colon, however many the store's prefix ends with", () => {
+    expect(redisStoreOf(declared, "AUTH_STORE", "prefixed").prefix).toBe("app1:");
+    expect(redisStoreOf(declared, "AUTH_STORE", "trailing").prefix).toBe("app1:");
   });
 
   it("names the variable and the store it lacks", () => {
-    expect(() => redisUrlOf(declared, "RATE_LIMIT_STORE", "nope")).toThrow(
+    expect(() => redisStoreOf(declared, "RATE_LIMIT_STORE", "nope")).toThrow(
       "RATE_LIMIT_STORE=nope names no store: declare it in caches.stores, or set RATE_LIMIT_STORE=memory",
     );
   });
 
   it("finds no store among the names Object.prototype lends", () => {
-    expect(() => redisUrlOf(declared, "AUTH_STORE", "toString")).toThrow(
+    expect(() => redisStoreOf(declared, "AUTH_STORE", "toString")).toThrow(
       "AUTH_STORE=toString names no store",
     );
   });

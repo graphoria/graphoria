@@ -60,7 +60,7 @@ type ConfigurationInput = {
   /** REST response cache: named stores and the chain cached operations read. See Caches. */
   caches?: {
     default?: string[]; // default ["memory"]
-    stores?: Record<string, { type: "redis"; url: string; ttl?: number }>;
+    stores?: Record<string, { type: "redis"; url: string; ttl?: number; prefix?: string }>;
   };
   queues?: QueueConfig[];
   cron?: CronJobConfig[];
@@ -845,7 +845,13 @@ caches: {
   [cache fields](#cache-configuration). It cannot be declared.
 - **A `redis` store** takes a `url` and an optional `ttl` in milliseconds, used by the operations
   that set none. It also bounds those operations' `memory` copies in the same chain (the smallest
-  such `ttl`, when several stores set one). Every process pointed at it shares its entries.
+  such `ttl`, when several stores set one). Every process pointed at the same `url` and `prefix`
+  shares its entries.
+- **`prefix`**, optional on a `redis` store, starts every key the store holds, followed by one `:`
+  (`shop` and `shop:` both give `shop:…`): the cached responses, and the token records and
+  rate-limit buckets when `AUTH_STORE` or `RATE_LIMIT_STORE` names the store. It takes letters,
+  digits, `_`, `-` and `:`, and does not start with `:`. Deployments that share one Redis each set
+  their own ([what it does not separate](./DEPLOYMENT.md#redis)); without one, keys carry no prefix.
 - **Reads** walk the chain in order. The first hit is served and copied into the stores before it,
   never into the ones after it. **Writes** reach every store and finish before the response. A
   store that fails is logged and skipped; it never fails a request.
