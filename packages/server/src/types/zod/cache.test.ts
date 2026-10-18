@@ -65,11 +65,25 @@ describe("caches", () => {
     ]);
   });
 
-  it("rejects two stores on one Redis URL in one chain", () => {
+  it("rejects two stores on one Redis URL and prefix in one chain", () => {
     expect(
       problems({ caches: { default: ["a", "b"], stores: { a: redis(), b: redis() } } }),
     ).toEqual([
-      'caches.default.1: cache stores "a" and "b" use the same Redis URL, so their entries would share keys',
+      'caches.default.1: cache stores "a" and "b" use the same Redis URL and prefix, so their entries would share keys',
+    ]);
+  });
+
+  it("accepts two stores on one Redis URL in one chain when their prefixes differ", () => {
+    const stores = { a: { ...redis(), prefix: "one" }, b: { ...redis(), prefix: "two" } };
+
+    expect(problems({ caches: { default: ["a", "b"], stores } })).toEqual([]);
+  });
+
+  it("rejects two prefixes that differ only by a trailing colon", () => {
+    const stores = { a: { ...redis(), prefix: "one" }, b: { ...redis(), prefix: "one:" } };
+
+    expect(problems({ caches: { default: ["a", "b"], stores } })).toEqual([
+      'caches.default.1: cache stores "a" and "b" use the same Redis URL and prefix, so their entries would share keys',
     ]);
   });
 

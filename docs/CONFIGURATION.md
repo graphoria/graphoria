@@ -90,10 +90,10 @@ starting rather than letting it come up misconfigured.
 key name fails immediately instead of being dropped.
 
 The [`caches`](#caches) checks run in this pass too: every store a chain names is `memory` or
-declared, and appears once; a chain holds one store per Redis URL; the memory-only fields need
-`memory` in the chain, which then needs `max`, `maxSize` or `ttl`; and only query operations take
-`cache`. The store names the env sets are checked here as well: `AUTH_STORE`, which auth on requires,
-and `RATE_LIMIT_STORE` must be `memory` or a store `caches.stores` declares.
+declared, and appears once; a chain holds one store per Redis URL and prefix; the memory-only
+fields need `memory` in the chain, which then needs `max`, `maxSize` or `ttl`; and only query
+operations take `cache`. The store names the env sets are checked here as well: `AUTH_STORE`, which
+auth on requires, and `RATE_LIMIT_STORE` must be `memory` or a store `caches.stores` declares.
 
 **References**, once the databases have been introspected: every name the
 configuration points at is resolved against what exists, and any that resolve to
@@ -859,8 +859,8 @@ caches: {
   [the token store](./AUTHENTICATION.md#token-store) and [Rate limiting](#rate-limiting).
 
 Boot fails when a chain names a store that is neither `memory` nor declared, lists a store twice,
-or holds two stores on one Redis URL, since their entries would share keys. A store nothing reads
-logs a warning.
+or holds two stores on one Redis URL and prefix, since their entries would share keys. A store
+nothing reads logs a warning.
 
 **Staleness.** A copy into a faster store starts that store's TTL afresh. An entry can therefore be
 served as old as the sum of the chain's TTLs: `ttl: 60_000` with `memory` in front of Redis can
