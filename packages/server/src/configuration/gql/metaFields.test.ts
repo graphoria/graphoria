@@ -134,7 +134,7 @@ describe("execute", () => {
 // which Bun.serve then refuses.
 describe("over HTTP", () => {
   let routes: Record<string, unknown>;
-  let prefixes: { graphql: string; rest: string };
+  let prefixes: { graphql: string; rest: string; openapi: string };
 
   beforeAll(async () => {
     const { createHandlers } = await import("../../index");
@@ -173,6 +173,32 @@ describe("over HTTP", () => {
     const response = await rest(new Request(`http://localhost${prefixes.rest}/health`));
 
     expect(await response.json()).toEqual({ data: { __typename: "Query" } });
+  });
+
+  it("describes the quickstart's health check in /openapi.json", async () => {
+    const openapi = routes[prefixes.openapi] as () => Response;
+    const spec = (await openapi().json()) as { paths: Record<string, unknown> };
+
+    expect(spec.paths["/health"]).toMatchObject({
+      get: {
+        responses: {
+          200: {
+            content: {
+              "application/json": {
+                schema: {
+                  properties: {
+                    data: {
+                      properties: { __typename: { type: "string", nullable: false } },
+                      required: ["__typename"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   it("answers only the selection a __schema query asks for", async () => {

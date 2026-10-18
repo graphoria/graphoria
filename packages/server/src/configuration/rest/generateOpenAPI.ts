@@ -1,6 +1,21 @@
-import { GraphQLObjectType } from "graphql";
+import {
+  GraphQLObjectType,
+  isListType,
+  isNonNullType,
+  Kind,
+  SchemaMetaFieldDef,
+  TypeMetaFieldDef,
+  TypeNameMetaFieldDef,
+} from "graphql";
 
-import type { GraphQLType } from "graphql";
+import type {
+  DocumentNode,
+  FieldNode,
+  FragmentDefinitionNode,
+  GraphQLType,
+  SelectionNode,
+  SelectionSetNode,
+} from "graphql";
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { SelectionAnalysis } from "../../analyzeQuery/types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
@@ -75,6 +90,121 @@ const processSelections = (
 
     return acc;
   }, {});
+
+// No type lists these among its fields: graphql-js defines them apart.
+const META_FIELD_DEFS = new Map(
+  [SchemaMetaFieldDef, TypeMetaFieldDef, TypeNameMetaFieldDef].map((field) => [field.name, field]),
+);
+
+type Fragments = ReadonlyMap<string, FragmentDefinitionNode>;
+type FieldGroup = { nodes: FieldNode[]; conditional: boolean };
+
+const isConditional = (selection: SelectionNode) =>
+  selection.directives?.some(({ name }) => name.value === "include" || name.value === "skip") ??
+  false;
+
+// Groups fields by response key across fragments, as execution merges them,
+// and as execution collects a fragment spread twice in one selection once.
+const collectFields = (
+  selectionSet: SelectionSetNode,
+  fragments: Fragments,
+  groups: Map<string, FieldGroup>,
+  visited: Set<string>,
+  conditional = false,
+) => {
+  for (const selection of selectionSet.selections) {
+    const skippable = conditional || isConditional(selection);
+
+    if (selection.kind === Kind.FIELD) {
+      const key = selection.alias?.value ?? selection.name.value;
+      const group = groups.get(key);
+
+      if (group) {
+        group.nodes.push(selection);
+        group.conditional &&= skippable;
+      } else {
+        groups.set(key, { nodes: [selection], conditional: skippable });
+      }
+    } else if (selection.kind === Kind.INLINE_FRAGMENT) {
+      collectFields(selection.selectionSet, fragments, groups, visited, skippable);
+    } else if (!visited.has(selection.name.value)) {
+      visited.add(selection.name.value);
+      const fragment = fragments.get(selection.name.value);
+      if (fragment) collectFields(fragment.selectionSet, fragments, groups, visited, skippable);
+    }
+  }
+};
+
+const metaPropertiesOf = (
+  parentType: GraphQLObjectType | undefined,
+  selectionSets: SelectionSetNode[],
+  fragments: Fragments,
+) => {
+  const groups = new Map<string, FieldGroup>();
+  const visited = new Set<string>();
+  for (const selectionSet of selectionSets) {
+    collectFields(selectionSet, fragments, groups, visited);
+  }
+
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+
+  for (const [key, { nodes, conditional }] of groups) {
+    const name = nodes[0]!.name.value;
+    const type = META_FIELD_DEFS.get(name)?.type ?? (parentType && getFieldType(parentType, name));
+    const isRequired = isNonNullType(type) && !conditional;
+    const subSelections = nodes.flatMap(({ selectionSet }) => (selectionSet ? [selectionSet] : []));
+
+    properties[key] = metaSchemaOf(type, subSelections, fragments, isRequired);
+    if (isRequired) required.push(key);
+  }
+
+  return { properties, required };
+};
+
+const metaSchemaOf = (
+  type: GraphQLType | undefined,
+  selectionSets: SelectionSetNode[],
+  fragments: Fragments,
+  isRequired: boolean,
+): Record<string, unknown> => {
+  const nullable = !isRequired;
+  const nullableType = isNonNullType(type) ? type.ofType : type;
+
+  if (isListType(nullableType)) {
+    const item = nullableType.ofType;
+    return {
+      type: "array",
+      items: metaSchemaOf(item, selectionSets, fragments, isNonNullType(item)),
+      nullable,
+    };
+  }
+
+  if (selectionSets.length === 0) return { type: openApiTypeOf(nullableType), nullable };
+
+  const objectType = nullableType instanceof GraphQLObjectType ? nullableType : undefined;
+  return { type: "object", ...metaPropertiesOf(objectType, selectionSets, fragments), nullable };
+};
+
+/**
+ * The root `__schema`, `__type` and `__typename`, which the analysis keeps out
+ * of `fields` because graphql-js answers them. `meta` holds the operation
+ * narrowed to them and the document's fragments.
+ */
+const rootMetaPropertiesOf = (meta: DocumentNode, rootType: GraphQLObjectType | undefined) => {
+  const fragments = new Map<string, FragmentDefinitionNode>();
+  const selectionSets: SelectionSetNode[] = [];
+
+  for (const definition of meta.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION) {
+      fragments.set(definition.name.value, definition);
+    } else if (definition.kind === Kind.OPERATION_DEFINITION) {
+      selectionSets.push(definition.selectionSet);
+    }
+  }
+
+  return metaPropertiesOf(rootType, selectionSets, fragments);
+};
 
 type GenerateOpenAPIParams = {
   title?: string;
@@ -179,6 +309,12 @@ export const generateOpenAPI = ({
                 (operation.operation === "mutation"
                   ? role.schema.getMutationType()
                   : role.schema.getQueryType()) ?? undefined;
+              // A query that fails validation, which may spread fragments in a
+              // cycle, answers 401 and no data.
+              const meta =
+                operation.meta && !value.hasError
+                  ? rootMetaPropertiesOf(operation.meta, rootType)
+                  : { properties: {}, required: [] };
               return {
                 type: "object" as const,
                 properties: fields.reduce<Record<string, unknown>>((acc, field) => {
@@ -209,8 +345,11 @@ export const generateOpenAPI = ({
                     };
                   }
                   return acc;
-                }, {}),
-                required: fields.filter((f) => f.isRequired).map((f) => f.alias || f.name),
+                }, meta.properties),
+                required: [
+                  ...meta.required,
+                  ...fields.filter((f) => f.isRequired).map((f) => f.alias || f.name),
+                ],
               };
             })();
 
