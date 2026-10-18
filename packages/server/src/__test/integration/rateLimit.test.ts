@@ -143,6 +143,31 @@ describeIf("rate limiting", () => {
       await second.stop();
     }
   });
+
+  it("keeps apart the budgets of two servers whose stores set different prefixes", async () => {
+    const prefix = `rate-limit-${crypto.randomUUID()}`;
+    const second = await startServer({
+      engine: "pg",
+      config: {
+        caches: {
+          default: ["redis"],
+          stores: { redis: { type: "redis", url: REDIS_URL, prefix } },
+        },
+      },
+      env: { rateLimit },
+      skipSeed: true,
+    });
+
+    try {
+      for (let i = 0; i < ANONYMOUS_MAX; i++) await post();
+
+      expect((await post()).status).toBe(429);
+      expect((await second.context.gqlRaw(QUERY)).status).toBe(200);
+      expect(await redis.keys(`${prefix}:rl:*`)).toHaveLength(1);
+    } finally {
+      await second.stop();
+    }
+  });
 });
 
 describeIf("rate limiting, as shipped", () => {
