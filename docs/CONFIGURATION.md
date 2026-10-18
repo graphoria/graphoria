@@ -60,7 +60,7 @@ type ConfigurationInput = {
   /** REST response cache: named stores and the chain cached operations read. See Caches. */
   caches?: {
     default?: string[]; // default ["memory"]
-    stores?: Record<string, { type: "redis"; url: string; ttl?: number }>;
+    stores?: Record<string, { type: "redis"; url: string; ttl?: number; prefix?: string }>;
   };
   queues?: QueueConfig[];
   cron?: CronJobConfig[];
@@ -90,10 +90,10 @@ starting rather than letting it come up misconfigured.
 key name fails immediately instead of being dropped.
 
 The [`caches`](#caches) checks run in this pass too: every store a chain names is `memory` or
-declared, and appears once; a chain holds one store per Redis URL; the memory-only fields need
-`memory` in the chain, which then needs `max`, `maxSize` or `ttl`; and only query operations take
-`cache`. The store names the env sets are checked here as well: `AUTH_STORE`, which auth on requires,
-and `RATE_LIMIT_STORE` must be `memory` or a store `caches.stores` declares.
+declared, and appears once; a chain holds one store per Redis URL and prefix; the memory-only
+fields need `memory` in the chain, which then needs `max`, `maxSize` or `ttl`; and only query
+operations take `cache`. The store names the env sets are checked here as well: `AUTH_STORE`, which
+auth on requires, and `RATE_LIMIT_STORE` must be `memory` or a store `caches.stores` declares.
 
 **References**, once the databases have been introspected: every name the
 configuration points at is resolved against what exists, and any that resolve to
@@ -845,7 +845,13 @@ caches: {
   [cache fields](#cache-configuration). It cannot be declared.
 - **A `redis` store** takes a `url` and an optional `ttl` in milliseconds, used by the operations
   that set none. It also bounds those operations' `memory` copies in the same chain (the smallest
-  such `ttl`, when several stores set one). Every process pointed at it shares its entries.
+  such `ttl`, when several stores set one). Every process pointed at the same `url` and `prefix`
+  shares its entries.
+- **`prefix`**, optional on a `redis` store, starts every key the store holds, followed by one `:`
+  (`shop` and `shop:` both give `shop:…`): the cached responses, and the token records and
+  rate-limit buckets when `AUTH_STORE` or `RATE_LIMIT_STORE` names the store. It takes letters,
+  digits, `_`, `-` and `:`, and does not start with `:`. Deployments that share one Redis each set
+  their own ([what it does not separate](./DEPLOYMENT.md#redis)); without one, keys carry no prefix.
 - **Reads** walk the chain in order. The first hit is served and copied into the stores before it,
   never into the ones after it. **Writes** reach every store and finish before the response. A
   store that fails is logged and skipped; it never fails a request.
@@ -853,8 +859,8 @@ caches: {
   [the token store](./AUTHENTICATION.md#token-store) and [Rate limiting](#rate-limiting).
 
 Boot fails when a chain names a store that is neither `memory` nor declared, lists a store twice,
-or holds two stores on one Redis URL, since their entries would share keys. A store nothing reads
-logs a warning.
+or holds two stores on one Redis URL and prefix, since their entries would share keys. A store
+nothing reads logs a warning.
 
 **Staleness.** A copy into a faster store starts that store's TTL afresh. An entry can therefore be
 served as old as the sum of the chain's TTLs: `ttl: 60_000` with `memory` in front of Redis can

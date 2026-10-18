@@ -36,7 +36,7 @@ describe.skipIf(!integrationEnabled)("RedisCacheStore", () => {
 
   const store = (name: string, ttlMs?: number, pruneIntervalMs?: number) => {
     const operation = `redisCacheStore-${name}-${crypto.randomUUID()}`;
-    const cache = new RedisCacheStore(operation, REDIS_URL, ttlMs, pruneIntervalMs);
+    const cache = new RedisCacheStore(operation, REDIS_URL, "", ttlMs, pruneIntervalMs);
     created.push(cache);
     const prefix = `cache:${operation}:`;
 

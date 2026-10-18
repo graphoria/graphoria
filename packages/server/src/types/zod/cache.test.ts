@@ -23,6 +23,21 @@ describe("caches", () => {
     expect(ConfigurationZod.parse({ ...base, caches }).caches).toEqual(caches);
   });
 
+  it("keeps a redis store's prefix as written", () => {
+    const caches = {
+      default: ["memory", "shared"],
+      stores: { shared: { ...redis(), prefix: "app1:" } },
+    };
+
+    expect(ConfigurationZod.parse({ ...base, caches }).caches).toEqual(caches);
+  });
+
+  it.each(["", ":", ":app1", "app 1", "app*", "{app1}"])("rejects the prefix %p", (prefix) => {
+    expect(problems({ caches: { stores: { s: { ...redis(), prefix } } } })).toEqual([
+      "caches.stores.s.prefix: letters, digits, _, - and : only, not starting with :",
+    ]);
+  });
+
   it("rejects a store named memory", () => {
     expect(problems({ caches: { stores: { memory: redis() } } })).toEqual([
       'caches.stores.memory: "memory" is the built-in in-process store and cannot be declared',
@@ -50,11 +65,25 @@ describe("caches", () => {
     ]);
   });
 
-  it("rejects two stores on one Redis URL in one chain", () => {
+  it("rejects two stores on one Redis URL and prefix in one chain", () => {
     expect(
       problems({ caches: { default: ["a", "b"], stores: { a: redis(), b: redis() } } }),
     ).toEqual([
-      'caches.default.1: cache stores "a" and "b" use the same Redis URL, so their entries would share keys',
+      'caches.default.1: cache stores "a" and "b" use the same Redis URL and prefix, so their entries would share keys',
+    ]);
+  });
+
+  it("accepts two stores on one Redis URL in one chain when their prefixes differ", () => {
+    const stores = { a: { ...redis(), prefix: "one" }, b: { ...redis(), prefix: "two" } };
+
+    expect(problems({ caches: { default: ["a", "b"], stores } })).toEqual([]);
+  });
+
+  it("rejects two prefixes that differ only by a trailing colon", () => {
+    const stores = { a: { ...redis(), prefix: "one" }, b: { ...redis(), prefix: "one:" } };
+
+    expect(problems({ caches: { default: ["a", "b"], stores } })).toEqual([
+      'caches.default.1: cache stores "a" and "b" use the same Redis URL and prefix, so their entries would share keys',
     ]);
   });
 

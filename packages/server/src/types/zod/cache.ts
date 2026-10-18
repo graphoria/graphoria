@@ -3,7 +3,7 @@ import type { z } from "zod";
 import type { CachesZod } from "../../config/types/cache";
 import type { OperationCacheConfig } from "../../config/types/operation";
 
-import { MEMORY_STORE } from "../../config/types/cache";
+import { MEMORY_STORE, keyPrefixOf } from "../../config/types/cache";
 
 type Caches = z.output<typeof CachesZod>;
 
@@ -21,7 +21,7 @@ const MEMORY_FIELDS = [
 
 const chainIssues = (chain: string[], caches: Caches, path: (string | number)[]): CacheIssue[] => {
   const issues: CacheIssue[] = [];
-  const storeByUrl = new Map<string, string>();
+  const storeByKeys = new Map<string, string>();
 
   for (const [index, name] of chain.entries()) {
     const at = [...path, index];
@@ -40,13 +40,15 @@ const chainIssues = (chain: string[], caches: Caches, path: (string | number)[])
       continue;
     }
 
-    const twin = storeByUrl.get(store.url);
+    // A prefix holds no space, so no two URL and prefix pairs join into one string.
+    const keys = `${store.url} ${keyPrefixOf(store)}`;
+    const twin = storeByKeys.get(keys);
     if (twin === undefined) {
-      storeByUrl.set(store.url, name);
+      storeByKeys.set(keys, name);
     } else {
       issues.push({
         path: at,
-        message: `cache stores "${twin}" and "${name}" use the same Redis URL, so their entries would share keys`,
+        message: `cache stores "${twin}" and "${name}" use the same Redis URL and prefix, so their entries would share keys`,
       });
     }
   }

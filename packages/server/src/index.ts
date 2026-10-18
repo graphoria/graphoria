@@ -35,7 +35,7 @@ import {
   instantiateDatabasesConnections,
   pingConnection,
 } from "./singletons/databases";
-import { redisUrlOf, storesInUse } from "./singletons/cache";
+import { redisStoreOf, storesInUse } from "./singletons/cache";
 import { closeCacheRedisClient, getCacheRedisClient } from "./singletons/cache/redisClient";
 import { env } from "./singletons/env";
 import { setQueryTimeoutMs } from "./singletons/queryTimeout";
@@ -223,10 +223,10 @@ const bootAnalyzedConfiguration = async (
   // The stores the env names need only the configuration, so a misnamed one
   // refuses boot before anything connects. The rate-limit store is resolved even
   // with no limit set, so the typo fails now rather than once a limit is configured.
-  const rateLimitRedisUrl =
+  const rateLimitRedis =
     rateLimitStore === undefined || rateLimitStore === MEMORY_STORE
       ? undefined
-      : redisUrlOf(projectConfiguration.caches, "RATE_LIMIT_STORE", rateLimitStore);
+      : redisStoreOf(projectConfiguration.caches, "RATE_LIMIT_STORE", rateLimitStore);
   const tokenRepository = createConfiguredTokenRepository(
     Boolean(projectConfiguration.auth?.enabled),
     env.authStore,
@@ -279,7 +279,7 @@ const bootAnalyzedConfiguration = async (
       analyzedConfiguration,
       aiSurfaces: resolveAISurfaces(env, projectConfiguration.ai),
       tokenRepository,
-      rateLimitRedisUrl,
+      rateLimitRedis,
     };
   } catch (error) {
     await releaseFailedBoot(() => tokenRepository.close());
@@ -392,7 +392,7 @@ const createGraphQLServer = async (env: Env) => {
     analyzedConfiguration,
     aiSurfaces,
     tokenRepository,
-    rateLimitRedisUrl,
+    rateLimitRedis,
   } = await bootAnalyzedConfiguration(env, {
     authStoreRequired: true,
     rateLimitStore: env.rateLimit.store,
@@ -443,8 +443,10 @@ const createGraphQLServer = async (env: Env) => {
       anonymousRole: env.anonymousRole,
       permissions: projectConfiguration.auth?.permissions,
       store: () =>
-        rateLimitRedisUrl
-          ? createRedisRateLimitStore(getCacheRedisClient(rateLimitRedisUrl))
+        rateLimitRedis
+          ? createRedisRateLimitStore(getCacheRedisClient(rateLimitRedis.url), {
+              prefix: rateLimitRedis.prefix,
+            })
           : createMemoryRateLimitStore(),
     });
 

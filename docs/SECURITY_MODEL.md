@@ -462,15 +462,19 @@ choice is always explicit.
 A server with auth off still verifies bearer tokens signed with its key. Without `AUTH_STORE`, the
 revocation check reads an empty store in the process, so a token that another deployment sharing
 the key revoked keeps verifying here until it expires. **Deliberate**: with auth off this server
-issues and revokes nothing itself, so it requires no token store. Point `AUTH_STORE` at the store
-that deployment uses wherever its revocations must hold here.
+issues and revokes nothing itself, so it requires no token store. Point `AUTH_STORE` at a store
+with that deployment's `url` and `prefix` wherever its revocations must hold here.
 
 ### Two deployments sharing one Redis can serve each other's rows
 
 The REST response cache key hashes the pathname, method, variables, `sub` and `role`. Nothing in it
 names the deployment, the database or the configuration. Two Graphoria servers pointed at the same
 Redis, with an operation of the same name, will serve each other's cached rows to a caller whose
-`role` and `sub` match. **Open gap.** Give each deployment its own Redis database or its own Redis.
+`role` and `sub` match, and share their rate-limit buckets, unless their stores set different
+prefixes. **Closed by `prefix`**: a Redis store's [`prefix`](./CONFIGURATION.md#caches) starts every
+key it holds, so two deployments that each set their own share no key. It separates their keys, not
+their access: a deployment that must not read or flush the other's keys needs a Redis of its own
+([Redis](./DEPLOYMENT.md#redis)).
 
 ### Failure directions, where they differ
 

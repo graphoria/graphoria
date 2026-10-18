@@ -13,7 +13,7 @@ import type { RlsUserKey, StartedRls } from "./fixture";
 
 import { ENGINES, SCHEMAS, fieldName } from "../config";
 import { integrationEnabled } from "../harness";
-import { flushRedis, startRlsServer } from "./fixture";
+import { startRlsServer } from "./fixture";
 
 /**
  * Schema isolation, in two halves.
@@ -81,8 +81,6 @@ describe.skipIf(!integrationEnabled)("rls · schema isolation", () => {
       const restrictedFromAnonymous = [tasks, projects, users, organizations, taskTags];
 
       beforeAll(async () => {
-        await flushRedis();
-
         started = await startRlsServer(engine);
       });
 

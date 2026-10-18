@@ -3,7 +3,7 @@ import type { CacheStore } from "./types";
 import type { OperationCacheConfig } from "../../config/types/operation";
 import type { Configuration } from "../../types/configuration";
 
-import { MEMORY_STORE } from "../../config/types/cache";
+import { MEMORY_STORE, keyPrefixOf } from "../../config/types/cache";
 import { LruCacheStore } from "./lruCacheStore";
 import { RedisCacheStore } from "./redisCacheStore";
 import { TieredCacheStore } from "./tieredCacheStore";
@@ -44,15 +44,19 @@ const lruOptions = (cache: OperationCacheConfig, ttl: number | undefined): LruOp
   return options as LruOptions;
 };
 
-/** The URL of the Redis store an env variable names; throws when caches.stores lacks it. */
-export const redisUrlOf = (declared: Caches, variable: string, name: string): string => {
+/** The URL and key prefix of the Redis store an env variable names; throws when caches.stores lacks it. */
+export const redisStoreOf = (
+  declared: Caches,
+  variable: string,
+  name: string,
+): { url: string; prefix: string } => {
   const store = Object.hasOwn(declared.stores, name) ? declared.stores[name] : undefined;
   if (!store) {
     throw new Error(
       `${variable}=${name} names no store: declare it in caches.stores, or set ${variable}=${MEMORY_STORE}`,
     );
   }
-  return store.url;
+  return { url: store.url, prefix: keyPrefixOf(store) };
 };
 
 /** The store an operation's responses are kept in: its own `stores`, else the default chain. */
@@ -73,7 +77,12 @@ export const buildCacheStore = (operationName: string, cache: OperationCacheConf
   const stores = chain.map((name): CacheStore => {
     if (name === MEMORY_STORE) return new LruCacheStore(lruOptions(cache, memoryTtl));
     const store = caches.stores[name]!;
-    return new RedisCacheStore(operationName, store.url, cache.ttl ?? store.ttl);
+    return new RedisCacheStore(
+      operationName,
+      store.url,
+      keyPrefixOf(store),
+      cache.ttl ?? store.ttl,
+    );
   });
 
   // A one-store chain keeps its bare store, so it runs exactly the code it ran before chains.
