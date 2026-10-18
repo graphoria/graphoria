@@ -1,5 +1,13 @@
 import { isString } from "es-toolkit";
-import { OverlappingFieldsCanBeMergedRule, parse, specifiedRules, validate } from "graphql";
+import {
+  execute,
+  Kind,
+  MaxIntrospectionDepthRule,
+  OverlappingFieldsCanBeMergedRule,
+  parse,
+  specifiedRules,
+  validate,
+} from "graphql";
 import { LRUCache } from "lru-cache";
 
 import type { BunRequest } from "bun";
@@ -13,6 +21,7 @@ import type { SessionContext } from "../../utils/sessionVariables";
 import { analyzeQuery } from "../../analyzeQuery";
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule, isDepthLimitError } from "../../analyzeQuery/depthLimit";
+import { introspectionLimitRule } from "../../analyzeQuery/introspectionLimit";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
 import { filterBasedOnDirective } from "../../databases/common";
@@ -200,10 +209,15 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
   // Results are merged by assignment (last write wins) and nothing here checks
   // the spec's field-merging constraints, so the overlap rule only rejects
   // queries the engine would otherwise execute — while being the one rule whose
-  // cost grows quadratically with wide selection sets.
-  const validationRules = specifiedRules.filter(
-    (rule) => rule !== OverlappingFieldsCanBeMergedRule,
-  );
+  // cost grows quadratically with wide selection sets. introspectionLimitRule
+  // keeps MaxIntrospectionDepthRule's bound, walking a fragment once per path
+  // where that rule walks it again at every spread.
+  const validationRules = [
+    ...specifiedRules.filter(
+      (rule) => rule !== OverlappingFieldsCanBeMergedRule && rule !== MaxIntrospectionDepthRule,
+    ),
+    introspectionLimitRule,
+  ];
 
   // undefined = unparseable query (never cached)
   const getCacheEntry = (query: string): CachedQuery | undefined => {
@@ -234,14 +248,28 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     );
   };
 
-  const isIntrospectionAST = (document: DocumentNode): boolean =>
-    document.definitions.some(
-      (def) =>
-        def.kind === "OperationDefinition" &&
-        def.selectionSet.selections.some(
-          (sel) => sel.kind === "Field" && sel.name.value === "__schema",
-        ),
-    );
+  // Keyed by an analysis's meta document, so per role and query text, and gone
+  // with the analysis. Only an operation that declares no variables answers
+  // every request alike.
+  const metaAnswers = new WeakMap<DocumentNode, Record<string, unknown>>();
+
+  const answerMetaFields = async (
+    document: DocumentNode,
+    variables: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    const cached = metaAnswers.get(document);
+    if (cached) return cached;
+
+    const result = await execute({ schema: entities.schema, document, variableValues: variables });
+    if (result.errors?.length) throw new Error(result.errors[0]!.message);
+
+    const data = result.data ?? {};
+    const [operation] = document.definitions;
+    if (operation?.kind === Kind.OPERATION_DEFINITION && !operation.variableDefinitions?.length) {
+      metaAnswers.set(document, data);
+    }
+    return data;
+  };
 
   const isNoDataAST = (document: DocumentNode): boolean =>
     document.definitions.some(
@@ -253,18 +281,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     );
 
   const gql = {
-    // Check if the query is an introspection query (AST-based, not substring)
-    isIntrospectionQuery: (query: string) => {
-      const entry = getCacheEntry(query);
-      return entry ? isIntrospectionAST(entry.document) : false;
-    },
     // Check if the query is a _no_data query (AST-based, not substring)
     isNoDataQuery: (query: string) => {
       const entry = getCacheEntry(query);
       return entry ? isNoDataAST(entry.document) : false;
     },
-    // Return the introspection result for clients like GraphiQL or Apollo Client
-    introspectionResult: { data: entities.introspection },
     noDataResult: { data: { _no_data: "No data available" } },
     // `enforceDepthLimit: false` and `enforceCostLimit: false` are for
     // operator-authored queries (REST operations), which are config, not
@@ -426,6 +447,8 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
           // Returns an immutable ResolvedOperation — original operation is not mutated
           const resolved = resolveVariables(operation, variables, session);
 
+          const metaData = operation.meta ? await answerMetaFields(operation.meta, variables) : {};
+
           if (operation.operation === "query") {
             // Separate auth fields, remote schema fields, and table fields
             const authFields = resolved.fields.filter(
@@ -525,7 +548,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 { durationMs: (Bun.nanoseconds() - startTime) / 1e6 },
                 "graphql request completed (no table fields)",
               );
-              return { data: { ...authData, ...remoteData, ...aiData } };
+              return { data: { ...metaData, ...authData, ...remoteData, ...aiData } };
             }
 
             const tableQueryAnalysis = {
@@ -607,6 +630,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                   }
                 : {}),
               data: data.reduce((acc, curr) => Object.assign(acc, curr), {
+                ...metaData,
                 ...authData,
                 ...remoteData,
                 ...aiData,
@@ -641,7 +665,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             );
 
             return {
-              data: results,
+              data: { ...metaData, ...results },
             };
           }
 

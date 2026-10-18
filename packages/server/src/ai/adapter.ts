@@ -8,6 +8,7 @@ import type { SessionContext } from "../utils/sessionVariables";
 
 import { checkQueryCost } from "../analyzeQuery/costLimit";
 import { depthLimitRule } from "../analyzeQuery/depthLimit";
+import { introspectionLimitRule } from "../analyzeQuery/introspectionLimit";
 import { categorizeSqlType, isNumericType } from "../databases/sqlTypeUtils";
 import { columnFieldName } from "../databases/transformers/graphqlName";
 import { logger } from "../logging";
@@ -44,6 +45,7 @@ export type AiToolDeps = {
   logger: typeof logger;
   checkQueryCost: typeof checkQueryCost;
   depthLimitRule: typeof depthLimitRule;
+  introspectionLimitRule: typeof introspectionLimitRule;
   categorizeSqlType: typeof categorizeSqlType;
   isNumericType: typeof isNumericType;
   columnFieldName: typeof columnFieldName;

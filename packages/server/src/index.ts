@@ -310,8 +310,8 @@ const startAgent = async (env: Env, ai: Configuration["ai"]) => {
  * an HTTP server. Performs the same boot as {@link createBunServer} minus the
  * route / websocket / queue / cron layer, then returns an `execute` function.
  *
- * `execute(query, variables?, opts?)` runs the same introspection / no-data /
- * validation / dispatch pipeline as the `/graphql` endpoint. It bypasses auth:
+ * `execute(query, variables?, opts?)` runs the same no-data / validation /
+ * dispatch pipeline as the `/graphql` endpoint, introspection included. It bypasses auth:
  * `opts.role` selects the role (defaults to the superadmin role — full
  * privileges) and there is no token verification. Because no `BunRequest`
  * exists, request-dependent features (operation `init`/`beforeRequest` hooks
@@ -652,8 +652,6 @@ const createGraphQLServer = async (env: Env) => {
             if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
 
             const { query, variables } = await req.json();
-
-            if (gql.isIntrospectionQuery(query)) return new S200(gql.introspectionResult);
 
             if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
 

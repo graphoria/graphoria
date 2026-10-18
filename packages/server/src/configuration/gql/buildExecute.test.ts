@@ -12,15 +12,12 @@ type HandlerCall = {
 const makeGql = (
   calls: HandlerCall[],
   overrides: Partial<{
-    isIntrospectionQuery: (q: string) => boolean;
     isNoDataQuery: (q: string) => boolean;
     hasErrors: (q: string) => { hasErrors: boolean; validationErrors: unknown[] };
     handlerData: unknown;
   }> = {},
 ) => ({
-  isIntrospectionQuery: overrides.isIntrospectionQuery ?? ((q: string) => q.includes("__schema")),
   isNoDataQuery: overrides.isNoDataQuery ?? ((q: string) => q.includes("_no_data")),
-  introspectionResult: { data: { __schema: "INTROSPECTION" } },
   noDataResult: { data: { _no_data: "No data available" } },
   hasErrors: overrides.hasErrors ?? (() => ({ hasErrors: false, validationErrors: [] })),
   handler: async (
@@ -40,15 +37,21 @@ const makeRoles = (gqls: Record<string, ReturnType<typeof makeGql>>) =>
   ) as unknown as Parameters<typeof buildExecute>[0];
 
 describe("buildExecute", () => {
-  it("short-circuits introspection queries", async () => {
+  it("validates a __schema query and hands it to the handler like any other", async () => {
     const calls: HandlerCall[] = [];
-    const gql = makeGql(calls);
+    const validated: string[] = [];
+    const gql = makeGql(calls, {
+      hasErrors: (q) => {
+        validated.push(q);
+        return { hasErrors: false, validationErrors: [] };
+      },
+    });
     const execute = buildExecute(makeRoles({ superadmin: gql }), "superadmin");
+    const query = "{ __schema { types { name } } }";
 
-    const result = await execute("{ __schema { types { name } } }");
-
-    expect(result).toBe(gql.introspectionResult);
-    expect(calls).toHaveLength(0);
+    expect(await execute(query)).toEqual({ data: { ok: true } });
+    expect(validated).toEqual([query]);
+    expect(calls.map((call) => call.query)).toEqual([query]);
   });
 
   it("short-circuits no-data queries", async () => {

@@ -4,6 +4,7 @@ import type { FieldNode, SelectionNode } from "graphql";
 import type { EntitiesWithSchema, SelectionAnalysis, VariableDefinition } from "../types";
 
 import { analyzeDirectives } from "../directiveUtils";
+import { META_FIELDS } from "../metaFields";
 import { getFieldType, unwrapType } from "../typeUtils";
 import { extractArgumentValue } from "../valueExtractors";
 
@@ -31,7 +32,7 @@ export const analyzeSelections = (
           : undefined;
 
         const fieldName = field.name.value;
-        if (fieldName === "__typename") {
+        if (META_FIELDS.has(fieldName)) {
           return {
             name: fieldName,
           };
@@ -135,4 +136,4 @@ export const analyzeSelections = (
         };
       }
     })
-    .filter((sel) => sel.name !== "__typename");
+    .filter((sel) => !META_FIELDS.has(sel.name));

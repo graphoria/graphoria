@@ -8,6 +8,7 @@ import type { AnalysisResult } from "../../analyzeQuery/types";
 import type { AuditEvent } from "../../logging/audit";
 import type { Auth } from "../../types/configuration";
 
+import { fragmentFanOut } from "../../__test/fragmentFanOut";
 import { attributeOf, installSpanSink, stringAttribute } from "../../__test/spanSink";
 import { configureMetrics, createRegistry, setMetricsRegistry } from "../../observability/metrics";
 import { startSpan, withActiveSpan } from "../../observability/tracing";
@@ -114,21 +115,10 @@ beforeAll(async () => {
 });
 
 describe("handleGraphQLRequestFactory — pure helpers", () => {
-  it("isIntrospectionQuery detects __schema queries", () => {
-    const factory = factoryFn(buildEntities());
-    expect(factory.isIntrospectionQuery("query { __schema { queryType { name } } }")).toBe(true);
-    expect(factory.isIntrospectionQuery("query { users { id } }")).toBe(false);
-  });
-
   it("isNoDataQuery detects _no_data sentinel", () => {
     const factory = factoryFn(buildEntities());
     expect(factory.isNoDataQuery("query { _no_data }")).toBe(true);
     expect(factory.isNoDataQuery("query { users { id } }")).toBe(false);
-  });
-
-  it("introspectionResult passes through entities.introspection", () => {
-    const factory = factoryFn(buildEntities());
-    expect(factory.introspectionResult).toEqual({ data: introspection });
   });
 
   it("noDataResult returns the no-data sentinel", () => {
@@ -199,6 +189,27 @@ describe("handleGraphQLRequestFactory.hasErrors", () => {
     const result = factory.hasErrors("query { users { id } users(limit: 10) { id } }");
 
     expect(result.hasErrors).toBe(false);
+  });
+
+  it("refuses introspection that repeats a list field on one path", () => {
+    const factory = factoryFn(buildEntities());
+
+    const result = factory.hasErrors(
+      '{ __type(name: "User") { fields { type { fields { name } } } } }',
+    );
+
+    expect(result.hasErrors).toBe(true);
+    expect(result.validationErrors[0].message).toContain('"fields" twice');
+  });
+
+  it("validates nested fragment spreads under introspection in bounded time", () => {
+    const factory = factoryFn(buildEntities());
+    const started = performance.now();
+
+    const result = factory.hasErrors(fragmentFanOut(26, "User"));
+
+    expect(result.hasErrors).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 
@@ -350,11 +361,87 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
   });
 });
 
+describe("handleGraphQLRequestFactory.handler — meta fields", () => {
+  it("answers a root __typename with the root type's name", async () => {
+    const factory = factoryFn(buildEntities());
+
+    expect(await factory.handler("{ __typename }", {}, fakeReq, undefined)).toEqual({
+      data: { __typename: "Query" },
+    });
+    expect(await factory.handler("mutation { __typename }", {}, fakeReq, undefined)).toEqual({
+      data: { __typename: "Mutation" },
+    });
+  });
+
+  it("answers __type from the role's schema", async () => {
+    const factory = factoryFn(buildEntities());
+
+    expect(
+      await factory.handler(
+        '{ user: __type(name: "User") { name } none: __type(name: "Nope") { name } }',
+        {},
+        fakeReq,
+        undefined,
+      ),
+    ).toEqual({ data: { user: { name: "User" }, none: null } });
+  });
+
+  it("answers meta fields beside the other root fields", async () => {
+    const factory = factoryFn(buildEntities());
+
+    expect(
+      await factory.handler("{ __typename auth_me { username role } }", {}, fakeReq, {
+        sub: "alice",
+        role: "user",
+      }),
+    ).toEqual({ data: { __typename: "Query", auth_me: { username: "alice", role: "user" } } });
+  });
+
+  it("answers a meta query that declares no variables once per query text", async () => {
+    const entities = buildEntities();
+    const factory = factoryFn(entities);
+    const query = '{ __type(name: "User") { name } }';
+
+    await factory.handler(query, {}, fakeReq, undefined);
+
+    // A new execution would read the new schema; the cached answer is the old one.
+    entities.schema = buildSchema("type Query { users: [String] }");
+
+    expect(await factory.handler(query, {}, fakeReq, undefined)).toEqual({
+      data: { __type: { name: "User" } },
+    });
+  });
+
+  it("answers a meta query that declares variables on every request", async () => {
+    const factory = factoryFn(buildEntities());
+    const query = "query ($name: String!) { __type(name: $name) { name } }";
+
+    expect(await factory.handler(query, { name: "User" }, fakeReq, undefined)).toEqual({
+      data: { __type: { name: "User" } },
+    });
+    expect(await factory.handler(query, { name: "Post" }, fakeReq, undefined)).toEqual({
+      data: { __type: { name: "Post" } },
+    });
+  });
+
+  it("refuses a variable graphql-js cannot coerce", async () => {
+    const factory = factoryFn(buildEntities());
+
+    await expect(
+      factory.handler(
+        "query ($name: String!) { __type(name: $name) { name } }",
+        { name: 5 },
+        fakeReq,
+        undefined,
+      ),
+    ).rejects.toThrow('Variable "$name" has invalid value');
+  });
+});
+
 describe("handleGraphQLRequestFactory — query cache", () => {
   // Same call order as the /graphql POST route and buildExecute
   // oxlint-disable-next-line typescript/no-explicit-any
   const routeSequence = async (factory: any, query: string) => {
-    factory.isIntrospectionQuery(query);
     factory.isNoDataQuery(query);
     factory.hasErrors(query);
     return factory.handler(query, {}, fakeReq, { sub: "alice", role: "user" });
@@ -477,6 +564,25 @@ describe("handleGraphQLRequestFactory — SQL memoization", () => {
 
       expect(seen).toHaveLength(2);
       expect(seen[1]).toContain('"users_renamed"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("answers a root __typename beside a table field, outside the SQL", async () => {
+    const factory = factoryFn(tableEntities());
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      const result = await factory.handler(
+        "query { __typename users { id } }",
+        {},
+        fakeReq,
+        undefined,
+      );
+
+      expect(result.data.__typename).toBe("Query");
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).not.toContain("__typename");
     } finally {
       restore();
     }

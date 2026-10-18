@@ -177,7 +177,7 @@ describe("sqlite engine, end to end", () => {
           }[];
         }[];
       };
-    }>(`query { __schema { queryType { name } } }`);
+    }>(`query { __schema { types { name fields { name type { name ofType { name } } } } } }`);
     const fieldType = (fieldName: string) => {
       const field = introspection.__schema.types
         .find((t) => t.name === "main_users")

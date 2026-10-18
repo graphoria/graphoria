@@ -6,6 +6,7 @@ import {
   GraphQLObjectType,
   GraphQLScalarType,
   GraphQLUnionType,
+  MaxIntrospectionDepthRule,
   parse,
   printType,
   specifiedRules,
@@ -239,7 +240,8 @@ export type ValidateQueryFn = (
 /**
  * Build a query validator for a role. Without a positive depth limit it
  * delegates to the role's own `hasErrors`; with one it layers a depth-limit
- * rule on the standard rule set.
+ * rule on the standard rule set, the server's introspection bound standing in
+ * for graphql-js's.
  *
  * The cost budget applies on both branches, and there is no MCP-specific
  * override for it. MCP gets its own depth knob because an agent legitimately
@@ -254,7 +256,8 @@ export const makeValidateQuery =
     }
     const document = parse(query);
     const errors = validate(role.schema, document, [
-      ...specifiedRules,
+      ...specifiedRules.filter((rule) => rule !== MaxIntrospectionDepthRule),
+      deps.introspectionLimitRule,
       deps.depthLimitRule(maxQueryDepth),
     ]);
     if (errors.length > 0) return { hasErrors: true, validationErrors: errors };

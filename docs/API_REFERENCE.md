@@ -102,7 +102,7 @@ async function createGraphQLEngine(env: Partial<Env>): Promise<{
 
 #### `Execute`
 
-The in-process query runner returned by all three factories above. It runs the same introspection / no-data / validation / dispatch pipeline as the `/graphql` endpoint.
+The in-process query runner returned by all three factories above. It runs the same no-data / validation / dispatch pipeline as the `/graphql` endpoint, introspection included.
 
 ```typescript
 type Execute = (

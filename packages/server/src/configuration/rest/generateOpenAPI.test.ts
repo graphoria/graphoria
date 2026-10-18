@@ -6,6 +6,8 @@ import { describe, expect, it } from "bun:test";
 import type { RemoteRESTResolved } from "../../remoteREST/types";
 import type { Env } from "../../types/env";
 
+import { fragmentFanOut } from "../../__test/fragmentFanOut";
+
 const { getSchema } = await import("../getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
 const { generateOpenAPI } = await import("./generateOpenAPI");
@@ -17,7 +19,7 @@ const options = {
   admin: { header: "x-admin-secret" },
 } as Env;
 
-const specFor = (query: string) => {
+const dataSchemaFor = (query: string) => {
   const role = getSchema({
     tables: StoreMSSQL.tables,
     storedProcedures: [],
@@ -33,8 +35,10 @@ const specFor = (query: string) => {
 
   // oxlint-disable-next-line typescript/no-explicit-any
   return (spec.paths!["/probe"] as any).get.responses[200].content["application/json"].schema
-    .properties.data.properties;
+    .properties.data;
 };
+
+const specFor = (query: string) => dataSchemaFor(query).properties;
 
 describe("generateOpenAPI", () => {
   it("names the admin-secret header the server reads", () => {
@@ -141,6 +145,156 @@ describe("generateOpenAPI", () => {
 
     expect(address.address_id.nullable).toBe(false);
     expect(address.line1.nullable).toBe(true);
+  });
+
+  it("lists the root __typename beside the data fields", () => {
+    const data = dataSchemaFor(`
+      query {
+        __typename
+        dbo_addresses {
+          address_id
+        }
+      }
+    `);
+
+    expect(data.properties.__typename).toEqual({ type: "string", nullable: false });
+    expect(data.properties.dbo_addresses.type).toBe("array");
+    expect(data.required).toContain("__typename");
+  });
+
+  it("types a root __type's selection from the introspection types", () => {
+    const product = specFor(`
+      query {
+        product: __type(name: "dbo_products") {
+          name
+          kind
+          fields {
+            isDeprecated
+          }
+        }
+      }
+    `).product;
+
+    expect(product.type).toBe("object");
+    expect(product.nullable).toBe(true);
+    expect(product.properties.name).toEqual({ type: "string", nullable: true });
+    expect(product.properties.kind).toEqual({ type: "string", nullable: false });
+    expect(product.required).toEqual(["kind"]);
+    expect(product.properties.fields.type).toBe("array");
+    expect(product.properties.fields.nullable).toBe(true);
+    expect(product.properties.fields.items.properties.isDeprecated).toEqual({
+      type: "boolean",
+      nullable: false,
+    });
+  });
+
+  it("follows fragments and lists of leaves under __schema", () => {
+    const schema = specFor(`
+      query {
+        __schema {
+          directives {
+            locations
+          }
+          types {
+            ...Named
+          }
+        }
+      }
+      fragment Named on __Type {
+        name
+      }
+    `).__schema.properties;
+
+    expect(schema.directives.items.properties.locations).toEqual({
+      type: "array",
+      items: { type: "string", nullable: false },
+      nullable: false,
+    });
+    expect(schema.types.items.properties.name).toEqual({ type: "string", nullable: true });
+  });
+
+  it("leaves a conditionally included meta field out of required", () => {
+    const data = dataSchemaFor(`
+      query ($bare: Boolean!) {
+        __typename @skip(if: $bare)
+      }
+    `);
+
+    expect(data.properties.__typename).toEqual({ type: "string", nullable: true });
+    expect(data.required).toEqual([]);
+  });
+
+  it("merges a meta field selected twice, as execution does", () => {
+    const product = specFor(`
+      query {
+        product: __type(name: "dbo_products") {
+          kind
+          fields {
+            name
+          }
+          ...More
+        }
+      }
+      fragment More on __Type {
+        kind
+        fields {
+          isDeprecated
+        }
+      }
+    `).product;
+
+    expect(product.required).toEqual(["kind"]);
+    expect(Object.keys(product.properties.fields.items.properties)).toEqual([
+      "name",
+      "isDeprecated",
+    ]);
+  });
+
+  it("requires a meta field only where some selection of it cannot be skipped", () => {
+    const field = specFor(`
+      query ($full: Boolean!) {
+        product: __type(name: "dbo_products") {
+          fields {
+            ... @include(if: $full) {
+              name
+              isDeprecated
+            }
+            isDeprecated
+          }
+        }
+      }
+    `).product.properties.fields.items;
+
+    expect(field.required).toEqual(["isDeprecated"]);
+  });
+
+  it("collects a fragment once per selection, however often it is spread", () => {
+    const started = performance.now();
+
+    expect(specFor(fragmentFanOut(26, "dbo_products")).__type.properties.name.type).toBe("string");
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("describes no meta field of a query that fails validation", () => {
+    expect(
+      specFor(`
+        query {
+          __type(name: "dbo_products") {
+            ...A
+          }
+        }
+        fragment A on __Type {
+          ofType {
+            ...B
+          }
+        }
+        fragment B on __Type {
+          ofType {
+            ...A
+          }
+        }
+      `),
+    ).toEqual({});
   });
 
   it("adds the paths of the role's remote REST APIs", () => {

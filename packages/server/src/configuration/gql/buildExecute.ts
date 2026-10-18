@@ -10,8 +10,8 @@ type RolesWithGqlHandler = Record<string, { handlers: { gql: HandleGraphQLReques
 
 /**
  * Wrap the per-role GraphQL handlers in a single `execute(query, variables, opts)`
- * function — the same orchestration the `/graphql` POST route performs (introspection
- * / no-data short-circuits, validation, dispatch) minus the HTTP layer. Lets callers
+ * function — the same orchestration the `/graphql` POST route performs (the no-data
+ * short-circuit, validation, dispatch) minus the HTTP layer. Lets callers
  * run a query in-process without standing up a server.
  *
  * @param roles - The analyzed-configuration role map (`analyzedConfiguration.roles`).
@@ -33,7 +33,6 @@ export const buildExecute = (roles: RolesWithGqlHandler, defaultRole: string) =>
 
     const { gql } = roleSchema.handlers;
 
-    if (gql.isIntrospectionQuery(query)) return gql.introspectionResult;
     if (gql.isNoDataQuery(query)) return gql.noDataResult;
 
     const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
