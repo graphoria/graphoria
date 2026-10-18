@@ -13,6 +13,7 @@ import type { SessionContext } from "../../utils/sessionVariables";
 import { analyzeQuery } from "../../analyzeQuery";
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule, isDepthLimitError } from "../../analyzeQuery/depthLimit";
+import { introspectionLimitRule } from "../../analyzeQuery/introspectionLimit";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
 import { filterBasedOnDirective } from "../../databases/common";
@@ -201,9 +202,10 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
   // the spec's field-merging constraints, so the overlap rule only rejects
   // queries the engine would otherwise execute — while being the one rule whose
   // cost grows quadratically with wide selection sets.
-  const validationRules = specifiedRules.filter(
-    (rule) => rule !== OverlappingFieldsCanBeMergedRule,
-  );
+  const validationRules = [
+    ...specifiedRules.filter((rule) => rule !== OverlappingFieldsCanBeMergedRule),
+    introspectionLimitRule,
+  ];
 
   // undefined = unparseable query (never cached)
   const getCacheEntry = (query: string): CachedQuery | undefined => {

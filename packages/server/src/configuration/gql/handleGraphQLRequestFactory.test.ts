@@ -200,6 +200,17 @@ describe("handleGraphQLRequestFactory.hasErrors", () => {
 
     expect(result.hasErrors).toBe(false);
   });
+
+  it("refuses introspection that repeats a list field on one path", () => {
+    const factory = factoryFn(buildEntities());
+
+    const result = factory.hasErrors(
+      '{ __type(name: "User") { fields { type { fields { name } } } } }',
+    );
+
+    expect(result.hasErrors).toBe(true);
+    expect(result.validationErrors[0].message).toContain('"fields" twice');
+  });
 });
 
 describe("handleGraphQLRequestFactory.hasErrors — cost limit", () => {

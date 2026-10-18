@@ -90,6 +90,15 @@ describe("makeValidateQuery — cost limit", () => {
     it("still rejects a query that does not typecheck", () => {
       expect(validateQuery("query { not_a_field }").hasErrors).toBe(true);
     });
+
+    it("still refuses introspection that repeats a list field on one path", () => {
+      const result = validateQuery(
+        '{ __type(name: "User") { fields { type { fields { name } } } } }',
+      );
+
+      expect(result.hasErrors).toBe(true);
+      expect(result.validationErrors[0]?.message).toContain('"fields" twice');
+    });
   });
 
   it("budgets a tool call against the variables it was handed", async () => {

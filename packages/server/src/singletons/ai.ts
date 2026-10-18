@@ -4,6 +4,7 @@ import type { AIConfig } from "../types/zod/ai";
 
 import { checkQueryCost } from "../analyzeQuery/costLimit";
 import { depthLimitRule } from "../analyzeQuery/depthLimit";
+import { introspectionLimitRule } from "../analyzeQuery/introspectionLimit";
 import { scopedCredentialRole } from "../authentication/capabilities";
 import { categorizeSqlType, isNumericType } from "../databases/sqlTypeUtils";
 import { columnFieldName } from "../databases/transformers/graphqlName";
@@ -35,6 +36,7 @@ export const makeAiToolDeps = (env: Env): AiToolDeps => ({
   logger,
   checkQueryCost,
   depthLimitRule,
+  introspectionLimitRule,
   categorizeSqlType,
   isNumericType,
   columnFieldName,
