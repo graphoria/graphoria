@@ -73,7 +73,7 @@ export const buildCacheStore = (operationName: string, cache: OperationCacheConf
   const stores = chain.map((name): CacheStore => {
     if (name === MEMORY_STORE) return new LruCacheStore(lruOptions(cache, memoryTtl));
     const store = caches.stores[name]!;
-    return new RedisCacheStore(operationName, store.url, cache.ttl ?? store.ttl);
+    return new RedisCacheStore(operationName, store.url, "", cache.ttl ?? store.ttl);
   });
 
   // A one-store chain keeps its bare store, so it runs exactly the code it ran before chains.

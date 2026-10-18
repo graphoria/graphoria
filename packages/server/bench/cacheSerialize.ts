@@ -171,7 +171,7 @@ export const buildScenarios = async (store: Store): Promise<Scenario[]> => {
     // offline. TTL 100 ms rounds up to a 1 s expiry; the sleep lands past it.
     const buildStore = async (): Promise<CacheStore> => {
       const { RedisCacheStore } = await import("../src/singletons/cache/redisCacheStore");
-      const built = new RedisCacheStore(`${operation}-${crypto.randomUUID()}`, REDIS_URL, 100);
+      const built = new RedisCacheStore(`${operation}-${crypto.randomUUID()}`, REDIS_URL, "", 100);
       await built.clear();
       for (let index = 0; index < 100; index += 1) {
         await built.set(`key-${index}`, `value-${index}`);
