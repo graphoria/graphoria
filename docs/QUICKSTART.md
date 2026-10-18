@@ -250,11 +250,14 @@ curl http://localhost:3000/graphql \
 
 `GET /graphql` only upgrades to the WebSocket that carries [subscriptions](./SUBSCRIPTIONS.md); any other `GET` answers `404`. Some clients send queries as `GET` — urql does by default — so switch them to `POST` (`preferGetMethod: false` on urql's `Client`).
 
-The corresponding REST endpoint is also live:
+The corresponding REST endpoint is also live, behind the same header:
 
 ```bash
-curl 'http://localhost:3000/rest/health'
+curl 'http://localhost:3000/rest/health' \
+  -H 'x-admin-secret: dev-admin-change-me'
 ```
+
+It answers `{"data":{"__typename":"Query"}}`.
 
 ## 5. Embedding into an existing Bun app
 
