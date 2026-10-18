@@ -114,21 +114,10 @@ beforeAll(async () => {
 });
 
 describe("handleGraphQLRequestFactory — pure helpers", () => {
-  it("isIntrospectionQuery detects __schema queries", () => {
-    const factory = factoryFn(buildEntities());
-    expect(factory.isIntrospectionQuery("query { __schema { queryType { name } } }")).toBe(true);
-    expect(factory.isIntrospectionQuery("query { users { id } }")).toBe(false);
-  });
-
   it("isNoDataQuery detects _no_data sentinel", () => {
     const factory = factoryFn(buildEntities());
     expect(factory.isNoDataQuery("query { _no_data }")).toBe(true);
     expect(factory.isNoDataQuery("query { users { id } }")).toBe(false);
-  });
-
-  it("introspectionResult passes through entities.introspection", () => {
-    const factory = factoryFn(buildEntities());
-    expect(factory.introspectionResult).toEqual({ data: introspection });
   });
 
   it("noDataResult returns the no-data sentinel", () => {
@@ -442,7 +431,6 @@ describe("handleGraphQLRequestFactory — query cache", () => {
   // Same call order as the /graphql POST route and buildExecute
   // oxlint-disable-next-line typescript/no-explicit-any
   const routeSequence = async (factory: any, query: string) => {
-    factory.isIntrospectionQuery(query);
     factory.isNoDataQuery(query);
     factory.hasErrors(query);
     return factory.handler(query, {}, fakeReq, { sub: "alice", role: "user" });

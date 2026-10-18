@@ -266,15 +266,6 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     return data;
   };
 
-  const isIntrospectionAST = (document: DocumentNode): boolean =>
-    document.definitions.some(
-      (def) =>
-        def.kind === "OperationDefinition" &&
-        def.selectionSet.selections.some(
-          (sel) => sel.kind === "Field" && sel.name.value === "__schema",
-        ),
-    );
-
   const isNoDataAST = (document: DocumentNode): boolean =>
     document.definitions.some(
       (def) =>
@@ -285,18 +276,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     );
 
   const gql = {
-    // Check if the query is an introspection query (AST-based, not substring)
-    isIntrospectionQuery: (query: string) => {
-      const entry = getCacheEntry(query);
-      return entry ? isIntrospectionAST(entry.document) : false;
-    },
     // Check if the query is a _no_data query (AST-based, not substring)
     isNoDataQuery: (query: string) => {
       const entry = getCacheEntry(query);
       return entry ? isNoDataAST(entry.document) : false;
     },
-    // Return the introspection result for clients like GraphiQL or Apollo Client
-    introspectionResult: { data: entities.introspection },
     noDataResult: { data: { _no_data: "No data available" } },
     // `enforceDepthLimit: false` and `enforceCostLimit: false` are for
     // operator-authored queries (REST operations), which are config, not

@@ -581,7 +581,7 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
             }[];
           }[];
         };
-      }>(`query { __schema { queryType { name } } }`);
+      }>(`query { __schema { types { name fields { name type { name ofType { name } } } } } }`);
 
       const fieldType = (typeName: string, fieldName: string) => {
         const type = introspection.__schema.types.find((t) => t.name === typeName);
