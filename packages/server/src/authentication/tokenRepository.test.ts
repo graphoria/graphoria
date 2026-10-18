@@ -198,6 +198,32 @@ describe("tokenRepository", () => {
   });
 });
 
+describe("tokenRepository under a prefix", () => {
+  it("keys every record under the store's prefix", async () => {
+    const client = createFakeClient();
+    const repo = createTokenRepositoryWithClient(client, "app1:");
+
+    await repo.saveJti("jti-1", "5m");
+    await repo.revoke("jti-2", "7d");
+
+    expect([...client.store.keys()]).toEqual(["app1:jti-1", "app1:jti-2"]);
+    expect([...client.ttls.keys()]).toEqual(["app1:jti-1", "app1:jti-2"]);
+    expect(await repo.isTokenUsed("jti-1")).toBe(true);
+    expect(await repo.isRevoked("jti-2")).toBe(true);
+    expect(await repo.checkRefresh("jti-1")).toEqual({ isUsed: true, isRevoked: false });
+  });
+
+  it("does not read a record another prefix holds", async () => {
+    const client = createFakeClient();
+    await createTokenRepositoryWithClient(client, "one:").revoke("jti", "7d");
+
+    const other = createTokenRepositoryWithClient(client, "two:");
+
+    expect(await other.isRevoked("jti")).toBe(false);
+    expect(await other.checkRefresh("jti")).toEqual({ isUsed: false, isRevoked: false });
+  });
+});
+
 describe("retryAfterReconnect", () => {
   // Like Bun's client with its offline queue off, a command fails at once while disconnected.
   const createDroppedClient = (failure?: Error) => {

@@ -27,13 +27,18 @@ export type TokenRepositoryClient = {
   close(): void;
 };
 
-export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): TokenRepository => {
+/** `prefix` starts every record's key: a Redis store's `prefix` and its `:`. */
+export const createTokenRepositoryWithClient = (
+  client: TokenRepositoryClient,
+  prefix = "",
+): TokenRepository => {
   const log = logger("token-repository");
 
   const saveJti = async (jti: string, expiresIn: string) => {
+    const key = `${prefix}${jti}`;
     try {
-      await client.hset(jti, { isUsed: "true" });
-      await client.expire(jti, parseDurationToMs(expiresIn) / 1000);
+      await client.hset(key, { isUsed: "true" });
+      await client.expire(key, parseDurationToMs(expiresIn) / 1000);
     } catch (error) {
       log.error({ err: error }, "failed to save JTI");
       throw new Error("Token storage unavailable");
@@ -42,7 +47,7 @@ export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): 
 
   const isTokenUsed = async (jti: string): Promise<boolean> => {
     try {
-      const [isUsed] = await client.hmget(jti, ["isUsed"]);
+      const [isUsed] = await client.hmget(`${prefix}${jti}`, ["isUsed"]);
       return isUsed === "true";
     } catch (error) {
       log.error({ err: error }, "failed to check JTI usage, failing closed");
@@ -51,17 +56,18 @@ export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): 
   };
 
   const revoke = async (jti: string, expiresIn: string) => {
+    const key = `${prefix}${jti}`;
     try {
-      const [isUsed, isRevoked] = await client.hmget(jti, ["isUsed", "isRevoked"]);
+      const [isUsed, isRevoked] = await client.hmget(key, ["isUsed", "isRevoked"]);
       if (isRevoked === "true") return;
 
-      await client.hset(jti, { isRevoked: "true" });
+      await client.hset(key, { isRevoked: "true" });
 
       // saveJti is the only writer of a TTL, so `isUsed` doubles as "this key
       // already expires on its own". Without one the revocation record would
       // outlive the token it revokes, forever — but overwriting an existing TTL
       // would move a refresh token's expiry, so only a fresh key gets one.
-      if (isUsed !== "true") await client.expire(jti, parseDurationToMs(expiresIn) / 1000);
+      if (isUsed !== "true") await client.expire(key, parseDurationToMs(expiresIn) / 1000);
     } catch (error) {
       log.error({ err: error }, "failed to revoke JTI");
       throw new Error("Token revocation failed");
@@ -70,7 +76,7 @@ export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): 
 
   const isRevoked = async (jti: string): Promise<boolean> => {
     try {
-      const [isRevoked] = await client.hmget(jti, ["isRevoked"]);
+      const [isRevoked] = await client.hmget(`${prefix}${jti}`, ["isRevoked"]);
       return isRevoked === "true";
     } catch (error) {
       log.error({ err: error }, "failed to check revocation, failing closed");
@@ -80,7 +86,7 @@ export const createTokenRepositoryWithClient = (client: TokenRepositoryClient): 
 
   const checkRefresh = async (jti: string): Promise<{ isUsed: boolean; isRevoked: boolean }> => {
     try {
-      const [isUsed, isRevoked] = await client.hmget(jti, ["isUsed", "isRevoked"]);
+      const [isUsed, isRevoked] = await client.hmget(`${prefix}${jti}`, ["isUsed", "isRevoked"]);
       return { isUsed: isUsed === "true", isRevoked: isRevoked === "true" };
     } catch (error) {
       log.error({ err: error }, "failed to check JTI state, failing closed");
@@ -168,7 +174,7 @@ export const retryAfterReconnect = (
   };
 };
 
-export const createTokenRepository = (redisUrl: string): TokenRepository => {
+export const createTokenRepository = (redisUrl: string, prefix = ""): TokenRepository => {
   // Bun's RedisClient exposes the same hset/hmget/expire surface we need but
   // its declared types are wider than TokenRepositoryClient. The cast is the
   // structural-typing bridge and is intentional.
@@ -178,6 +184,7 @@ export const createTokenRepository = (redisUrl: string): TokenRepository => {
 
   return createTokenRepositoryWithClient(
     createShardedTokenRepositoryClient(clients.map((client) => retryAfterReconnect(client))),
+    prefix,
   );
 };
 
