@@ -7,7 +7,7 @@ import type { StartedRls } from "./fixture";
 import { ENGINES, fieldName } from "../config";
 import { integrationEnabled } from "../harness";
 import { callMcpTool } from "../mcp";
-import { flushRedis, startRlsServer } from "./fixture";
+import { startRlsServer } from "./fixture";
 
 /**
  * The AI agent reads what its caller reads. A scripted provider stands in for
@@ -57,8 +57,6 @@ describe.skipIf(!integrationEnabled)("rls · AI agent and MCP", () => {
       const tasks = fieldName(engine, "app", "tasks");
 
       beforeAll(async () => {
-        await flushRedis();
-
         const { env } = await import("../../../singletons/env");
         const { importAiPackage } = await import("../../../singletons/ai");
         started = await startRlsServer(engine, {
