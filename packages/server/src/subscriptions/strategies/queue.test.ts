@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ServerWebSocket } from "bun";
+import type { SelectionAnalysis } from "../../analyzeQuery/types";
 import type { SubscriptionContext } from "../types";
 
 import { createQueryEventEmitter } from "../../utils/event-emitter";
@@ -18,12 +19,13 @@ const contextFor = (
   eventEmitter: ReturnType<typeof createQueryEventEmitter>,
   ws: ServerWebSocket<unknown>,
   subscriptionId: string,
+  selections: SelectionAnalysis[] = [{ name: "message" }],
 ) =>
   ({
     ws,
     subscriptionId,
     eventEmitter,
-    field: { name: "events_orders", selections: [{ name: "message" }] },
+    field: { name: "events_orders", selections },
   }) as unknown as SubscriptionContext;
 
 describe("queue subscription strategy", () => {
@@ -47,6 +49,30 @@ describe("queue subscription strategy", () => {
     expect(first.sent).toEqual([
       { id: "1", type: "next", payload: { data: { events_orders: { message: "m1" } } } },
       { id: "1", type: "next", payload: { data: { events_orders: { message: "m2" } } } },
+    ]);
+  });
+
+  it("names the message's type when the subscription selects __typename", async () => {
+    const strategy = createQueueSubscriptionStrategy();
+    const eventEmitter = createQueryEventEmitter();
+    const client = socket();
+
+    await strategy.subscribe(
+      contextFor(eventEmitter, client.ws, "1", [
+        { name: "__typename", typeName: "QueueMutationResponse" },
+        { name: "message" },
+      ]),
+    );
+    eventEmitter.sendDataUpdate("events_orders", { data: { message: "m1", id: "1" } });
+
+    expect(client.sent).toEqual([
+      {
+        id: "1",
+        type: "next",
+        payload: {
+          data: { events_orders: { __typename: "QueueMutationResponse", message: "m1" } },
+        },
+      },
     ]);
   });
 });

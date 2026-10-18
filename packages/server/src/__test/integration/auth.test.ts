@@ -138,6 +138,34 @@ describe.skipIf(!integrationEnabled)("auth · redis", () => {
         });
       });
 
+      it("names the token and user types", async () => {
+        const loggedIn = await gqlRaw(
+          `mutation { auth_login(username: "${USERNAME}", password: "${PASSWORD}") { __typename access_token } }`,
+        );
+        const login = (await loggedIn.json()) as {
+          data?: { auth_login: { __typename: string; access_token: string } };
+        };
+
+        expect(login.data?.auth_login.__typename).toBe("AuthToken");
+
+        const refreshed = await gqlRaw(`mutation { auth_refresh { __typename } }`, undefined, {
+          cookie: refreshCookie(loggedIn),
+        });
+        const refresh = (await refreshed.json()) as {
+          data?: { auth_refresh: { __typename: string } };
+        };
+
+        expect(refresh.data?.auth_refresh.__typename).toBe("AuthToken");
+
+        const me = await gql<{ auth_me: { __typename: string } }>(
+          `query { auth_me { __typename } }`,
+          undefined,
+          { token: login.data!.auth_login.access_token },
+        );
+
+        expect(me.data?.auth_me.__typename).toBe("AuthUser");
+      });
+
       it("resolves a request with no token to the anonymous session", async () => {
         expect(await whoami()).toEqual({ username: "anonymous", role: "anonymous" });
       });

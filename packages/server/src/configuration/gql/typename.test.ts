@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 // `singletons/env` parses process.env at module load.
 process.env.ADMIN_SECRET ??= "test-admin-secret";
@@ -49,6 +50,17 @@ beforeAll(async () => {
           connection: { filename: join(dir, "app.db") },
         },
       ],
+      operations: {
+        makeThing: {
+          handler: async () => ({ id: 7, nested: { a: "x" }, list: [{ a: "y" }, { a: "z" }] }),
+          output: z.object({
+            id: z.number(),
+            nested: z.object({ a: z.string() }),
+            list: z.array(z.object({ a: z.string() })),
+          }),
+          rest: { path: "/make-thing", method: "POST" },
+        },
+      },
     } as never,
   });
 });
@@ -158,5 +170,27 @@ describe("objects SQL builds", () => {
         "{ main_books(orderBy: [{ id: ASC }], limit: 1) { __typename @skip(if: true) id } }",
       ),
     ).toEqual({ data: { main_books: [{ id: 1 }] } });
+  });
+});
+
+describe("objects a handler returns", () => {
+  it("name their output types, nested and listed ones too", async () => {
+    expect(
+      await engine.execute(
+        "mutation { makeThing { __typename id nested { __typename a } list { __typename a } } }",
+      ),
+    ).toEqual({
+      data: {
+        makeThing: {
+          __typename: "makeThingOutput",
+          id: 7,
+          nested: { __typename: "makeThingOutputnested", a: "x" },
+          list: [
+            { __typename: "makeThingOutputlist", a: "y" },
+            { __typename: "makeThingOutputlist", a: "z" },
+          ],
+        },
+      },
+    });
   });
 });
