@@ -9,6 +9,8 @@ import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
 import type { AiToolDeps, RoleEntities } from "../adapter";
 
+import { fragmentFanOut } from "../../__test/fragmentFanOut";
+
 const { env } = await import("../../singletons/env");
 const { makeAiToolDeps } = await import("../../singletons/ai");
 const { handleGraphQLRequestFactory } =
@@ -98,6 +100,13 @@ describe("makeValidateQuery — cost limit", () => {
 
       expect(result.hasErrors).toBe(true);
       expect(result.validationErrors[0]?.message).toContain('"fields" twice');
+    });
+
+    it("validates nested fragment spreads under introspection in bounded time", () => {
+      const started = performance.now();
+
+      expect(validateQuery(fragmentFanOut(26, "User")).hasErrors).toBe(false);
+      expect(performance.now() - started).toBeLessThan(1_000);
     });
   });
 

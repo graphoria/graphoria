@@ -2,6 +2,7 @@ import { isString } from "es-toolkit";
 import {
   execute,
   Kind,
+  MaxIntrospectionDepthRule,
   OverlappingFieldsCanBeMergedRule,
   parse,
   specifiedRules,
@@ -208,9 +209,13 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
   // Results are merged by assignment (last write wins) and nothing here checks
   // the spec's field-merging constraints, so the overlap rule only rejects
   // queries the engine would otherwise execute — while being the one rule whose
-  // cost grows quadratically with wide selection sets.
+  // cost grows quadratically with wide selection sets. introspectionLimitRule
+  // keeps MaxIntrospectionDepthRule's bound, walking a fragment once per path
+  // where that rule walks it again at every spread.
   const validationRules = [
-    ...specifiedRules.filter((rule) => rule !== OverlappingFieldsCanBeMergedRule),
+    ...specifiedRules.filter(
+      (rule) => rule !== OverlappingFieldsCanBeMergedRule && rule !== MaxIntrospectionDepthRule,
+    ),
     introspectionLimitRule,
   ];
 

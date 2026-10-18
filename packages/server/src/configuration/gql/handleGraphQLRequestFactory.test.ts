@@ -8,6 +8,7 @@ import type { AnalysisResult } from "../../analyzeQuery/types";
 import type { AuditEvent } from "../../logging/audit";
 import type { Auth } from "../../types/configuration";
 
+import { fragmentFanOut } from "../../__test/fragmentFanOut";
 import { attributeOf, installSpanSink, stringAttribute } from "../../__test/spanSink";
 import { configureMetrics, createRegistry, setMetricsRegistry } from "../../observability/metrics";
 import { startSpan, withActiveSpan } from "../../observability/tracing";
@@ -199,6 +200,16 @@ describe("handleGraphQLRequestFactory.hasErrors", () => {
 
     expect(result.hasErrors).toBe(true);
     expect(result.validationErrors[0].message).toContain('"fields" twice');
+  });
+
+  it("validates nested fragment spreads under introspection in bounded time", () => {
+    const factory = factoryFn(buildEntities());
+    const started = performance.now();
+
+    const result = factory.hasErrors(fragmentFanOut(26, "User"));
+
+    expect(result.hasErrors).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 

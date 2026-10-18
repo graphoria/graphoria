@@ -75,13 +75,15 @@ stay on `MAX_QUERY_DEPTH`. See [MCP Server](./MCP.md).
 **Introspection has a bound of its own.** Depth and cost skip `__schema`, `__type` and `__typename`,
 so without it a query could nest `fields { type { fields { … } } }` as far as it liked, each level
 multiplying the answer. Under `__schema` and `__type`, each of `types`, `fields`, `args`,
-`inputFields`, `interfaces`, `possibleTypes` and `enumValues` may appear once on a path, while
-`ofType` nests freely, as wrapped types need. The queries GraphiQL and graphql-js's
-`getIntrospectionQuery` send stay within it. It has no setting and reaches the same paths as depth,
-plus the REST operations, whose queries are checked against it at boot:
+`inputFields`, `interfaces`, `possibleTypes` and `enumValues` may appear once on a path, and no path
+holds more than two of `fields`, `interfaces`, `possibleTypes` and `inputFields`, the limit of
+graphql-js's own `MaxIntrospectionDepthRule`, which this bound replaces. `ofType` nests freely, as
+wrapped types need. The queries GraphiQL and graphql-js's `getIntrospectionQuery` send stay within
+it. It has no setting and reaches the same paths as depth, plus the REST operations, whose queries
+are checked against it at boot:
 
 ```
-Introspection selects "fields" twice on one path under "__type". Each of types, fields, args, inputFields, interfaces, possibleTypes, enumValues may appear once on a path.
+Introspection selects "fields" twice on one path under "__type". Each of types, fields, args, inputFields, interfaces, possibleTypes, enumValues may appear once on a path, and at most 2 of fields, interfaces, possibleTypes, inputFields.
 ```
 
 ## Page size

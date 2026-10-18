@@ -16,11 +16,28 @@ const LIST_FIELDS = [
   "enumValues",
 ];
 
+// graphql-js's MaxIntrospectionDepthRule refuses a path holding three of these.
+// This rule keeps that bound in its place: that rule walks a fragment again at
+// every spread of it.
+const NESTING_FIELDS = ["fields", "interfaces", "possibleTypes", "inputFields"];
+const MAX_NESTING = 2;
+
 const BITS = new Map(LIST_FIELDS.map((name, index) => [name, 1 << index]));
+const NESTING_MASK = NESTING_FIELDS.reduce((mask, name) => mask | (BITS.get(name) ?? 0), 0);
+
+const countOf = (mask: number): number => {
+  let count = 0;
+  for (let rest = mask; rest; rest &= rest - 1) count++;
+  return count;
+};
+
+const BOUND = `Each of ${LIST_FIELDS.join(", ")} may appear once on a path, and at most ${MAX_NESTING} of ${NESTING_FIELDS.join(", ")}.`;
 
 /**
- * GraphQL validation rule that refuses a query selecting one introspection list
- * field twice on a path under `__schema` or `__type`. Depth and cost skip
+ * GraphQL validation rule that bounds introspection under `__schema` and
+ * `__type`: a path selects each list field once at most, and at most two of
+ * `fields`, `interfaces`, `possibleTypes` and `inputFields`, the bound of
+ * graphql-js's MaxIntrospectionDepthRule, which it replaces. Depth and cost skip
  * introspection fields, so this is what bounds them.
  *
  * @example
@@ -37,26 +54,35 @@ export const introspectionLimitRule = (context: ValidationContext): ASTVisitor =
   const verdicts = new Map<string, string | undefined>();
   const spreading = new Set<string>();
 
-  const repeatedIn = (
+  const violationIn = (
     selectionSet: SelectionSetNode | undefined,
     onPath: number,
   ): string | undefined => {
     if (!selectionSet) return undefined;
 
     for (const selection of selectionSet.selections) {
-      let repeated: string | undefined;
+      let violation: string | undefined;
 
       switch (selection.kind) {
         case Kind.FIELD: {
-          const bit = BITS.get(selection.name.value) ?? 0;
-          if (onPath & bit) return selection.name.value;
+          const name = selection.name.value;
+          const bit = BITS.get(name) ?? 0;
+          if (onPath & bit) return `selects "${name}" twice`;
 
-          repeated = repeatedIn(selection.selectionSet, onPath | bit);
+          const path = onPath | bit;
+          if (bit & NESTING_MASK && countOf(path & NESTING_MASK) > MAX_NESTING) {
+            const nested = NESTING_FIELDS.filter((field) => path & (BITS.get(field) ?? 0)).map(
+              (field) => `"${field}"`,
+            );
+            return `nests ${nested.slice(0, -1).join(", ")} and ${nested.at(-1)}`;
+          }
+
+          violation = violationIn(selection.selectionSet, path);
           break;
         }
 
         case Kind.INLINE_FRAGMENT: {
-          repeated = repeatedIn(selection.selectionSet, onPath);
+          violation = violationIn(selection.selectionSet, onPath);
           break;
         }
 
@@ -65,7 +91,7 @@ export const introspectionLimitRule = (context: ValidationContext): ASTVisitor =
           const key = `${name}:${onPath}`;
 
           if (verdicts.has(key)) {
-            repeated = verdicts.get(key);
+            violation = verdicts.get(key);
             break;
           }
 
@@ -75,15 +101,15 @@ export const introspectionLimitRule = (context: ValidationContext): ASTVisitor =
           if (!fragment || spreading.has(name)) break;
 
           spreading.add(name);
-          repeated = repeatedIn(fragment.selectionSet, onPath);
+          violation = violationIn(fragment.selectionSet, onPath);
           spreading.delete(name);
 
-          verdicts.set(key, repeated);
+          verdicts.set(key, violation);
           break;
         }
       }
 
-      if (repeated) return repeated;
+      if (violation) return violation;
     }
 
     return undefined;
@@ -93,12 +119,12 @@ export const introspectionLimitRule = (context: ValidationContext): ASTVisitor =
     Field(node) {
       if (node.name.value !== "__schema" && node.name.value !== "__type") return;
 
-      const repeated = repeatedIn(node.selectionSet, 0);
+      const violation = violationIn(node.selectionSet, 0);
 
-      if (repeated) {
+      if (violation) {
         context.reportError(
           new GraphQLError(
-            `Introspection selects "${repeated}" twice on one path under "${node.name.value}". Each of ${LIST_FIELDS.join(", ")} may appear once on a path.`,
+            `Introspection ${violation} on one path under "${node.name.value}". ${BOUND}`,
             { nodes: [node] },
           ),
         );

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { buildSchema, getIntrospectionQuery, parse, validate } from "graphql";
+import {
+  buildSchema,
+  getIntrospectionQuery,
+  MaxIntrospectionDepthRule,
+  parse,
+  validate,
+} from "graphql";
 
+import { fragmentFanOut } from "../__test/fragmentFanOut";
 import { introspectionLimitRule } from "./introspectionLimit";
 
 const schema = buildSchema(`
@@ -59,6 +66,31 @@ describe("introspectionLimitRule", () => {
     expect(errorsOf(query)).toEqual([expect.stringContaining(`"${field}" twice`)]);
   });
 
+  it("accepts two of fields, interfaces, possibleTypes and inputFields on one path", () => {
+    expect(
+      errorsOf(`{ __type(name: "Item") { fields { type { interfaces { name } } } } }`),
+    ).toEqual([]);
+  });
+
+  it("refuses three of fields, interfaces, possibleTypes and inputFields on one path", () => {
+    expect(
+      errorsOf(
+        `{ __type(name: "Item") { fields { type { interfaces { possibleTypes { name } } } } } }`,
+      ),
+    ).toEqual([expect.stringContaining('nests "fields", "interfaces" and "possibleTypes"')]);
+  });
+
+  it.each([
+    `{ __type(name: "Item") { fields { type { fields { type { fields { name } } } } } } }`,
+    `{ __type(name: "Item") { interfaces { fields { type { possibleTypes { name } } } } } }`,
+    `{ __type(name: "Item") { ...A } }
+      fragment A on __Type { inputFields { type { ...B } } }
+      fragment B on __Type { fields { type { interfaces { name } } } }`,
+  ])("refuses what graphql-js's MaxIntrospectionDepthRule refuses: %s", (query) => {
+    expect(validate(schema, parse(query), [MaxIntrospectionDepthRule])).not.toEqual([]);
+    expect(errorsOf(query)).not.toEqual([]);
+  });
+
   it("follows fragment spreads and inline fragments", () => {
     expect(
       errorsOf(`
@@ -102,16 +134,9 @@ describe("introspectionLimitRule", () => {
 
   // Without one walk per fragment and path, each level doubles the work: 2^26 here.
   it("walks a fragment once per path, however often it is spread", () => {
-    const levels = 26;
-    const fragments = Array.from(
-      { length: levels },
-      (_, level) => `fragment F${level} on __Type { ...F${level + 1} ...F${level + 1} }`,
-    ).join("\n");
     const started = performance.now();
 
-    errorsOf(
-      `{ __type(name: "Item") { ...F0 } }\n${fragments}\nfragment F${levels} on __Type { name }`,
-    );
+    errorsOf(fragmentFanOut(26, "Item"));
 
     expect(performance.now() - started).toBeLessThan(1_000);
   });
