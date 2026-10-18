@@ -162,6 +162,27 @@ describe("generateOpenAPI", () => {
     expect(data.required).toContain("__typename");
   });
 
+  it("lists a __typename below the root, required unless a directive may skip it", () => {
+    const address = specFor(`
+      query {
+        dbo_addresses {
+          __typename
+          dbo_customers {
+            __typename @skip(if: true)
+          }
+        }
+      }
+    `).dbo_addresses.items;
+
+    expect(address.properties.__typename).toEqual({ type: "string", nullable: false });
+    expect(address.required).toContain("__typename");
+    expect(address.properties.dbo_customers.properties.__typename).toEqual({
+      type: "string",
+      nullable: true,
+    });
+    expect(address.properties.dbo_customers.required).not.toContain("__typename");
+  });
+
   it("types a root __type's selection from the introspection types", () => {
     const product = specFor(`
       query {

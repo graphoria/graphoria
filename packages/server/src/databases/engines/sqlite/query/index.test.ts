@@ -55,6 +55,37 @@ describe("SQLite: generateSQL", () => {
     );
   });
 
+  it("names each object's type with a constant, under its alias too", () => {
+    const text = sql(
+      `{ dbo_products { __typename kind: __typename product_id dbo_product_categories { __typename } } }`,
+    );
+
+    expect(text).toContain(`'__typename', 'dbo_products'`);
+    expect(text).toContain(`'kind', 'dbo_products'`);
+    expect(text).toContain(`'__typename', 'dbo_product_categories'`);
+    expect(text).not.toContain(`"__typename"`);
+  });
+
+  it("names a group, its key, its aggregates and its rows", () => {
+    const text = sql(`{
+      dbo_orders_aggregate(groupBy: [customer_id]) {
+        __typename
+        key { __typename customer_id }
+        count
+        sum { __typename total_amount }
+        items { __typename order_id }
+      }
+    }`);
+
+    expect(text).toContain(`'__typename', 'dbo_ordersGroupBy'`);
+    expect(text).toContain(`'key', json_object('__typename', 'dbo_orders', 'customer_id', `);
+    expect(text).toContain(
+      `'sum', json_object('total_amount', t1_agg.sum_total_amount, '__typename', 'dbo_ordersSum')`,
+    );
+    expect(text).toContain(`json_object('__typename', 'dbo_orders', 'order_id', `);
+    expect(text).toContain(`SUM(t1."total_amount") AS sum_total_amount`);
+  });
+
   it("hashes with the result text itself, SQLite having no md5()", () => {
     const text = sql(`{ dbo_products { product_id } }`, true);
 

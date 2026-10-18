@@ -1,3 +1,4 @@
+import type { TypenameSelection } from "../../../../analyzeQuery/metaFields";
 import type {
   OperationAnalysis,
   SelectionAnalysis,
@@ -6,6 +7,7 @@ import type {
 import type { MergedEntities } from "../../../../configuration/getSchemas/mergeEntities";
 import type { GroupByInfo, PageLimits, QueryPathFrame } from "../../../common";
 
+import { isTypename } from "../../../../analyzeQuery/metaFields";
 import {
   buildOrderByClauseSQLite,
   buildPaginationClauseSQLite,
@@ -17,6 +19,7 @@ import {
   isSingleQuery,
   processFieldSelectionsSQLite,
   sqlColumnName,
+  sqlLiteral,
   sqliteJsonValue,
   wrapIdentifierSQLite,
 } from "../../../common";
@@ -68,21 +71,30 @@ const buildGroupedQuery = (
   tableAlias: string,
   whereClause: string,
 ): string => {
-  const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias } =
+  const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias, typenames } =
     groupByInfo;
 
   const sqlName = (fieldName: string) => sqlColumnName(entities, field.name, fieldName);
   const column = (alias: string, fieldName: string) =>
     `${alias}.${wrapIdentifierSQLite(sqlName(fieldName))}`;
   const value = (alias: string, selection: SelectionAnalysis) =>
-    applyDirectives(
-      sqliteJsonValue(entities, field.name, sqlName(selection.name), column(alias, selection.name)),
-      selection.directives,
-      "sqlite",
-      variablesDefinition,
-    );
+    isTypename(selection)
+      ? sqlLiteral("sqlite", selection.typeName)
+      : applyDirectives(
+          sqliteJsonValue(
+            entities,
+            field.name,
+            sqlName(selection.name),
+            column(alias, selection.name),
+          ),
+          selection.directives,
+          "sqlite",
+          variablesDefinition,
+        );
+  const typenameField = (sel: TypenameSelection) =>
+    `'${sel.alias || sel.name}', ${sqlLiteral("sqlite", sel.typeName)}`;
 
-  const selectClauses: string[] = [];
+  const selectClauses: string[] = typenames.map(typenameField);
 
   if (hasKey) {
     const keyFields = keys
@@ -96,9 +108,11 @@ const buildGroupedQuery = (
     if (agg.name === "count") {
       selectClauses.push(`'${agg.nameResolved}', ${cteAlias}.${agg.alias}`);
     } else {
-      selectClauses.push(
-        `'${agg.nameResolved}', json_object('${agg.fieldAlias}', ${cteAlias}.${agg.alias})`,
-      );
+      const aggFields = [
+        `'${agg.fieldAlias}', ${cteAlias}.${agg.alias}`,
+        ...agg.typenames.map(typenameField),
+      ];
+      selectClauses.push(`'${agg.nameResolved}', json_object(${aggFields.join(", ")})`);
     }
   });
 

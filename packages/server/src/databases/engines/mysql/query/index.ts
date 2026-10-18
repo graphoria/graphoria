@@ -1,3 +1,4 @@
+import type { TypenameSelection } from "../../../../analyzeQuery/metaFields";
 import type {
   OperationAnalysis,
   SelectionAnalysis,
@@ -6,6 +7,7 @@ import type {
 import type { MergedEntities } from "../../../../configuration/getSchemas/mergeEntities";
 import type { GroupByInfo, PageLimits, QueryPathFrame } from "../../../common";
 
+import { isTypename } from "../../../../analyzeQuery/metaFields";
 import {
   buildOrderByClauseMySQL,
   buildPaginationClauseMySQL,
@@ -17,6 +19,7 @@ import {
   isSingleQuery,
   processFieldSelectionsMySQL,
   sqlColumnName,
+  sqlLiteral,
   wrapIdentifierMySQL,
 } from "../../../common";
 
@@ -75,17 +78,21 @@ const buildGroupedQuery = (
   tableAlias: string,
   whereClause: string,
 ): string => {
-  const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias } =
+  const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias, typenames } =
     groupByInfo;
 
   const sqlName = (fieldName: string) => sqlColumnName(entities, field.name, fieldName);
+  const typenameField = (sel: TypenameSelection) =>
+    `'${sel.alias || sel.name}', ${sqlLiteral("mysql", sel.typeName)}`;
 
-  const selectClauses: string[] = [];
+  const selectClauses: string[] = typenames.map(typenameField);
 
   if (hasKey) {
     // Add key object with group by fields
     const keyFields = keys
       .map((key) => {
+        if (isTypename(key)) return typenameField(key);
+
         const selector = applyDirectives(
           `${cteAlias}.${wrapIdentifierMySQL(sqlName(key.name))}`,
           key.directives,
@@ -104,9 +111,11 @@ const buildGroupedQuery = (
     if (agg.name === "count") {
       selectClauses.push(`'${agg.nameResolved}', ${cteAlias}.${agg.alias}`);
     } else {
-      selectClauses.push(
-        `'${agg.nameResolved}', JSON_OBJECT('${agg.fieldAlias}', ${cteAlias}.${agg.alias})`,
-      );
+      const aggFields = [
+        `'${agg.fieldAlias}', ${cteAlias}.${agg.alias}`,
+        ...agg.typenames.map(typenameField),
+      ];
+      selectClauses.push(`'${agg.nameResolved}', JSON_OBJECT(${aggFields.join(", ")})`);
     }
   });
 
@@ -118,6 +127,8 @@ const buildGroupedQuery = (
       const itemFields = itemsSelection.selections
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
         .map((sel) => {
+          if (isTypename(sel)) return typenameField(sel);
+
           const selector = applyDirectives(
             `${tableAlias}.${wrapIdentifierMySQL(sqlName(sel.name))}`,
             sel.directives,

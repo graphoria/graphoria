@@ -643,4 +643,32 @@ describe("Meta fields", () => {
   it("gives an operation that selects no meta field none", () => {
     expect(prodQuery.operations[0]).not.toHaveProperty("meta");
   });
+
+  it("keeps a nested __typename, naming the type it is selected on", () => {
+    const [operation] = analyzeQuery(
+      "{ dbo_products { __typename t: __typename dbo_product_categories { __typename } } }",
+      StoreMSSQL,
+    ).operations;
+
+    expect(operation!.fields[0]!.selections).toEqual([
+      { name: "__typename", typeName: "dbo_products", isRequired: true },
+      { name: "__typename", alias: "t", typeName: "dbo_products", isRequired: true },
+      {
+        name: "dbo_product_categories",
+        isArray: true,
+        selections: [{ name: "__typename", typeName: "dbo_product_categories", isRequired: true }],
+      },
+    ]);
+  });
+
+  it("does not require a nested __typename a directive may skip", () => {
+    const [operation] = analyzeQuery(
+      "{ dbo_products { __typename @skip(if: true) } }",
+      StoreMSSQL,
+    ).operations;
+    const [typename] = operation!.fields[0]!.selections!;
+
+    expect(typename).toMatchObject({ name: "__typename", typeName: "dbo_products" });
+    expect(typename).not.toHaveProperty("isRequired");
+  });
 });

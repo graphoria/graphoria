@@ -1,11 +1,14 @@
 import { describe, expect, it } from "bun:test";
 
+import type { AnalysisResult } from "../../../../analyzeQuery/types";
+
 import { StorePG } from "../../../../__test/dataset/store";
 import {
   ordDirectiveOptionalQuery,
   ordDirectiveRequiredQuery,
   ordGroupByDateFormatQuery,
   ordGroupByQuery,
+  ordGroupByTypenameQuery,
   ordQuery,
   ordWithIncludeFalseDirectiveQuery,
   ordWithIncludeTrueDirectiveQuery,
@@ -17,6 +20,7 @@ import {
   prodQuery,
   prodReservedWordAliasQuery,
   prodReservedWordColumnQuery,
+  prodTypenameQuery,
   prodWhereArgumentDeeplyNestedEntitiesQuery,
   prodWhereArgumentNestedEntitiesQuery,
   prodWhereArgumentNestedQuery,
@@ -40,6 +44,7 @@ import {
   prodWithUppercaseDirectiveQuery,
 } from "../../../../__test/fixtures/queries";
 import { format, genSql as genSqlEnforced } from "../format";
+import { generateSQL } from "./index";
 
 // The suites below assert clause construction, so they run with page limits
 // exempt — otherwise every list expectation would carry the default page size.
@@ -1479,5 +1484,35 @@ describe("PostgreSQL: page limits", () => {
 
   it("leaves the query unbounded when the caller is exempt", () => {
     expect(genSqlEnforced(StorePG, prodQuery, {}, false, null)).not.toContain("LIMIT");
+  });
+});
+
+describe("PostgreSQL: __typename", () => {
+  const sqlOf = (query: AnalysisResult) =>
+    generateSQL(StorePG, query.operations[0]!, {}, false, null);
+
+  it("names each object's type with a constant, under its alias too", () => {
+    const sql = sqlOf(prodTypenameQuery);
+
+    expect(sql).toContain(`'__typename', 'dbo_products'`);
+    expect(sql).toContain(`'kind', 'dbo_products'`);
+    expect(sql).toContain(`'__typename', 'dbo_product_categories'`);
+    expect(sql).not.toContain(`"__typename"`);
+  });
+
+  it("names a group, its key, its aggregates and its rows", () => {
+    const sql = sqlOf(ordGroupByTypenameQuery);
+
+    expect(sql).toContain(`'__typename', 'dbo_ordersGroupBy'`);
+    expect(sql).toContain(
+      `'key', json_build_object('__typename', 'dbo_orders', 'customer_id', t1_agg."customer_id")`,
+    );
+    expect(sql).toContain(
+      `'sum', json_build_object('total_amount', t1_agg.sum_total_amount, '__typename', 'dbo_ordersSum')`,
+    );
+    expect(sql).toContain(
+      `json_build_object('__typename', 'dbo_orders', 'order_id', t1."order_id")`,
+    );
+    expect(sql).toContain(`SUM(t1."total_amount") AS sum_total_amount`);
   });
 });
