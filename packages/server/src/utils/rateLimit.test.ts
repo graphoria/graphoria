@@ -180,6 +180,25 @@ describe("redis rate limit store", () => {
     expect((await second.consume("k", CAPACITY, REFILL_PER_MS, WINDOW_MS)).allowed).toBe(false);
   });
 
+  it("keys every bucket under the store's prefix", async () => {
+    const client = createFakeRedis();
+    const store = createRedisRateLimitStore(client, { now: () => 0, prefix: "app1:" });
+
+    await store.consume("rl:user:42", CAPACITY, REFILL_PER_MS, WINDOW_MS);
+
+    expect(client.calls[0]!.args[2]).toBe("app1:rl:user:42");
+  });
+
+  it("keeps apart the budgets of two prefixes on one client", async () => {
+    const client = createFakeRedis();
+    const first = createRedisRateLimitStore(client, { now: () => 0, prefix: "one:" });
+    const second = createRedisRateLimitStore(client, { now: () => 0, prefix: "two:" });
+
+    await consumeN(first, "k", CAPACITY);
+
+    expect((await second.consume("k", CAPACITY, REFILL_PER_MS, WINDOW_MS)).allowed).toBe(true);
+  });
+
   it("fails open when redis throws", async () => {
     const store = createRedisRateLimitStore(
       {

@@ -64,6 +64,8 @@ type RateLimitLogger = { warn(obj: object, msg: string): void };
 export type RedisRateLimitStoreOptions = {
   now?: () => number;
   log?: RateLimitLogger;
+  /** Prepended to every bucket key: a Redis store's `prefix` and its `:`. */
+  prefix?: string;
 };
 
 // KEYS[1] = bucket key, ARGV = capacity, refillPerMs, nowMs, ttlMs. Refill,
@@ -83,7 +85,7 @@ return { allowed, tostring(tokens) }
 
 export const createRedisRateLimitStore = (
   client: RateLimitRedisClient,
-  { now = Date.now, log = logger("rate-limit") }: RedisRateLimitStoreOptions = {},
+  { now = Date.now, log = logger("rate-limit"), prefix = "" }: RedisRateLimitStoreOptions = {},
 ): RateLimitStore => {
   let lastWarnMs: number | undefined;
 
@@ -95,7 +97,7 @@ export const createRedisRateLimitStore = (
         const reply = (await client.send("EVAL", [
           CONSUME_SCRIPT,
           "1",
-          key,
+          `${prefix}${key}`,
           String(capacity),
           String(refillPerMs),
           String(nowMs),
