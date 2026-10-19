@@ -1,11 +1,14 @@
 import { describe, expect, it } from "bun:test";
 
+import type { AnalysisResult } from "../../../../analyzeQuery/types";
+
 import { StoreMSSQL } from "../../../../__test/dataset/store";
 import {
   ordDirectiveOptionalQuery,
   ordDirectiveRequiredQuery,
   ordGroupByDateFormatQuery,
   ordGroupByQuery,
+  ordGroupByTypenameQuery,
   ordQuery,
   ordWithIncludeFalseDirectiveQuery,
   ordWithIncludeTrueDirectiveQuery,
@@ -17,6 +20,7 @@ import {
   prodQuery,
   prodReservedWordAliasQuery,
   prodReservedWordColumnQuery,
+  prodTypenameQuery,
   prodWhereArgumentDeeplyNestedEntitiesQuery,
   prodWhereArgumentNestedEntitiesQuery,
   prodWhereArgumentNestedQuery,
@@ -40,6 +44,7 @@ import {
   prodWithUppercaseDirectiveQuery,
 } from "../../../../__test/fixtures/queries";
 import { format, genSql as genSqlEnforced } from "../../mssql/format";
+import { generateSQL } from "./index";
 
 // The suites below assert clause construction, so they run with page limits
 // exempt — otherwise every list expectation would carry the default page size.
@@ -1438,5 +1443,33 @@ describe("MSSQL: page limits", () => {
 
   it("leaves the query unbounded when the caller is exempt", () => {
     expect(genSqlEnforced(StoreMSSQL, prodQuery, {}, false, null)).not.toContain("FETCH NEXT");
+  });
+});
+
+describe("MSSQL: __typename", () => {
+  const sqlOf = (query: AnalysisResult) =>
+    generateSQL(StoreMSSQL, query.operations[0]!, {}, false, null);
+
+  it("names each object's type with a constant, under its alias too", () => {
+    const sql = sqlOf(prodTypenameQuery);
+
+    expect(sql).toContain("'dbo_products' AS [__typename]");
+    expect(sql).toContain("'dbo_products' AS [kind]");
+    expect(sql).toContain("'dbo_product_categories' AS [__typename]");
+    expect(sql).not.toContain(".[__typename]");
+  });
+
+  it("names a group, its key, its aggregates and its rows", () => {
+    const sql = sqlOf(ordGroupByTypenameQuery);
+
+    expect(sql).toContain("'dbo_ordersGroupBy' AS [__typename]");
+    expect(sql).toContain(
+      "JSON_QUERY((SELECT 'dbo_orders' AS [__typename], t1_agg.[customer_id] AS [customer_id] FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)) AS [key]",
+    );
+    expect(sql).toContain(
+      "JSON_QUERY((SELECT t1_agg.sum_total_amount AS [total_amount], 'dbo_ordersSum' AS [__typename] FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)) AS [sum]",
+    );
+    expect(sql).toContain("SELECT 'dbo_orders' AS [__typename], t1.[order_id] AS [order_id]");
+    expect(sql).toContain("SUM(t1.[total_amount]) AS sum_total_amount");
   });
 });

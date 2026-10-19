@@ -391,6 +391,54 @@ describe.skipIf(!integrationEnabled)("query · sqlite", () => {
     });
   });
 
+  describe("__typename", () => {
+    it("names each row's type across relationships, under an alias too", async () => {
+      const data = await run<{ main_tasks_single: Record<string, unknown> }>(`
+        query {
+          main_tasks_single(where: { id: { eq: 9 } }) {
+            __typename
+            kind: __typename
+            main_projects {
+              __typename
+              main_tasks(where: { id: { eq: 9 } }) { __typename id }
+            }
+          }
+        }
+      `);
+
+      expect(data.main_tasks_single).toEqual({
+        __typename: "main_tasks",
+        kind: "main_tasks",
+        main_projects: {
+          __typename: "main_projects",
+          main_tasks: [{ __typename: "main_tasks", id: 9 }],
+        },
+      });
+    });
+
+    it("names a group, its key, its aggregates and its rows", async () => {
+      const data = await run<{ main_tasks_aggregate: Record<string, unknown>[] }>(`
+        query {
+          main_tasks_aggregate(where: { id: { eq: 9 } }, groupBy: [project_id]) {
+            __typename
+            key { __typename project_id }
+            sum { __typename priority }
+            items { __typename id }
+          }
+        }
+      `);
+
+      expect(data.main_tasks_aggregate).toEqual([
+        {
+          __typename: "main_tasksGroupBy",
+          key: { __typename: "main_tasks", project_id: 3 },
+          sum: { __typename: "main_tasksSum", priority: 4 },
+          items: [{ __typename: "main_tasks", id: 9 }],
+        },
+      ]);
+    });
+  });
+
   describe("directives", () => {
     it("applies every data-transform directive", async () => {
       const data = await run<Record<string, Record<string, unknown>>>(`

@@ -40,6 +40,21 @@ describe("handleAuthMeQuery", () => {
     });
   });
 
+  it("names the user type when the selection asks for __typename", () => {
+    const field: SelectionAnalysis = {
+      name: "auth_me",
+      selections: [
+        { name: "__typename", typeName: "AuthUser" },
+        { name: "__typename", alias: "kind", typeName: "AuthUser" },
+        { name: "username" },
+      ],
+    };
+    expect(handleAuthMeQuery(field, { sub: "alice", role: "user" })).toEqual({
+      auth_me: { username: "alice", role: "user", __typename: "AuthUser", kind: "AuthUser" },
+    });
+    expect(handleAuthMeQuery(field, undefined)).toEqual({ auth_me: null });
+  });
+
   it("returns an empty object for non auth_me fields", () => {
     const field: SelectionAnalysis = { name: "something_else" };
     expect(handleAuthMeQuery(field, { sub: "x", role: "user" })).toEqual({});

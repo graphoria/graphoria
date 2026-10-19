@@ -81,7 +81,7 @@ query {
 }
 ```
 
-When this query lands on `/graphql`, Graphoria routes the `payments_*` portions of the selection to the `payments` remote, strips the prefix from each type/field name, and sends a sub-query to `https://payments.internal/graphql`. Aliases in the original query are preserved, so the response shape matches what the client requested without further translation.
+When this query lands on `/graphql`, Graphoria routes the `payments_*` portions of the selection to the `payments` remote, strips the prefix from each type/field name, and sends a sub-query to `https://payments.internal/graphql`. Aliases in the original query are preserved, so the response shape matches what the client requested without further translation. The one value translated back is `__typename`: the remote answers with its own type names, and Graphoria prefixes them again, so the client reads `payments_Customer`, the type the unified schema serves.
 
 Headers behave like this:
 

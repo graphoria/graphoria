@@ -1,9 +1,11 @@
 import { isBoolean, isString } from "es-toolkit/compat";
 
+import type { TypenameSelection } from "../analyzeQuery/metaFields";
 import type { SelectionAnalysis, VariableDefinition } from "../analyzeQuery/types";
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
 import type { DatabaseType, RelationshipCondition, VirtualColumn } from "../types/configuration";
 
+import { isTypename } from "../analyzeQuery/metaFields";
 import { FILTER_OPERATORS } from "../config/types/auth";
 import { applyDirectives } from "./directives";
 import { SqlTypeCategory, categorizeSqlType } from "./sqlTypeUtils";
@@ -15,6 +17,8 @@ export interface AggregationField {
   fieldAlias: string;
   alias: string;
   nameResolved: string;
+  /** The `__typename`s selected beside the aggregated column. */
+  typenames: TypenameSelection[];
 }
 
 export interface GroupByInfo {
@@ -23,8 +27,11 @@ export interface GroupByInfo {
   hasItems: boolean;
   keyResolved: string;
   hasKey: boolean;
+  /** The grouped columns `key` selects, and its `__typename`s. */
   keys: SelectionAnalysis[];
   cteAlias: string;
+  /** The `__typename`s selected on the group itself. */
+  typenames: TypenameSelection[];
 }
 
 // isOperatorObject decides whether a filter object is a column filter or a nested
@@ -427,7 +434,7 @@ const RELATIONSHIP_CONDITION_SQL_OPERATORS: Record<string, string> = {
 // Static join-condition values are literals (never bound as params at this layer),
 // so render them safely: escape quotes in strings, reject non-finite numbers, and
 // emit dialect-correct booleans (MSSQL has no boolean type — compare against 1/0).
-const sqlLiteral = (dbType: DatabaseType, value: string | number | boolean): string => {
+export const sqlLiteral = (dbType: DatabaseType, value: string | number | boolean): string => {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
       throw new Error(`Relationship condition value must be a finite number, got ${value}`);
@@ -828,6 +835,8 @@ export const processFieldSelectionsFp =
 
         if (sel.selections) {
           subQueries.push([`${colName}`, buildSubquery(sel, level + 1)]);
+        } else if (isTypename(sel)) {
+          selectClauses.push([colName, sqlLiteral(dbType, sel.typeName)]);
         } else {
           const virtColumn = entities.isVirtualColumn(tableName, sel.name);
 
@@ -887,19 +896,22 @@ export const extractAggregationInfo = (
 
   const aggregations: AggregationField[] = [];
   const keys: SelectionAnalysis[] = [];
+  const typenames: TypenameSelection[] = [];
 
   let keyResolved = "";
   let hasItems = false;
 
   field.selections?.forEach((sel) => {
-    if (sel.name === "items") {
+    if (isTypename(sel)) {
+      typenames.push(sel);
+    } else if (sel.name === "items") {
       hasItems = true;
     } else if (sel.name === "key") {
       keyResolved = sel.alias || sel.name;
 
       // If 'key' is selected, we need to include all groupBy fields
       sel.selections?.forEach((keySel) => {
-        if (groupBy.includes(keySel.name)) {
+        if (groupBy.includes(keySel.name) || isTypename(keySel)) {
           keys.push(keySel);
         }
       });
@@ -911,9 +923,10 @@ export const extractAggregationInfo = (
           fieldName: "*",
           fieldAlias: "*",
           nameResolved: sel.alias || "count",
+          typenames: [],
         });
       } else {
-        const fieldSelected = sel.selections?.[0];
+        const fieldSelected = sel.selections?.find((selected) => !isTypename(selected));
 
         // For min, max, sum, avg - extract the field they're aggregating
         const fieldName = fieldSelected?.name;
@@ -925,6 +938,7 @@ export const extractAggregationInfo = (
             fieldAlias: fieldAlias || fieldName,
             alias: `${sel.name}_${fieldName}`,
             nameResolved: sel.alias || sel.name,
+            typenames: sel.selections?.filter(isTypename) ?? [],
           });
         }
       }
@@ -939,6 +953,7 @@ export const extractAggregationInfo = (
     hasKey: keys.length > 0,
     keys,
     cteAlias: `${tableAlias}_agg`,
+    typenames,
   };
 };
 
