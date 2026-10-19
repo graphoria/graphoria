@@ -3,6 +3,9 @@ import type { RemoteSchemaResolved } from "./types";
 
 import { formatTraceparent, startSpan } from "../observability/tracing";
 
+// The analysis names an inline fragment after its type condition.
+const INLINE_FRAGMENT = "... on ";
+
 /**
  * Build the sub-query string for a remote field by stripping the prefix from
  * the field name and type references.
@@ -32,6 +35,14 @@ const buildSelectionsString = (
       const subSelections = sel.selections?.length
         ? ` { ${buildSelectionsString(sel.selections, prefixMap)} }`
         : "";
+
+      if (sel.name.startsWith(INLINE_FRAGMENT)) {
+        const typeName = sel.name.slice(INLINE_FRAGMENT.length);
+        const original = Object.hasOwn(prefixMap.toOriginal, typeName)
+          ? prefixMap.toOriginal[typeName]
+          : typeName;
+        return `${INLINE_FRAGMENT}${original}${subSelections}`;
+      }
 
       const aliasPrefix = sel.alias ? `${sel.alias}: ` : "";
       return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments)}${subSelections}`;
@@ -114,7 +125,10 @@ const prefixTypenames = (
     const key = selection.alias || selection.name;
     const selected = object[key];
 
-    if (selection.name === "__typename") {
+    if (selection.name.startsWith(INLINE_FRAGMENT)) {
+      // Its fields sit on the object the fragment is spread in.
+      prefixTypenames(object, selection.selections, toPrefixed);
+    } else if (selection.name === "__typename") {
       if (typeof selected === "string" && Object.hasOwn(toPrefixed, selected)) {
         object[key] = toPrefixed[selected];
       }

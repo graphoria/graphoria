@@ -227,6 +227,51 @@ describe("Remote Schema Proxy", () => {
     }
   });
 
+  it("forwards an inline fragment's type condition under the remote's own name", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ data: { users: [{ __typename: "User", id: "1" }] } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock;
+
+    try {
+      const result = await proxyRemoteField(
+        {
+          name: "test_users",
+          isArray: true,
+          selections: [
+            { name: "... on test_User", selections: [{ name: "__typename" }, { name: "id" }] },
+          ],
+        },
+        createMockRemoteSchema(),
+        "users",
+        {},
+        "query",
+      );
+
+      expect(result).toEqual([{ __typename: "test_User", id: "1" }]);
+
+      const [, options] = (
+        fetchMock as unknown as {
+          mock: {
+            calls: [string, RequestInit & { headers: Record<string, string> }][];
+          };
+        }
+      ).mock.calls[0];
+      expect(JSON.parse(options.body as string).query).toBe(
+        "query { users { ... on User { __typename id } } }",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("should forward client headers", async () => {
     const fetchMock = mock(() =>
       Promise.resolve(
