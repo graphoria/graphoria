@@ -625,3 +625,49 @@ export const prodReservedWordColumnQuery = analyzeQuery(
   `,
   StoreMSSQL,
 );
+
+// ============================================================================
+// __typename
+// ============================================================================
+
+export const prodTypenameQuery = analyzeQuery(
+  `
+    {
+      dbo_products {
+        __typename
+        kind: __typename
+        product_id
+        dbo_product_categories {
+          __typename
+          category_id
+        }
+      }
+    }
+  `,
+  StoreMSSQL,
+);
+
+// `__typename` first under `sum`, so the aggregated column is not the first selection.
+export const ordGroupByTypenameQuery = analyzeQuery(
+  `
+    {
+      dbo_orders_aggregate(groupBy: [customer_id]) {
+        __typename
+        key {
+          __typename
+          customer_id
+        }
+        count
+        sum {
+          __typename
+          total_amount
+        }
+        items {
+          __typename
+          order_id
+        }
+      }
+    }
+  `,
+  StoreMSSQL,
+);

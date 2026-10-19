@@ -30,6 +30,8 @@ export interface FragmentAnalysis {
 export interface SelectionAnalysis {
   name: string;
   alias?: string;
+  /** Set on a `__typename` only: the name of the object type it is selected on. */
+  typeName?: string;
   /** The source of this field (table, queue, auth, operation, etc.) */
   source?: EntitySource;
   // oxlint-disable-next-line typescript/no-explicit-any

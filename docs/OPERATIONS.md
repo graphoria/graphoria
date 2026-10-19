@@ -74,7 +74,7 @@ When this operation is registered:
 - The result is cached for 30 seconds, with up to 1000 distinct cache entries (LRU eviction; in-process store, see [Caching](#caching)).
 - The `output` schema is reflected into the OpenAPI spec at `/openapi.json` so SDK generators and API clients see the response shape.
 
-If `output` is omitted, the OpenAPI document describes the response from the query's own selection, typed from the GraphQL schema, root `__typename`, `__type` and `__schema` included. The `output` schema is purely descriptive — it is not used to validate the response at runtime, since the GraphQL query result already conforms to the schema's types.
+If `output` is omitted, the OpenAPI document describes the response from the query's own selection, typed from the GraphQL schema, `__typename` at any level and the root `__type` and `__schema` included. The `output` schema is purely descriptive — it is not used to validate the response at runtime, since the GraphQL query result already conforms to the schema's types.
 
 ## Handler operations
 

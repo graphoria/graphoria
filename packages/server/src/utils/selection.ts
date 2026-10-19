@@ -1,5 +1,13 @@
 import type { SelectionAnalysis } from "../analyzeQuery/types";
 
+import { isTypename } from "../analyzeQuery/metaFields";
+
+/** The `__typename`s among `fields`, each response key mapped to its type's name. */
+export const typenamesOf = (fields: SelectionAnalysis[] | undefined): Record<string, string> =>
+  Object.fromEntries(
+    (fields ?? []).filter(isTypename).map((field) => [field.alias || field.name, field.typeName]),
+  );
+
 export const filterResultBySelection = (
   data: unknown,
   fields: SelectionAnalysis[] | undefined,
@@ -17,7 +25,9 @@ export const filterResultBySelection = (
       const key = field.name;
       const alias = field.alias || key;
 
-      if (key in (data as Record<string, unknown>)) {
+      if (isTypename(field)) {
+        result[alias] = field.typeName;
+      } else if (key in (data as Record<string, unknown>)) {
         const value = (data as Record<string, unknown>)[key];
 
         if (field.selections && field.selections.length > 0) {

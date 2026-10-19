@@ -260,6 +260,54 @@ describe.skipIf(!integrationEnabled)("query · mssql", () => {
     });
   });
 
+  describe("__typename", () => {
+    it("names each row's type across relationships, under an alias too", async () => {
+      const data = await run<{ app_tasks_single: Record<string, unknown> }>(`
+        query {
+          app_tasks_single(where: { id: { eq: 9 } }) {
+            __typename
+            kind: __typename
+            app_projects {
+              __typename
+              app_tasks(where: { id: { eq: 9 } }) { __typename id }
+            }
+          }
+        }
+      `);
+
+      expect(data.app_tasks_single).toEqual({
+        __typename: "app_tasks",
+        kind: "app_tasks",
+        app_projects: {
+          __typename: "app_projects",
+          app_tasks: [{ __typename: "app_tasks", id: 9 }],
+        },
+      });
+    });
+
+    it("names a group, its key, its aggregates and its rows", async () => {
+      const data = await run<{ app_tasks_aggregate: Record<string, unknown>[] }>(`
+        query {
+          app_tasks_aggregate(where: { id: { eq: 9 } }, groupBy: [project_id]) {
+            __typename
+            key { __typename project_id }
+            sum { __typename priority }
+            items { __typename id }
+          }
+        }
+      `);
+
+      expect(data.app_tasks_aggregate).toEqual([
+        {
+          __typename: "app_tasksGroupBy",
+          key: { __typename: "app_tasks", project_id: 3 },
+          sum: { __typename: "app_tasksSum", priority: 4 },
+          items: [{ __typename: "app_tasks", id: 9 }],
+        },
+      ]);
+    });
+  });
+
   describe("directives", () => {
     it("applies every data-transform directive", async () => {
       const data = await run<Record<string, Record<string, unknown>>>(`
