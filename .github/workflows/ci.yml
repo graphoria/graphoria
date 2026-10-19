@@ -12,7 +12,7 @@ concurrency:
 env:
   # Kept at or above the root package.json `engines.bun` floor (>=1.4.2). Pinned
   # rather than floating so a Bun release cannot turn a green PR red on its own.
-  BUN_VERSION: 1.4.2
+  BUN_VERSION: 1.4.3
 
 jobs:
   check:
