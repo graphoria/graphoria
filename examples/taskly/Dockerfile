@@ -1,11 +1,11 @@
 # Install stage: bun install and its cache stay here.
-FROM oven/bun:1.4.2-slim AS deps
+FROM oven/bun:1.4.3-slim AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 # Final stage: the locked dependencies and the sources, run as the image's non-root `bun` user.
-FROM oven/bun:1.4.2-slim
+FROM oven/bun:1.4.3-slim
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY . .
