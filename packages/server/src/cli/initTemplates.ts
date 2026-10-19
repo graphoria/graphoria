@@ -96,8 +96,8 @@ export const seedSchema = ({ database, dbName }: Pick<InitAnswers, "database" | 
 const FRONTEND_DEPENDENCIES = {
   "bun-plugin-tailwind": "0.1.2",
   "gql.tada": "1.11.3",
-  react: "19.3.0",
-  "react-dom": "19.3.0",
+  react: "19.3.1",
+  "react-dom": "19.3.1",
   tailwindcss: "4.3.3",
   urql: "5.0.4",
 };
