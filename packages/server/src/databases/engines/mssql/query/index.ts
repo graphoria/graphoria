@@ -1,3 +1,4 @@
+import type { TypenameSelection } from "../../../../analyzeQuery/metaFields";
 import type {
   OperationAnalysis,
   SelectionAnalysis,
@@ -6,6 +7,7 @@ import type {
 import type { MergedEntities } from "../../../../configuration/getSchemas/mergeEntities";
 import type { GroupByInfo, PageLimits, QueryPathFrame } from "../../../common";
 
+import { isTypename } from "../../../../analyzeQuery/metaFields";
 import {
   buildOrderByClauseMSSQL,
   buildPaginationClauseMSSQL,
@@ -17,6 +19,7 @@ import {
   isSingleQuery,
   processFieldSelectionsMSSQL,
   sqlColumnName,
+  sqlLiteral,
   wrapIdentifierMSSQL,
 } from "../../../common";
 
@@ -81,17 +84,21 @@ const buildGroupedQuery = (
   tableAlias: string,
   whereClause: string,
 ): string => {
-  const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias } =
+  const { groupByFields, aggregations, hasItems, keyResolved, hasKey, keys, cteAlias, typenames } =
     groupByInfo;
 
   const sqlName = (fieldName: string) => sqlColumnName(entities, field.name, fieldName);
+  const typenameField = (sel: TypenameSelection) =>
+    `${sqlLiteral("mssql", sel.typeName)} AS ${wrapIdentifierMSSQL(sel.alias || sel.name)}`;
 
-  const selectClauses: string[] = [];
+  const selectClauses: string[] = typenames.map(typenameField);
 
   if (hasKey) {
     // Add key object with group by fields
     const keyFields = keys
       .map((key) => {
+        if (isTypename(key)) return typenameField(key);
+
         const selector = applyDirectives(
           `${cteAlias}.${wrapIdentifierMSSQL(sqlName(key.name))}`,
           key.directives,
@@ -112,8 +119,12 @@ const buildGroupedQuery = (
     if (agg.name === "count") {
       selectClauses.push(`${cteAlias}.${agg.alias} AS ${wrapIdentifierMSSQL(agg.nameResolved)}`);
     } else {
+      const aggFields = [
+        `${cteAlias}.${agg.alias} AS ${wrapIdentifierMSSQL(agg.fieldAlias)}`,
+        ...agg.typenames.map(typenameField),
+      ];
       selectClauses.push(
-        `JSON_QUERY((SELECT ${cteAlias}.${agg.alias} AS ${wrapIdentifierMSSQL(agg.fieldAlias)} FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)) AS ${wrapIdentifierMSSQL(agg.nameResolved)}`,
+        `JSON_QUERY((SELECT ${aggFields.join(", ")} FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)) AS ${wrapIdentifierMSSQL(agg.nameResolved)}`,
       );
     }
   });
@@ -126,6 +137,8 @@ const buildGroupedQuery = (
       const itemFields = itemsSelection.selections
         .filter((sel) => !isAggregationField(sel.name) && sel.name !== "items")
         .map((sel) => {
+          if (isTypename(sel)) return typenameField(sel);
+
           const selector = applyDirectives(
             `${tableAlias}.${wrapIdentifierMSSQL(sqlName(sel.name))}`,
             sel.directives,

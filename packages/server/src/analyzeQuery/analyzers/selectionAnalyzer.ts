@@ -1,10 +1,9 @@
-import { GraphQLNonNull, GraphQLObjectType } from "graphql";
+import { GraphQLNonNull, GraphQLObjectType, TypeNameMetaFieldDef } from "graphql";
 
 import type { FieldNode, SelectionNode } from "graphql";
 import type { EntitiesWithSchema, SelectionAnalysis, VariableDefinition } from "../types";
 
 import { analyzeDirectives } from "../directiveUtils";
-import { META_FIELDS } from "../metaFields";
 import { getFieldType, unwrapType } from "../typeUtils";
 import { extractArgumentValue } from "../valueExtractors";
 
@@ -32,12 +31,16 @@ export const analyzeSelections = (
           : undefined;
 
         const fieldName = field.name.value;
-        if (META_FIELDS.has(fieldName)) {
+        // Valid at the root only, where graphql-js answers them.
+        if (fieldName === "__schema" || fieldName === "__type") {
           return {
             name: fieldName,
           };
         }
-        const fieldType = getFieldType(parentType, fieldName);
+        const isTypenameField = fieldName === "__typename";
+        const fieldType = isTypenameField
+          ? TypeNameMetaFieldDef.type
+          : getFieldType(parentType, fieldName);
         let isArray = false;
         let fieldObjType: GraphQLObjectType | null = null;
 
@@ -84,6 +87,7 @@ export const analyzeSelections = (
         const selectionAnalysis: SelectionAnalysis = {
           name: fieldName,
           ...(field.alias && { alias: field.alias.value }),
+          ...(isTypenameField && { typeName: parentType.name }),
           ...(args && Object.keys(args).length && { arguments: args }),
           ...(isArray && { isArray }),
           ...(hasDirectives && { directives }),
@@ -136,4 +140,4 @@ export const analyzeSelections = (
         };
       }
     })
-    .filter((sel) => !META_FIELDS.has(sel.name));
+    .filter((sel) => sel.name !== "__schema" && sel.name !== "__type");

@@ -13,7 +13,7 @@ export type SupervisedWorker = {
   pid: number;
   /** Resolves with the exit code, or 128 + the signal number. */
   exited: Promise<number>;
-  readonly signalCode: string | null;
+  readonly signalCode: string | number | null;
   kill(signal?: NodeJS.Signals): void;
 };
 

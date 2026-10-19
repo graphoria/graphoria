@@ -3,6 +3,9 @@ import type { RemoteSchemaResolved } from "./types";
 
 import { formatTraceparent, startSpan } from "../observability/tracing";
 
+// The analysis names an inline fragment after its type condition.
+const INLINE_FRAGMENT = "... on ";
+
 /**
  * Build the sub-query string for a remote field by stripping the prefix from
  * the field name and type references.
@@ -32,6 +35,14 @@ const buildSelectionsString = (
       const subSelections = sel.selections?.length
         ? ` { ${buildSelectionsString(sel.selections, prefixMap)} }`
         : "";
+
+      if (sel.name.startsWith(INLINE_FRAGMENT)) {
+        const typeName = sel.name.slice(INLINE_FRAGMENT.length);
+        const original = Object.hasOwn(prefixMap.toOriginal, typeName)
+          ? prefixMap.toOriginal[typeName]
+          : typeName;
+        return `${INLINE_FRAGMENT}${original}${subSelections}`;
+      }
 
       const aliasPrefix = sel.alias ? `${sel.alias}: ` : "";
       return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments)}${subSelections}`;
@@ -90,6 +101,41 @@ const buildHeaders = (
   }
 
   return headers;
+};
+
+/**
+ * The remote answers `__typename` with its own type names, which the merged
+ * schema serves prefixed. Walks the result along the selection, aliases
+ * included, renaming in place.
+ */
+const prefixTypenames = (
+  value: unknown,
+  selections: SelectionAnalysis[] | undefined,
+  toPrefixed: RemoteSchemaResolved["prefixMap"]["toPrefixed"],
+): void => {
+  if (!selections?.length || value === null || typeof value !== "object") return;
+
+  if (Array.isArray(value)) {
+    for (const item of value) prefixTypenames(item, selections, toPrefixed);
+    return;
+  }
+
+  const object = value as Record<string, unknown>;
+  for (const selection of selections) {
+    const key = selection.alias || selection.name;
+    const selected = object[key];
+
+    if (selection.name.startsWith(INLINE_FRAGMENT)) {
+      // Its fields sit on the object the fragment is spread in.
+      prefixTypenames(object, selection.selections, toPrefixed);
+    } else if (selection.name === "__typename") {
+      if (typeof selected === "string" && Object.hasOwn(toPrefixed, selected)) {
+        object[key] = toPrefixed[selected];
+      }
+    } else {
+      prefixTypenames(selected, selection.selections, toPrefixed);
+    }
+  }
 };
 
 /**
@@ -152,7 +198,9 @@ export const proxyRemoteField = async (
     }
 
     // Extract the result for the original field name
-    return json.data?.[originalFieldName] ?? null;
+    const result = json.data?.[originalFieldName] ?? null;
+    prefixTypenames(result, field.selections, remoteSchema.prefixMap.toPrefixed);
+    return result;
   } catch (error) {
     span?.recordError(error);
     throw error;
