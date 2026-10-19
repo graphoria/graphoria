@@ -268,6 +268,54 @@ describe.skipIf(!integrationEnabled)("query · mysql", () => {
     });
   });
 
+  describe("__typename", () => {
+    it("names each row's type across relationships, under an alias too", async () => {
+      const data = await run<Record<string, Record<string, unknown>>>(`
+        query {
+          ${APP}_tasks_single(where: { id: { eq: 9 } }) {
+            __typename
+            kind: __typename
+            ${APP}_projects {
+              __typename
+              ${APP}_tasks(where: { id: { eq: 9 } }) { __typename id }
+            }
+          }
+        }
+      `);
+
+      expect(data[`${APP}_tasks_single`]).toEqual({
+        __typename: `${APP}_tasks`,
+        kind: `${APP}_tasks`,
+        [`${APP}_projects`]: {
+          __typename: `${APP}_projects`,
+          [`${APP}_tasks`]: [{ __typename: `${APP}_tasks`, id: 9 }],
+        },
+      });
+    });
+
+    it("names a group, its key, its aggregates and its rows", async () => {
+      const data = await run<Record<string, Record<string, unknown>[]>>(`
+        query {
+          ${APP}_tasks_aggregate(where: { id: { eq: 9 } }, groupBy: [project_id]) {
+            __typename
+            key { __typename project_id }
+            sum { __typename priority }
+            items { __typename id }
+          }
+        }
+      `);
+
+      expect(data[`${APP}_tasks_aggregate`]).toEqual([
+        {
+          __typename: `${APP}_tasksGroupBy`,
+          key: { __typename: `${APP}_tasks`, project_id: 3 },
+          sum: { __typename: `${APP}_tasksSum`, priority: 4 },
+          items: [{ __typename: `${APP}_tasks`, id: 9 }],
+        },
+      ]);
+    });
+  });
+
   describe("directives", () => {
     it("applies the transform directives MySQL supports", async () => {
       const data = await run<Record<string, Record<string, unknown>>>(`

@@ -150,6 +150,128 @@ describe("Remote Schema Proxy", () => {
     }
   });
 
+  it("answers __typename with the prefixed type name, under its alias", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: {
+              users: [
+                {
+                  __typename: "User",
+                  kind: "User",
+                  profile: null,
+                  posts: [{ __typename: "Post", id: "1" }],
+                },
+                { __typename: "Unlisted", kind: "Unlisted", profile: null, posts: [] },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    ) as unknown as typeof fetch;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock;
+
+    try {
+      const result = await proxyRemoteField(
+        {
+          name: "test_users",
+          isArray: true,
+          selections: [
+            { name: "__typename" },
+            { name: "__typename", alias: "kind" },
+            { name: "profile", selections: [{ name: "__typename" }] },
+            {
+              name: "posts",
+              isArray: true,
+              selections: [{ name: "__typename" }, { name: "id" }],
+            },
+          ],
+        },
+        createMockRemoteSchema({
+          prefixMap: {
+            toOriginal: { test_User: "User", test_Post: "Post" },
+            toPrefixed: { User: "test_User", Post: "test_Post" },
+          },
+        }),
+        "users",
+        {},
+        "query",
+      );
+
+      expect(result).toEqual([
+        {
+          __typename: "test_User",
+          kind: "test_User",
+          profile: null,
+          posts: [{ __typename: "test_Post", id: "1" }],
+        },
+        { __typename: "Unlisted", kind: "Unlisted", profile: null, posts: [] },
+      ]);
+
+      const [, options] = (
+        fetchMock as unknown as {
+          mock: {
+            calls: [string, RequestInit & { headers: Record<string, string> }][];
+          };
+        }
+      ).mock.calls[0];
+      expect(JSON.parse(options.body as string).query).toBe(
+        "query { users { __typename kind: __typename profile { __typename } posts { __typename id } } }",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("forwards an inline fragment's type condition under the remote's own name", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ data: { users: [{ __typename: "User", id: "1" }] } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock;
+
+    try {
+      const result = await proxyRemoteField(
+        {
+          name: "test_users",
+          isArray: true,
+          selections: [
+            { name: "... on test_User", selections: [{ name: "__typename" }, { name: "id" }] },
+          ],
+        },
+        createMockRemoteSchema(),
+        "users",
+        {},
+        "query",
+      );
+
+      expect(result).toEqual([{ __typename: "test_User", id: "1" }]);
+
+      const [, options] = (
+        fetchMock as unknown as {
+          mock: {
+            calls: [string, RequestInit & { headers: Record<string, string> }][];
+          };
+        }
+      ).mock.calls[0];
+      expect(JSON.parse(options.body as string).query).toBe(
+        "query { users { ... on User { __typename id } } }",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("should forward client headers", async () => {
     const fetchMock = mock(() =>
       Promise.resolve(

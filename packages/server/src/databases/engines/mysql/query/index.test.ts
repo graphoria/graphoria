@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
+import type { AnalysisResult } from "../../../../analyzeQuery/types";
+
 import { StoreMySQL } from "../../../../__test/dataset/store";
 import {
   ordDirectiveOptionalQuery,
@@ -7,6 +9,7 @@ import {
   ordGroupByDateFormatQuery,
   ordGroupByMultiplyQuery,
   ordGroupByQuery,
+  ordGroupByTypenameQuery,
   ordQuery,
   ordWithIncludeFalseDirectiveQuery,
   ordWithIncludeTrueDirectiveQuery,
@@ -18,6 +21,7 @@ import {
   prodQuery,
   prodReservedWordAliasQuery,
   prodReservedWordColumnQuery,
+  prodTypenameQuery,
   prodWhereArgumentDeeplyNestedEntitiesQuery,
   prodWhereArgumentNestedEntitiesQuery,
   prodWhereArgumentNestedQuery,
@@ -1545,5 +1549,33 @@ describe("MySQL: statement timeout hint", () => {
 
   it("emits no hint when no timeout is resolved", () => {
     expect(gen(prodQuery)).not.toContain("MAX_EXECUTION_TIME");
+  });
+});
+
+describe("MySQL: __typename", () => {
+  const sqlOf = (query: AnalysisResult) =>
+    generateSQLMySQL(StoreMySQL, query.operations[0]!, {}, false, null);
+
+  it("names each object's type with a constant, under its alias too", () => {
+    const sql = sqlOf(prodTypenameQuery);
+
+    expect(sql).toContain(`'__typename', 'dbo_products'`);
+    expect(sql).toContain(`'kind', 'dbo_products'`);
+    expect(sql).toContain(`'__typename', 'dbo_product_categories'`);
+    expect(sql).not.toContain("`__typename`");
+  });
+
+  it("names a group, its key, its aggregates and its rows", () => {
+    const sql = sqlOf(ordGroupByTypenameQuery);
+
+    expect(sql).toContain(`'__typename', 'dbo_ordersGroupBy'`);
+    expect(sql).toContain(
+      "'key', JSON_OBJECT('__typename', 'dbo_orders', 'customer_id', t1_agg.`customer_id`)",
+    );
+    expect(sql).toContain(
+      "'sum', JSON_OBJECT('total_amount', t1_agg.sum_total_amount, '__typename', 'dbo_ordersSum')",
+    );
+    expect(sql).toContain("JSON_OBJECT('__typename', 'dbo_orders', 'order_id', t1.`order_id`)");
+    expect(sql).toContain("SUM(t1.`total_amount`) AS sum_total_amount");
   });
 });

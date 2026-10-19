@@ -4,6 +4,7 @@ import type { OperationDefinitionNode } from "graphql";
 import type { Maybe } from "graphql/jsutils/Maybe";
 import type { EntitiesWithSchema, OperationAnalysis, VariableDefinition } from "../types";
 
+import { META_FIELDS } from "../metaFields";
 import { analyzeSelections } from "./selectionAnalyzer";
 import { analyzeVariables } from "./variableAnalyzer";
 
@@ -28,13 +29,14 @@ export const analyzeOperation = (
 
   const declaredVariables = analyzeVariables(variableDefinitions);
 
+  // graphql-js answers the root meta fields, through the operation's `meta`.
   const fields = analyzeSelections(
     selectionSet.selections,
     rootType,
     entities,
     declaredVariables,
     generatedVariables,
-  );
+  ).filter((field) => !META_FIELDS.has(field.name));
 
   const allVariables = [...declaredVariables, ...generatedVariables];
 

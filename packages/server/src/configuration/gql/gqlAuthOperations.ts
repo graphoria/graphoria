@@ -7,6 +7,7 @@ import { resolveVariableRef } from "../../analyzeQuery/resolveVariables";
 import { checkUserCredentials } from "../../databases";
 import { actorFromSession, audit } from "../../logging/audit";
 import { getTokenService } from "../../singletons/authentication";
+import { typenamesOf } from "../../utils/selection";
 
 // Handle auth mutations: auth_login / auth_refresh / auth_logout
 export const handleAuthMutation = async (
@@ -78,6 +79,7 @@ export const handleAuthMutation = async (
           access_token: data.access_token,
           expires_in: data.expires_in,
           role: result.role,
+          ...typenamesOf(field.selections),
         },
       },
     };
@@ -111,6 +113,7 @@ export const handleAuthMutation = async (
             access_token: result.access_token,
             expires_in: result.expires_in,
             role: result.role,
+            ...typenamesOf(field.selections),
           },
         },
       };
@@ -169,7 +172,9 @@ export const handleAuthMeQuery = (
   if (field.name === "auth_me") {
     const alias = field.alias || field.name;
     return {
-      [alias]: session?.sub ? { username: session.sub, role: session.role } : null,
+      [alias]: session?.sub
+        ? { username: session.sub, role: session.role, ...typenamesOf(field.selections) }
+        : null,
     };
   }
   return {};

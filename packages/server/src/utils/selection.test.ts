@@ -2,11 +2,18 @@ import { describe, expect, it } from "bun:test";
 
 import type { SelectionAnalysis } from "../analyzeQuery/types";
 
-import { filterResultBySelection } from "./selection";
+import { filterResultBySelection, typenamesOf } from "./selection";
 
 const f = (name: string, selections?: SelectionAnalysis[], alias?: string): SelectionAnalysis => ({
   name,
   selections,
+  alias,
+});
+
+// A __typename as the analysis records it.
+const typename = (typeName: string, alias?: string): SelectionAnalysis => ({
+  name: "__typename",
+  typeName,
   alias,
 });
 
@@ -93,5 +100,49 @@ describe("filterResultBySelection", () => {
       const result = filterResultBySelection({ a: null, b: 2 }, [f("a")]);
       expect(result).toEqual({ a: null });
     });
+  });
+
+  describe("__typename", () => {
+    it("answers the type the analysis recorded, under its alias too", () => {
+      const result = filterResultBySelection({ id: 1 }, [
+        typename("Thing"),
+        typename("Thing", "kind"),
+        f("id"),
+      ]);
+      expect(result).toEqual({ __typename: "Thing", kind: "Thing", id: 1 });
+    });
+
+    it("names nested objects and each element of a list", () => {
+      const data = { child: { a: 1 }, list: [{ a: 2 }, { a: 3 }], none: null };
+      const result = filterResultBySelection(data, [
+        f("child", [typename("Child"), f("a")]),
+        f("list", [typename("Item")]),
+        f("none", [typename("Child")]),
+      ]);
+      expect(result).toEqual({
+        child: { __typename: "Child", a: 1 },
+        list: [{ __typename: "Item" }, { __typename: "Item" }],
+        none: null,
+      });
+    });
+
+    it("answers the schema's type over a __typename the data carries", () => {
+      expect(filterResultBySelection({ __typename: "Other" }, [typename("Thing")])).toEqual({
+        __typename: "Thing",
+      });
+    });
+  });
+});
+
+describe("typenamesOf", () => {
+  it("maps each __typename's response key to its type", () => {
+    expect(typenamesOf([typename("Thing"), typename("Thing", "kind"), f("id")])).toEqual({
+      __typename: "Thing",
+      kind: "Thing",
+    });
+  });
+
+  it("is empty without a selection", () => {
+    expect(typenamesOf(undefined)).toEqual({});
   });
 });

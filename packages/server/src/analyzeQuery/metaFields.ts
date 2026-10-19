@@ -1,12 +1,22 @@
 import { Kind } from "graphql";
 
 import type { DocumentNode, FieldNode, OperationDefinitionNode, SelectionNode } from "graphql";
+import type { SelectionAnalysis } from "./types";
 
-/** The meta fields. SQL never selects them: graphql-js answers the root ones. */
+/**
+ * The meta fields. graphql-js answers them at the root; below it, `__typename`
+ * is answered by whatever builds the object.
+ */
 export const META_FIELDS = new Set(["__schema", "__type", "__typename"]);
 
 const isMetaField = (selection: SelectionNode): selection is FieldNode =>
   selection.kind === Kind.FIELD && META_FIELDS.has(selection.name.value);
+
+/** A `__typename` below the root, which the analysis gives its type's name. */
+export type TypenameSelection = SelectionAnalysis & { typeName: string };
+
+export const isTypename = (selection: SelectionAnalysis): selection is TypenameSelection =>
+  selection.typeName !== undefined;
 
 /**
  * The operation narrowed to its root meta fields, beside the document's
