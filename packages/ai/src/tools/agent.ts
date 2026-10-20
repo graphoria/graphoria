@@ -84,11 +84,11 @@ export const buildAgentTools = (
           case "non_query":
             return { error: "Internal: built query is not a query." };
           case "validation":
-            return { data: null, errors: outcome.errors };
+            return { query, data: null, errors: outcome.errors };
           case "error":
             return { error: outcome.message };
           case "ok":
-            return outcome.result;
+            return { query, ...(outcome.result as object) };
         }
       },
     }),

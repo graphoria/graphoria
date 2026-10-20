@@ -190,6 +190,37 @@ describe("buildAgentTools — query_data", () => {
     expect(queries).toEqual([`query { ${table.resolverName}(limit: 1) { ${fields} } }`]);
   });
 
+  it("returns the query it ran beside the data", async () => {
+    const { tools, table, field } = recording();
+
+    const result = await tools
+      .find((t) => t.name === "query_data")!
+      .execute({ entity: table.resolverName, operation: "list", columns: [field], limit: 1 });
+
+    expect(result).toEqual({
+      query: `query { ${table.resolverName}(limit: 1) { ${field} } }`,
+      data: {},
+    });
+  });
+
+  it("returns the query it built beside the validation errors", async () => {
+    const { queries, tools, table } = recording();
+
+    const result = (await tools
+      .find((t) => t.name === "query_data")!
+      .execute({
+        entity: table.resolverName,
+        operation: "list",
+        columns: ["no_such_column"],
+        limit: 1,
+      })) as { query: string; data: null; errors: unknown[] };
+
+    expect(result.query).toBe(`query { ${table.resolverName}(limit: 1) { no_such_column } }`);
+    expect(result.data).toBeNull();
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(queries).toEqual([]);
+  });
+
   it("reads filters sent as a JSON string as the object they spell", async () => {
     const { queries, tools, table, field } = recording();
     const listing = { entity: table.resolverName, operation: "list", columns: [field], limit: 1 };

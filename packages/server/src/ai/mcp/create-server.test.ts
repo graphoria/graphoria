@@ -255,6 +255,45 @@ describe("createMcpServer", () => {
 
       expect(queries).toEqual([`query { dbo_products(limit: 1) { ${fields} } }`]);
     });
+
+    it("returns the query it built beside the data", async () => {
+      const role = buildRole();
+      role.handlers.gql.handler = (async () => ({
+        data: { dbo_products: [] },
+      })) as typeof role.handlers.gql.handler;
+      const table = role.tables.find((t) => t.resolverName === "dbo_products")!;
+      const field = columnFieldName(table.columns[0]!);
+
+      const result = await callTool(serverFor(undefined, role), "query_data", {
+        entity: "dbo_products",
+        operation: "list",
+        columns: [field],
+        limit: 1,
+      });
+
+      expect(JSON.parse(textOf(result))).toEqual({
+        query: `query { dbo_products(limit: 1) { ${field} } }`,
+        data: { dbo_products: [] },
+      });
+    });
+
+    it("returns the query it built beside the validation errors", async () => {
+      const result = await callTool(serverFor(), "query_data", {
+        entity: "dbo_products",
+        operation: "list",
+        columns: ["no_such_column"],
+        limit: 1,
+      });
+
+      const parsed = JSON.parse(textOf(result)) as {
+        query: string;
+        data: null;
+        errors: unknown[];
+      };
+      expect(parsed.query).toBe("query { dbo_products(limit: 1) { no_such_column } }");
+      expect(parsed.data).toBeNull();
+      expect(parsed.errors.length).toBeGreaterThan(0);
+    });
   });
 
   describe("list_entities", () => {
