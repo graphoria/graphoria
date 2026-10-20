@@ -36,6 +36,7 @@ export const buildAgentTools = (
   deps: AiToolDeps,
   role: RoleEntities,
   caller: ToolCaller,
+  onQuery?: (query: string) => void,
 ): Tool[] => {
   const validateQuery = makeValidateQuery(deps, role);
 
@@ -88,6 +89,7 @@ export const buildAgentTools = (
           case "error":
             return { error: outcome.message };
           case "ok":
+            onQuery?.(query);
             return { query, ...(outcome.result as object) };
         }
       },
@@ -119,6 +121,7 @@ export const buildAgentTools = (
           case "error":
             return { error: outcome.message };
           case "ok":
+            onQuery?.(query);
             return outcome.result;
         }
       },

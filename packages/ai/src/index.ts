@@ -28,6 +28,8 @@ Aggregate shape (\`key\` is an object and must be sub-selected):
     }
   }
 
+query_data returns the GraphQL \`query\` it ran beside the data. Do NOT repeat it in your answer: the caller receives every query separately.
+
 CRITICAL: After query_data returns data, present the answer IMMEDIATELY. Do NOT call more tools. Do NOT re-query with a different operation. One query → present results → done. Use a Markdown table for grouped results.`;
 
 export const DEFAULT_AI_PROMPT_TEMPLATE = `Database-query request from the user:
@@ -64,15 +66,18 @@ export const createAgent: AiPackage["createAgent"] = (deps, settings) => {
   // A function replacement: a string one would expand `$&`, `$'` and `$$` in the prompt.
   const wrap = (prompt: string) => settings.promptTemplate.replaceAll("{prompt}", () => prompt);
 
-  return (prompt: string, { role, session, req }: AgentCaller) =>
-    ask(
+  return async (prompt: string, { role, session, req }: AgentCaller) => {
+    const queries: string[] = [];
+    const answer = await ask(
       deps.logger,
       prompt,
-      buildAgentTools(deps, role, { session, req }),
+      buildAgentTools(deps, role, { session, req }, (query) => queries.push(query)),
       settings.systemPrompt,
       wrap,
       settings.timeoutMs,
     );
+    return { answer, queries };
+  };
 };
 
 export const createMCPRoutes: AiPackage["createMCPRoutes"] = (deps, roles, options) =>

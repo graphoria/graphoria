@@ -39,7 +39,10 @@ export type ToolCaller = { session?: SessionContext; req?: BunRequest };
 
 export type AgentCaller = { role: RoleEntities; session?: SessionContext; req?: BunRequest };
 
-export type Agent = (prompt: string, caller: AgentCaller) => Promise<string>;
+/** The agent's text answer, and each GraphQL query it ran that returned, in run order. */
+export type AgentAnswer = { answer: string; queries: string[] };
+
+export type Agent = (prompt: string, caller: AgentCaller) => Promise<AgentAnswer>;
 
 export type AiToolDeps = {
   logger: typeof logger;

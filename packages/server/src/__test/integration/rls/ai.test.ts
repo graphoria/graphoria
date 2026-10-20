@@ -90,8 +90,12 @@ describe.skipIf(!integrationEnabled)("rls · AI agent and MCP", () => {
           const response = await askRest(await bearer("ana"));
 
           expect(response.status).toBe(200);
-          const { answer } = (await response.json()) as { answer: string };
+          const { answer, queries } = (await response.json()) as {
+            answer: string;
+            queries: string[];
+          };
           expect(taskIds(answer, tasks)).toEqual(ANA_TASKS);
+          expect(queries).toEqual([`{ ${tasks}(orderBy: [{ id: ASC }]) { id } }`]);
         });
 
         it("answers ana through the ask field with her own rows only", async () => {

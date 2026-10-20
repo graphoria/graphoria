@@ -81,9 +81,11 @@ A role without `ai` gets `404` from the REST route, and the `ask` field is absen
 
 ### REST
 
-| Verb | Path       | Body                                          | Response            |
-| ---- | ---------- | --------------------------------------------- | ------------------- |
-| POST | `/rest/ai` | `{ "prompt": "how many orders per status?" }` | `{ "answer": "…" }` |
+| Verb | Path       | Body                                          | Response                              |
+| ---- | ---------- | --------------------------------------------- | ------------------------------------- |
+| POST | `/rest/ai` | `{ "prompt": "how many orders per status?" }` | `{ "answer": "…", "queries": ["…"] }` |
+
+`queries` lists each GraphQL query the agent ran that returned, in run order: what `query_data` built and what `graphql_execute` sent. A query refused by validation, or one that fails, is left out; a `graphql_execute` query is listed as sent, without its variables.
 
 ```bash
 curl -X POST http://localhost:3000/rest/ai \
@@ -113,7 +115,7 @@ A request runs at most one `ask`: a second one, under an alias, fails the reques
 1. At boot the agent stores its prompts. Each call builds its tools for the caller's role, session and request.
 2. Each call runs a tool-calling loop (max 10 iterations): `list_entities` → `describe_entity` → `query_data`. The built-in prompt steers the agent to `query_data`, whose structured JSON input the server turns into GraphQL; `graphql_execute` remains available for queries that shape cannot express.
 3. Anti-hallucination guards reject answers that never queried the data and forbid fabrication.
-4. The final text answer is returned; intermediate tool calls are hidden from the caller.
+4. The final text answer is returned with the queries the agent ran; the tool calls themselves stay hidden from the caller.
 
 The agent reads through the caller's role, so a prompt cannot reach a table, column or row the caller's own queries could not. What it reads is sent to the LLM provider.
 

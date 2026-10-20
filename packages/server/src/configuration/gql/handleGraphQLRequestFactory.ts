@@ -539,7 +539,9 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 target: { kind: "ai", via: "graphql" },
                 prompt,
               });
-              aiData[alias] = await getAgent()(prompt, { role: asAgentRole(), session, req });
+              aiData[alias] = (
+                await getAgent()(prompt, { role: asAgentRole(), session, req })
+              ).answer;
             }
 
             // Skip SQL generation if there are no table fields

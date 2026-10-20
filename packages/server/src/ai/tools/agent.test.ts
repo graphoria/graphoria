@@ -15,6 +15,7 @@ const { makeAiToolDeps } = await import("../../singletons/ai");
 const { buildAgentTools } = await import("../../../../ai/src/tools/agent");
 const { ask } = await import("../../../../ai/src/agent/agent");
 const { setProvider } = await import("../../../../ai/src/agent/providers");
+const { DEFAULT_AI_SYSTEM_PROMPT } = await import("../../../../ai/src/index");
 const { columnFieldName } = await import("../../databases/transformers/graphqlName");
 
 const deps = makeAiToolDeps(env);
@@ -249,5 +250,89 @@ describe("buildAgentTools — query_data", () => {
     expect(error).toContain("__proto__");
     expect(error).toContain("is reserved: GraphQL keeps names starting with __");
     expect(queries).toEqual([]);
+  });
+});
+
+describe("buildAgentTools — onQuery", () => {
+  const reporting = (handler: () => Promise<{ data: object }> = async () => ({ data: {} })) => {
+    const role = buildRole();
+    const reported: string[] = [];
+    const tools = buildAgentTools(
+      deps,
+      {
+        ...role,
+        handlers: {
+          ...role.handlers,
+          gql: { ...role.handlers.gql, handler },
+        },
+      },
+      {},
+      (query) => reported.push(query),
+    );
+    const table = role.tables[0]!;
+    return { reported, tools, table, field: columnFieldName(table.columns[0]!) };
+  };
+
+  it("reports each query graphql_execute and query_data ran, in order", async () => {
+    const { reported, tools, table, field } = reporting();
+    const raw = `{ ${table.resolverName}(limit: 1) { ${field} } }`;
+
+    await tools.find((t) => t.name === "graphql_execute")!.execute({ query: raw });
+    await tools
+      .find((t) => t.name === "query_data")!
+      .execute({ entity: table.resolverName, operation: "list", columns: [field], limit: 1 });
+
+    expect(reported).toEqual([raw, `query { ${table.resolverName}(limit: 1) { ${field} } }`]);
+  });
+
+  it("reports no query that failed validation", async () => {
+    const { reported, tools, table } = reporting();
+
+    await tools
+      .find((t) => t.name === "graphql_execute")!
+      .execute({ query: "query { __nope_field }" });
+    await tools
+      .find((t) => t.name === "query_data")!
+      .execute({
+        entity: table.resolverName,
+        operation: "list",
+        columns: ["no_such_column"],
+        limit: 1,
+      });
+
+    expect(reported).toEqual([]);
+  });
+
+  it("keeps a repeated query, and leaves out a mutation", async () => {
+    const { reported, tools, table, field } = reporting();
+    const raw = `{ ${table.resolverName}(limit: 1) { ${field} } }`;
+    const execute = tools.find((t) => t.name === "graphql_execute")!;
+
+    await execute.execute({ query: raw });
+    await execute.execute({ query: "mutation { x }" });
+    await execute.execute({ query: raw });
+
+    expect(reported).toEqual([raw, raw]);
+  });
+
+  it("reports no query whose handler throws", async () => {
+    const { reported, tools, table, field } = reporting(async () => {
+      throw new Error("boom");
+    });
+
+    await tools
+      .find((t) => t.name === "graphql_execute")!
+      .execute({ query: `{ ${table.resolverName}(limit: 1) { ${field} } }` })
+      .catch(() => undefined);
+
+    expect(reported).toEqual([]);
+  });
+});
+
+describe("default system prompt", () => {
+  it("tells the agent not to repeat the query query_data hands back", () => {
+    expect(DEFAULT_AI_SYSTEM_PROMPT).toContain(
+      "Do NOT repeat it in your answer: the caller receives every query separately.",
+    );
   });
 });

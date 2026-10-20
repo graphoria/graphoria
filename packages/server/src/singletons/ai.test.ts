@@ -85,10 +85,47 @@ describe("AI singleton", () => {
     );
     await instantiateAI({ enabled: true, endpoint: "/ai", mcp: { enabled: false } });
 
-    expect(await getAgent()("how many?", { role: recorded, session, req })).toBe("done");
+    expect(await getAgent()("how many?", { role: recorded, session, req })).toEqual({
+      answer: "done",
+      queries: [query],
+    });
     expect(calls).toHaveLength(1);
     expect(calls[0]![2]).toBe(req);
     expect(calls[0]![3]).toBe(session);
+  });
+
+  it("answers each call with only the queries that call ran", async () => {
+    const role = buildRole();
+    const recorded = {
+      ...role,
+      handlers: {
+        ...role.handlers,
+        gql: { ...role.handlers.gql, handler: async () => ({ data: {} }) },
+      },
+    };
+    const [first, second] = role.tables
+      .slice(0, 2)
+      .map(
+        (table) => `{ ${table.resolverName}(limit: 1) { ${columnFieldName(table.columns[0]!)} } }`,
+      );
+    const running = (query: string): ChatResult[] => [
+      {
+        content: "",
+        toolCalls: [{ id: "1", function: { name: "graphql_execute", arguments: { query } } }],
+      },
+      { content: "done", toolCalls: [] },
+    ];
+    (await packageProvider())(scripted([...running(first!), ...running(second!)]));
+    await instantiateAI({ enabled: true, endpoint: "/ai", mcp: { enabled: false } });
+
+    expect(await getAgent()("one", { role: recorded })).toEqual({
+      answer: "done",
+      queries: [first],
+    });
+    expect(await getAgent()("two", { role: recorded })).toEqual({
+      answer: "done",
+      queries: [second],
+    });
   });
 
   it("bounds each LLM call by the timeout it was instantiated with", async () => {

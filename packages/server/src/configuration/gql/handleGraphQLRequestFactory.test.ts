@@ -723,8 +723,10 @@ describe("handleGraphQLRequestFactory — audit", () => {
     }
   });
 
+  const AGENT_ANSWER = { answer: "forty-two", queries: ["{ users { id } }"] };
+
   it("records an ask with the prompt and the superadmin caller", async () => {
-    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
+    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => AGENT_ANSWER);
     try {
       const factory = factoryFn(buildEntities());
       const result = await factory.handler(
@@ -753,7 +755,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
     const spy = spyOn(aiModule, "getAgent").mockReturnValue(
       async (prompt: string, caller: Record<string, unknown>) => {
         seen.push({ prompt, caller });
-        return "forty-two";
+        return AGENT_ANSWER;
       },
     );
     return { seen, spy };

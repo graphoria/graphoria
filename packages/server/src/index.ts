@@ -80,6 +80,7 @@ export { setQueueAdapter } from "./singletons/queues";
 
 export type {
   Agent,
+  AgentAnswer,
   AgentCaller,
   AiPackage,
   AiToolDeps,
@@ -705,9 +706,12 @@ const createGraphQLServer = async (env: Env) => {
               prompt,
             });
 
-            return new S200({
-              answer: await getAgent()(prompt, { role: roleSchema, session, req }),
+            const { answer, queries } = await getAgent()(prompt, {
+              role: roleSchema,
+              session,
+              req,
             });
+            return new S200({ answer, queries });
           } catch (error) {
             return new S400({ errors: [{ message: (error as Error)?.message }] });
           }
