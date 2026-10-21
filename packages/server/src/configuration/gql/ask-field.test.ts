@@ -2,6 +2,7 @@ process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
 import { describe, expect, it } from "bun:test";
+import { printType } from "graphql";
 import type { Auth } from "../../types/configuration";
 
 const { getSchema, getSchemas } = await import("../../configuration/getSchemas");
@@ -20,13 +21,17 @@ const entities = {
 describe("ask GraphQL field gating", () => {
   it("adds the ask query field when includeAI is true", () => {
     const role = getSchema(entities, null, null, true);
-    expect(role.typeDefs).toContain("ask(prompt: String!): String!");
+    expect(role.typeDefs).toContain("ask(prompt: String!): AskResult!");
+    expect(printType(role.schema.getType("AskResult")!)).toBe(
+      "type AskResult {\n  answer: String!\n  queries: [String!]!\n}",
+    );
     expect(role.getResolverSource("ask")).toBe(EntitySource.AI);
   });
 
   it("omits the ask query field when includeAI is false", () => {
     const role = getSchema(entities, null, null, false);
     expect(role.typeDefs).not.toContain("ask(prompt");
+    expect(role.schema.getType("AskResult")).toBeUndefined();
     expect(role.getResolverSource("ask")).toBeUndefined();
   });
 });
@@ -43,7 +48,7 @@ describe("ask field per role", () => {
       true,
     );
 
-    expect(schemas.analyst!.typeDefs).toContain("ask(prompt: String!): String!");
+    expect(schemas.analyst!.typeDefs).toContain("ask(prompt: String!): AskResult!");
     expect(schemas.viewer!.typeDefs).not.toContain("ask(prompt");
   });
 

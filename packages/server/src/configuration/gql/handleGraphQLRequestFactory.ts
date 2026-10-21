@@ -13,7 +13,7 @@ import { LRUCache } from "lru-cache";
 import type { BunRequest } from "bun";
 import type { DocumentNode, GraphQLError } from "graphql";
 import type { RoleEntities } from "../../ai/adapter";
-import type { AnalysisResult, SelectionAnalysis } from "../../analyzeQuery/types";
+import type { AnalysisResult, FragmentAnalysis, SelectionAnalysis } from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
@@ -246,6 +246,34 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     return analysis.operations.some(
       (operation) => operation.fields !== undefined && selectionsHave(operation.fields),
     );
+  };
+
+  // The analyzer leaves a fragment unresolved in `selections`: a spread is a
+  // `...Name` entry, an inline fragment a `... on Type` entry holding its own
+  // selections, and a directive on either sits on that entry. A fragment expands
+  // once, at the first spread `keep` lets through: fragments that each spread
+  // the next one twice would otherwise cost 2^n.
+  const resolveFragments = (
+    selections: SelectionAnalysis[] | undefined,
+    fragments: FragmentAnalysis[],
+    keep: (selection: SelectionAnalysis) => boolean,
+  ): SelectionAnalysis[] => {
+    const visited = new Set<string>();
+    const fieldsByName = new Map(fragments.map((fragment) => [fragment.name, fragment.fields]));
+    const walk = (entries: SelectionAnalysis[] | undefined): SelectionAnalysis[] =>
+      (entries ?? []).filter(keep).flatMap((selection) => {
+        if (selection.name.startsWith("... on ")) {
+          return walk(selection.selections);
+        }
+        if (selection.name.startsWith("...")) {
+          const name = selection.name.slice(3);
+          if (visited.has(name)) return [];
+          visited.add(name);
+          return walk(fieldsByName.get(name));
+        }
+        return [selection];
+      });
+    return walk(selections);
   };
 
   // Keyed by an analysis's meta document, so per role and query text, and gone
@@ -539,7 +567,16 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 target: { kind: "ai", via: "graphql" },
                 prompt,
               });
-              aiData[alias] = await getAgent()(prompt, { role: asAgentRole(), session, req });
+              const agentAnswer = await getAgent()(prompt, { role: asAgentRole(), session, req });
+              const selections = resolveFragments(
+                field.selections,
+                queryAnalysis.fragments,
+                (selection) =>
+                  filterBasedOnDirective(selection, operation.variables ?? [], callerValues),
+              );
+              // An empty selection hands back the whole object, not the nothing it asks for.
+              aiData[alias] =
+                selections.length > 0 ? filterResultBySelection(agentAnswer, selections) : {};
             }
 
             // Skip SQL generation if there are no table fields

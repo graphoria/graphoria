@@ -122,11 +122,11 @@ export const createMcpServer = (
           case "non_query":
             return errorResult("Internal: built query is not a query.");
           case "validation":
-            return jsonResult({ data: null, errors: outcome.errors });
+            return jsonResult({ query, data: null, errors: outcome.errors });
           case "error":
             return errorResult(`Error executing query: ${outcome.message}`);
           case "ok":
-            return jsonResult(outcome.result);
+            return jsonResult({ query, ...(outcome.result as object) });
         }
       } catch (error) {
         return errorResult(

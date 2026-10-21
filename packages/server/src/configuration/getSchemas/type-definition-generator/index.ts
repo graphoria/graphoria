@@ -242,9 +242,10 @@ export const generateQueryType = (mergedEntities: MergedEntities, hasRoles: bool
             `
           : ""
       }
-      ${mergedEntities.ai ? "ask(prompt: String!): String!" : ""}
+      ${mergedEntities.ai ? "ask(prompt: String!): AskResult!" : ""}
       ${mergedEntities.remoteSchemas.map((rs) => rs.queryFields.map((f) => f.sdl).join("\n      ")).join("\n      ")}
     }
+    ${mergedEntities.ai ? "type AskResult { answer: String! queries: [String!]! }" : ""}
 `;
 };
 

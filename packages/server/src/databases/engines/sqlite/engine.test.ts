@@ -313,11 +313,14 @@ describe("sqlite engine, the agent", () => {
     const { setProvider } = (await importAiPackage())!;
     setProvider(readingOrganizations);
     try {
-      const data = await run<{ ask: string }>(`{ ask(prompt: "which organizations?") }`);
+      const data = await run<{ ask: { answer: string; queries: string[] } }>(
+        `{ ask(prompt: "which organizations?") { answer queries } }`,
+      );
 
-      expect(JSON.parse(data.ask)).toEqual({
+      expect(JSON.parse(data.ask.answer)).toEqual({
         data: { main_organizations: [{ name: "Acme" }, { name: "Umbrella" }] },
       });
+      expect(data.ask.queries).toEqual(["{ main_organizations(orderBy: [{ id: ASC }]) { name } }"]);
     } finally {
       setProvider(null);
     }

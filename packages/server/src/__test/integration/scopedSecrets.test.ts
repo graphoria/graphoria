@@ -209,11 +209,14 @@ describe.skipIf(!integrationEnabled)("scoped admin credentials", () => {
     });
 
     it("accepts the agent credential and records it as scoped", async () => {
-      const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
+      const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => ({
+        answer: "forty-two",
+        queries: [],
+      }));
       try {
         const response = await ask(AI_SECRET);
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ answer: "forty-two" });
+        expect(await response.json()).toEqual({ answer: "forty-two", queries: [] });
 
         expect(records).toEqual([
           {
@@ -235,7 +238,10 @@ describe.skipIf(!integrationEnabled)("scoped admin credentials", () => {
     });
 
     it("still accepts the admin secret, recorded as the superset", async () => {
-      const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
+      const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => ({
+        answer: "forty-two",
+        queries: [],
+      }));
       try {
         const response = await ask(adminSecret());
         expect(response.status).toBe(200);
@@ -342,7 +348,10 @@ describe.skipIf(!integrationEnabled)("scoped credentials read as their configure
   afterEach(() => setAuditLog(null));
 
   it("asks the agent as AI_SECRET_ROLE", async () => {
-    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
+    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => ({
+      answer: "forty-two",
+      queries: [],
+    }));
     try {
       const response = await started.context.rest("/ai", {
         method: "POST",

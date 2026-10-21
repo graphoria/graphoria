@@ -511,7 +511,16 @@ export const generateOpenAPI = ({
                       "application/json": {
                         schema: {
                           type: "object",
-                          properties: { answer: { type: "string" } },
+                          properties: {
+                            answer: { type: "string" },
+                            queries: {
+                              type: "array",
+                              items: { type: "string" },
+                              description:
+                                "Each GraphQL query the agent ran that returned, in run order",
+                            },
+                          },
+                          required: ["answer", "queries"],
                         },
                       },
                     },

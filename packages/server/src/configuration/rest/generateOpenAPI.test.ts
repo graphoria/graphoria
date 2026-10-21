@@ -361,4 +361,32 @@ describe("generateOpenAPI", () => {
       "Not found (the caller's role is not granted `ai`)",
     );
   });
+
+  it("describes the agent's answer and the queries it ran", () => {
+    const role = getSchema({
+      tables: StoreMSSQL.tables,
+      storedProcedures: [],
+      queues: [],
+      operations: OperationsZod.parse({}),
+      remoteSchemas: [],
+      remoteREST: [],
+    });
+
+    const spec = generateOpenAPI({ role, options, ai: { path: "/ai" } });
+
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const post = (spec.paths!["/ai"] as any).post;
+    expect(post.responses["200"].content["application/json"].schema).toEqual({
+      type: "object",
+      properties: {
+        answer: { type: "string" },
+        queries: {
+          type: "array",
+          items: { type: "string" },
+          description: "Each GraphQL query the agent ran that returned, in run order",
+        },
+      },
+      required: ["answer", "queries"],
+    });
+  });
 });

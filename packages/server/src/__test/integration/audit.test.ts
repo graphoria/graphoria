@@ -231,7 +231,10 @@ describe.skipIf(!integrationEnabled)("audit log", () => {
 
   describe("agent", () => {
     it("records an ask over REST with the prompt, after the admin-secret use", async () => {
-      const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
+      const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => ({
+        answer: "forty-two",
+        queries: [],
+      }));
       try {
         const response = await started.context.rest("/ai", {
           method: "POST",
@@ -239,7 +242,7 @@ describe.skipIf(!integrationEnabled)("audit log", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ prompt: "how many users?" }),
         });
-        expect(await response.json()).toEqual({ answer: "forty-two" });
+        expect(await response.json()).toEqual({ answer: "forty-two", queries: [] });
 
         expect(records.map((record) => record.action)).toEqual(["admin_secret.used", "ai.ask"]);
         expect(records[1]).toEqual({

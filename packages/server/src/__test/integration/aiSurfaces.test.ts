@@ -39,7 +39,10 @@ describe.skipIf(!integrationEnabled)("AI surfaces", () => {
     });
 
   const withStubbedAgent = async (run: () => Promise<Response>) => {
-    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
+    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => ({
+      answer: "forty-two",
+      queries: ["{ users { id } }"],
+    }));
     try {
       return await run();
     } finally {
@@ -100,7 +103,10 @@ describe.skipIf(!integrationEnabled)("AI surfaces", () => {
       const response = await withStubbedAgent(() => askAsAdmin(started, "/rest/ai"));
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ answer: "forty-two" });
+      expect(await response.json()).toEqual({
+        answer: "forty-two",
+        queries: ["{ users { id } }"],
+      });
     });
 
     it("leaves the ask field out of the schema", async () => {

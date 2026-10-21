@@ -29,7 +29,11 @@ const sdl = `
     users(limit: Int): [User!]!
     auth_me: AuthMe
     remote_query_field: String
-    ask(prompt: String!): String!
+    ask(prompt: String!): AskResult!
+  }
+  type AskResult {
+    answer: String!
+    queries: [String!]!
   }
   type Mutation {
     queue_publish(data: String): String
@@ -723,18 +727,20 @@ describe("handleGraphQLRequestFactory — audit", () => {
     }
   });
 
+  const AGENT_ANSWER = { answer: "forty-two", queries: ["{ users { id } }"] };
+
   it("records an ask with the prompt and the superadmin caller", async () => {
-    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => "forty-two");
+    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async () => AGENT_ANSWER);
     try {
       const factory = factoryFn(buildEntities());
       const result = await factory.handler(
-        'query { ask(prompt: "how many users?") }',
+        'query { ask(prompt: "how many users?") { answer queries } }',
         {},
         fakeReq,
         { sub: "superadmin", role: "superadmin", authMethod: "admin_secret" },
       );
 
-      expect(result).toEqual({ data: { ask: "forty-two" } });
+      expect(result).toEqual({ data: { ask: AGENT_ANSWER } });
       expect(records).toEqual([
         {
           action: "ai.ask",
@@ -753,7 +759,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
     const spy = spyOn(aiModule, "getAgent").mockReturnValue(
       async (prompt: string, caller: Record<string, unknown>) => {
         seen.push({ prompt, caller });
-        return "forty-two";
+        return AGENT_ANSWER;
       },
     );
     return { seen, spy };
@@ -766,9 +772,14 @@ describe("handleGraphQLRequestFactory — audit", () => {
       const factory = factoryFn(entities);
       const session = { sub: "ana@acme.test", role: "user", jti: "jti-1" };
 
-      const result = await factory.handler('{ ask(prompt: "how many?") }', {}, fakeReq, session);
+      const result = await factory.handler(
+        '{ ask(prompt: "how many?") { answer } }',
+        {},
+        fakeReq,
+        session,
+      );
 
-      expect(result.data).toEqual({ ask: "forty-two" });
+      expect(result.data).toEqual({ ask: { answer: "forty-two" } });
       const caller = seen[0]!.caller as {
         role: { schema: unknown; handlers: { gql: { handler: unknown } } };
         session: unknown;
@@ -787,7 +798,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
     const { seen, spy } = asking();
     try {
       await factoryFn(buildEntities()).handler(
-        "query Ask($p: String!) { ask(prompt: $p) }",
+        "query Ask($p: String!) { ask(prompt: $p) { answer } }",
         { p: "how many users?" },
         fakeReq,
         { sub: "superadmin", role: "superadmin", authMethod: "admin_secret" },
@@ -806,7 +817,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
     const { seen, spy } = asking();
     try {
       await factoryFn(buildEntities()).handler(
-        'query Ask($p: String = "how many users?") { ask(prompt: $p) }',
+        'query Ask($p: String = "how many users?") { ask(prompt: $p) { answer } }',
         {},
         fakeReq,
         { sub: "superadmin", role: "superadmin", authMethod: "admin_secret" },
@@ -831,7 +842,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
       };
 
       const error = await factoryFn(entities)
-        .handler('{ users { id } ask(prompt: "$static_0") }', {}, fakeReq, {
+        .handler('{ users { id } ask(prompt: "$static_0") { answer } }', {}, fakeReq, {
           sub: "ana@acme.test",
           role: "user",
         })
@@ -854,7 +865,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
     const { seen, spy } = asking();
     try {
       const outcome = factoryFn(buildEntities()).handler(
-        "query Ask($p: String) { ask(prompt: $p) }",
+        "query Ask($p: String) { ask(prompt: $p) { answer } }",
         { p: value },
         fakeReq,
         { sub: "ana@acme.test", role: "user" },
@@ -872,7 +883,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
     const { seen, spy } = asking();
     try {
       const outcome = factoryFn(buildEntities()).handler(
-        '{ first: ask(prompt: "one") second: ask(prompt: "two") }',
+        '{ first: ask(prompt: "one") { answer } second: ask(prompt: "two") { answer } }',
         {},
         fakeReq,
         { sub: "ana@acme.test", role: "user" },
@@ -892,7 +903,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
       const { seen, spy } = asking();
       try {
         const result = await factoryFn(buildEntities()).handler(
-          `{ ask(prompt: "how many?") ${directive} }`,
+          `{ ask(prompt: "how many?") ${directive} { answer } }`,
           {},
           fakeReq,
           { sub: "ana@acme.test", role: "user" },
@@ -911,12 +922,13 @@ describe("handleGraphQLRequestFactory — audit", () => {
     const { seen, spy } = asking();
     try {
       const factory = factoryFn(buildEntities());
-      const query = 'query Q($skip: Boolean!) { ask(prompt: "how many?") @skip(if: $skip) }';
+      const query =
+        'query Q($skip: Boolean!) { ask(prompt: "how many?") @skip(if: $skip) { answer } }';
       const session = { sub: "ana@acme.test", role: "user" };
 
       expect(await factory.handler(query, { skip: true }, fakeReq, session)).toEqual({ data: {} });
       expect(await factory.handler(query, { skip: false }, fakeReq, session)).toEqual({
-        data: { ask: "forty-two" },
+        data: { ask: { answer: "forty-two" } },
       });
       expect(seen.map((call) => call.prompt)).toEqual(["how many?"]);
     } finally {
@@ -928,13 +940,13 @@ describe("handleGraphQLRequestFactory — audit", () => {
     const { seen, spy } = asking();
     try {
       const result = await factoryFn(buildEntities()).handler(
-        '{ first: ask(prompt: "one") second: ask(prompt: "two") @skip(if: true) }',
+        '{ first: ask(prompt: "one") { answer } second: ask(prompt: "two") @skip(if: true) { answer } }',
         {},
         fakeReq,
         { sub: "ana@acme.test", role: "user" },
       );
 
-      expect(result).toEqual({ data: { first: "forty-two" } });
+      expect(result).toEqual({ data: { first: { answer: "forty-two" } } });
       expect(seen.map((call) => call.prompt)).toEqual(["one"]);
     } finally {
       spy.mockRestore();
@@ -957,7 +969,7 @@ describe("handleGraphQLRequestFactory — audit", () => {
       };
 
       const outcome = factoryFn(entities).handler(
-        '{ remote_query_field ask(prompt: "") }',
+        '{ remote_query_field ask(prompt: "") { answer } }',
         {},
         fakeReq,
         { sub: "ana@acme.test", role: "user" },
@@ -969,6 +981,210 @@ describe("handleGraphQLRequestFactory — audit", () => {
       expect(records).toEqual([]);
     } finally {
       globalThis.fetch = originalFetch;
+      spy.mockRestore();
+    }
+  });
+
+  it("answers only the subfields an ask selects, under their aliases", async () => {
+    const { spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        '{ ask(prompt: "how many?") { text: answer queries __typename } }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({
+        data: {
+          ask: { text: "forty-two", queries: ["{ users { id } }"], __typename: "AskResult" },
+        },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each(["@skip(if: true)", "@include(if: false)"])(
+    "leaves out an ask subfield under %s",
+    async (directive) => {
+      const { spy } = asking();
+      try {
+        const result = await factoryFn(buildEntities()).handler(
+          `{ ask(prompt: "how many?") { answer queries ${directive} } }`,
+          {},
+          fakeReq,
+          { sub: "ana@acme.test", role: "user" },
+        );
+
+        expect(result).toEqual({ data: { ask: { answer: "forty-two" } } });
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it("answers an empty object when every subfield of an ask is skipped", async () => {
+    const { seen, spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        '{ ask(prompt: "how many?") { answer @skip(if: true) } }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({ data: { ask: {} } });
+      expect(seen.map((call) => call.prompt)).toEqual(["how many?"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("answers the subfields a fragment on AskResult selects", async () => {
+    const { spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        'query { ask(prompt: "how many?") { ...A } } fragment A on AskResult { queries }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({ data: { ask: { queries: ["{ users { id } }"] } } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("answers the subfields an inline fragment on AskResult selects", async () => {
+    const { spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        '{ ask(prompt: "how many?") { ... on AskResult { answer } } }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({ data: { ask: { answer: "forty-two" } } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("follows nested fragments and leaves out a skipped spread", async () => {
+    const { spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        'query { ask(prompt: "how many?") { ...Outer ...Skipped @skip(if: true) } } fragment Outer on AskResult { ...Inner } fragment Inner on AskResult { answer } fragment Skipped on AskResult { queries }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({ data: { ask: { answer: "forty-two" } } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("resolves fragments that each spread the next one twice in bounded time", async () => {
+    const { spy } = asking();
+    const levels = 26;
+    const query = [
+      '{ ask(prompt: "how many?") { ...F0 } }',
+      ...Array.from(
+        { length: levels },
+        (_, level) => `fragment F${level} on AskResult { ...F${level + 1} ...F${level + 1} }`,
+      ),
+      `fragment F${levels} on AskResult { answer }`,
+    ].join("\n");
+    try {
+      const factory = factoryFn(buildEntities());
+      expect(factory.hasErrors(query).hasErrors).toBe(false);
+      const started = performance.now();
+
+      const result = await factory.handler(query, {}, fakeReq, {
+        sub: "ana@acme.test",
+        role: "user",
+      });
+
+      expect(result).toEqual({ data: { ask: { answer: "forty-two" } } });
+      expect(performance.now() - started).toBeLessThan(1_000);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("resolves many distinct fragments spread side by side in bounded time", async () => {
+    const { spy } = asking();
+    const count = 30_000;
+    const query = [
+      `{ ask(prompt: "how many?") { ${Array.from({ length: count }, (_, i) => `...F${i}`).join(" ")} } }`,
+      ...Array.from({ length: count }, (_, i) => `fragment F${i} on AskResult { answer }`),
+    ].join("\n");
+    try {
+      const factory = factoryFn(buildEntities());
+      const started = performance.now();
+
+      const result = await factory.handler(query, {}, fakeReq, {
+        sub: "ana@acme.test",
+        role: "user",
+      });
+
+      expect(result).toEqual({ data: { ask: { answer: "forty-two" } } });
+      expect(performance.now() - started).toBeLessThan(1_000);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    [
+      'query Q($q: Boolean!) { ask(prompt: "x") { answer queries @include(if: $q) } }',
+      { q: false },
+      { answer: "forty-two" },
+    ],
+    [
+      'query Q($q: Boolean!) { ask(prompt: "x") { answer queries @include(if: $q) } }',
+      { q: true },
+      { answer: "forty-two", queries: ["{ users { id } }"] },
+    ],
+    [
+      'query Q($s: Boolean = true) { ask(prompt: "x") { answer ...A @skip(if: $s) } } fragment A on AskResult { queries }',
+      {},
+      { answer: "forty-two" },
+    ],
+  ])(
+    "applies the caller's variables to @skip and @include on ask: %#",
+    async (query, variables, ask) => {
+      const { spy } = asking();
+      try {
+        const result = await factoryFn(buildEntities()).handler(query, variables, fakeReq, {
+          sub: "ana@acme.test",
+          role: "user",
+        });
+
+        expect(result).toEqual({ data: { ask } });
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it("expands a fragment at a spread that is not skipped, after one that is", async () => {
+    const { spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        'query { ask(prompt: "how many?") { ...A @skip(if: true) ...A } } fragment A on AskResult { answer }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({ data: { ask: { answer: "forty-two" } } });
+    } finally {
       spy.mockRestore();
     }
   });

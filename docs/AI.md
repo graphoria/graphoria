@@ -81,9 +81,11 @@ A role without `ai` gets `404` from the REST route, and the `ask` field is absen
 
 ### REST
 
-| Verb | Path       | Body                                          | Response            |
-| ---- | ---------- | --------------------------------------------- | ------------------- |
-| POST | `/rest/ai` | `{ "prompt": "how many orders per status?" }` | `{ "answer": "…" }` |
+| Verb | Path       | Body                                          | Response                              |
+| ---- | ---------- | --------------------------------------------- | ------------------------------------- |
+| POST | `/rest/ai` | `{ "prompt": "how many orders per status?" }` | `{ "answer": "…", "queries": ["…"] }` |
+
+`queries` lists each GraphQL query the agent ran that returned, in run order: what `query_data` built and what `graphql_execute` sent. A query refused by validation, or one that fails, is left out; a `graphql_execute` query is listed as sent, without its variables.
 
 ```bash
 curl -X POST http://localhost:3000/rest/ai \
@@ -100,20 +102,43 @@ A single root **query** field, compiled into the schema of every role granted `a
 
 ```graphql
 query Ask($prompt: String!) {
-  ask(prompt: $prompt)
+  ask(prompt: $prompt) {
+    answer
+    queries
+  }
 }
 ```
 
-Send it to `/graphql` with the caller's token (or the admin secret), passing the prompt inline or as a variable. Returns the answer as a `String`.
+Send it to `/graphql` with the caller's token (or the admin secret), passing the prompt inline or as a variable. Returns an `AskResult`: `answer` is the text, `queries` the GraphQL queries the agent ran, as on `POST /rest/ai`. `ask` is an object, so it needs a selection: a bare `ask(prompt: …)` fails validation.
 
 A request runs at most one `ask`: a second one, under an alias, fails the request with ``Only one `ask` is allowed per request``, and an `ask` skipped by `@skip` or `@include` runs nothing. A prompt passed as a variable is read from the variables the request sends, or their declared defaults. An empty or non-string prompt fails with `` `prompt` (string) is required ``, as on `POST /rest/ai`.
+
+#### Upgrading from 0.6
+
+Up to 0.6 `ask` returned a `String`. It now returns an `AskResult`, so a query must select the answer:
+
+```graphql
+# 0.6
+{
+  ask(prompt: "how many orders?")
+}
+
+# now
+{
+  ask(prompt: "how many orders?") {
+    answer
+  }
+}
+```
+
+`POST /rest/ai` still answers `answer` and adds `queries`, so REST clients need no change.
 
 ## How it works
 
 1. At boot the agent stores its prompts. Each call builds its tools for the caller's role, session and request.
 2. Each call runs a tool-calling loop (max 10 iterations): `list_entities` → `describe_entity` → `query_data`. The built-in prompt steers the agent to `query_data`, whose structured JSON input the server turns into GraphQL; `graphql_execute` remains available for queries that shape cannot express.
 3. Anti-hallucination guards reject answers that never queried the data and forbid fabrication.
-4. The final text answer is returned; intermediate tool calls are hidden from the caller.
+4. The final text answer is returned with the queries the agent ran; the tool calls themselves stay hidden from the caller.
 
 The agent reads through the caller's role, so a prompt cannot reach a table, column or row the caller's own queries could not. What it reads is sent to the LLM provider.
 
@@ -123,7 +148,8 @@ The agent reads through the caller's role, so a prompt cannot reach a table, col
 - **Reads as the caller.** A role's row filters apply with the caller's session; the admin secret reads everything.
 - **Read-only.** Mutations and subscriptions are rejected at the tool boundary.
 - **No `ask` inside a tool.** A tool query that selects `ask` is refused, so the agent cannot start itself again.
-- **An inline prompt starting with `$` is read as a variable.** `ask(prompt: "$total")` fails with `Variable total not found`; pass such a prompt as a variable.
+- **An inline prompt starting with `$` is read as a variable.** `ask(prompt: "$total") { answer }` fails with `Variable total not found`; pass such a prompt as a variable.
+- **An inline fragment inside `ask` needs a type condition.** `... { answer }` or `... @include(if: $q) { queries }` answers without those fields; write `... on AskResult { … }`, or put the directive on the field.
 - **Iteration cap.** The tool-calling loop is bounded (10 iterations); a question that can't be answered within that budget errors rather than looping forever.
 - **Each LLM call is bounded.** `AI_TIMEOUT_MS` (default 60 s) per call, up to 10 calls per question.
 - **Prompts are audit-logged.** Every invocation writes an `ai.ask` record carrying the prompt verbatim — see [Audit log](../README.md#audit-log). Do not put secrets in a prompt.

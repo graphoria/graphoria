@@ -36,6 +36,7 @@ export const buildAgentTools = (
   deps: AiToolDeps,
   role: RoleEntities,
   caller: ToolCaller,
+  onQuery?: (query: string) => void,
 ): Tool[] => {
   const validateQuery = makeValidateQuery(deps, role);
 
@@ -84,11 +85,12 @@ export const buildAgentTools = (
           case "non_query":
             return { error: "Internal: built query is not a query." };
           case "validation":
-            return { data: null, errors: outcome.errors };
+            return { query, data: null, errors: outcome.errors };
           case "error":
             return { error: outcome.message };
           case "ok":
-            return outcome.result;
+            onQuery?.(query);
+            return { query, ...(outcome.result as object) };
         }
       },
     }),
@@ -119,6 +121,7 @@ export const buildAgentTools = (
           case "error":
             return { error: outcome.message };
           case "ok":
+            onQuery?.(query);
             return outcome.result;
         }
       },
