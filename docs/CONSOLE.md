@@ -36,7 +36,7 @@ Three secrets open the console, and the session carries the scope of whichever o
 
 Each is a comma-separated list, rotated like `ADMIN_SECRET` (see [Rotating secrets](./AUTHENTICATION.md#rotating-secrets)), and both console credentials are unset by default. Neither opens anything outside `{CONSOLE_ENDPOINT}/api/*`: sent in the admin-secret header to `/graphql`, `/rest/*` (the agent's `/rest/ai` included) or `/mcp` it resolves to the anonymous role.
 
-A `read` session that calls `POST /api/queues/publish`, `POST /api/cron` or either `/api/ai` endpoint gets `403` with `Console session is read-only`, and nothing is published, asked or audited. The UI hides the publish form and the cron actions for such a session and marks it read-only in the sidebar.
+A `read` session that calls `POST /api/queues/publish`, `POST /api/cron` or either `/api/ai` endpoint gets `403` with `Console session is read-only`, and nothing is published, asked or audited. The UI hides the publish form, the cron actions and the AI page for such a session and marks it read-only in the sidebar.
 
 Two consequences worth knowing:
 
@@ -45,13 +45,14 @@ Two consequences worth knowing:
 
 ## Pages
 
-| Page   | Shows                                                                                                                                                                                                                           |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tables | Every table/view exposed to the superadmin role: columns (with descriptions, types, nullability), relationships (source→target with `resolverName`), and a deep link into GraphiQL pre-filled with the table name.              |
-| Roles  | Cross-role permission matrix (which role sees which entity), per-role entity browser (tables+columns, operations, remote schemas, remote REST), and per-role SDL viewer/download.                                               |
-| APIs   | REST operations (method + path + tag), remote REST proxies, remote GraphQL schemas, with deep links into Scalar (per-operation anchor) and the `openapi.json` spec.                                                             |
-| Status | Uptime, memory, Bun version, PID, token strategy, per-database ping latency, queue broker connections, publishers/subscribers, cron jobs with trigger/pause/resume controls, and a queue publish form. Auto-refreshes every 5s. |
-| Config | Project name/version, endpoint prefixes (linked), enabled features (auth, AI, MCP, CORS).                                                                                                                                       |
+| Page   | Shows                                                                                                                                                                                                                                                                                                                        |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tables | Every table/view exposed to the superadmin role: columns (with descriptions, types, nullability), relationships (source→target with `resolverName`), and a deep link into GraphiQL pre-filled with the table name.                                                                                                           |
+| Roles  | Cross-role permission matrix (which role sees which entity), per-role entity browser (tables+columns, operations, remote schemas, remote REST), and per-role SDL viewer/download.                                                                                                                                            |
+| APIs   | REST operations (method + path + tag), remote REST proxies, remote GraphQL schemas, with deep links into Scalar (per-operation anchor) and the `openapi.json` spec.                                                                                                                                                          |
+| Status | Uptime, memory, Bun version, PID, token strategy, per-database ping latency, queue broker connections, publishers/subscribers, cron jobs with trigger/pause/resume controls, and a queue publish form. Auto-refreshes every 5s.                                                                                              |
+| Config | Project name/version, endpoint prefixes (linked), enabled features (auth, AI, MCP, CORS).                                                                                                                                                                                                                                    |
+| AI     | Ask the AI agent about the data as any role granted `ai` (write sessions, while the agent is on). Each answer is rendered from Markdown, beside the GraphQL queries the agent ran (copy, or open in GraphiQL) and how long it took. Questions stay in the tab until a reload or logout; Cancel stops waiting, not the agent. |
 
 ## API
 

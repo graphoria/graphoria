@@ -1,1 +1,88 @@
 @import "tailwindcss";
+
+/* answerHtml is server-rendered markup: preflight strips these elements' styles. */
+.ai-answer {
+  /* Bun.markdown.render emits soft and hard breaks alike as a bare newline and
+     offers no callback for either: preserving newlines would turn every soft
+     break into a line break, so a hard break collapses to a space instead. */
+  /* A table is as wide as its content: scroll it here rather than past the card. */
+  overflow-x: auto;
+
+  & > * + * {
+    margin-top: 0.5rem;
+  }
+  & h1,
+  & h2,
+  & h3,
+  & h4,
+  & h5,
+  & h6 {
+    font-weight: 600;
+  }
+  & h1,
+  & h2 {
+    font-size: 1rem;
+  }
+  & > :is(h1, h2, h3, h4, h5, h6):not(:first-child) {
+    margin-top: 1rem;
+  }
+  & > :is(h1, h2, h3, h4, h5, h6) + * {
+    margin-top: 0.25rem;
+  }
+  & p,
+  & li,
+  & blockquote {
+    max-width: 72ch;
+  }
+  & ul {
+    list-style: disc;
+    padding-left: 1.25rem;
+  }
+  & ol {
+    list-style: decimal;
+    padding-left: 1.25rem;
+  }
+  & table {
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  & thead {
+    border-bottom: 1px solid var(--color-gray-200);
+  }
+  & tbody tr {
+    border-bottom: 1px solid var(--color-gray-100);
+  }
+  & th,
+  & td {
+    padding: 0.25rem 1rem 0.25rem 0;
+  }
+  & th {
+    color: var(--color-gray-500);
+    font-weight: 500;
+    text-align: left;
+  }
+  & pre {
+    background: var(--color-gray-50);
+    border-radius: 0.25rem;
+    padding: 0.5rem;
+    overflow-x: auto;
+  }
+  & code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+  & :not(pre) > code {
+    background: var(--color-gray-50);
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.25rem;
+    white-space: pre-wrap;
+  }
+  & blockquote {
+    border-left: 3px solid var(--color-gray-200);
+    padding-left: 0.75rem;
+    color: var(--color-gray-500);
+  }
+  & hr {
+    border-color: var(--color-gray-200);
+  }
+}

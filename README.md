@@ -83,9 +83,9 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 - **Remote REST APIs** — proxy external OpenAPI services under `/rest`
 - **Virtual columns** — computed columns powered by SQL expressions or functions
 - **GraphQL directives** — `@where`, `@truncate`, `@replace`, `@concat`, and more for data transformation
-- **AI agent** — natural-language → database Q&A for the roles you grant it, reading only what the caller's role reads; GraphQL `ask` query and REST endpoint (via `@graphoria/ai`)
+- **AI agent** — natural-language → database Q&A for the roles you grant it, reading only what the caller's role reads; GraphQL `ask` query, REST endpoint and the admin console's AI page (via `@graphoria/ai`)
 - **MCP server** — Model Context Protocol server so AI editors can explore your schema as tools (via `@graphoria/ai`)
-- **Admin console** — web UI at `/_console` for tables, roles, permissions, API docs, and runtime status
+- **Admin console** — web UI at `/_console` for tables, roles, permissions, API docs, runtime status, and questions to the AI agent
 - **LRU cache** with queue-driven invalidation
 - **Built-in playgrounds** — GraphiQL and Scalar API documentation
 - **OpenAPI** spec generation from operations
@@ -381,7 +381,7 @@ Generated GraphQL fields follow the `{schema}_{name}` pattern by default — e.g
 | GET      | `/openapi.json` | Unified OpenAPI spec (operations + remote-REST).                                                                             |
 | POST     | `/mcp`          | Model Context Protocol server (opt-in; tools run as the caller's role; `AI_MCP_REQUIRE_ADMIN_SECRET` requires a credential). |
 | POST     | `/rest/ai`      | AI agent — NL → database Q&A for the roles granted `ai` (opt-in).                                                            |
-| GET      | `/_console`     | Admin console UI + status APIs (session from `ADMIN_SECRET` or a console credential, opt-in).                                |
+| GET      | `/_console`     | Admin console UI, status APIs and an AI page (session from `ADMIN_SECRET` or a console credential, opt-in).                  |
 | GET      | `/health/live`  | Liveness probe — `200` while the process serves HTTP. No auth.                                                               |
 | GET      | `/health/ready` | Readiness probe — `503` while a database, Redis or a broker is unreachable. No auth.                                         |
 
@@ -454,25 +454,25 @@ The three limits that ship on — query depth, page size and the statement timeo
 
 **Features**
 
-| Guide                                                 | Description                                                                 |
-| ----------------------------------------------------- | --------------------------------------------------------------------------- |
-| [Authentication](./docs/AUTHENTICATION.md)            | JWT and PASETO strategies, argon2id passwords, refresh-token rotation       |
-| [Permissions & Access Control](./docs/PERMISSIONS.md) | RBAC, row-level filtering, session variables, ordering                      |
-| [Resource Limits](./docs/LIMITS.md)                   | Depth, page size, timeouts, rate limiting and the query cost budget         |
-| [Operations](./docs/OPERATIONS.md)                    | Custom query and handler operations, hooks, caching                         |
-| [Cron Jobs](./docs/CRON.md)                           | Scheduled background work with cron expressions and ISO datetimes           |
-| [Queues](./docs/QUEUES.md)                            | RabbitMQ and Kafka publishers, subscribers, cache invalidation              |
-| [Subscriptions](./docs/SUBSCRIPTIONS.md)              | GraphQL subscriptions over WebSockets                                       |
-| [GraphQL Directives](./docs/DIRECTIVES.md)            | Built-in data-transformation and `@when` control-flow directives            |
-| [Virtual Columns](./docs/VIRTUAL_COLUMNS.md)          | Computed columns powered by SQL expressions or functions                    |
-| [Performance](./docs/PERFORMANCE.md)                  | Query strategy, caching behaviour, measured numbers and the gate            |
-| [Observability](./docs/OBSERVABILITY.md)              | Health endpoints, slow query log, Prometheus metrics, OTLP tracing          |
-| [Remote GraphQL Schemas](./docs/REMOTE_SCHEMAS.md)    | Stitch external GraphQL APIs into the unified schema                        |
-| [Remote REST APIs](./docs/REMOTE_REST.md)             | Proxy external OpenAPI services under `/rest`                               |
-| [AI Agent](./docs/AI.md)                              | Natural-language → database Q&A as the caller's role, over GraphQL and REST |
-| [MCP Server](./docs/MCP.md)                           | Model Context Protocol server — schema as tools for AI editors              |
-| [Admin Console](./docs/CONSOLE.md)                    | Web UI for tables, roles, permissions, API docs, and runtime status         |
-| [React SDK](./docs/REACT.md)                          | `@graphoria/react` hooks, providers, and recipes for Apollo and urql        |
+| Guide                                                 | Description                                                                                    |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [Authentication](./docs/AUTHENTICATION.md)            | JWT and PASETO strategies, argon2id passwords, refresh-token rotation                          |
+| [Permissions & Access Control](./docs/PERMISSIONS.md) | RBAC, row-level filtering, session variables, ordering                                         |
+| [Resource Limits](./docs/LIMITS.md)                   | Depth, page size, timeouts, rate limiting and the query cost budget                            |
+| [Operations](./docs/OPERATIONS.md)                    | Custom query and handler operations, hooks, caching                                            |
+| [Cron Jobs](./docs/CRON.md)                           | Scheduled background work with cron expressions and ISO datetimes                              |
+| [Queues](./docs/QUEUES.md)                            | RabbitMQ and Kafka publishers, subscribers, cache invalidation                                 |
+| [Subscriptions](./docs/SUBSCRIPTIONS.md)              | GraphQL subscriptions over WebSockets                                                          |
+| [GraphQL Directives](./docs/DIRECTIVES.md)            | Built-in data-transformation and `@when` control-flow directives                               |
+| [Virtual Columns](./docs/VIRTUAL_COLUMNS.md)          | Computed columns powered by SQL expressions or functions                                       |
+| [Performance](./docs/PERFORMANCE.md)                  | Query strategy, caching behaviour, measured numbers and the gate                               |
+| [Observability](./docs/OBSERVABILITY.md)              | Health endpoints, slow query log, Prometheus metrics, OTLP tracing                             |
+| [Remote GraphQL Schemas](./docs/REMOTE_SCHEMAS.md)    | Stitch external GraphQL APIs into the unified schema                                           |
+| [Remote REST APIs](./docs/REMOTE_REST.md)             | Proxy external OpenAPI services under `/rest`                                                  |
+| [AI Agent](./docs/AI.md)                              | Natural-language → database Q&A as the caller's role, over GraphQL and REST                    |
+| [MCP Server](./docs/MCP.md)                           | Model Context Protocol server — schema as tools for AI editors                                 |
+| [Admin Console](./docs/CONSOLE.md)                    | Web UI for tables, roles, permissions, API docs, runtime status, and questions to the AI agent |
+| [React SDK](./docs/REACT.md)                          | `@graphoria/react` hooks, providers, and recipes for Apollo and urql                           |
 
 ## Contributing
 
