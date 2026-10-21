@@ -134,6 +134,9 @@ export async function ask(
   const toolDefs: ToolDefinition[] = tools.map(toToolDefinition);
   const log = logger("ai-agent");
   let emptyAnswers = 0;
+  // A weak model re-issues the same call instead of reading the result it just
+  // got. Repeating it costs a query and a turn, so answer from the cached one.
+  const completedCalls = new Map<string, string>();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     log.debug({ iteration: i + 1 }, "agent iteration");
@@ -181,8 +184,26 @@ export async function ask(
           // Strip nulls, coerce stringified JSON (LLM robustness), then validate via Zod
           const cleanedArgs = coerceJsonStrings(tool.schema, stripNulls(rawArgs));
           const parsedArgs = tool.schema.parse(cleanedArgs);
+          const callKey = `${toolName}:${JSON.stringify(parsedArgs)}`;
+          const cached = completedCalls.get(callKey);
+
+          if (cached !== undefined) {
+            log.debug({ tool: toolName }, "skipping duplicate tool call");
+            messages.push({
+              role: "tool",
+              content: JSON.stringify({
+                note: "This exact call already ran in this conversation; its result is repeated here. Do not call it again: present the answer from it now.",
+                result: JSON.parse(cached),
+              }),
+              tool_name: toolName,
+              tool_call_id: tc.id,
+            });
+            continue;
+          }
+
           const result = await tool.execute(parsedArgs);
           const resultStr = JSON.stringify(result);
+          completedCalls.set(callKey, resultStr);
 
           log.debug({ tool: toolName, resultLength: resultStr.length }, "tool returned");
 

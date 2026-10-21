@@ -129,3 +129,42 @@ describe("ask — empty answers", () => {
     );
   });
 });
+
+describe("ask — repeated tool calls", () => {
+  afterEach(() => setProvider(null));
+
+  it("runs an identical call once and hands the model its cached result", async () => {
+    let calls = 0;
+    let executions = 0;
+    let lastToolMessage = "";
+    setProvider({
+      chat: async (messages) => {
+        calls += 1;
+        if (calls === 3)
+          lastToolMessage = [...messages].reverse().find((m) => m.role === "tool")?.content ?? "";
+        if (calls <= 2)
+          return {
+            content: "",
+            toolCalls: [{ id: `call-${calls}`, function: { name: "query_data", arguments: {} } }],
+          };
+        return { content: "done", toolCalls: [] };
+      },
+    });
+    const queryTool = {
+      name: "query_data",
+      description: "",
+      schema: z.object({}),
+      execute: async () => {
+        executions += 1;
+        return { data: [{ id: 1 }] };
+      },
+    };
+
+    const answer = await ask(logger, "q", [queryTool], "system", (prompt) => prompt);
+
+    expect(answer).toBe("done");
+    expect(executions).toBe(1);
+    expect(lastToolMessage).toContain("already ran");
+    expect(lastToolMessage).toContain('"id":1');
+  });
+});
