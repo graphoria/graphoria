@@ -1,4 +1,5 @@
-import type { Agent, AiPackage, AiToolDeps } from "../ai/adapter";
+import type { Agent, AgentAnswer, AgentCaller, AiPackage, AiToolDeps } from "../ai/adapter";
+import type { AuditActor } from "../logging/audit";
 import type { Env } from "../types/env";
 import type { AIConfig } from "../types/zod/ai";
 
@@ -9,6 +10,7 @@ import { scopedCredentialRole } from "../authentication/capabilities";
 import { categorizeSqlType, isNumericType } from "../databases/sqlTypeUtils";
 import { columnFieldName } from "../databases/transformers/graphqlName";
 import { logger } from "../logging";
+import { audit } from "../logging/audit";
 import { S429 } from "../utils/responses";
 import { env } from "./env";
 
@@ -86,6 +88,20 @@ export const getAgent = (): Agent => {
     throw new Error("AI agent is not enabled. Set `ai.enabled = true` in your configuration.");
   }
   return settings.agent;
+};
+
+/** The agent call behind `POST /rest/ai` and the console's AI page. */
+export const askAgent = async (
+  prompt: unknown,
+  caller: AgentCaller,
+  { actor, via }: { actor: AuditActor; via: "rest" | "console" },
+): Promise<AgentAnswer> => {
+  if (typeof prompt !== "string" || prompt.length === 0)
+    throw new Error("`prompt` (string) is required");
+
+  audit().emit({ action: "ai.ask", actor, target: { kind: "ai", via }, prompt });
+
+  return getAgent()(prompt, caller);
 };
 
 /** Test-only reset. */
