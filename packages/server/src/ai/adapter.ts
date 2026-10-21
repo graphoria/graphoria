@@ -79,7 +79,12 @@ export type Message = {
   tool_name?: string;
 };
 
-export type ChatResult = { content: string; toolCalls: ToolCall[] };
+export type ChatResult = {
+  content: string;
+  toolCalls: ToolCall[];
+  /** The provider's stop reason, when it reports one: `length` explains an empty reply. */
+  finishReason?: string;
+};
 
 export type Provider = {
   chat(messages: Message[], tools: ToolDefinition[], signal?: AbortSignal): Promise<ChatResult>;

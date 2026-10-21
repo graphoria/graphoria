@@ -105,7 +105,11 @@ export function makeOpenAICompatible(cfg: OpenAICompatConfig): Provider {
           : [],
       );
 
-      return { content: msg?.content ?? "", toolCalls };
+      return {
+        content: msg?.content ?? "",
+        toolCalls,
+        finishReason: res.choices[0]?.finish_reason ?? undefined,
+      };
     },
   };
 }

@@ -65,6 +65,7 @@ interface OllamaMessage {
 
 interface OllamaChatResponse {
   message: { role: "assistant"; content: string; tool_calls?: OllamaToolCall[] };
+  done_reason?: string;
 }
 
 /** Serialize normalized history → Ollama's wire shape (tool results keyed by tool_name). */
@@ -130,6 +131,6 @@ export const ollamaProvider: Provider = {
       function: { name: tc.function.name, arguments: tc.function.arguments },
     }));
 
-    return { content: data.message.content ?? "", toolCalls };
+    return { content: data.message.content ?? "", toolCalls, finishReason: data.done_reason };
   },
 };

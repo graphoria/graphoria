@@ -76,6 +76,9 @@ const Entry = ({ entry, graphiql }: { entry: AiEntry; graphiql?: string }) => (
     {entry.status === "error" && <p className="text-sm text-red-500">{entry.error}</p>}
     {entry.answer && (
       <>
+        {entry.answer.answer.trim().length === 0 && (
+          <p className="text-sm text-amber-600">The agent returned no text.</p>
+        )}
         {/* The server's renderer escapes all text and writes every tag itself. */}
         <div
           className="ai-answer text-sm"

@@ -7,6 +7,9 @@ import { getProvider } from "./providers";
 
 const MAX_ITERATIONS = 10;
 
+/** Empty replies allowed before the loop gives up: a model may answer nothing once, not forever. */
+const MAX_EMPTY_ANSWERS = 2;
+
 /** Strip null values from tool-call arguments — LLMs pass `null` for optional fields instead of omitting them. */
 function stripNulls(args: Record<string, unknown>): Record<string, unknown> {
   for (const key of Object.keys(args)) {
@@ -130,11 +133,17 @@ export async function ask(
   const provider = await getProvider();
   const toolDefs: ToolDefinition[] = tools.map(toToolDefinition);
   const log = logger("ai-agent");
+  let emptyAnswers = 0;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     log.debug({ iteration: i + 1 }, "agent iteration");
 
-    const { content, toolCalls } = await chatWithin(provider, messages, toolDefs, timeoutMs);
+    const { content, toolCalls, finishReason } = await chatWithin(
+      provider,
+      messages,
+      toolDefs,
+      timeoutMs,
+    );
 
     // If the model returned tool calls, execute them and feed results back
     if (toolCalls.length > 0) {
@@ -209,8 +218,28 @@ export async function ask(
     const hasDescribed = calledTools.includes("describe_entity");
     const hasQueried = calledTools.includes("query_data");
     const hasGraphql = calledTools.includes("graphql_execute");
+    const hasData = hasQueried || hasGraphql;
 
-    if (!hasQueried && !hasGraphql) {
+    // A first empty reply is worth one more turn: it is what a thinking model
+    // returns when it stops after its reasoning block, and what a length-limited
+    // reply leaves behind. Returning it would render a blank answer.
+    if (content.trim().length === 0) {
+      emptyAnswers += 1;
+      log.warn({ iteration: i + 1, finishReason, hasData }, "model returned an empty answer");
+      if (emptyAnswers > MAX_EMPTY_ANSWERS)
+        throw new Error("The model returned an empty answer. Try again, or set another LLM_MODEL.");
+      messages.push({
+        role: "user",
+        content: hasData
+          ? "Your last reply was empty. Present the answer to the user now, in Markdown, from the tool results above. Do not call any more tools."
+          : hasDescribed
+            ? "STOP — you haven't queried the data yet. Call query_data with the entity and columns from describe_entity. Use operation 'aggregate' with groupBy for grouping. Do NOT fabricate data."
+            : "STOP — you skipped steps. Call describe_entity to get the table schema, then query_data to run the query. Do NOT fabricate data.",
+      });
+      continue;
+    }
+
+    if (!hasData) {
       log.warn("model attempted answer without querying data, nudging");
       messages.push({
         role: "user",

@@ -153,6 +153,7 @@ The agent reads through the caller's role, so a prompt cannot reach a table, col
 - **An inline prompt starting with `$` is read as a variable.** `ask(prompt: "$total") { answer }` fails with `Variable total not found`; pass such a prompt as a variable.
 - **An inline fragment inside `ask` needs a type condition.** `... { answer }` or `... @include(if: $q) { queries }` answers without those fields; write `... on AskResult { … }`, or put the directive on the field.
 - **Iteration cap.** The tool-calling loop is bounded (10 iterations); a question that can't be answered within that budget errors rather than looping forever.
+- **An empty model reply is retried, then reported.** A model that stops without text — a thinking model that ends after its reasoning block, or one cut off by the context window — gets two more turns asking for the answer, and the server logs the provider's `finishReason` each time (`length` points at the context window). If it still returns nothing, the request fails with `The model returned an empty answer` instead of answering with a blank card.
 - **Each LLM call is bounded.** `AI_TIMEOUT_MS` (default 60 s) per call, up to 10 calls per question.
 - **Prompts are audit-logged.** Every invocation writes an `ai.ask` record carrying the prompt verbatim — see [Audit log](../README.md#audit-log). Do not put secrets in a prompt.
 

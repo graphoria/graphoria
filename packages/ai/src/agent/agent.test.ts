@@ -3,6 +3,8 @@ process.env.JWT_SECRET ??= "test-jwt";
 
 import { afterEach, describe, expect, it } from "bun:test";
 
+import { z } from "zod";
+
 import type { AiToolDeps, Provider } from "@graphoria/server";
 
 const { ask } = await import("./agent");
@@ -83,5 +85,47 @@ describe("ask — LLM call timeout", () => {
     });
 
     await expect(ask(logger, "q", [], "system", (prompt) => prompt, 60_000)).rejects.toBe(failure);
+  });
+});
+
+describe("ask — empty answers", () => {
+  afterEach(() => setProvider(null));
+
+  const queryTool = {
+    name: "query_data",
+    description: "",
+    schema: z.object({}),
+    execute: async () => ({ data: [{ count: 3 }] }),
+  };
+
+  it("asks again when the model answers nothing, then returns the retry", async () => {
+    let calls = 0;
+    setProvider({
+      chat: async () => {
+        calls += 1;
+        if (calls === 1)
+          return {
+            content: "",
+            toolCalls: [{ id: "call-1", function: { name: "query_data", arguments: {} } }],
+          };
+        if (calls === 2) return { content: "   ", toolCalls: [] };
+        return { content: "3 books", toolCalls: [] };
+      },
+    });
+
+    const answer = await ask(logger, "how many?", [queryTool], "system", (prompt) => prompt);
+
+    expect(answer).toBe("3 books");
+    expect(calls).toBe(3);
+  });
+
+  it("fails loudly after repeated empty answers", async () => {
+    setProvider({
+      chat: async () => ({ content: "", toolCalls: [], finishReason: "length" }),
+    });
+
+    await expect(ask(logger, "q", [], "system", (prompt) => prompt)).rejects.toThrow(
+      "The model returned an empty answer",
+    );
   });
 });
