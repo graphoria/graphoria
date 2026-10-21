@@ -7,10 +7,11 @@ import type { RateLimiter } from "../utils/rateLimit";
 import type { BunRequest } from "bun";
 import type { DatabasesConnections } from "../singletons/databases";
 
+import { renderAnswerHtml } from "./markdown";
 import { createConsoleSessions } from "./session";
 import { getTags } from "../configuration/rest/generateOpenAPI";
 import { audit } from "../logging/audit";
-import { resolveAISurfaces } from "../singletons/ai";
+import { askAgent, resolveAISurfaces } from "../singletons/ai";
 import { getCronJobs } from "../singletons/cron";
 import { databasesConnections, pingConnection } from "../singletons/databases";
 import { queueManager } from "../singletons/queues";
@@ -84,7 +85,8 @@ export const consoleRoutesFactory = ({
         if (!scope) return new S404({ error: "Not Found" });
         if (required === "write" && scope !== "write")
           return new S403({ errors: [{ message: "Console session is read-only" }] });
-        return new S200(await handler(req, server, scope));
+        const result = await handler(req, server, scope);
+        return result instanceof Response ? result : new S200(result);
       } catch (error) {
         return new S400({ errors: [{ message: (error as Error)?.message }] });
       }
@@ -349,5 +351,44 @@ export const consoleRoutesFactory = ({
         return { ok: true };
       }, "write"),
     },
+
+    ...(aiSurfaces.agent
+      ? {
+          [`${base}/ai`]: {
+            ...cors,
+            GET: guarded(
+              () => ({
+                roles: Object.keys(analyzedConfiguration.roles).filter(
+                  (role) => analyzedConfiguration.roles[role].entityOfRole.ai,
+                ),
+              }),
+              "write",
+            ),
+            POST: guarded(async (req, server) => {
+              const body = (await req.json()) as { prompt?: unknown; role?: unknown };
+              const role = body.role ?? env.superadmin.role;
+              if (typeof role !== "string" || !Object.hasOwn(analyzedConfiguration.roles, role))
+                throw new Error(`Unknown role "${role}"`);
+              const roleEntities = analyzedConfiguration.roles[role];
+              if (!roleEntities.entityOfRole.ai)
+                throw new Error(`Role "${role}" is not granted the AI agent`);
+
+              const ip = clientAddress(req, server);
+              const session = { sub: "console", role };
+              const limit = await rateLimiter?.check(session, ip);
+              if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+              // No `req`: the tools would forward its headers, the console
+              // session cookie among them, to a remote source's forwardHeaders.
+              const { answer, queries } = await askAgent(
+                body.prompt,
+                { role: roleEntities, session },
+                { actor: { type: "console", ip, role }, via: "console" },
+              );
+              return { answer, answerHtml: renderAnswerHtml(answer), queries };
+            }, "write"),
+          },
+        }
+      : {}),
   };
 };

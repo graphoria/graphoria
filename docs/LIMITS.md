@@ -169,18 +169,19 @@ Off by default. `RATE_LIMIT_MAX` is the request ceiling per window for an authen
 | `RATE_LIMIT_TRUST_PROXY`   | `boolean` | `false` | Read the client address from `X-Forwarded-For` |
 
 A caller gets **one bucket across every endpoint** — `/graphql` including the websocket upgrade,
-`/rest/*` (the agent's `/rest/ai` included), `/mcp` and the console login — because what exhausts a
-server is total request volume, not volume on one route. An idle bucket refills to `max`, so a
-caller may burst `max` then sustain `max` per window. Over budget is `429` with `Retry-After` in
-seconds. The [health endpoints](./OBSERVABILITY.md#health-endpoints) are outside the limit, so a
-probe is never answered `429`.
+`/rest/*` (the agent's `/rest/ai` included), `/mcp`, the console login and the console's `/api/ai`
+— because what exhausts a server is total request volume, not volume on one route. An idle bucket
+refills to `max`, so a caller may burst `max` then sustain `max` per window. Over budget is `429`
+with `Retry-After` in seconds. The [health endpoints](./OBSERVABILITY.md#health-endpoints) are
+outside the limit, so a probe is never answered `429`.
 
 Callers are identified by authenticated subject where there is one and by client address otherwise.
 The admin secret is one subject, shared by everyone who presents it, and so is each AI credential on
 its own route: every holder of `AI_SECRET` shares one bucket under the ceiling of `AI_SECRET_ROLE`,
-every holder of `AI_MCP_SECRET` one under the ceiling of `AI_MCP_SECRET_ROLE`. **Neither the admin
-secret nor the superadmin role is exempt**, so set `RATE_LIMIT_MAX` above what your own tooling
-needs — the console alone polls status every five seconds.
+every holder of `AI_MCP_SECRET` one under the ceiling of `AI_MCP_SECRET_ROLE`, and the console's AI
+route one per role, shared by every console session that asks as it, under that role's ceiling.
+**Neither the admin secret nor the superadmin role is exempt**, so set `RATE_LIMIT_MAX` above what
+your own tooling needs — the console alone polls status every five seconds.
 
 The override is per role, and it beats both environment values:
 

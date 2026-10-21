@@ -13,7 +13,7 @@ export const CONSOLE_SESSION_COOKIE = "graphoria_console_session";
 const CONSOLE_AUDIENCE = "console";
 const CONSOLE_SUBJECT = "console";
 
-/** `read` sees state; `write` may also publish to queues and control cron. */
+/** `read` sees state; `write` may also publish to queues, control cron and ask the AI agent. */
 export type ConsoleScope = "read" | "write";
 
 const isScope = (value: unknown): value is ConsoleScope => value === "read" || value === "write";

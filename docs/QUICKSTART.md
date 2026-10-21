@@ -136,7 +136,7 @@ Answer yes to `Enable the AI agent?`, or pass `--ai` (`--no-ai` answers no, and 
 | `.env`         | `LLM_PROVIDER=ollama` and `OLLAMA_HOST=http://localhost:11434`, plus commented alternatives. |
 | `graphoria.ts` | `ai: { enabled: true }`.                                                                     |
 
-The agent answers `/rest/ai` and GraphiQL's `ask`. Ollama must be running on the host, so `--ai` works with `bun run dev`, not `docker compose up`.
+The agent answers `/rest/ai` and GraphiQL's `ask`; with the console on (`CONSOLE_ENABLED`), a write session also asks it at `POST {CONSOLE_ENDPOINT}/api/ai`. Ollama must be running on the host, so `--ai` works with `bun run dev`, not `docker compose up`.
 
 The rest of this guide sets a project up by hand, against a database you already run.
 

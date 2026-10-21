@@ -2,6 +2,7 @@ import { CookieMap } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 
 import type { BunRequest } from "bun";
+import type { AgentAnswer, AiPackage } from "../ai/adapter";
 import type { AuditEvent } from "../logging/audit";
 import type { Env } from "../types/env";
 
@@ -868,5 +869,216 @@ describe("consoleRoutesFactory — audit", () => {
     } finally {
       setCronJobs(null);
     }
+  });
+});
+
+describe("console AI", () => {
+  let records: AuditEvent[];
+  let asked: unknown[][];
+  let answer: AgentAnswer;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let instantiateAI: any;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let resetAI: any;
+
+  const fakeServer = { requestIP: () => ({ address: "10.0.0.7" }) };
+  const aiRole = (ai: boolean) => ({ ...fakeSuperadminRole, entityOfRole: { ai } });
+  const aiConfiguration = {
+    ...fakeAnalyzedConfiguration,
+    roles: { superadmin: aiRole(true), analyst: aiRole(true), user: aiRole(false) },
+  };
+
+  const aiRoutes = (
+    rateLimiter?: unknown,
+    agentOn = true,
+    flags: { restEnabled?: boolean; graphqlEnabled?: boolean } = {},
+  ) =>
+    consoleRoutesFactory({
+      env: { ...fakeEnv, ai: { ...fakeEnv.ai, enabled: agentOn, ...flags } },
+      consolePath: "/_console",
+      prefixes,
+      projectConfiguration: fakeProjectConfiguration,
+      analyzedConfiguration: aiConfiguration,
+      tokenService,
+      rateLimiter,
+    });
+
+  const askReq = (body: object, cookie = sessionCookie) =>
+    bunReq(
+      "http://localhost/_console/api/ai",
+      { method: "POST", body: JSON.stringify(body) },
+      cookie,
+    );
+
+  const readCookie = async () => {
+    const login = bunReq(
+      "http://localhost/_console/api/login",
+      { method: "POST", body: JSON.stringify({ secret: READ_SECRET }) },
+      "",
+    );
+    await buildRoutes()["/_console/api/login"].POST(login);
+    return `${SESSION_COOKIE}=${login.cookies.get(SESSION_COOKIE)}`;
+  };
+
+  beforeAll(async () => {
+    ({ instantiateAI, resetAI } = await import("../singletons/ai"));
+  });
+
+  beforeEach(async () => {
+    records = [];
+    asked = [];
+    answer = {
+      answer: "| status | n |\n|---|---|\n| open | 3 |",
+      queries: ["{ orders { status } }"],
+    };
+    setAuditLog({ emit: (event) => records.push(event) });
+    const fakeAi: AiPackage = {
+      defaults: { systemPrompt: "", promptTemplate: "{prompt}" },
+      createAgent:
+        () =>
+        async (...args) => {
+          asked.push(args);
+          return answer;
+        },
+      createMCPRoutes: () => {
+        throw new Error("not used");
+      },
+      setProvider: () => {},
+    };
+    await instantiateAI({ enabled: true, endpoint: "/ai", mcp: { enabled: false } }, undefined, {
+      importAi: async () => fakeAi,
+    });
+  });
+
+  afterEach(() => {
+    setAuditLog(null);
+    resetAI();
+  });
+
+  it("mounts no route while the agent is off", () => {
+    expect(aiRoutes(undefined, false)["/_console/api/ai"]).toBeUndefined();
+  });
+
+  it("mounts the route whatever the REST and GraphQL flags say", () => {
+    const routes = aiRoutes(undefined, true, { restEnabled: false, graphqlEnabled: false });
+
+    expect(routes["/_console/api/ai"]).toBeDefined();
+  });
+
+  it("lists the roles granted ai, the superadmin role first", async () => {
+    const res = await aiRoutes()["/_console/api/ai"].GET(bunReq());
+    expect(await res.json()).toEqual({ roles: ["superadmin", "analyst"] });
+  });
+
+  it("answers 404 without a session and asks nothing", async () => {
+    const res = await aiRoutes()["/_console/api/ai"].POST(askReq({ prompt: "hi" }, ""));
+    expect(res.status).toBe(404);
+    expect(asked).toEqual([]);
+  });
+
+  it("answers 403 to a read-only session and asks nothing", async () => {
+    const cookie = await readCookie();
+    const routes = aiRoutes();
+
+    const get = await routes["/_console/api/ai"].GET(bunReq(undefined, undefined, cookie));
+    const post = await routes["/_console/api/ai"].POST(askReq({ prompt: "hi" }, cookie));
+
+    expect(get.status).toBe(403);
+    expect(post.status).toBe(403);
+    expect(await post.json()).toEqual({ errors: [{ message: "Console session is read-only" }] });
+    expect(asked).toEqual([]);
+    expect(records.filter((record) => record.action === "ai.ask")).toEqual([]);
+  });
+
+  it("answers the picked role's question with its Markdown rendered", async () => {
+    const res = await aiRoutes()["/_console/api/ai"].POST(
+      askReq({ prompt: "orders per status?", role: "analyst" }),
+      fakeServer,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      answer: answer.answer,
+      answerHtml:
+        "<table><thead><tr><th>status</th><th>n</th></tr></thead><tbody><tr><td>open</td><td>3</td></tr></tbody></table>",
+      queries: ["{ orders { status } }"],
+    });
+    expect(asked).toEqual([
+      [
+        "orders per status?",
+        { role: aiConfiguration.roles.analyst, session: { sub: "console", role: "analyst" } },
+      ],
+    ]);
+  });
+
+  it("asks as the superadmin role when none is picked, handing the tools no request", async () => {
+    await aiRoutes()["/_console/api/ai"].POST(askReq({ prompt: "hi" }));
+
+    const caller = asked[0]?.[1];
+    expect(caller).toEqual({
+      role: aiConfiguration.roles.superadmin,
+      session: { sub: "console", role: "superadmin" },
+    });
+    expect(caller).not.toHaveProperty("req");
+  });
+
+  it("answers 400 for an unknown role, a role without ai and a missing prompt", async () => {
+    const routes = aiRoutes();
+    const cases = [
+      [{ prompt: "hi", role: "ghost" }, 'Unknown role "ghost"'],
+      [{ prompt: "hi", role: "constructor" }, 'Unknown role "constructor"'],
+      [{ prompt: "hi", role: "__proto__" }, 'Unknown role "__proto__"'],
+      [{ prompt: "hi", role: 5 }, 'Unknown role "5"'],
+      // An array coerces to the own key "analyst": only the typeof check refuses it.
+      [{ prompt: "hi", role: ["analyst"] }, 'Unknown role "analyst"'],
+      [{ prompt: "hi", role: "user" }, 'Role "user" is not granted the AI agent'],
+      [{ prompt: "" }, "`prompt` (string) is required"],
+    ] as const;
+
+    for (const [body, message] of cases) {
+      const res = await routes["/_console/api/ai"].POST(askReq(body));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ errors: [{ message }] });
+    }
+    expect(asked).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it("records exactly one ai.ask per question", async () => {
+    await aiRoutes()["/_console/api/ai"].POST(
+      askReq({ prompt: "orders per status?", role: "analyst" }),
+      fakeServer,
+    );
+
+    expect(records).toEqual([
+      {
+        action: "ai.ask",
+        actor: { type: "console", ip: "10.0.0.7", role: "analyst" },
+        target: { kind: "ai", via: "console" },
+        prompt: "orders per status?",
+      },
+    ]);
+  });
+
+  it("answers 429 once the picked role's console bucket is spent", async () => {
+    const routes = aiRoutes(
+      createRateLimiter({
+        settings: { max: 1, anonymousMax: 0, windowMs: 60_000, trustProxy: false },
+        anonymousRole: "anonymous",
+      }),
+    );
+
+    const first = await routes["/_console/api/ai"].POST(askReq({ prompt: "a" }));
+    const otherRole = await routes["/_console/api/ai"].POST(
+      askReq({ prompt: "b", role: "analyst" }),
+    );
+    const second = await routes["/_console/api/ai"].POST(askReq({ prompt: "c" }));
+
+    expect(first.status).toBe(200);
+    expect(otherRole.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(second.headers.get("Retry-After")).toBe("60");
+    expect(await second.json()).toEqual({ errors: [{ message: "Rate limit exceeded" }] });
+    expect(asked.map(([prompt]) => prompt)).toEqual(["a", "b"]);
   });
 });
