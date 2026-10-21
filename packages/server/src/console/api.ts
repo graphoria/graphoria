@@ -1,3 +1,6 @@
+import { BREAK, parse, TypeInfo, visit, visitWithTypeInfo } from "graphql";
+
+import type { DocumentNode, GraphQLSchema } from "graphql";
 import type { ConsoleScope } from "./session";
 import type { TokenService } from "../authentication/types";
 import type { AnalyzedConfiguration } from "../configuration";
@@ -55,6 +58,25 @@ const measureLatency = async (connection: DatabasesConnections[string], type: st
   }
 };
 
+const selectsAsk = (schema: GraphQLSchema, document: DocumentNode) => {
+  const queryType = schema.getQueryType();
+  const typeInfo = new TypeInfo(schema);
+  let found = false;
+
+  visit(
+    document,
+    visitWithTypeInfo(typeInfo, {
+      Field(node) {
+        if (node.name.value !== "ask" || typeInfo.getParentType() !== queryType) return;
+        found = true;
+        return BREAK;
+      },
+    }),
+  );
+
+  return found;
+};
+
 export const consoleRoutesFactory = ({
   env,
   consolePath,
@@ -69,6 +91,16 @@ export const consoleRoutesFactory = ({
 
   const clientAddress = (req: BunRequest, server?: Bun.Server<unknown>) =>
     resolveClientAddress(req, server, env.rateLimit.trustProxy);
+
+  const configuredAiRole = (requested: unknown) => {
+    const role = requested ?? env.superadmin.role;
+    if (typeof role !== "string" || !Object.hasOwn(analyzedConfiguration.roles, role))
+      throw new Error(`Unknown role "${role}"`);
+    const roleEntities = analyzedConfiguration.roles[role];
+    if (!roleEntities.entityOfRole.ai)
+      throw new Error(`Role "${role}" is not granted the AI agent`);
+    return { role, roleEntities };
+  };
 
   const guarded =
     (
@@ -366,12 +398,7 @@ export const consoleRoutesFactory = ({
             ),
             POST: guarded(async (req, server) => {
               const body = (await req.json()) as { prompt?: unknown; role?: unknown };
-              const role = body.role ?? env.superadmin.role;
-              if (typeof role !== "string" || !Object.hasOwn(analyzedConfiguration.roles, role))
-                throw new Error(`Unknown role "${role}"`);
-              const roleEntities = analyzedConfiguration.roles[role];
-              if (!roleEntities.entityOfRole.ai)
-                throw new Error(`Role "${role}" is not granted the AI agent`);
+              const { role, roleEntities } = configuredAiRole(body.role);
 
               const ip = clientAddress(req, server);
               const session = { sub: "console", role };
@@ -386,6 +413,48 @@ export const consoleRoutesFactory = ({
                 { actor: { type: "console", ip, role }, via: "console" },
               );
               return { answer, answerHtml: renderAnswerHtml(answer), queries };
+            }, "write"),
+          },
+          [`${base}/graphql`]: {
+            ...cors,
+            POST: guarded(async (req, server) => {
+              const body = (await req.json()) as { query?: unknown; role?: unknown };
+              const { role, roleEntities } = configuredAiRole(body.role);
+
+              const session = { sub: "console", role };
+              const limit = await rateLimiter?.check(session, clientAddress(req, server));
+              if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+              if (typeof body.query !== "string" || body.query.trim().length === 0)
+                throw new Error("`query` (string) is required");
+
+              const document = parse(body.query);
+              if (
+                document.definitions.some(
+                  (definition) =>
+                    definition.kind === "OperationDefinition" && definition.operation !== "query",
+                )
+              )
+                throw new Error("Only `query` operations are allowed");
+
+              const { hasErrors, validationErrors } = roleEntities.handlers.gql.hasErrors(
+                body.query,
+              );
+              if (hasErrors)
+                throw new Error(validationErrors.map((error) => error.message).join("\n"));
+
+              // `ask` would run the agent here, audited as an anonymous `graphql`
+              // caller rather than the console: questions go through /api/ai.
+              if (selectsAsk(roleEntities.schema, document))
+                throw new Error("`ask` is not allowed here: ask the agent through /api/ai");
+
+              // No `req`: a remote source's `forwardHeaders` would receive the
+              // console session cookie, and the agent ran these queries without one.
+              const request = new Request("http://graphoria.local/graphql", {
+                method: "POST",
+              }) as unknown as BunRequest;
+
+              return roleEntities.handlers.gql.handler(body.query, {}, request, session);
             }, "write"),
           },
         }

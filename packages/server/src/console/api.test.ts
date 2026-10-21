@@ -1,5 +1,6 @@
 import { CookieMap } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { buildSchema } from "graphql";
 
 import type { BunRequest } from "bun";
 import type { AgentAnswer, AiPackage } from "../ai/adapter";
@@ -882,7 +883,30 @@ describe("console AI", () => {
   let resetAI: any;
 
   const fakeServer = { requestIP: () => ({ address: "10.0.0.7" }) };
-  const aiRole = (ai: boolean) => ({ ...fakeSuperadminRole, entityOfRole: { ai } });
+  let executed: { query: string; request: Request; session: unknown } | undefined;
+  let validationErrors: { message: string }[] = [];
+  const fakeGql = {
+    handler: async (query: string, _variables: unknown, request: Request, session: unknown) => {
+      executed = { query, request, session };
+      return { data: { ok: true } };
+    },
+    hasErrors: () =>
+      validationErrors.length > 0
+        ? { hasErrors: true, validationErrors }
+        : { hasErrors: false, validationErrors: [] },
+    isNoDataQuery: () => false,
+  };
+  const aiSchema = buildSchema(`
+    type AskResult { answer: String, queries: [String] }
+    type Order { id: Int, status: String, ask: String }
+    type Query { ask(prompt: String!): AskResult, orders: [Order] }
+  `);
+  const aiRole = (ai: boolean) => ({
+    ...fakeSuperadminRole,
+    entityOfRole: { ai },
+    handlers: { gql: fakeGql },
+    schema: aiSchema,
+  });
   const aiConfiguration = {
     ...fakeAnalyzedConfiguration,
     roles: { superadmin: aiRole(true), analyst: aiRole(true), user: aiRole(false) },
@@ -910,6 +934,13 @@ describe("console AI", () => {
       cookie,
     );
 
+  const queryReq = (body: object, cookie = sessionCookie) =>
+    bunReq(
+      "http://localhost/_console/api/graphql",
+      { method: "POST", body: JSON.stringify(body) },
+      cookie,
+    );
+
   const readCookie = async () => {
     const login = bunReq(
       "http://localhost/_console/api/login",
@@ -927,6 +958,8 @@ describe("console AI", () => {
   beforeEach(async () => {
     records = [];
     asked = [];
+    executed = undefined;
+    validationErrors = [];
     answer = {
       answer: "| status | n |\n|---|---|\n| open | 3 |",
       queries: ["{ orders { status } }"],
@@ -1080,5 +1113,120 @@ describe("console AI", () => {
     expect(second.headers.get("Retry-After")).toBe("60");
     expect(await second.json()).toEqual({ errors: [{ message: "Rate limit exceeded" }] });
     expect(asked.map(([prompt]) => prompt)).toEqual(["a", "b"]);
+  });
+
+  it("executes a query as the picked role and returns its response", async () => {
+    const res = await aiRoutes()["/_console/api/graphql"].POST(
+      queryReq({ query: "query { orders { id } }", role: "analyst" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: { ok: true } });
+    expect(executed?.query).toBe("query { orders { id } }");
+    expect(executed?.session).toEqual({ sub: "console", role: "analyst" });
+    expect(executed?.request.headers.get("cookie")).toBeNull();
+  });
+
+  it("executes as the superadmin role when none is picked", async () => {
+    await aiRoutes()["/_console/api/graphql"].POST(queryReq({ query: "query { x }" }));
+
+    expect(executed?.session).toEqual({ sub: "console", role: "superadmin" });
+  });
+
+  it("answers 403 to a read session and 404 without one", async () => {
+    const cookie = await readCookie();
+    const routes = aiRoutes();
+
+    const read = await routes["/_console/api/graphql"].POST(
+      queryReq({ query: "query { x }" }, cookie),
+    );
+    const none = await routes["/_console/api/graphql"].POST(queryReq({ query: "query { x }" }, ""));
+
+    expect(read.status).toBe(403);
+    expect(none.status).toBe(404);
+    expect(executed).toBeUndefined();
+  });
+
+  it("refuses a bad role, an empty query, a mutation and an invalid query", async () => {
+    const routes = aiRoutes();
+    const cases = [
+      [{ query: "query { x }", role: "ghost" }, 'Unknown role "ghost"'],
+      [{ query: "query { x }", role: "user" }, 'Role "user" is not granted the AI agent'],
+      [{ query: "" }, "`query` (string) is required"],
+      [{ query: "mutation { x }" }, "Only `query` operations are allowed"],
+    ] as const;
+
+    for (const [body, message] of cases) {
+      const res = await routes["/_console/api/graphql"].POST(queryReq(body));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ errors: [{ message }] });
+    }
+
+    validationErrors = [{ message: "Cannot query field 'x'" }];
+    const invalid = await routes["/_console/api/graphql"].POST(queryReq({ query: "query { x }" }));
+
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ errors: [{ message: "Cannot query field 'x'" }] });
+    expect(executed).toBeUndefined();
+  });
+
+  it("mounts no query route while the agent is off", () => {
+    expect(aiRoutes(undefined, false)["/_console/api/graphql"]).toBeUndefined();
+  });
+
+  it("refuses a query selecting ask, aliased or through a fragment", async () => {
+    const routes = aiRoutes();
+    const queries = [
+      'query { ask(prompt: "hi") { answer } }',
+      'query { a: ask(prompt: "hi") { answer } }',
+      'query { ...Q } fragment Q on Query { ask(prompt: "hi") { answer } }',
+      'query { ... on Query { ask(prompt: "hi") { answer } } }',
+    ];
+
+    for (const query of queries) {
+      const res = await routes["/_console/api/graphql"].POST(queryReq({ query }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        errors: [{ message: "`ask` is not allowed here: ask the agent through /api/ai" }],
+      });
+    }
+    expect(executed).toBeUndefined();
+  });
+
+  it("runs a query selecting a column named ask", async () => {
+    const res = await aiRoutes()["/_console/api/graphql"].POST(
+      queryReq({ query: "query { orders { ask } }" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(executed?.query).toBe("query { orders { ask } }");
+  });
+
+  it("answers 429 once the picked role's console bucket is spent, by questions too", async () => {
+    const routes = aiRoutes(
+      createRateLimiter({
+        settings: { max: 1, anonymousMax: 0, windowMs: 60_000, trustProxy: false },
+        anonymousRole: "anonymous",
+      }),
+    );
+
+    await routes["/_console/api/ai"].POST(askReq({ prompt: "a" }));
+    const spent = await routes["/_console/api/graphql"].POST(queryReq({ query: "query { a }" }));
+
+    expect(spent.status).toBe(429);
+    expect(spent.headers.get("Retry-After")).toBe("60");
+    expect(await spent.json()).toEqual({ errors: [{ message: "Rate limit exceeded" }] });
+    expect(executed).toBeUndefined();
+
+    const otherRole = await routes["/_console/api/graphql"].POST(
+      queryReq({ query: "query { b }", role: "analyst" }),
+    );
+    const second = await routes["/_console/api/graphql"].POST(
+      queryReq({ query: "query { c }", role: "analyst" }),
+    );
+
+    expect(otherRole.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(executed?.query).toBe("query { b }");
   });
 });
