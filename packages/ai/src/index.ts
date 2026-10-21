@@ -42,7 +42,7 @@ STEP 1 — list_entities: Call with \`kind\` and/or \`search\` to find relevant 
 
 STEP 2 — describe_entity: Call using the EXACT \`name\` string from step 1 (do NOT shorten, transform, or guess it — "pg_public_contacts" is NOT "contacts"). The result contains the table's columns — copy the column names EXACTLY for step 3.
 
-STEP 3 — query_data: Send a structured JSON query. Pick ONE operation — aggregate (for grouping/counts) OR list (for row data). Do NOT call both. The entity must be the EXACT resolverName from step 1 (e.g. "pg_public_contacts"). For aggregates, use operation "aggregate" with groupBy. ALWAYS include \`"filters": { "deleted_at": { "is_null": true } }\` unless the user asks for deleted data.
+STEP 3 — query_data: Send a structured JSON query. Pick ONE operation — aggregate (for grouping/counts) OR list (for row data). Do NOT call both. The entity must be the EXACT resolverName from step 1 (e.g. "pg_public_contacts"). For aggregates, use operation "aggregate" with groupBy. When the table has a \`deleted_at\` column, include \`"filters": { "deleted_at": { "is_null": true } }\` unless the user asks for deleted data.
 
 STEP 4 — STOP AND PRESENT: After query_data returns, present the answer IMMEDIATELY. Do NOT call more tools. Do NOT re-query. Format grouped results as a Markdown table. You are DONE after this step.
 
