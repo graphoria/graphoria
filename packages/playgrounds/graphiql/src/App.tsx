@@ -28,7 +28,8 @@ function App() {
 
   return (
     <>
-      <GraphiQL fetcher={fetcher} plugins={[explorer]} defaultQuery={initialQuery} />
+      {/* `initialQuery`, not `defaultQuery`: a saved tab state would otherwise win. */}
+      <GraphiQL fetcher={fetcher} plugins={[explorer]} initialQuery={initialQuery} />
       <TokenBanner />
     </>
   );
