@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import type { AiEntry } from "../aiHistory";
 import type { AiRolesResponse, ConfigResponse } from "../client";
@@ -193,22 +193,38 @@ const Queries = ({
   queries: string[];
   graphiql?: string;
   role: string;
-}) => (
-  <details className="mt-3 border-t border-gray-100 pt-2">
-    <summary className="cursor-pointer text-sm text-gray-500">
-      Queries{" "}
-      <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">
-        {queries.length}
-      </span>
-    </summary>
-    {queries.map((query, index) => (
-      <QueryRun key={index} query={query} graphiql={graphiql} role={role} />
-    ))}
-  </details>
-);
+}) => {
+  const ref = useRef<HTMLDetailsElement>(null);
+
+  // Open by default only beside the answer. The split is a container query, so
+  // read the columns it laid out instead of repeating its breakpoint here.
+  useLayoutEffect(() => {
+    const details = ref.current;
+    const grid = details?.parentElement;
+    if (details && grid && getComputedStyle(grid).gridTemplateColumns.split(" ").length > 1)
+      details.open = true;
+  }, []);
+
+  return (
+    <details
+      ref={ref}
+      className="mt-3 border-t border-gray-100 pt-2 @5xl:mt-0 @5xl:border-t-0 @5xl:pt-0 @5xl:border-l @5xl:pl-6"
+    >
+      <summary className="cursor-pointer text-sm text-gray-500">
+        Queries{" "}
+        <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">
+          {queries.length}
+        </span>
+      </summary>
+      {queries.map((query, index) => (
+        <QueryRun key={index} query={query} graphiql={graphiql} role={role} />
+      ))}
+    </details>
+  );
+};
 
 const Entry = ({ entry, graphiql }: { entry: AiEntry; graphiql?: string }) => (
-  <div className="bg-white rounded-lg shadow-sm p-4 mb-3">
+  <div className="@container bg-white rounded-lg shadow-sm p-4 mb-3">
     <div className="flex items-baseline gap-3 not-last:mb-2 not-last:pb-2 not-last:border-b not-last:border-gray-100">
       <p className="flex-1 min-w-0 font-medium whitespace-pre-wrap">{entry.prompt}</p>
       <span className="shrink-0 flex items-center gap-2 text-xs text-gray-400">
@@ -232,19 +248,25 @@ const Entry = ({ entry, graphiql }: { entry: AiEntry; graphiql?: string }) => (
     </div>
     {entry.status === "error" && <p className="text-sm text-red-500">{entry.error}</p>}
     {entry.answer && (
-      <>
-        {entry.answer.answer.trim().length === 0 && (
-          <p className="text-sm text-amber-600">The agent returned no text.</p>
-        )}
-        {/* The server's renderer escapes all text and writes every tag itself. */}
-        <div
-          className="ai-answer text-sm"
-          dangerouslySetInnerHTML={{ __html: entry.answer.answerHtml }}
-        />
+      <div
+        className={
+          entry.answer.queries.length > 0 ? "grid grid-cols-1 gap-x-6 @5xl:grid-cols-2" : undefined
+        }
+      >
+        <div>
+          {entry.answer.answer.trim().length === 0 && (
+            <p className="text-sm text-amber-600">The agent returned no text.</p>
+          )}
+          {/* The server's renderer escapes all text and writes every tag itself. */}
+          <div
+            className="ai-answer text-sm"
+            dangerouslySetInnerHTML={{ __html: entry.answer.answerHtml }}
+          />
+        </div>
         {entry.answer.queries.length > 0 && (
           <Queries queries={entry.answer.queries} graphiql={graphiql} role={entry.role} />
         )}
-      </>
+      </div>
     )}
   </div>
 );
