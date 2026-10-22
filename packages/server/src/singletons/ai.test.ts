@@ -9,14 +9,23 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 
 import type { BunRequest } from "bun";
-import type { AiPackage, ChatResult, Provider } from "../ai/adapter";
+import type { AgentAnswer, AiPackage, ChatResult, Provider } from "../ai/adapter";
+import type { AuditEvent } from "../logging/audit";
 import type { Env } from "../types/env";
 
 const { getSchema } = await import("../configuration/getSchemas");
 const { StoreMSSQL } = await import("../__test/dataset/store");
 const aiModule = await import("./ai");
-const { instantiateAI, getAgent, resetAI, resolveAISurfaces, assertScopedRoles, importAiPackage } =
-  aiModule;
+const {
+  instantiateAI,
+  getAgent,
+  resetAI,
+  resolveAISurfaces,
+  assertScopedRoles,
+  importAiPackage,
+  askAgent,
+} = aiModule;
+const { setAuditLog } = await import("../logging/audit");
 const { columnFieldName } = await import("../databases/transformers/graphqlName");
 const { disconnectDatabases } = await import("./databases");
 const { env } = await import("./env");
@@ -451,5 +460,71 @@ describe("assertScopedRoles", () => {
     expect(() =>
       assertScopedRoles(envWith({ secrets: ["s"], secretRole: "anonymous" }), roles, restOff),
     ).not.toThrow();
+  });
+});
+
+describe("askAgent", () => {
+  const actor = { type: "console", ip: "10.0.0.7", role: "superadmin" } as const;
+  let records: AuditEvent[];
+  let asked: unknown[][];
+
+  const agentAnswering = (answer: AgentAnswer) =>
+    instantiateAI({ enabled: true, endpoint: "/ai", mcp: { enabled: false } }, undefined, {
+      importAi: async (): Promise<AiPackage> => ({
+        defaults: { systemPrompt: "", promptTemplate: "{prompt}" },
+        createAgent:
+          () =>
+          async (...args) => {
+            asked.push(args);
+            return answer;
+          },
+        createMCPRoutes: () => {
+          throw new Error("not used");
+        },
+        setProvider: () => {},
+      }),
+    });
+
+  beforeEach(() => {
+    records = [];
+    asked = [];
+    setAuditLog({ emit: (event) => records.push(event) });
+  });
+
+  afterEach(() => {
+    setAuditLog(null);
+    resetAI();
+  });
+
+  it("refuses a missing, empty or non-string prompt before auditing it", async () => {
+    await agentAnswering({ answer: "unused", queries: [] });
+    const caller = { role: buildRole() };
+
+    for (const prompt of [undefined, "", 42]) {
+      await expect(askAgent(prompt, caller, { actor, via: "console" })).rejects.toThrow(
+        "`prompt` (string) is required",
+      );
+    }
+
+    expect(records).toEqual([]);
+    expect(asked).toEqual([]);
+  });
+
+  it("records one ai.ask, then answers through the caller", async () => {
+    await agentAnswering({ answer: "3 open orders", queries: ["{ orders { id } }"] });
+    const caller = { role: buildRole(), session: { sub: "console", role: "superadmin" } };
+
+    const result = await askAgent("how many open orders?", caller, { actor, via: "console" });
+
+    expect(result).toEqual({ answer: "3 open orders", queries: ["{ orders { id } }"] });
+    expect(asked).toEqual([["how many open orders?", caller]]);
+    expect(records).toEqual([
+      {
+        action: "ai.ask",
+        actor,
+        target: { kind: "ai", via: "console" },
+        prompt: "how many open orders?",
+      },
+    ]);
   });
 });

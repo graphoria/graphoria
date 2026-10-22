@@ -2,7 +2,7 @@
 
 > **See also:** [MCP](./MCP.md) | [Permissions](./PERMISSIONS.md) | [Configuration](./CONFIGURATION.md)
 
-Graphoria can run an LLM agent **server-side** that answers natural-language questions about your database. Ask it a question; it discovers the relevant tables, writes and runs read-only GraphQL queries against your schema, and returns a written answer. It is exposed two ways: a GraphQL `ask` query and a REST `POST` endpoint.
+Graphoria can run an LLM agent **server-side** that answers natural-language questions about your database. Ask it a question; it discovers the relevant tables, writes and runs read-only GraphQL queries against your schema, and returns a written answer. It is exposed three ways: a GraphQL `ask` query, a REST `POST` endpoint, and the [admin console](./CONSOLE.md)'s AI page.
 
 The agent reuses the same tooling as the [MCP server](./MCP.md) — `list_entities`, `describe_entity`, `query_data`, `graphql_execute`, sharing the executors in `@graphoria/ai`'s tools — but the tool-calling loop lives in `@graphoria/ai` (running server-side) instead of handing tools to an external client. It is four of the six MCP tools: `graphql_validate` and `rest_execute` are not offered to the agent, and none of the four can be disabled the way the MCP ones can.
 
@@ -79,6 +79,8 @@ Both resolve the caller like `/graphql`: `Authorization: Bearer <token>` for the
 
 A role without `ai` gets `404` from the REST route, and the `ask` field is absent from its schema.
 
+The [admin console](./CONSOLE.md) reaches the agent too, through `POST {CONSOLE_ENDPOINT}/api/ai`: a write session asks as any role granted `ai` (the superadmin role by default), mounted whenever the agent is on, whatever `AI_REST_ENABLED` and `AI_GRAPHQL_ENABLED` say. It answers `{ answer, answerHtml, queries }`, `answerHtml` being the answer's Markdown rendered with all text escaped, and its `ai.ask` record carries `via: "console"`.
+
 ### REST
 
 | Verb | Path       | Body                                          | Response                              |
@@ -94,7 +96,7 @@ curl -X POST http://localhost:3000/rest/ai \
   -d '{"prompt":"how many orders per status?"}'
 ```
 
-The path is configurable via `ai.endpoint`, under the REST prefix: the full URL is `${PREFIX}${REST_API_PREFIX}${endpoint}` (default `/rest/ai`). Setting `AI_REST_ENABLED=false` leaves the route unmounted, so the agent is reachable through the GraphQL `ask` field only. `AI_GRAPHQL_ENABLED=false` leaves the `ask` field out of every schema, so the agent is reachable over REST only.
+The path is configurable via `ai.endpoint`, under the REST prefix: the full URL is `${PREFIX}${REST_API_PREFIX}${endpoint}` (default `/rest/ai`). Setting `AI_REST_ENABLED=false` leaves the route unmounted, so the agent is reachable through the GraphQL `ask` field (and the console, when enabled) only. `AI_GRAPHQL_ENABLED=false` leaves the `ask` field out of every schema, so the agent is reachable over REST (and the console, when enabled) only.
 
 ### GraphQL
 
@@ -151,6 +153,7 @@ The agent reads through the caller's role, so a prompt cannot reach a table, col
 - **An inline prompt starting with `$` is read as a variable.** `ask(prompt: "$total") { answer }` fails with `Variable total not found`; pass such a prompt as a variable.
 - **An inline fragment inside `ask` needs a type condition.** `... { answer }` or `... @include(if: $q) { queries }` answers without those fields; write `... on AskResult { … }`, or put the directive on the field.
 - **Iteration cap.** The tool-calling loop is bounded (10 iterations); a question that can't be answered within that budget errors rather than looping forever.
+- **An empty model reply is retried, then reported.** A model that stops without text — a thinking model that ends after its reasoning block, or one cut off by the context window — gets two more turns asking for the answer, and the server logs the provider's `finishReason` each time (`length` points at the context window). If it still returns nothing, the request fails with `The model returned an empty answer` instead of answering with a blank card.
 - **Each LLM call is bounded.** `AI_TIMEOUT_MS` (default 60 s) per call, up to 10 calls per question.
 - **Prompts are audit-logged.** Every invocation writes an `ai.ask` record carrying the prompt verbatim — see [Audit log](../README.md#audit-log). Do not put secrets in a prompt.
 

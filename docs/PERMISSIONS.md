@@ -73,7 +73,7 @@ auth: {
 
 ### The AI agent
 
-`ai: true` lets a role call the [AI agent](./AI.md): the GraphQL `ask` field is compiled into its schema and `POST /rest/ai` answers it. The agent reads what the role reads — its tables and columns, its row filters evaluated with the caller's session — and every row it reads goes to the LLM provider, so grant it only where that is acceptable. The superadmin role (the admin secret) always has it.
+`ai: true` lets a role call the [AI agent](./AI.md): the GraphQL `ask` field is compiled into its schema and `POST /rest/ai` answers it, and a [console](./CONSOLE.md) write session can also ask as that role (`POST {CONSOLE_ENDPOINT}/api/ai`) and run a GraphQL query as it (`POST {CONSOLE_ENDPOINT}/api/graphql`). The agent reads what the role reads — its tables and columns, its row filters evaluated with the caller's session — and every row it reads goes to the LLM provider, so grant it only where that is acceptable. The superadmin role (the admin secret) always has it.
 
 ## Table Access Modes
 

@@ -5,8 +5,10 @@ import { useHashLocation } from "wouter/use-hash-location";
 import type { ConfigResponse, ConsoleScope, Meta } from "./client";
 
 import mark from "../../public/graphoria-mark-dark.svg";
+import { clearAiHistory } from "./aiHistory";
 import { apiFetch, getMeta, logout, onAuthFail } from "./client";
 import { Login } from "./Login";
+import { AiPage } from "./pages/AiPage";
 import { ApisPage } from "./pages/ApisPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { RolesPage } from "./pages/RolesPage";
@@ -23,6 +25,8 @@ const NAV = [
   { path: "/config", label: "Config" },
 ];
 
+const AI_NAV = { path: "/ai", label: "AI" };
+
 export const App = () => {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -30,20 +34,53 @@ export const App = () => {
   // live, and what it may do, is to ask the server; `undefined` is "not asked
   // yet" and `null` is "no session".
   const [scope, setScope] = useState<ConsoleScope | null | undefined>(undefined);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  // The routes wait for the config read: until it resolves, `aiEnabled` is false,
+  // so `#/ai` would fall through the catch-all redirect after a login.
+  const [configReady, setConfigReady] = useState(false);
+
+  // One read answers what the session may do and whether the agent is on. A login
+  // returns the scope alone, so it reads again; the initial read ends the session on
+  // failure, while after a login a failed read only leaves the agent off.
+  const loadConfig = () =>
+    apiFetch<ConfigResponse>("/config").then((config) => {
+      setAiEnabled(config.features.ai === true);
+      setScope(config.session.scope);
+    });
 
   useEffect(() => {
-    onAuthFail(() => setScope(null));
+    onAuthFail(() => {
+      clearAiHistory();
+      setAiEnabled(false);
+      setScope(null);
+    });
     getMeta()
       .then(setMeta)
       .catch((error) => setMetaError((error as Error).message));
-    apiFetch<ConfigResponse>("/config")
-      .then((config) => setScope(config.session.scope))
-      .catch(() => setScope(null));
+    loadConfig()
+      .catch(() => setScope(null))
+      .finally(() => setConfigReady(true));
   }, []);
 
   if (metaError) return <p className="text-red-500 text-center">{metaError}</p>;
-  if (!meta || scope === undefined) return <p className="text-gray-400 text-center">Loading…</p>;
-  if (!scope) return <Login meta={meta} onSuccess={setScope} />;
+  if (!meta || scope === undefined || !configReady)
+    return <p className="text-gray-400 text-center">Loading…</p>;
+  if (!scope)
+    return (
+      <Login
+        meta={meta}
+        onSuccess={(next) => {
+          setScope(next);
+          setConfigReady(false);
+          loadConfig()
+            .catch(() => {})
+            .finally(() => setConfigReady(true));
+        }}
+      />
+    );
+
+  const showAi = aiEnabled && scope === "write";
+  const nav = showAi ? [...NAV, AI_NAV] : NAV;
 
   return (
     <Router hook={useHashLocation}>
@@ -58,7 +95,7 @@ export const App = () => {
             )}
           </div>
           <nav className="flex flex-col py-2 flex-1">
-            {NAV.map(({ path, label }) => (
+            {nav.map(({ path, label }) => (
               <Link
                 key={path}
                 href={path}
@@ -76,19 +113,24 @@ export const App = () => {
             className="mt-auto mx-4 py-2 px-4 rounded text-gray-400 hover:text-white cursor-pointer text-left"
             onClick={async () => {
               await logout();
+              clearAiHistory();
+              setAiEnabled(false);
               setScope(null);
             }}
           >
             Log out
           </button>
         </aside>
-        <main className="flex-1 p-6">
+        {/* min-w-0 lets this flex item shrink below its content, so a wide table or query
+            scrolls in its card instead of stretching the page. */}
+        <main className="flex-1 min-w-0 p-6">
           <Switch>
             <Route path="/tables" component={TablesPage} />
             <Route path="/roles" component={RolesPage} />
             <Route path="/apis" component={ApisPage} />
             <Route path="/status">{() => <StatusPage readOnly={scope === "read"} />}</Route>
             <Route path="/config" component={ConfigPage} />
+            {showAi && <Route path="/ai" component={AiPage} />}
             <Route>
               <Redirect to="/tables" />
             </Route>

@@ -20,8 +20,8 @@ import { consoleRoutesFactory } from "./console/api";
 import { createAuthTables, verifyAuthTablesExist } from "./databases";
 import { createCapabilityAuthorizer, scopedCredentialRole } from "./authentication/capabilities";
 import {
+  askAgent,
   assertScopedRoles,
-  getAgent,
   importAiPackage,
   instantiateAI,
   makeAiToolDeps,
@@ -694,23 +694,11 @@ const createGraphQLServer = async (env: Env) => {
             if (!roleSchema?.entityOfRole.ai) return new S404({ error: "Not Found" });
 
             const { prompt } = await req.json();
-            if (typeof prompt !== "string" || prompt.length === 0)
-              return new S400({
-                errors: [{ message: "`prompt` (string) is required" }],
-              });
-
-            audit().emit({
-              action: "ai.ask",
-              actor: { ...actorFromSession(session), ...(scope ? { scope } : {}) },
-              target: { kind: "ai", via: "rest" },
+            const { answer, queries } = await askAgent(
               prompt,
-            });
-
-            const { answer, queries } = await getAgent()(prompt, {
-              role: roleSchema,
-              session,
-              req,
-            });
+              { role: roleSchema, session, req },
+              { actor: { ...actorFromSession(session), ...(scope ? { scope } : {}) }, via: "rest" },
+            );
             return new S200({ answer, queries });
           } catch (error) {
             return new S400({ errors: [{ message: (error as Error)?.message }] });

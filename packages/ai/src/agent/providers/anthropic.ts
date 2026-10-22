@@ -115,7 +115,7 @@ export function makeAnthropic(cfg: AnthropicConfig): Provider {
         }
       }
 
-      return { content, toolCalls };
+      return { content, toolCalls, finishReason: res.stop_reason ?? undefined };
     },
   };
 }

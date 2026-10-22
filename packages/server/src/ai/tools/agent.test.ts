@@ -15,7 +15,8 @@ const { makeAiToolDeps } = await import("../../singletons/ai");
 const { buildAgentTools } = await import("../../../../ai/src/tools/agent");
 const { ask } = await import("../../../../ai/src/agent/agent");
 const { setProvider } = await import("../../../../ai/src/agent/providers");
-const { DEFAULT_AI_SYSTEM_PROMPT } = await import("../../../../ai/src/index");
+const { DEFAULT_AI_PROMPT_TEMPLATE, DEFAULT_AI_SYSTEM_PROMPT } =
+  await import("../../../../ai/src/index");
 const { columnFieldName } = await import("../../databases/transformers/graphqlName");
 
 const deps = makeAiToolDeps(env);
@@ -333,6 +334,12 @@ describe("default system prompt", () => {
   it("tells the agent not to repeat the query query_data hands back", () => {
     expect(DEFAULT_AI_SYSTEM_PROMPT).toContain(
       "Do NOT repeat it in your answer: the caller receives every query separately.",
+    );
+  });
+
+  it("asks for the deleted_at filter only when the table has the column", () => {
+    expect(DEFAULT_AI_PROMPT_TEMPLATE).toContain(
+      "When the table has a `deleted_at` column, include",
     );
   });
 });

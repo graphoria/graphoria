@@ -3,7 +3,7 @@ export const apiBase = `${location.pathname.replace(/\/+$/, "")}/api`;
 
 export type Meta = { name: string; version: string };
 
-/** `read` sees state; `write` may also publish to queues and control cron. */
+/** `read` sees state; `write` may also publish to queues, control cron and ask the AI agent. */
 export type ConsoleScope = "read" | "write";
 
 export type TablesResponse = {
@@ -90,6 +90,10 @@ export type RoleEntitiesResponse = {
   remoteREST: { name: string; prefix: string; routes: number }[];
 };
 
+export type AiRolesResponse = { roles: string[] };
+
+export type AiAnswerResponse = { answer: string; answerHtml: string; queries: string[] };
+
 export class AuthError extends Error {}
 
 let authFailHandler: () => void = () => {};
@@ -134,11 +138,12 @@ export const apiFetch = async <T>(path: string): Promise<T> => {
   return res.json();
 };
 
-export const apiPost = async <T>(path: string, body: unknown): Promise<T> => {
+export const apiPost = async <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> => {
   const res = await fetch(`${apiBase}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (res.status === 404) {
