@@ -201,6 +201,30 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
     expect(await res.text()).toBe('"pong"');
   });
 
+  it.each([null, false, 0, ""])("JSON-encodes a falsy %p the handler returns", async (answer) => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_falsy", { handler: () => answer }),
+      stubGql(),
+    );
+
+    const res = await factory.handler(new URL("http://x/test"), "/test", "GET", fakeReq());
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(JSON.stringify(answer));
+  });
+
+  it("sends an empty body when the handler returns nothing", async () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_void", { handler: () => undefined }),
+      stubGql(),
+    );
+
+    const res = await factory.handler(new URL("http://x/test"), "/test", "GET", fakeReq());
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
+  });
+
   it("returns 404 when no route matches the path", async () => {
     const factory = handleRESTRequestFactory(
       stubEntities("op_f", { handler: () => ({}) }),

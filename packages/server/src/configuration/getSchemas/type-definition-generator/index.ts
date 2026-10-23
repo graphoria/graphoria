@@ -322,6 +322,13 @@ const generateGraphQLTypeFromSchema = (
   return mapJSONSchemaToGraphQLType(schema);
 };
 
+// `.nullable()` on an object output converts to `anyOf: [<object>, { type: "null" }]`.
+const nullableObject = (schema: OpenAPIV3_1.SchemaObject) => {
+  const branches = (schema.anyOf ?? []) as OpenAPIV3_1.SchemaObject[];
+  if (branches.length !== 2 || !branches.some((branch) => branch.type === "null")) return undefined;
+  return branches.find((branch) => branch.type === "object");
+};
+
 export const generateMutationType = (mergedEntities: MergedEntities, hasRoles: boolean = false) => {
   const authQueries = hasRoles
     ? `
@@ -347,7 +354,9 @@ export const generateMutationType = (mergedEntities: MergedEntities, hasRoles: b
     )
     .map(([operationName, operationConfig]) => {
       const inputShape = convertFromZod(operationConfig.input);
-      const outputShape = convertFromZod(operationConfig.output);
+      const convertedOutput = convertFromZod(operationConfig.output);
+      const nullableOutput = nullableObject(convertedOutput);
+      const outputShape = nullableOutput ?? convertedOutput;
 
       const hasInputProperties =
         inputShape.type === "object" &&
@@ -362,6 +371,7 @@ export const generateMutationType = (mergedEntities: MergedEntities, hasRoles: b
       const mutationName = operationConfig.graphql?.name ?? operationName;
 
       const output = hasOutputProperties ? `${mutationName}Output` : "Boolean";
+      const bang = hasOutputProperties && nullableOutput ? "" : "!";
 
       return {
         input: hasInputProperties
@@ -384,10 +394,10 @@ export const generateMutationType = (mergedEntities: MergedEntities, hasRoles: b
         })(),
         resolver: hasInputProperties
           ? `
-          ${mutationName}(input: ${mutationName}Input!): ${output}!
+          ${mutationName}(input: ${mutationName}Input!): ${output}${bang}
         `
           : `
-          ${mutationName}: ${output}!
+          ${mutationName}: ${output}${bang}
         `,
       };
     });

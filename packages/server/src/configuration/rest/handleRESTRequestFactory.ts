@@ -354,7 +354,11 @@ export const handleRESTRequestFactory = (
               })
             : result;
 
-          return new S200(finalResult);
+          // Not S200: it sends a falsy body as no body, which a preflight wants
+          // but turns a handler's null, false, 0 or "" into an answer no client parses.
+          return finalResult === undefined
+            ? new S200()
+            : new S200Serialized(JSON.stringify(finalResult));
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
           return new S401({ errors: [message] });

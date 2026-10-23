@@ -1,7 +1,10 @@
 import { describe, expect, test as it } from "bun:test";
+import { buildSchema } from "graphql";
+import { z } from "zod";
 
 import {
   generateAggregationTypes,
+  generateMutationType,
   generateOrderByInputType,
   generateQueryType,
   generateTableType,
@@ -154,6 +157,46 @@ describe("Type definition generator", () => {
       expect(result).toContain("input StringCondition");
       expect(result).toContain("type dbo_products");
       expect(result).toContain("type Query");
+    });
+  });
+
+  describe("Operation mutation output", () => {
+    const mutationField = (output?: z.ZodType) => {
+      const typeDefs = generateMutationType({
+        storedProcedures: [],
+        queues: [],
+        remoteSchemas: [],
+        operations: {
+          publishBook: {
+            graphql: { enabled: true },
+            rest: { path: "/publish-book", method: "POST" },
+            input: z.object({ id: z.number().int() }),
+            output,
+          },
+        },
+      } as unknown as Parameters<typeof generateMutationType>[0]);
+      const schema = buildSchema(`type Query { ok: Boolean }\n${typeDefs}`);
+      return schema.getMutationType()!.getFields().publishBook!.type.toString();
+    };
+
+    const book = z.object({ id: z.number().int(), title: z.string() });
+
+    it("types an object output as its own non-null type", () => {
+      expect(mutationField(book)).toBe("publishBookOutput!");
+    });
+
+    // `.nullable()` converts to anyOf [object, null], which used to fall back
+    // to Boolean!, so selecting the row's fields failed validation.
+    it("types a nullable object output as a nullable field of the object's type", () => {
+      expect(mutationField(book.nullable())).toBe("publishBookOutput");
+    });
+
+    it("keeps Boolean! for an output that is not an object", () => {
+      expect(mutationField(z.boolean())).toBe("Boolean!");
+      expect(mutationField(z.string().nullable())).toBe("Boolean!");
+      expect(mutationField(z.union([book, z.string()]))).toBe("Boolean!");
+      expect(mutationField(z.union([book, z.null(), z.string()]))).toBe("Boolean!");
+      expect(mutationField()).toBe("Boolean!");
     });
   });
 
