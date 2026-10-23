@@ -76,6 +76,8 @@ function LoginForm() {
 }
 ```
 
+`login()` leaves `isLoading` alone: the provider keeps the form mounted while it runs, so a form that shows a pending state, or ignores a second submit, tracks its own.
+
 The hook surface:
 
 | Member            | Type                                            | Notes                                                                                |

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { StrictMode } from "react";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { StrictMode, useState } from "react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import FakeTimers from "@sinonjs/fake-timers";
 
 import type { ReactNode } from "react";
@@ -158,6 +158,36 @@ describe("AuthContext", () => {
       );
       expect(stateUpdateWarnings.length).toBe(0);
     });
+
+    it("renders loadingFallback, not the children, until the boot refresh settles", async () => {
+      let answer!: (response: Response) => void;
+      mockFetch.queue.push(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const view = render(
+        <AuthProvider loadingFallback={<p>booting</p>}>
+          <p>app</p>
+        </AuthProvider>,
+      );
+
+      expect(view.queryByText("booting")).not.toBeNull();
+      expect(view.queryByText("app")).toBeNull();
+
+      await act(async () => {
+        answer(
+          new Response(JSON.stringify({ data: { auth_refresh: null } }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+        await flushMicrotasks();
+      });
+
+      await waitFor(() => expect(view.queryByText("app")).not.toBeNull());
+      expect(view.queryByText("booting")).toBeNull();
+    });
   });
 
   // ===========================================================================
@@ -277,6 +307,93 @@ describe("AuthContext", () => {
 
       expect(result).toBeNull();
       expect(ctxRef.current?.error).toBe("Login failed");
+    });
+
+    it("keeps the children mounted while login() is pending, with isLoading false", async () => {
+      mockFetch.enqueueGraphQLData({ auth_refresh: null });
+      const ctxRef = makeCtxRef();
+      const view = render(
+        <AuthProvider loadingFallback={<p>booting</p>}>
+          <Capture ctxRef={ctxRef} />
+          <p>sign-in form</p>
+        </AuthProvider>,
+      );
+      await waitFor(() => expect(ctxRef.current?.isLoading).toBe(false));
+
+      let answer!: (response: Response) => void;
+      mockFetch.queue.push(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending = ctxRef.current!.login("alice", "pw");
+        await flushMicrotasks();
+      });
+
+      expect(view.queryByText("sign-in form")).not.toBeNull();
+      expect(view.queryByText("booting")).toBeNull();
+      expect(ctxRef.current?.isLoading).toBe(false);
+
+      await act(async () => {
+        answer(
+          new Response(JSON.stringify({ data: { auth_login: tokens("editor") } }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+        await pending;
+      });
+
+      expect(ctxRef.current?.user).toEqual({ role: "editor" });
+    });
+
+    it("keeps a child's state through a failed login", async () => {
+      mockFetch.enqueueGraphQLData({ auth_refresh: null });
+      const ctxRef = makeCtxRef();
+      function Draft() {
+        const [text, setText] = useState("");
+        return (
+          <input
+            aria-label="username"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+        );
+      }
+      const view = render(
+        <AuthProvider>
+          <Capture ctxRef={ctxRef} />
+          <Draft />
+        </AuthProvider>,
+      );
+      await waitFor(() => expect(ctxRef.current?.isLoading).toBe(false));
+      fireEvent.change(view.getByLabelText("username"), { target: { value: "alice" } });
+
+      let answer!: (response: Response) => void;
+      mockFetch.queue.push(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending = ctxRef.current!.login("alice", "bad");
+        await flushMicrotasks();
+      });
+      await act(async () => {
+        answer(
+          new Response(JSON.stringify({ data: { auth_login: null } }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+        await pending;
+      });
+
+      expect((view.getByLabelText("username") as HTMLInputElement).value).toBe("alice");
+      expect(ctxRef.current?.error).toBe("Invalid credentials");
     });
   });
 
