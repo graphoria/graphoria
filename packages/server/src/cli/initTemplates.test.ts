@@ -24,6 +24,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   dbPort: 15432,
   rabbitmq: false,
   ai: false,
+  auth: false,
   redis: false,
   dataTools: false,
   frontend: false,
@@ -699,6 +700,257 @@ describe("renderProject seed.sql", () => {
   });
 });
 
+describe("renderProject with --auth", () => {
+  // The seed's schema, which prefixes its field names: a MySQL schema is its database.
+  const TABLES = { pg: "public", mysql: "shop", mssql: "dbo", sqlite: "main" } as const;
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "graphoria-init-auth-"));
+    process.env.DB_HOST = "db.internal";
+    process.env.DB_PORT = "15432";
+    process.env.DB_USER = "someone";
+    process.env.DB_PASSWORD = "Pa55word.x";
+    process.env.DB_NAME = "shop";
+    process.env.DB_FILE = join(dir, "unused.db");
+    process.env.RABBITMQ_HOST = "rabbit.internal";
+    process.env.RABBITMQ_PORT = "5672";
+    process.env.RABBITMQ_USER = "graphoria";
+    process.env.RABBITMQ_PASSWORD = "rabbit-pass";
+    process.env.RABBITMQ_VHOST = "/";
+    process.env.REDIS_URL = "redis://cache.internal:6379";
+  });
+
+  afterAll(async () => {
+    for (const key of [
+      "DB_HOST",
+      "DB_PORT",
+      "DB_USER",
+      "DB_PASSWORD",
+      "DB_NAME",
+      "DB_FILE",
+      "RABBITMQ_HOST",
+      "RABBITMQ_PORT",
+      "RABBITMQ_USER",
+      "RABBITMQ_PASSWORD",
+      "RABBITMQ_VHOST",
+      "REDIS_URL",
+    ]) {
+      delete process.env[key];
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  let seq = 0;
+  const parse = async (database: DatabaseType, patch: Partial<ProjectValues> = {}) => {
+    const path = await writeProject(
+      join(dir, `${database}-${seq++}`),
+      renderWith({ auth: true, ...patch }, database),
+    );
+    return ConfigurationZod.parse(((await import(path)).default as (h: object) => unknown)({}));
+  };
+
+  it.each(ENGINES)("turns auth on for %s, creating the user table itself", async (database) => {
+    const { auth } = await parse(database);
+
+    expect(auth.enabled).toBe(true);
+    expect(auth.database).toBe("main");
+    expect(auth.autoCreateTables).toBe(true);
+    expect(auth.schema).toBe(database === "sqlite" ? "main" : "auth");
+    expect(Object.keys(auth.permissions)).toEqual(["anonymous", "reader", "editor"]);
+  });
+
+  it.each(ENGINES)("grants the three %s tiers", async (database) => {
+    const table = (name: string) => `${TABLES[database]}_${name}`;
+    const { auth } = await parse(database);
+
+    expect(auth.permissions.anonymous).toMatchObject({
+      tables: { [table("authors")]: { columns: "ALL" } },
+      operations: [],
+      queues: [],
+      ai: false,
+    });
+    expect(auth.permissions.reader).toMatchObject({
+      tables: {
+        [table("authors")]: { columns: "ALL" },
+        [table("books")]: { columns: "ALL", filter: { status: { eq: "published" } } },
+      },
+      operations: [],
+      queues: [],
+      ai: false,
+    });
+    expect(auth.permissions.editor).toMatchObject({
+      tables: { [table("authors")]: { columns: "ALL" }, [table("books")]: { columns: "ALL" } },
+      operations: ["addBook", "publishBook"],
+      queues: [],
+      ai: false,
+    });
+    // toMatchObject reads each table's grant as a subset: these pin that only
+    // the reader's books carry a filter.
+    expect(auth.permissions.anonymous!.tables).toEqual({ [table("authors")]: { columns: "ALL" } });
+    expect(auth.permissions.reader!.tables).toEqual({
+      [table("authors")]: { columns: "ALL" },
+      [table("books")]: { columns: "ALL", filter: { status: { eq: "published" } } },
+    });
+    expect(auth.permissions.editor!.tables).toEqual({
+      [table("authors")]: { columns: "ALL" },
+      [table("books")]: { columns: "ALL" },
+    });
+  });
+
+  it.each([
+    [
+      { redis: true },
+      { operations: ["books"] },
+      { operations: ["books", "addBook", "publishBook"] },
+    ],
+    [{ ai: true }, { ai: true }, { ai: true }],
+    [{ rabbitmq: true }, { queues: [] }, { queues: ["events"] }],
+  ])("extends the roles for %j", async (patch, reader, editor) => {
+    const { auth } = await parse("pg", patch);
+
+    expect(auth.permissions.reader).toMatchObject(reader);
+    expect(auth.permissions.editor).toMatchObject(editor);
+    expect(auth.permissions.anonymous).toMatchObject({ operations: [], queues: [], ai: false });
+  });
+
+  it("replaces the frontend's anonymous grant", async () => {
+    const config = renderWith({ auth: true, frontend: true })["graphoria.ts"]!;
+    const { auth } = await parse("pg", { frontend: true });
+
+    expect(config).not.toContain("The frontend has no login");
+    expect(Object.keys(auth.permissions.anonymous!.tables)).toEqual(["public_authors"]);
+    expect(auth.permissions.anonymous).toMatchObject({ operations: [], queues: [], ai: false });
+  });
+
+  it.each(ENGINES)(
+    "adds publishBook to the %s scaffold, answering a row or null",
+    async (database) => {
+      const { operations } = await parse(database);
+
+      expect(Object.keys(operations)).toEqual(["addBook", "publishBook"]);
+      expect(operations.publishBook!.rest).toMatchObject({ path: "/publish-book", method: "POST" });
+      expect(operations.publishBook!.output!.safeParse(null).success).toBe(true);
+      expect(
+        operations.publishBook!.output!.safeParse({
+          id: 7,
+          title: "Kindred",
+          publishedYear: 1979,
+          authorId: 3,
+        }).success,
+      ).toBe(true);
+    },
+  );
+
+  it("publishes through the repository", async () => {
+    const { operations } = await parse("pg");
+    const published: number[] = [];
+    const repository = {
+      main: {
+        books: {
+          publish: async (id: number) => {
+            published.push(id);
+            return null;
+          },
+        },
+      },
+    };
+
+    expect(await operations.publishBook!.handler!({ repository } as never, { id: 7 })).toBeNull();
+    expect(published).toEqual([7]);
+  });
+
+  it.each(ENGINES)("leaves publishBook out of the %s scaffold without --auth", (database) => {
+    const files = render(database);
+
+    expect(files["graphoria.ts"]).not.toContain("publishBook");
+    expect(files["repository.ts"]).not.toContain("publish:");
+  });
+
+  it.each(["pg", "sqlite"] as const)(
+    "keeps the %s auth token store in memory, unless Redis holds it",
+    (database) => {
+      expect(renderWith({ auth: true }, database)[".env"]!.split("\n")).toContain(
+        "AUTH_STORE=memory",
+      );
+      const withRedis = renderWith({ auth: true, redis: true }, database)[".env"]!;
+      expect(withRedis.split("\n")).toContain("AUTH_STORE=redis");
+      expect(withRedis).not.toContain("AUTH_STORE=memory");
+      expect(render(database)[".env"]).not.toContain("AUTH_STORE");
+    },
+  );
+
+  it.each(ENGINES)(
+    "gives the %s books a status, with two drafts after the six published",
+    (database) => {
+      const seed = renderWith({ auth: true }, database)["seed.sql"]!;
+
+      expect(seed).toContain("-- addBook stores a draft; publishBook shows it to readers.");
+      expect(seed).toContain(
+        {
+          pg: "status TEXT NOT NULL DEFAULT 'draft'",
+          mysql: "status VARCHAR(20) NOT NULL DEFAULT 'draft'",
+          mssql: "status NVARCHAR(20) NOT NULL DEFAULT N'draft'",
+          sqlite: "status TEXT NOT NULL DEFAULT 'draft'",
+        }[database],
+      );
+      expect(seed.match(/'published'\)/g)).toHaveLength(6);
+      expect(seed.match(/'draft'\)/g)).toHaveLength(2);
+      expect(seed.indexOf("'The Dispossessed'")).toBeGreaterThan(
+        seed.indexOf("'Parable of the Sower'"),
+      );
+      expect(render(database)["seed.sql"]).not.toContain("status");
+    },
+  );
+
+  it("seeds SQLite with two drafts, adds a draft and publishes it", async () => {
+    const { Database } = await import("bun:sqlite");
+    const project = join(dir, `sqlite-run-${seq++}`);
+    const path = await writeProject(project, renderWith({ auth: true }, "sqlite"), [
+      "graphoria.ts",
+      "repository.ts",
+      "seed.sql",
+    ]);
+    process.env.DB_FILE = join(project, "shop.db");
+    const db = ConfigurationZod.parse(((await import(path)).default as (h: object) => unknown)({}))
+      .databases[0]!;
+    const connection = new Database(join(project, "shop.db"), { create: true });
+    try {
+      await db.onConnect!(connection as never, db as never);
+      const count = (where: string) =>
+        (connection.query(`SELECT COUNT(*) AS n FROM books WHERE ${where}`).get() as { n: number })
+          .n;
+      expect(count("1 = 1")).toBe(8);
+      expect(count("status = 'draft'")).toBe(2);
+
+      const repository = db.repository!(connection as never) as {
+        books: {
+          add(book: object): Promise<{ id: number }>;
+          publish(id: number): Promise<unknown>;
+        };
+      };
+      const added = await repository.books.add({
+        title: "The Lathe of Heaven",
+        publishedYear: 1971,
+        authorId: 1,
+      });
+      expect(added.id).toBe(9);
+      expect(count("id = 9 AND status = 'draft'")).toBe(1);
+
+      expect(await repository.books.publish(9)).toEqual({
+        id: 9,
+        title: "The Lathe of Heaven",
+        publishedYear: 1971,
+        authorId: 1,
+      });
+      expect(count("status = 'draft'")).toBe(2);
+      expect(await repository.books.publish(99)).toBeNull();
+    } finally {
+      connection.close();
+    }
+  });
+});
+
 describe("renderProject with the frontend", () => {
   const renderWeb = (database: DatabaseType) =>
     renderProject({ ...values(database), frontend: true }, versions);
@@ -1256,9 +1508,10 @@ describe("renderProject types the add-book operation", () => {
 
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
-  // One tsc run over every engine's graphoria.ts and repository.ts, plus a copy
-  // that calls the repository wrongly: that copy's error must be the only one.
-  it("type-checks every engine's scaffold and rejects a wrong repository call", async () => {
+  // One tsc run over every engine's graphoria.ts and repository.ts, with and
+  // without --auth, plus copies that call the repository wrongly: their errors
+  // must be the only ones.
+  it("type-checks every engine's scaffold and rejects wrong repository calls", async () => {
     dir = await mkdtemp(join(tmpdir(), "graphoria-init-types-"));
     const files: string[] = [];
     const write = async (
@@ -1277,9 +1530,13 @@ describe("renderProject types the add-book operation", () => {
     for (const database of ENGINES) {
       await write(database, renderWith(everything, database));
       await write(`${database}-plain`, renderWith({}, database));
+      await write(`${database}-auth`, renderWith({ ...everything, auth: true }, database));
     }
     await write("typo", renderWith(everything), (text) =>
       text.replace("repository.main.books.add(", "repository.main.books.ad("),
+    );
+    await write("publish-typo", renderWith({ ...everything, auth: true }), (text) =>
+      text.replace("repository.main.books.publish(", "repository.main.books.publsh("),
     );
     const { compilerOptions } = JSON.parse(renderWith({ frontend: true })["tsconfig.json"]!);
     await writeFile(
@@ -1305,8 +1562,12 @@ describe("renderProject types the add-book operation", () => {
       .split("\n")
       .filter((line) => line.includes("error TS"));
 
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toStartWith("typo/graphoria.ts(");
-    expect(errors[0]).toContain("Property 'ad' does not exist");
+    expect(errors).toHaveLength(2);
+    expect(errors.find((line) => line.startsWith("typo/graphoria.ts("))).toContain(
+      "Property 'ad' does not exist",
+    );
+    expect(errors.find((line) => line.startsWith("publish-typo/graphoria.ts("))).toContain(
+      "Property 'publsh' does not exist",
+    );
   }, 60_000);
 });

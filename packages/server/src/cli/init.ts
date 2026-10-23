@@ -124,6 +124,11 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
     args.rabbitmq ?? /^y(es)?$/i.test(question(ask, say, "Add RabbitMQ? (y/N)", "n", yesNo));
   const ai =
     args.ai ?? /^y(es)?$/i.test(question(ask, say, "Enable the AI agent? (y/N)", "n", yesNo));
+  const auth =
+    args.auth ??
+    /^y(es)?$/i.test(
+      question(ask, say, "Add login with two roles, reader and editor? (y/N)", "n", yesNo),
+    );
   const redis = args.redis ?? /^y(es)?$/i.test(question(ask, say, "Add Redis? (y/N)", "n", yesNo));
 
   const dataTools =
@@ -138,7 +143,7 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       ),
     );
 
-  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, redis, dataTools, frontend };
+  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, auth, redis, dataTools, frontend };
 };
 
 export const isPortFree = (port: number): boolean => {
@@ -175,22 +180,34 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.database === "sqlite" ? [] : [`--db-port ${answers.dbPort}`]),
     ...(answers.rabbitmq ? ["--rabbitmq"] : []),
     ...(answers.ai ? ["--ai"] : []),
+    ...(answers.auth ? ["--auth"] : []),
     ...(answers.redis ? ["--redis"] : []),
     ...(answers.dataTools ? ["--data-tools"] : []),
     ...(answers.frontend ? ["--frontend"] : []),
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
-export const nextSteps = (answers: InitAnswers, installed: boolean) => {
+export const nextSteps = (
+  answers: InitAnswers,
+  installed: boolean,
+  users?: { reader: string; editor: string },
+) => {
+  if (answers.auth && !users) throw new Error("nextSteps: auth needs the demo users' passwords");
+
   const open = answers.frontend
     ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
     : "  then open http://localhost:3000/graphiql";
+
+  // Without Redis a host run only misses the cache, but with auth the server
+  // checks every token there and reads one it cannot check as no token.
+  const hostRedis = answers.auth && answers.redis;
 
   const run =
     answers.database === "sqlite"
       ? [
           ...(installed ? [] : ["First run `bun install`.", ""]),
           `Run it on this machine; the first boot creates ${answers.dbName}.db and seeds it:`,
+          ...(hostRedis ? ["  docker compose up -d --wait redis"] : []),
           "  bun run dev",
           open,
           "",
@@ -206,30 +223,52 @@ export const nextSteps = (answers: InitAnswers, installed: boolean) => {
           "Or run Graphoria on the host against the database container:",
           answers.database === "mssql"
             ? "  docker compose run --rm db-init"
-            : "  docker compose up -d --wait db",
+            : `  docker compose up -d --wait db${hostRedis ? " redis" : ""}`,
+          ...(answers.database === "mssql" && hostRedis
+            ? ["  docker compose up -d --wait redis"]
+            : []),
           "  bun run dev",
         ];
 
   return [
     ...run,
+    ...(answers.auth && users
+      ? [
+          "",
+          "Two demo users, one per role. Once the database is up, create them:",
+          `  bunx graphoria seed-auth --user reader --password ${users.reader} --role reader --config ./graphoria.ts`,
+          `  bunx graphoria seed-auth --user editor --password ${users.editor} --role editor --config ./graphoria.ts`,
+          ...(answers.database === "sqlite"
+            ? [
+                "(SQLite in Docker: run them inside the container, prefixed with `docker compose exec graphoria`.)",
+              ]
+            : []),
+          "Without a token you read the authors. A reader also reads the published books; an editor",
+          "reads every book, adds drafts (addBook) and publishes them (publishBook).",
+          "Log in with auth_login in GraphiQL or POST /rest/auth/login, then send",
+          `Authorization: Bearer <access_token>${answers.frontend ? ", or sign in at http://localhost:3000" : ""}.`,
+        ]
+      : []),
     ...(answers.rabbitmq
       ? [
           "",
           `RabbitMQ management UI: http://localhost:${RABBITMQ_MANAGEMENT_PORT} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
-          "Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.",
+          `Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.${answers.auth ? " Both take an editor's token or the admin secret." : ""}`,
         ]
       : []),
     ...(answers.ai
       ? [
           "",
-          "The AI agent answers /rest/ai and GraphiQL's ask field.",
+          `The AI agent answers /rest/ai and GraphiQL's ask field${answers.auth ? " for a reader or an editor" : ""}.`,
           "Ollama must run on the host, so use bun run dev, not docker compose up.",
         ]
       : []),
     ...(answers.redis
       ? [
           "",
-          "Redis caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.",
+          answers.auth
+            ? "Redis caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits once you turn them on. With bun run dev, start it first: a token the server cannot check there reads as no token."
+            : "Redis caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.",
         ]
       : []),
     ...(answers.dataTools
@@ -250,7 +289,7 @@ export const nextSteps = (answers: InitAnswers, installed: boolean) => {
       : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
-    `Try: ${sampleQuery(answers)}`,
+    `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${sampleQuery(answers)}`,
     "",
     "Recreate this setup in a new directory without prompts (the secrets are regenerated):",
     `  ${recreateCommand(answers, installed)}`,
@@ -258,7 +297,7 @@ export const nextSteps = (answers: InitAnswers, installed: boolean) => {
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--redis] [--data-tools] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--auth] [--redis] [--data-tools] [--frontend] [--no-install]";
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
@@ -308,6 +347,10 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   for (const warning of warnings) if (warning) console.warn(warning);
 
   const name = projectName(dir);
+  // Printed with the seed-auth commands only: not in .env, never in recreateCommand.
+  const users = answers.auth
+    ? { reader: generatePassword(), editor: generatePassword() }
+    : undefined;
   const files = renderProject(
     {
       ...answers,
@@ -347,6 +390,6 @@ export const initCommand = async (argv: string[]): Promise<never> => {
     console.log("");
   }
 
-  console.log(nextSteps(answers, args.install));
+  console.log(nextSteps(answers, args.install, users));
   process.exit(0);
 };

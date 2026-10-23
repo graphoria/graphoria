@@ -261,6 +261,23 @@ describe("cli init", () => {
     expect(result.stdout.toString()).toContain("/rest/books");
   });
 
+  it("scaffolds login with two roles with --auth, printing the demo passwords only", async () => {
+    const { cwd, result } = await init(["--yes", "--database", "sqlite", "--auth", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    const stdout = result.stdout.toString();
+    const passwords = [
+      ...stdout.matchAll(/seed-auth --user (reader|editor) --password (\w+) --role \1 /g),
+    ].map((match) => match[2]!);
+    expect(passwords).toHaveLength(2);
+    expect((await env(cwd)).AUTH_STORE).toBe("memory");
+    for (const name of await readdir(cwd)) {
+      const text = await readFile(join(cwd, name), "utf8");
+      for (const password of passwords) expect(text).not.toContain(password);
+    }
+  });
+
   it("scaffolds every feature together with --rabbitmq --ai --redis --frontend", async () => {
     const { cwd, result } = await init([
       "--yes",

@@ -48,11 +48,13 @@ describe("collectAnswers", () => {
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
     expect(answers.dbPort).toBe(5432);
     expect(answers.frontend).toBe(false);
+    expect(answers.auth).toBe(false);
     expect(io.fallbacks).toEqual([
       "pg",
       "app",
       answers.dbPassword,
       "5432",
+      "n",
       "n",
       "n",
       "n",
@@ -80,6 +82,7 @@ describe("collectAnswers", () => {
       dbPort: 13306,
       rabbitmq: false,
       ai: false,
+      auth: false,
       redis: false,
       dataTools: false,
       frontend: false,
@@ -92,7 +95,7 @@ describe("collectAnswers", () => {
 
     expect(answers.database).toBe("mssql");
     expect(answers.dbPort).toBe(1433);
-    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n", "n", "n", "n", "n"]);
+    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n", "n", "n", "n", "n", "n"]);
   });
 
   it("skips the name and port questions when --db-name and --db-port answered them", () => {
@@ -100,7 +103,7 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, dbName: "shop", dbPort: 15432 }, io.ask, io.say);
 
     expect(answers).toMatchObject({ dbName: "shop", dbPort: 15432 });
-    expect(io.fallbacks).toEqual(["pg", answers.dbPassword, "n", "n", "n", "n", "n"]);
+    expect(io.fallbacks).toEqual(["pg", answers.dbPassword, "n", "n", "n", "n", "n", "n"]);
   });
 
   it.each([
@@ -142,7 +145,7 @@ describe("collectAnswers", () => {
     const io = prompter([...answers]);
 
     expect(collectAnswers(ARGS, io.ask, io.say)).toMatchObject(want);
-    expect(io.fallbacks).toHaveLength(10);
+    expect(io.fallbacks).toHaveLength(11);
     expect(io.said).toHaveLength(1);
   });
 
@@ -153,23 +156,23 @@ describe("collectAnswers", () => {
   });
 
   it.each(["y", "yes", "Y", "YES", " Yes "])("adds the frontend on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", answer]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", "n", answer]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
   });
 
   it.each(["", "n", "no", "N", "No"])("leaves the frontend out on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", answer]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", "n", answer]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(false);
     expect(io.said).toEqual([]);
   });
 
   it("asks the frontend question again after another answer, saying why", () => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", "maybe", "y"]);
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", "n", "maybe", "y"]);
 
     expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
-    expect(io.fallbacks).toHaveLength(10);
+    expect(io.fallbacks).toHaveLength(11);
     expect(io.said).toHaveLength(1);
   });
 
@@ -178,7 +181,17 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, frontend }, io.ask, io.say);
 
     expect(answers.frontend).toBe(frontend);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n", "n"]);
+    expect(io.fallbacks).toEqual([
+      "pg",
+      "app",
+      answers.dbPassword,
+      "5432",
+      "n",
+      "n",
+      "n",
+      "n",
+      "n",
+    ]);
   });
 
   it("asks neither a password nor a port for SQLite, which has no server", () => {
@@ -192,11 +205,12 @@ describe("collectAnswers", () => {
       dbPort: 0,
       rabbitmq: false,
       ai: false,
+      auth: false,
       redis: false,
       dataTools: false,
       frontend: false,
     });
-    expect(io.fallbacks).toEqual(["app", "n", "n", "n", "n", "n"]);
+    expect(io.fallbacks).toEqual(["app", "n", "n", "n", "n", "n", "n"]);
   });
 
   it.each([
@@ -215,7 +229,17 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, rabbitmq }, io.ask, io.say);
 
     expect(answers.rabbitmq).toBe(rabbitmq);
-    expect(io.fallbacks).toEqual(["pg", "app", answers.dbPassword, "5432", "n", "n", "n", "n"]);
+    expect(io.fallbacks).toEqual([
+      "pg",
+      "app",
+      answers.dbPassword,
+      "5432",
+      "n",
+      "n",
+      "n",
+      "n",
+      "n",
+    ]);
   });
 
   it.each([true, false])("skips the AI question when --ai is %p", (ai) => {
@@ -223,6 +247,48 @@ describe("collectAnswers", () => {
     const answers = collectAnswers({ ...ARGS, ai }, io.ask, io.say);
 
     expect(answers.ai).toBe(ai);
+  });
+
+  it("asks for login with two roles right after the AI question", () => {
+    const questions: string[] = [];
+    collectAnswers(
+      ARGS,
+      (question) => {
+        questions.push(question);
+        return null;
+      },
+      () => {},
+    );
+
+    expect(questions.slice(5, 8)).toEqual([
+      "Enable the AI agent? (y/N)",
+      "Add login with two roles, reader and editor? (y/N)",
+      "Add Redis? (y/N)",
+    ]);
+  });
+
+  it.each(["y", "yes"])("adds login with two roles on %p", (answer) => {
+    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", answer]);
+
+    expect(collectAnswers(ARGS, io.ask, io.say).auth).toBe(true);
+  });
+
+  it.each([true, false])("skips the auth question when --auth is %p", (auth) => {
+    const io = prompter([]);
+    const answers = collectAnswers({ ...ARGS, auth }, io.ask, io.say);
+
+    expect(answers.auth).toBe(auth);
+    expect(io.fallbacks).toEqual([
+      "pg",
+      "app",
+      answers.dbPassword,
+      "5432",
+      "n",
+      "n",
+      "n",
+      "n",
+      "n",
+    ]);
   });
 
   it.each([true, false])("skips the Redis question when --redis is %p", (redis) => {
@@ -382,6 +448,7 @@ const ANSWERS: InitAnswers = {
   dbPort: 5432,
   rabbitmq: false,
   ai: false,
+  auth: false,
   redis: false,
   dataTools: false,
   frontend: false,
@@ -391,11 +458,19 @@ describe("recreateCommand", () => {
   it("turns every choice into a flag, with --yes so nothing is asked", () => {
     expect(
       recreateCommand(
-        { ...ANSWERS, rabbitmq: true, ai: true, redis: true, dataTools: true, frontend: true },
+        {
+          ...ANSWERS,
+          rabbitmq: true,
+          ai: true,
+          auth: true,
+          redis: true,
+          dataTools: true,
+          frontend: true,
+        },
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --redis --data-tools --frontend",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --auth --redis --data-tools --frontend",
     );
   });
 
@@ -432,5 +507,103 @@ describe("nextSteps", () => {
     expect(nextSteps({ ...ANSWERS, dataTools: true, redis: true }, true)).toContain(
       "Redis Commander inspects Redis at http://localhost:8081.",
     );
+  });
+
+  const USERS = { reader: "ReaderPass123", editor: "EditorPass456" };
+
+  it("prints a seed-auth command per role, with its password, only with auth", () => {
+    const steps = nextSteps({ ...ANSWERS, auth: true }, true, USERS);
+
+    expect(steps).toContain(
+      "Two demo users, one per role. Once the database is up, create them:\n" +
+        "  bunx graphoria seed-auth --user reader --password ReaderPass123 --role reader --config ./graphoria.ts\n" +
+        "  bunx graphoria seed-auth --user editor --password EditorPass456 --role editor --config ./graphoria.ts\n" +
+        "Without a token you read the authors. A reader also reads the published books; an editor\n" +
+        "reads every book, adds drafts (addBook) and publishes them (publishBook).\n" +
+        "Log in with auth_login in GraphiQL or POST /rest/auth/login, then send\n" +
+        "Authorization: Bearer <access_token>.\n",
+    );
+    expect(nextSteps(ANSWERS, true, USERS)).not.toContain("seed-auth");
+  });
+
+  it("refuses auth without the demo users' passwords, which it must print", () => {
+    expect(() => nextSteps({ ...ANSWERS, auth: true }, true)).toThrow("demo users' passwords");
+  });
+
+  it("puts the seed-auth commands right after the run instructions", () => {
+    const steps = nextSteps({ ...ANSWERS, auth: true, rabbitmq: true }, true, USERS);
+
+    expect(steps.indexOf("Two demo users")).toBeGreaterThan(steps.indexOf("  bun run dev"));
+    expect(steps.indexOf("Two demo users")).toBeLessThan(steps.indexOf("RabbitMQ management UI"));
+  });
+
+  it("says to run them in the container only for SQLite", () => {
+    const line =
+      "(SQLite in Docker: run them inside the container, prefixed with `docker compose exec graphoria`.)";
+
+    expect(
+      nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, auth: true }, true, USERS),
+    ).toContain(line);
+    expect(nextSteps({ ...ANSWERS, auth: true }, true, USERS)).not.toContain(line);
+  });
+
+  it("offers the app's sign-in only with the frontend", () => {
+    expect(nextSteps({ ...ANSWERS, auth: true, frontend: true }, true, USERS)).toContain(
+      "Authorization: Bearer <access_token>, or sign in at http://localhost:3000.",
+    );
+  });
+
+  it("says who may call the queue, the agent and the cached route with auth", () => {
+    const steps = nextSteps(
+      { ...ANSWERS, auth: true, rabbitmq: true, ai: true, redis: true },
+      true,
+      USERS,
+    );
+
+    expect(steps).toContain(
+      "Publish with the events_bookAdded mutation; subscribe with events_onBookAdded. Both take an editor's token or the admin secret.",
+    );
+    expect(steps).toContain(
+      "The AI agent answers /rest/ai and GraphiQL's ask field for a reader or an editor.",
+    );
+    expect(steps).toContain(
+      "Redis caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits once you turn them on. With bun run dev, start it first: a token the server cannot check there reads as no token.",
+    );
+    expect(steps).toContain(
+      "Try, as a reader, an editor or with the admin secret: { public_authors { name public_books { title } } }",
+    );
+  });
+
+  it("starts Redis for a host run only when auth keeps its tokens there", () => {
+    const withAuth = { ...ANSWERS, auth: true, redis: true };
+
+    expect(nextSteps(withAuth, true, USERS)).toContain(
+      "  docker compose up -d --wait db redis\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...withAuth, database: "sqlite", dbPort: 0 }, true, USERS)).toContain(
+      "seeds it:\n  docker compose up -d --wait redis\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...withAuth, database: "mssql" }, true, USERS)).toContain(
+      "  docker compose run --rm db-init\n  docker compose up -d --wait redis\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, redis: true }, true)).toContain(
+      "  docker compose up -d --wait db\n  bun run dev\n",
+    );
+  });
+
+  it("never prints a demo password in the recreate command", () => {
+    const recreate = nextSteps({ ...ANSWERS, auth: true }, true, USERS)
+      .split("\n")
+      .at(-1)!;
+
+    expect(recreate).toContain("--auth");
+    expect(recreate).not.toContain(USERS.reader);
+    expect(recreate).not.toContain(USERS.editor);
+  });
+
+  it("prints the same steps without auth, whatever users are passed", () => {
+    const answers = { ...ANSWERS, rabbitmq: true, ai: true, redis: true, frontend: true };
+
+    expect(nextSteps(answers, true, USERS)).toBe(nextSteps(answers, true));
   });
 });
