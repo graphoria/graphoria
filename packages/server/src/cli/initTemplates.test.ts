@@ -1385,6 +1385,110 @@ describe("renderProject with the frontend", () => {
   });
 });
 
+describe("renderProject with --auth --frontend", () => {
+  const renderAuthWeb = (database: DatabaseType, patch: Partial<ProjectValues> = {}) =>
+    renderProject({ ...values(database), frontend: true, auth: true, ...patch }, versions);
+  const TABLES = { pg: "public", mysql: "shop", mssql: "dbo", sqlite: "main" } as const;
+
+  it("depends on @graphoria/react at the running version, only with --auth --frontend", () => {
+    const dependencies = (patch: Partial<ProjectValues>) =>
+      JSON.parse(renderWith(patch)["package.json"]!).dependencies;
+
+    expect(dependencies({ auth: true, frontend: true })["@graphoria/react"]).toBe("^0.6.0");
+    expect(dependencies({ auth: true })).not.toHaveProperty("@graphoria/react");
+    expect(dependencies({ frontend: true })).not.toHaveProperty("@graphoria/react");
+  });
+
+  it("types the app's queries from the editor's schema", () => {
+    const { compilerOptions } = JSON.parse(renderAuthWeb("pg")["tsconfig.json"]!);
+
+    expect(compilerOptions.plugins[0].schema).toBe("./.graphoria/schemas/schema_editor.graphql");
+  });
+
+  it("wraps the app in AuthProvider and sends the token with every request", () => {
+    const frontend = renderAuthWeb("pg")["web/frontend.tsx"]!;
+
+    for (const marker of [
+      'import { AuthProvider, getAccessToken, useAuth } from "@graphoria/react";',
+      "<AuthProvider<Role>>",
+      "return token ? { headers: { Authorization: `Bearer ${token}` } } : {};",
+      "const client = useMemo(createClient, [user?.role]);",
+      "preferGetMethod: false",
+    ]) {
+      expect(frontend).toContain(marker);
+    }
+    expect(frontend).not.toContain("graphql-ws");
+  });
+
+  it("authenticates the websocket and reopens it on a new token, with RabbitMQ", () => {
+    const frontend = renderAuthWeb("pg", { rabbitmq: true })["web/frontend.tsx"]!;
+
+    for (const marker of [
+      'import { createClient as createWSClient } from "graphql-ws";',
+      "return token ? { Authorization: `Bearer ${token}` } : {};",
+      "subscribeAccessToken(() => wsClient.terminate());",
+      "subscriptionExchange({",
+    ]) {
+      expect(frontend).toContain(marker);
+    }
+  });
+
+  it.each(ENGINES)("reads the authors signed out and the %s catalog signed in", (database) => {
+    const app = renderAuthWeb(database)["web/App.tsx"]!;
+    const schema = TABLES[database];
+
+    expect(app).toContain('export type Role = "reader" | "editor";');
+    expect(app).toContain(
+      `query Authors {\n    ${schema}_authors(orderBy: [{ id: ASC }]) {\n      id\n      name\n    }\n  }`,
+    );
+    expect(app).toContain(`${schema}_books(orderBy: [{ published_year: ASC }]) {`);
+    expect(app).toContain("        status\n");
+    expect(app).toContain("return user ? <Catalog role={user.role} /> : <SignIn />;");
+  });
+
+  it("signs in through useAuth().login, keeping its own pending state", () => {
+    const app = renderAuthWeb("pg")["web/App.tsx"]!;
+
+    expect(app).toContain("const { login, error } = useAuth<Role>();");
+    expect(app).toContain("await login(username, password);");
+    expect(app).toContain("disabled={submitting}");
+    expect(app).toContain('{error && <p className="text-red-600">{error}</p>}');
+  });
+
+  it("shows the add-book form and Publish to an editor only, sending the token", () => {
+    const app = renderAuthWeb("pg")["web/App.tsx"]!;
+
+    expect(app).toMatch(
+      /\{role === "editor" && \(\s*<form className="mb-8 space-y-2" onSubmit=\{addBook\}>/,
+    );
+    expect(app).toMatch(
+      /\{role === "editor" && \(\s*<button[\s\S]*?onClick=\{\(\) => void publish\(book\.id\)\}[\s\S]*?Publish/,
+    );
+    expect(app).toContain('post("/rest/add-book", {');
+    expect(app).toContain('post("/rest/publish-book", { id });');
+    expect(app).toContain("Authorization: `Bearer ${getAccessToken()}`,");
+  });
+
+  it("subscribes to the book-added events for an editor only", () => {
+    const queued = renderAuthWeb("pg", { rabbitmq: true })["web/App.tsx"]!;
+    const plain = renderAuthWeb("pg")["web/App.tsx"]!;
+
+    expect(queued).toContain('pause: role !== "editor",');
+    expect(queued).toContain("// The list refreshes when the queued book-added event arrives.");
+    expect(plain).not.toContain("useSubscription");
+    expect(plain).toContain('    reexecute({ requestPolicy: "network-only" });\n    setTitle("");');
+  });
+
+  it("keeps the anonymous frontend without --auth", () => {
+    const files = renderWith({ frontend: true });
+
+    expect(files["web/App.tsx"]).not.toContain("@graphoria/react");
+    expect(JSON.parse(files["tsconfig.json"]!).compilerOptions.plugins[0].schema).toBe(
+      "./.graphoria/schemas/schema_anonymous.graphql",
+    );
+  });
+});
+
 describe("renderProject for SQLite", () => {
   const files = render("sqlite");
 

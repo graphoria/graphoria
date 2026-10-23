@@ -112,7 +112,10 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
   "graphql-ws": "6.3.0",
 };
 
-const packageJson = ({ name, rabbitmq, ai, frontend }: ProjectValues, { graphoria }: Versions) =>
+const packageJson = (
+  { name, rabbitmq, ai, auth, frontend }: ProjectValues,
+  { graphoria }: Versions,
+) =>
   JSON.stringify(
     {
       name,
@@ -129,6 +132,7 @@ const packageJson = ({ name, rabbitmq, ai, frontend }: ProjectValues, { graphori
         "@graphoria/server": `^${graphoria}`,
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
         ...(ai && { "@graphoria/ai": `^${graphoria}` }),
+        ...(auth && frontend && { "@graphoria/react": `^${graphoria}` }),
         ...(frontend && FRONTEND_DEPENDENCIES),
         ...(frontend && rabbitmq && FRONTEND_QUEUE_DEPENDENCIES),
       },
@@ -156,7 +160,9 @@ const TSCONFIG = `{
 }
 `;
 
-const TSCONFIG_FRONTEND = `{
+// gql.tada types the app's queries from one role's schema: the anonymous one, or
+// with --auth the editor's, which holds every query the app sends.
+const tsconfigFrontend = (role: string) => `{
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
     "target": "ESNext",
@@ -171,7 +177,7 @@ const TSCONFIG_FRONTEND = `{
     "plugins": [
       {
         "name": "gql.tada/ts-plugin",
-        "schema": "./.graphoria/schemas/schema_anonymous.graphql",
+        "schema": "./.graphoria/schemas/schema_${role}.graphql",
         "tadaOutputLocation": "./web/graphql-env.d.ts"
       }
     ]
@@ -1230,6 +1236,86 @@ if (import.meta.hot) {
 `;
 };
 
+const AUTH_WS_CLIENT = `
+// Graphoria upgrades GET /graphql to its websocket; the queued book-added
+// events arrive through the events_onBookAdded subscription. connection_init
+// carries the token, so a new token closes the socket and graphql-ws
+// reconnects with that token after its retry delay.
+const wsClient = createWSClient({
+  url: \`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/graphql\`,
+  connectionParams: () => {
+    const token = getAccessToken();
+    return token ? { Authorization: \`Bearer \${token}\` } : {};
+  },
+});
+subscribeAccessToken(() => wsClient.terminate());
+`;
+
+const AUTH_SUBSCRIPTION_EXCHANGE = `      subscriptionExchange({
+        forwardSubscription: (request) => ({
+          subscribe: (sink) => ({
+            unsubscribe: wsClient.subscribe(
+              { query: request.query ?? "", variables: request.variables },
+              sink,
+            ),
+          }),
+        }),
+      }),
+`;
+
+const frontendTsxAuth = ({
+  rabbitmq,
+}: ProjectValues) => `import { StrictMode, useMemo } from "react";
+import type { ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { Client, Provider, cacheExchange, fetchExchange } from "urql";
+${rabbitmq ? 'import { subscriptionExchange } from "@urql/core";\nimport { createClient as createWSClient } from "graphql-ws";\n' : ""}import { AuthProvider, getAccessToken, ${rabbitmq ? "subscribeAccessToken, " : ""}useAuth } from "@graphoria/react";
+
+import { App, type Role } from "./App.tsx";
+${rabbitmq ? AUTH_WS_CLIENT : ""}
+// Every request carries the signed-in user's access token; without one the
+// server reads it as anonymous.
+const createClient = () =>
+  new Client({
+    url: "/graphql",
+    // Graphoria answers queries over POST; GET /graphql is its websocket.
+    preferGetMethod: false,
+    fetchOptions: () => {
+      const token = getAccessToken();
+      return token ? { headers: { Authorization: \`Bearer \${token}\` } } : {};
+    },
+    exchanges: [
+      cacheExchange,
+      fetchExchange,
+${rabbitmq ? AUTH_SUBSCRIPTION_EXCHANGE : ""}    ],
+  });
+
+// A new client per role: no cached result crosses a login or a logout.
+function GraphQLProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth<Role>();
+  const client = useMemo(createClient, [user?.role]);
+  return <Provider value={client}>{children}</Provider>;
+}
+
+const app = (
+  <StrictMode>
+    <AuthProvider<Role>>
+      <GraphQLProvider>
+        <App />
+      </GraphQLProvider>
+    </AuthProvider>
+  </StrictMode>
+);
+
+const root = document.getElementById("root")!;
+if (import.meta.hot) {
+  // Hot reload keeps one React root across updates.
+  (import.meta.hot.data.root ??= createRoot(root)).render(app);
+} else {
+  createRoot(root).render(app);
+}
+`;
+
 // With RabbitMQ the list refreshes when the queued book-added event arrives.
 const BOOK_ADDED_SUBSCRIPTION = `
 // A message is an event, not a state: its arrival just re-fetches the list.
@@ -1360,6 +1446,242 @@ ${
 `;
 };
 
+// A reader's schema has no events_onBookAdded, so only an editor subscribes.
+const BOOK_ADDED_REFRESH_EDITOR = `  const [subscription] = useSubscription({
+    query: BookAddedSubscription,
+    pause: role !== "editor",
+  });
+
+  useEffect(() => {
+    if (subscription.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscription.data, reexecute]);
+`;
+
+const appTsxAuth = (values: ProjectValues) => {
+  const schema = seedSchema(values);
+
+  return `import { ${values.rabbitmq ? "useEffect, " : ""}useState } from "react";
+import type { FormEvent } from "react";
+import { useQuery${values.rabbitmq ? ", useSubscription" : ""} } from "urql";
+import { getAccessToken, useAuth } from "@graphoria/react";
+
+import { graphql } from "./graphql.ts";
+
+export type Role = "reader" | "editor";
+
+// What a visitor without a token reads.
+const AuthorsQuery = graphql(\`
+  query Authors {
+    ${schema}_authors(orderBy: [{ id: ASC }]) {
+      id
+      name
+    }
+  }
+\`);
+
+// A reader gets the published books, an editor every book.
+const CatalogQuery = graphql(\`
+  query Catalog {
+    ${schema}_authors(orderBy: [{ id: ASC }]) {
+      id
+      name
+      ${schema}_books(orderBy: [{ published_year: ASC }]) {
+        id
+        title
+        published_year
+        status
+      }
+    }
+  }
+\`);
+${values.rabbitmq ? BOOK_ADDED_SUBSCRIPTION : ""}
+// The write operations answer an editor's token only.
+const post = (path: string, body: object) =>
+  fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: \`Bearer \${getAccessToken()}\`,
+    },
+    body: JSON.stringify(body),
+  });
+
+export function App() {
+  const { user } = useAuth<Role>();
+  return user ? <Catalog role={user.role} /> : <SignIn />;
+}
+
+function SignIn() {
+  const { login, error } = useAuth<Role>();
+  const [{ data }] = useQuery({ query: AuthorsQuery });
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  // login() keeps this form mounted, so it holds its own pending state.
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    await login(username, password);
+    setSubmitting(false);
+  };
+
+  return (
+    <main className="mx-auto max-w-2xl p-8 font-sans">
+      <h1 className="mb-6 text-3xl font-bold">Authors</h1>
+      <form className="mb-8 space-y-2" onSubmit={submit}>
+        <input
+          className="block w-full rounded border border-gray-300 p-2"
+          autoComplete="username"
+          placeholder="Username"
+          required
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+        />
+        <input
+          className="block w-full rounded border border-gray-300 p-2"
+          autoComplete="current-password"
+          placeholder="Password"
+          required
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        <button
+          className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
+          disabled={submitting}
+          type="submit"
+        >
+          {submitting ? "Signing in…" : "Sign in"}
+        </button>
+        {error && <p className="text-red-600">{error}</p>}
+      </form>
+      <ul className="list-disc space-y-1 pl-6">
+        {data?.${schema}_authors.map((author) => (
+          <li key={author.id}>{author.name}</li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+
+function Catalog({ role }: { role: Role }) {
+  const { logout } = useAuth<Role>();
+  const [{ data, fetching, error }, reexecute] = useQuery({ query: CatalogQuery });
+${values.rabbitmq ? BOOK_ADDED_REFRESH_EDITOR : ""}
+  const [title, setTitle] = useState("");
+  const [year, setYear] = useState("");
+  const [authorId, setAuthorId] = useState("");
+
+  const addBook = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await post("/rest/add-book", {
+      title,
+      publishedYear: Number(year),
+      authorId: Number(authorId),
+    });
+    if (!response.ok) return;
+${
+  values.rabbitmq
+    ? "    // The list refreshes when the queued book-added event arrives.\n"
+    : '    // No queued event announces the book, so fetch the list again.\n    reexecute({ requestPolicy: "network-only" });\n'
+}    setTitle("");
+    setYear("");
+  };
+
+  const publish = async (id: number) => {
+    const response = await post("/rest/publish-book", { id });
+    if (response.ok) reexecute({ requestPolicy: "network-only" });
+  };
+
+  return (
+    <main className="mx-auto max-w-2xl p-8 font-sans">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Authors</h1>
+        <p className="text-gray-600">
+          Signed in as {role}{" "}
+          <button className="underline" type="button" onClick={() => void logout()}>
+            Sign out
+          </button>
+        </p>
+      </div>
+      {role === "editor" && (
+        <form className="mb-8 space-y-2" onSubmit={addBook}>
+          <input
+            className="block w-full rounded border border-gray-300 p-2"
+            placeholder="Title"
+            required
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+          <input
+            className="block w-full rounded border border-gray-300 p-2"
+            placeholder="Year"
+            required
+            type="number"
+            value={year}
+            onChange={(event) => setYear(event.target.value)}
+          />
+          <select
+            className="block w-full rounded border border-gray-300 p-2"
+            required
+            value={authorId}
+            onChange={(event) => setAuthorId(event.target.value)}
+          >
+            <option value="">Pick an author…</option>
+            {data?.${schema}_authors.map((author) => (
+              <option key={author.id} value={author.id}>
+                {author.name}
+              </option>
+            ))}
+          </select>
+          <button className="rounded bg-black px-4 py-2 text-white" type="submit">
+            Add book
+          </button>
+        </form>
+      )}
+      {fetching && <p className="text-gray-500">Loading…</p>}
+      {error && <p className="text-red-600">{error.message}</p>}
+      <ul className="space-y-6">
+        {data?.${schema}_authors.map((author) => (
+          <li key={author.id}>
+            <h2 className="text-xl font-semibold">{author.name}</h2>
+            <ul className="mt-2 list-disc pl-6">
+              {author.${schema}_books?.map(
+                (book) =>
+                  book && (
+                    <li key={book.id}>
+                      {book.title} <span className="text-gray-500">({book.published_year})</span>
+                      {book.status === "draft" && (
+                        <>
+                          {" "}
+                          <span className="rounded bg-amber-100 px-1 text-sm text-amber-800">
+                            draft
+                          </span>
+                          {role === "editor" && (
+                            <button
+                              className="ml-2 text-sm underline"
+                              type="button"
+                              onClick={() => void publish(book.id)}
+                            >
+                              Publish
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </li>
+                  ),
+              )}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+`;
+};
+
 const GRAPHQL_TS = `import { initGraphQLTada } from "gql.tada";
 
 // \`bun run types\` writes this file from the schema \`bun run dev\` prints.
@@ -1371,8 +1693,8 @@ export const graphql = initGraphQLTada<{ introspection: introspection }>();
 const frontendFiles = (values: ProjectValues): Record<(typeof FRONTEND_FILES)[number], string> => ({
   "bunfig.toml": BUNFIG,
   "web/index.html": indexHtml(values),
-  "web/frontend.tsx": frontendTsx(values),
-  "web/App.tsx": appTsx(values),
+  "web/frontend.tsx": values.auth ? frontendTsxAuth(values) : frontendTsx(values),
+  "web/App.tsx": values.auth ? appTsxAuth(values) : appTsx(values),
   "web/graphql.ts": GRAPHQL_TS,
   "web/styles.css": `@import "tailwindcss";\n`,
 });
@@ -1382,7 +1704,9 @@ export const renderProject = (
   versions: Versions,
 ): Record<string, string> => ({
   "package.json": packageJson(values, versions),
-  "tsconfig.json": values.frontend ? TSCONFIG_FRONTEND : TSCONFIG,
+  "tsconfig.json": values.frontend
+    ? tsconfigFrontend(values.auth ? "editor" : "anonymous")
+    : TSCONFIG,
   "graphoria.ts": graphoriaConfig(values),
   "repository.ts": repository(values),
   "index.ts": values.frontend ? INDEX_FRONTEND : INDEX,

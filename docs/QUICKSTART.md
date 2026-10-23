@@ -66,7 +66,7 @@ Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server
 
 ### Add a React frontend with `--frontend`
 
-Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books and adds new ones through `addBook`:
+Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books and adds new ones through `addBook` (with `--auth` too, behind a sign-in: see [Add login with two roles](#add-login-with-two-roles-with---auth)):
 
 | File                                                | What it holds                                                                                                           |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -76,9 +76,9 @@ Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` ans
 
 Its add-book form POSTs `/rest/add-book`, and the app fetches the list again once the operation answers with the stored row. With `--rabbitmq` too, the operation also publishes `events_bookAdded` after the insert, and the app refetches the list when `events_onBookAdded` delivers it instead.
 
-Five files change too: `graphoria.ts` opens the seed and `addBook` to anonymous callers (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
+Five files change too: `graphoria.ts` opens the seed and `addBook` to anonymous callers without `--auth` (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
 
-The app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API, but the grant also lets anyone add books through `addBook`, with `--redis` read `GET /rest/books`, with `--rabbitmq` publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off.
+Without `--auth`, the app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API, but the grant also lets anyone add books through `addBook`, with `--redis` read `GET /rest/books`, with `--rabbitmq` publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off. With `--auth`, see [Add login with two roles](#add-login-with-two-roles-with---auth).
 
 The query types come from the schema, which `bun run dev` prints to `.graphoria/schemas/`. Once it has, run:
 
@@ -166,6 +166,8 @@ bunx graphoria seed-auth --user editor --password <printed> --role editor --conf
 ```
 
 Log in with the `auth_login` mutation in GraphiQL, or `POST /rest/auth/login` with `{ "username": …, "password": … }`, and send the `access_token` it answers as `Authorization: Bearer <access_token>`. An operation a role is not granted answers `404` on its REST route, and that role's schema has no field for it. `publishBook` answers `null` for an id no book has.
+
+With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token. `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor.
 
 The rest of this guide sets a project up by hand, against a database you already run.
 
