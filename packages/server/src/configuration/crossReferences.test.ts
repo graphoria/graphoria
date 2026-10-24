@@ -364,6 +364,55 @@ describe("collectCrossReferenceErrors", () => {
       expect(errors).toEqual([]);
     });
 
+    it("reports a publisher and a subscriber a queue grant names that the queue lacks", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: {
+            reader: {
+              queues: {
+                events: { publishers: ["bookAdd"], subscribers: ["onBookPublished", "audit"] },
+              },
+            },
+          },
+          queues: [
+            {
+              name: "events",
+              topics: { books: {} },
+              publishers: { bookAdded: { topic: "books" } },
+              subscribers: { onBookPublished: { topic: "books" } },
+            },
+          ],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([
+        'auth.permissions.reader.queues.events.publishers["bookAdd"] — no publisher on queue "events" named "bookAdd" (did you mean "bookAdded"?)',
+        'auth.permissions.reader.queues.events.subscribers["audit"] — no subscriber on queue "events" named "audit"',
+      ]);
+    });
+
+    it("resolves the publishers and subscribers of a queue grant case-insensitively", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: {
+            reader: { queues: { events: { publishers: ["BOOKADDED"], subscribers: "ALL" } } },
+          },
+          queues: [
+            {
+              name: "events",
+              topics: { books: {} },
+              publishers: { bookAdded: { topic: "books" } },
+              subscribers: { onBookPublished: { topic: "books" } },
+            },
+          ],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([]);
+    });
+
     it("resolves an operation the role names but REST does not expose", () => {
       const errors = collectCrossReferenceErrors(
         config({

@@ -211,9 +211,30 @@ export const collectCrossReferenceErrors = (
       return collectListErrors(path, "queue", permission, queueNames);
     }
 
-    return Object.keys(permission)
-      .filter((key) => !queuesByName.has(key.toLowerCase()))
-      .map((key) => unresolved(`${path}${segment(key)}`, "queue", key, queueNames));
+    return Object.entries(permission).flatMap(([key, grant]) => {
+      const queuePath = `${path}${segment(key)}`;
+      const queue = queuesByName.get(key.toLowerCase());
+
+      if (!queue) return [unresolved(queuePath, "queue", key, queueNames)];
+      if (isString(grant)) return [];
+
+      const on = `on queue ${JSON.stringify(queue.name)}`;
+
+      return [
+        ...collectListErrors(
+          `${queuePath}.publishers`,
+          `publisher ${on}`,
+          grant.publishers,
+          Object.keys(queue.publishers),
+        ),
+        ...collectListErrors(
+          `${queuePath}.subscribers`,
+          `subscriber ${on}`,
+          grant.subscribers,
+          Object.keys(queue.subscribers),
+        ),
+      ];
+    });
   };
 
   for (const [role, permissions] of Object.entries(configuration.auth.permissions ?? {})) {

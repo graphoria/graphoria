@@ -287,6 +287,7 @@ and refuses to boot if any of them resolves to nothing:
 
 - `tables` keys, and the `columns`, `filter` and `orderBy` inside each
 - `storedProcedures`, `queues`, `operations`, `remoteSchemas`, `remoteREST`
+- the `publishers` and `subscribers` inside each `queues` key
 
 Nested relation filters are followed into the related table, so a column named
 one level down is checked too. Every unresolved name is reported at once, with

@@ -106,6 +106,7 @@ does exist.
 | `…tables.<table>.columns`, `filter` keys, `orderBy`     | that table's columns, relations for nesting  |
 | `auth.permissions.<role>.storedProcedures`              | introspected stored procedures               |
 | `auth.permissions.<role>.queues`                        | `queues[].name`                              |
+| `…queues.<queue>.publishers` / `subscribers`            | that queue's publishers and subscribers      |
 | `auth.permissions.<role>.operations`                    | `operations` keys                            |
 | `auth.permissions.<role>.remoteSchemas` / `remoteREST`  | `remoteSchemas[].name` / `remoteREST[].name` |
 | `queues[].publishers` / `subscribers` `.topic`          | that queue's `topics` keys                   |
