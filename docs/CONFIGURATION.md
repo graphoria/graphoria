@@ -610,6 +610,7 @@ type RolePermission = {
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[];
   remoteREST?: "ALL" | string[];
+  ai?: boolean;
   rateLimit?: { max: number; windowMs?: number };
 };
 
