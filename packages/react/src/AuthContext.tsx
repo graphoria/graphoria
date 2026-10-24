@@ -277,7 +277,9 @@ export function AuthProvider<TRole extends string = string>({
 
   const login = useCallback(
     async (username: string, password: string): Promise<User<TRole> | null> => {
-      setState((s) => ({ ...s, isLoading: true, error: null }));
+      // isLoading covers the boot refresh only: raising it here would swap the
+      // children for loadingFallback and drop their state.
+      setState((s) => ({ ...s, error: null }));
 
       try {
         const data = await gqlFetch<{ auth_login: TokenResponse<TRole> | null }>(
@@ -299,7 +301,6 @@ export function AuthProvider<TRole extends string = string>({
 
         setState((s) => ({
           ...s,
-          isLoading: false,
           error: "Invalid credentials",
         }));
         return null;
@@ -311,7 +312,7 @@ export function AuthProvider<TRole extends string = string>({
               ? error.message
               : "Login failed";
 
-        setState((s) => ({ ...s, isLoading: false, error: message }));
+        setState((s) => ({ ...s, error: message }));
         return null;
       }
     },

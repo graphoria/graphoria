@@ -28,7 +28,7 @@ export default (({ operation }) => ({
     enabled: true,
     database: "main", // which database hosts the auth tables
     schema: "auth", // schema to use (default: "auth")
-    autoCreateTables: true, // run CREATE SCHEMA / TABLE IF NOT EXISTS on boot
+    autoCreateTables: true, // run CREATE SCHEMA / TABLE IF NOT EXISTS on boot and in seed-auth
     permissions: {
       anonymous: { tables: "ALL", operations: "ALL" },
       user: {
@@ -45,7 +45,7 @@ export default (({ operation }) => ({
 })) satisfies ConfigurationFn;
 ```
 
-`auth.autoCreateTables` defaults to `false`. With it off, Graphoria runs a no-row probe (`SELECT username FROM auth.user WHERE 1=0`) at startup and aborts boot with a clear error if the table is missing — apply your schema migrations first, or flip `autoCreateTables: true` for the pre-1.0 behavior of running `CREATE SCHEMA / TABLE IF NOT EXISTS` on every boot. Either way you still need to create your first user (see _Bootstrapping users_ below).
+`auth.autoCreateTables` defaults to `false`. With it off, Graphoria runs a no-row probe (`SELECT username FROM auth.user WHERE 1=0`) at startup and aborts boot with a clear error if the table is missing — apply your schema migrations first, or flip `autoCreateTables: true` for the pre-1.0 behavior of running `CREATE SCHEMA / TABLE IF NOT EXISTS` on every boot, which `graphoria seed-auth` then runs too before it inserts. Either way you still need to create your first user (see _Bootstrapping users_ below).
 
 The `permissions` map describes what each role is allowed to see. If a request arrives without a token, the role is `anonymous`. With a valid token, the role comes from the `role` column of the `user` table. With the admin secret header, the role is `superadmin` and bypasses all checks. Read [Permissions & Access Control](./PERMISSIONS.md) for the full filtering and column-level rules.
 
@@ -78,15 +78,15 @@ bunx graphoria seed-auth \
   --claims '{"organizationId":"org_42"}'
 ```
 
-| Flag         | Required | Notes                                                                        |
-| ------------ | -------- | ---------------------------------------------------------------------------- |
-| `--user`     | yes      | `username` PK on the auth user table.                                        |
-| `--password` | yes      | Plaintext; the CLI hashes with argon2id (`Bun.password.hash`) before INSERT. |
-| `--role`     | yes      | Must match a key in `auth.permissions`.                                      |
-| `--config`   | yes      | Path to your `graphoria.ts`.                                                 |
-| `--claims`   | no       | JSON object copied into the user's `claims` column.                          |
+| Flag         | Required | Notes                                                                                                                       |
+| ------------ | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--user`     | yes      | `username` PK on the auth user table.                                                                                       |
+| `--password` | yes      | Plaintext; the CLI hashes with argon2id (`Bun.password.hash`) before INSERT.                                                |
+| `--role`     | yes      | A key of `auth.permissions` other than the anonymous role, or the superadmin role. Anything else exits 1 before connecting. |
+| `--config`   | yes      | Path to your `graphoria.ts`.                                                                                                |
+| `--claims`   | no       | JSON object copied into the user's `claims` column.                                                                         |
 
-The same dispatcher backs the `bun run auth:seed` script for in-repo development. The auth user table must exist before seeding — either set `auth.autoCreateTables: true` and let the server provision it on first boot, or apply the schema yourself.
+The same dispatcher backs the `bun run auth:seed` script for in-repo development. With `auth.autoCreateTables: true`, `seed-auth` creates the auth user table itself, as the server does on boot; with it off, the table must exist before seeding: apply the schema yourself.
 
 Anything you put in `claims` is later available as `$session.claims.<key>` in row-level filters. You can store the user's tenant ID, feature flags, or any other identity attribute that should travel with the token.
 

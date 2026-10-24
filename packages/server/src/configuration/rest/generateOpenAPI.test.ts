@@ -2,6 +2,7 @@ process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import type { RemoteRESTResolved } from "../../remoteREST/types";
 import type { Env } from "../../types/env";
@@ -316,6 +317,44 @@ describe("generateOpenAPI", () => {
         }
       `),
     ).toEqual({});
+  });
+
+  // A handler's REST answer is the JSON of what it returns, while a query's
+  // sits inside `data`: /openapi.json used to wrap both.
+  it("describes a handler's answer without the data envelope a query's has", () => {
+    const book = z.object({ id: z.number().int(), title: z.string() });
+    const role = getSchema({
+      tables: StoreMSSQL.tables,
+      storedProcedures: [],
+      queues: [],
+      operations: OperationsZod.parse({
+        publishBook: {
+          input: z.object({ id: z.number().int() }),
+          output: book.nullable(),
+          rest: { path: "/publish-book", method: "POST", body: z.object({ id: z.number().int() }) },
+          handler: () => null,
+        },
+        addresses: {
+          query: "query { dbo_addresses { address_id } }",
+          output: z.object({ dbo_addresses: z.array(z.object({ address_id: z.number() })) }),
+          rest: { path: "/addresses", method: "GET" },
+        },
+      }),
+      remoteSchemas: [],
+      remoteREST: [],
+    });
+
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const paths = generateOpenAPI({ role, options }).paths as any;
+    const handlerSchema =
+      paths["/publish-book"].post.responses[200].content["application/json"].schema;
+    const querySchema = paths["/addresses"].get.responses[200].content["application/json"].schema;
+
+    expect(handlerSchema.properties).toBeUndefined();
+    // oxlint-disable-next-line typescript/no-explicit-any
+    expect(handlerSchema.anyOf.map((branch: any) => branch.type)).toEqual(["object", "null"]);
+    expect(Object.keys(querySchema.properties)).toEqual(["data"]);
+    expect(querySchema.properties.data.properties.dbo_addresses.type).toBe("array");
   });
 
   it("adds the paths of the role's remote REST APIs", () => {

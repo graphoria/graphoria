@@ -50,6 +50,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("ai");
   });
 
+  it("answers the auth question with --auth or --no-auth", () => {
+    expect(parseInitArgs(["--auth"]).auth).toBe(true);
+    expect(parseInitArgs(["--no-auth"]).auth).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("auth");
+  });
+
   it("answers the Redis question with --redis or --no-redis", () => {
     expect(parseInitArgs(["--redis"]).redis).toBe(true);
     expect(parseInitArgs(["--no-redis"]).redis).toBe(false);

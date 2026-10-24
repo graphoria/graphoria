@@ -5,9 +5,27 @@ import { columnFieldName } from "../../../databases/transformers/graphqlName";
 import { convertFromZod } from "../../rest/openApiErrors";
 import { type MergedEntities } from "../mergeEntities";
 
+// `.nullable()` converts a scalar to `type: [<type>, "null"]` and anything else
+// to `anyOf: [<schema>, { type: "null" }]`.
+const unwrapNullable = (
+  schema: OpenAPIV3_1.SchemaObject,
+): { schema: OpenAPIV3_1.SchemaObject; nullable: boolean } => {
+  if (Array.isArray(schema.type) && schema.type.includes("null")) {
+    const types = schema.type.filter((type) => type !== "null");
+    if (types.length === 1) {
+      return { schema: { ...schema, type: types[0] } as OpenAPIV3_1.SchemaObject, nullable: true };
+    }
+  }
+  const branches = (schema.anyOf ?? []) as OpenAPIV3_1.SchemaObject[];
+  const others = branches.filter((branch) => branch.type !== "null");
+  if (branches.length === 2 && others.length === 1) return { schema: others[0]!, nullable: true };
+  return { schema, nullable: false };
+};
+
 // Map JSON Schema type to GraphQL type
-export const mapJSONSchemaToGraphQLType = (schema: OpenAPIV3_1.SchemaObject): string => {
-  if (!schema) return "String";
+export const mapJSONSchemaToGraphQLType = (nullableSchema: OpenAPIV3_1.SchemaObject): string => {
+  if (!nullableSchema) return "String";
+  const { schema } = unwrapNullable(nullableSchema);
 
   // Handle arrays
   if (schema.type === "array") {
@@ -292,8 +310,8 @@ const generateGraphQLTypeFromSchema = (
 
   if (schema.type === "object" && schema.properties) {
     const fields = Object.entries(schema.properties).map(([key, propSchema]) => {
-      const prop = propSchema as OpenAPIV3_1.SchemaObject;
-      const isRequired = schema.required?.includes(key) ?? false;
+      const { schema: prop, nullable } = unwrapNullable(propSchema as OpenAPIV3_1.SchemaObject);
+      const isRequired = !nullable && (schema.required?.includes(key) ?? false);
       const bang = isRequired ? "!" : "";
 
       if (prop.type === "object" && prop.properties) {
@@ -347,7 +365,9 @@ export const generateMutationType = (mergedEntities: MergedEntities, hasRoles: b
     )
     .map(([operationName, operationConfig]) => {
       const inputShape = convertFromZod(operationConfig.input);
-      const outputShape = convertFromZod(operationConfig.output);
+      const { schema: outputShape, nullable: nullableOutput } = unwrapNullable(
+        convertFromZod(operationConfig.output),
+      );
 
       const hasInputProperties =
         inputShape.type === "object" &&
@@ -362,16 +382,19 @@ export const generateMutationType = (mergedEntities: MergedEntities, hasRoles: b
       const mutationName = operationConfig.graphql?.name ?? operationName;
 
       const output = hasOutputProperties ? `${mutationName}Output` : "Boolean";
+      const bang = hasOutputProperties && nullableOutput ? "" : "!";
 
       return {
         input: hasInputProperties
           ? `
           input ${mutationName}Input {
             ${Object.entries(inputShape.properties ?? {})
-              .map(
-                ([key, value]) =>
-                  `${key}: ${mapJSONSchemaToGraphQLType(value as OpenAPIV3_1.SchemaObject)}${inputShape.required?.includes(key) ? "!" : ""}`,
-              )
+              .map(([key, value]) => {
+                const field = value as OpenAPIV3_1.SchemaObject;
+                const required =
+                  inputShape.required?.includes(key) && !unwrapNullable(field).nullable;
+                return `${key}: ${mapJSONSchemaToGraphQLType(field)}${required ? "!" : ""}`;
+              })
               .join("\n")}
           }
         `
@@ -384,10 +407,10 @@ export const generateMutationType = (mergedEntities: MergedEntities, hasRoles: b
         })(),
         resolver: hasInputProperties
           ? `
-          ${mutationName}(input: ${mutationName}Input!): ${output}!
+          ${mutationName}(input: ${mutationName}Input!): ${output}${bang}
         `
           : `
-          ${mutationName}: ${output}!
+          ${mutationName}: ${output}${bang}
         `,
       };
     });

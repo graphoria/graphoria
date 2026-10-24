@@ -176,7 +176,8 @@ export const AuthConfigZod = z
     schema: z.string().optional().default("auth"),
     /**
      * Whether Graphoria should run CREATE SCHEMA / TABLE IF NOT EXISTS for the
-     * auth user table on every boot. Default: false.
+     * auth user table on every boot, and in `graphoria seed-auth` before it
+     * inserts. Default: false.
      */
     autoCreateTables: z.boolean().optional().default(false),
     /** Permissions per role */

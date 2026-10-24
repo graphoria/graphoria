@@ -7,6 +7,7 @@ export type InitAnswers = {
   dbPort: number;
   rabbitmq: boolean;
   ai: boolean;
+  auth: boolean;
   redis: boolean;
   dataTools: boolean;
   frontend: boolean;
@@ -111,7 +112,10 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
   "graphql-ws": "6.3.0",
 };
 
-const packageJson = ({ name, rabbitmq, ai, frontend }: ProjectValues, { graphoria }: Versions) =>
+const packageJson = (
+  { name, rabbitmq, ai, auth, frontend }: ProjectValues,
+  { graphoria }: Versions,
+) =>
   JSON.stringify(
     {
       name,
@@ -128,6 +132,7 @@ const packageJson = ({ name, rabbitmq, ai, frontend }: ProjectValues, { graphori
         "@graphoria/server": `^${graphoria}`,
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
         ...(ai && { "@graphoria/ai": `^${graphoria}` }),
+        ...(auth && frontend && { "@graphoria/react": `^${graphoria}` }),
         ...(frontend && FRONTEND_DEPENDENCIES),
         ...(frontend && rabbitmq && FRONTEND_QUEUE_DEPENDENCIES),
       },
@@ -155,7 +160,9 @@ const TSCONFIG = `{
 }
 `;
 
-const TSCONFIG_FRONTEND = `{
+// gql.tada types the app's queries from one role's schema: the anonymous one, or
+// with --auth the editor's, which holds every query the app sends.
+const tsconfigFrontend = (role: string) => `{
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
     "target": "ESNext",
@@ -170,7 +177,7 @@ const TSCONFIG_FRONTEND = `{
     "plugins": [
       {
         "name": "gql.tada/ts-plugin",
-        "schema": "./.graphoria/schemas/schema_anonymous.graphql",
+        "schema": "./.graphoria/schemas/schema_${role}.graphql",
         "tadaOutputLocation": "./web/graphql-env.d.ts"
       }
     ]
@@ -215,6 +222,34 @@ ${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provi
       anonymous: {
         tables: ["${schema}_authors", "${schema}_books"],
 ${values.rabbitmq ? '        queues: ["events"],\n' : ""}        operations: [${operations.join(", ")}],
+${values.ai ? "        ai: true,\n" : ""}      },
+    },
+  },
+`;
+};
+
+const authConfig = (values: ProjectValues) => {
+  const schema = seedSchema(values);
+  const editorOperations = [...(values.redis ? ['"books"'] : []), '"addBook"', '"publishBook"'];
+  return `  // Three tiers. Without a token a caller reads the authors. A reader also
+  // reads the published books; an editor reads every book, drafts included,
+  // adds books as drafts and publishes them.
+  auth: {
+    enabled: true,
+    database: "main",
+${values.database === "sqlite" ? '    // SQLite has no auth schema to create: the user table lives in the database file.\n    schema: "main",\n' : ""}    // The first boot, or seed-auth, creates the auth user table.
+    autoCreateTables: true,
+    permissions: {
+      anonymous: { tables: ["${schema}_authors"] },
+      reader: {
+        tables: {
+          ${schema}_authors: "ALL",
+          ${schema}_books: { columns: "ALL", filter: { status: { eq: "published" } } },
+        },
+${values.redis ? '        operations: ["books"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      },
+      editor: {
+        tables: ["${schema}_authors", "${schema}_books"],
+${values.rabbitmq ? '        queues: ["events"],\n' : ""}        operations: [${editorOperations.join(", ")}],
 ${values.ai ? "        ai: true,\n" : ""}      },
     },
   },
@@ -315,7 +350,47 @@ const REPOSITORY_ADD: Record<DatabaseType, { connection: string; add: string }> 
   },
 };
 
-const repository = ({ database }: ProjectValues) => {
+// Per engine, with --auth: `publish`, which marks a book published and answers
+// the row, or null when no book has that id.
+const REPOSITORY_PUBLISH: Record<DatabaseType, string> = {
+  pg: `    publish: async (id: number): Promise<Book | null> => {
+      const [row] = await sql\`
+        UPDATE books SET status = 'published' WHERE id = \${id}
+        RETURNING id, title, published_year AS "publishedYear", author_id AS "authorId"
+      \`;
+      return row ?? null;
+    },`,
+  mysql: `    // No RETURNING here either: update, then read the row back.
+    publish: async (id: number): Promise<Book | null> => {
+      await sql\`UPDATE books SET status = 'published' WHERE id = \${id}\`;
+      const [row] = await sql\`
+        SELECT id, title, published_year AS publishedYear, author_id AS authorId
+        FROM books WHERE id = \${id}
+      \`;
+      return row ?? null;
+    },`,
+  mssql: `    publish: async (id: number): Promise<Book | null> => {
+      const { recordset } = await pool
+        .request()
+        .input("id", id)
+        .query<Book>(\`
+          UPDATE books SET status = N'published'
+          OUTPUT INSERTED.id, INSERTED.title, INSERTED.published_year AS publishedYear,
+            INSERTED.author_id AS authorId
+          WHERE id = @id
+        \`);
+      return recordset[0] ?? null;
+    },`,
+  sqlite: `    publish: async (id: number): Promise<Book | null> =>
+      db
+        .query<Book, [number]>(
+          \`UPDATE books SET status = 'published' WHERE id = ?
+           RETURNING id, title, published_year AS publishedYear, author_id AS authorId\`,
+        )
+        .get(id),`,
+};
+
+const repository = ({ database, auth }: ProjectValues) => {
   const { connection, add } = REPOSITORY_ADD[database];
   return `import type { CustomRepositoryFactory } from "@graphoria/server/config";
 
@@ -328,7 +403,7 @@ export type Book = NewBook & { id: number };
 // engine.
 export const createRepository = ((${connection}) => ({
   books: {
-${add}
+${add}${auth ? `\n${REPOSITORY_PUBLISH[database]}` : ""}
   },
 })) satisfies CustomRepositoryFactory<"${database}">;
 
@@ -339,7 +414,18 @@ export type Repository = { main: ReturnType<typeof createRepository> };
 };
 
 // Who calls addBook, and what its handler does besides the insert.
-const addBookComment = ({ frontend, rabbitmq }: ProjectValues) => {
+const addBookComment = ({ auth, frontend, rabbitmq }: ProjectValues) => {
+  if (auth && rabbitmq) {
+    return `    // POST /rest/add-book, for an editor. The handler stores the book through
+    // the repository (repository.ts) as a draft, publishes events_bookAdded, the
+    // queued event events_onBookAdded consumes, and answers the stored row.
+`;
+  }
+  if (auth) {
+    return `    // POST /rest/add-book, for an editor. The handler stores the book through
+    // the repository (repository.ts) as a draft and answers the stored row.
+`;
+  }
   if (frontend && rabbitmq) {
     return `    // The frontend posts a new book here. The handler stores it through the
     // repository (repository.ts), publishes events_bookAdded, the queued event the
@@ -389,10 +475,19 @@ const ADD_BOOK_OPERATION = (
 ${values.rabbitmq ? ADD_BOOK_HANDLER_QUEUED : ADD_BOOK_HANDLER}    }),
 `;
 
+const booksCaller = ({ auth, frontend }: ProjectValues) => {
+  if (auth) {
+    return `
+    // A reader gets the published books and an editor every book: the cache
+    // keeps one entry per caller, keyed by the token's sub and role.`;
+  }
+  return frontend ? "" : " Call it with the admin secret.";
+};
+
 const BOOKS_OPERATION = (
   values: ProjectValues,
 ) => `    // GET /rest/books answers from this process first, then from Redis, and runs
-    // the query again once the entry is 10 seconds old.${values.frontend ? "" : " Call it with the admin secret."}
+    // the query again once the entry is 10 seconds old.${booksCaller(values)}
     books: {
       query: "query { ${seedSchema(values)}_books(orderBy: { published_year: DESC }) { id title published_year } }",
       rest: { path: "/books", method: "GET" },
@@ -400,8 +495,18 @@ const BOOKS_OPERATION = (
     },
 `;
 
+const PUBLISH_BOOK_OPERATION = `    // POST /rest/publish-book: an editor publishes a draft, which readers then
+    // see. Answers the published row, or null when no book has that id.
+    publishBook: operation.typed<Repository>()({
+      input: publishBookInput,
+      output: book.nullable(),
+      rest: { path: "/publish-book", method: "POST", body: publishBookInput },
+      handler: ({ repository }, { id }) => repository.main.books.publish(id),
+    }),
+`;
+
 const operationsConfig = (values: ProjectValues) => `  operations: {
-${values.redis ? BOOKS_OPERATION(values) : ""}${ADD_BOOK_OPERATION(values)}  },
+${values.redis ? BOOKS_OPERATION(values) : ""}${ADD_BOOK_OPERATION(values)}${values.auth ? PUBLISH_BOOK_OPERATION : ""}  },
 `;
 
 const AI_CONFIG = `  ai: {
@@ -419,8 +524,15 @@ const CACHES_CONFIG = `  // A cached operation answers from this process first, 
   },
 `;
 
-const REPOSITORY_ENTRY = `      // The typed data access in repository.ts, which addBook calls.
+const repositoryEntry = ({
+  auth,
+}: ProjectValues) => `      // The typed data access in repository.ts, which ${auth ? "addBook and publishBook call" : "addBook calls"}.
       repository: createRepository,
+`;
+
+const PUBLISH_BOOK_INPUT = `
+// The body of POST /rest/publish-book and of the publishBook GraphQL mutation.
+const publishBookInput = z.object({ id: z.number().int() });
 `;
 
 const graphoriaConfig = (
@@ -446,7 +558,7 @@ const addBookInput = z.object({
 
 // What addBook answers: the row the database stored, id included.
 const book = addBookInput.extend({ id: z.number().int() });
-
+${values.auth ? PUBLISH_BOOK_INPUT : ""}
 export default (() => ({
   name: ${JSON.stringify(values.name)},
   version: "1.0.0",
@@ -455,9 +567,9 @@ export default (() => ({
       name: "main",
       type: "${values.database}",
       enabled: true,
-${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${REPOSITORY_ENTRY}    },
+${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}    },
   ],
-${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -522,6 +634,9 @@ OLLAMA_HOST=http://localhost:11434
 `
     : "";
 
+// Auth needs a token store; with --redis, redisEnv already names it.
+const authEnv = ({ auth, redis }: ProjectValues) => (auth && !redis ? "AUTH_STORE=memory\n" : "");
+
 const redisEnv = (values: ProjectValues) =>
   values.redis
     ? `REDIS_URL=redis://localhost:6379
@@ -543,7 +658,7 @@ const sqliteDotEnv = (
 ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
-${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -556,7 +671,7 @@ DB_PORT=${values.dbPort}
 DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
-${rabbitmqEnv(values)}${aiEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -864,7 +979,34 @@ volumes:
 ${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}`;
 };
 
-const PG_SEED = `-- Runs once, when the Postgres volume is first created. \`docker compose down -v\` resets it.
+// The seed books. With --auth each row carries its status; the drafts come last,
+// so the published books keep the ids they have without --auth.
+const BOOK_ROWS = `INSERT INTO books (title, published_year, author_id) VALUES
+  ('A Wizard of Earthsea', 1968, 1),
+  ('The Left Hand of Darkness', 1969, 1),
+  ('Invisible Cities', 1972, 2),
+  ('If on a winter''s night a traveler', 1979, 2),
+  ('Kindred', 1979, 3),
+  ('Parable of the Sower', 1993, 3);`;
+
+const BOOK_ROWS_WITH_STATUS = `INSERT INTO books (title, published_year, author_id, status) VALUES
+  ('A Wizard of Earthsea', 1968, 1, 'published'),
+  ('The Left Hand of Darkness', 1969, 1, 'published'),
+  ('Invisible Cities', 1972, 2, 'published'),
+  ('If on a winter''s night a traveler', 1979, 2, 'published'),
+  ('Kindred', 1979, 3, 'published'),
+  ('Parable of the Sower', 1993, 3, 'published'),
+  ('The Dispossessed', 1974, 1, 'draft'),
+  ('Cosmicomics', 1965, 2, 'draft');`;
+
+const bookRows = (auth: boolean) => (auth ? BOOK_ROWS_WITH_STATUS : BOOK_ROWS);
+
+const statusColumn = (indent: string, type: string, draft: string) =>
+  `${indent}-- addBook stores a draft; publishBook shows it to readers.\n${indent}status ${type} NOT NULL DEFAULT ${draft}`;
+
+const pgSeed = ({
+  auth,
+}: ProjectValues) => `-- Runs once, when the Postgres volume is first created. \`docker compose down -v\` resets it.
 CREATE TABLE authors (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL
@@ -874,7 +1016,7 @@ CREATE TABLE books (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   published_year INT NOT NULL,
-  author_id INT NOT NULL REFERENCES authors (id)
+  author_id INT NOT NULL REFERENCES authors (id)${auth ? `,\n${statusColumn("  ", "TEXT", "'draft'")}` : ""}
 );
 
 INSERT INTO authors (name) VALUES
@@ -882,16 +1024,12 @@ INSERT INTO authors (name) VALUES
   ('Italo Calvino'),
   ('Octavia E. Butler');
 
-INSERT INTO books (title, published_year, author_id) VALUES
-  ('A Wizard of Earthsea', 1968, 1),
-  ('The Left Hand of Darkness', 1969, 1),
-  ('Invisible Cities', 1972, 2),
-  ('If on a winter''s night a traveler', 1979, 2),
-  ('Kindred', 1979, 3),
-  ('Parable of the Sower', 1993, 3);
+${bookRows(auth)}
 `;
 
-const MYSQL_SEED = `-- Runs once, when the MySQL volume is first created. \`docker compose down -v\` resets it.
+const mysqlSeed = ({
+  auth,
+}: ProjectValues) => `-- Runs once, when the MySQL volume is first created. \`docker compose down -v\` resets it.
 CREATE TABLE authors (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL
@@ -902,7 +1040,7 @@ CREATE TABLE books (
   title VARCHAR(255) NOT NULL,
   published_year INT NOT NULL,
   author_id INT NOT NULL,
-  FOREIGN KEY (author_id) REFERENCES authors (id)
+${auth ? `${statusColumn("  ", "VARCHAR(20)", "'draft'")},\n` : ""}  FOREIGN KEY (author_id) REFERENCES authors (id)
 );
 
 INSERT INTO authors (name) VALUES
@@ -910,16 +1048,30 @@ INSERT INTO authors (name) VALUES
   ('Italo Calvino'),
   ('Octavia E. Butler');
 
-INSERT INTO books (title, published_year, author_id) VALUES
-  ('A Wizard of Earthsea', 1968, 1),
-  ('The Left Hand of Darkness', 1969, 1),
-  ('Invisible Cities', 1972, 2),
-  ('If on a winter''s night a traveler', 1979, 2),
-  ('Kindred', 1979, 3),
-  ('Parable of the Sower', 1993, 3);
+${bookRows(auth)}
 `;
 
-const MSSQL_SEED = `-- db-init runs this on every \`docker compose up\`, so it only creates the tables
+const MSSQL_BOOK_ROWS = `  INSERT INTO dbo.books (title, published_year, author_id) VALUES
+    (N'A Wizard of Earthsea', 1968, 1),
+    (N'The Left Hand of Darkness', 1969, 1),
+    (N'Invisible Cities', 1972, 2),
+    (N'If on a winter''s night a traveler', 1979, 2),
+    (N'Kindred', 1979, 3),
+    (N'Parable of the Sower', 1993, 3);`;
+
+const MSSQL_BOOK_ROWS_WITH_STATUS = `  INSERT INTO dbo.books (title, published_year, author_id, status) VALUES
+    (N'A Wizard of Earthsea', 1968, 1, N'published'),
+    (N'The Left Hand of Darkness', 1969, 1, N'published'),
+    (N'Invisible Cities', 1972, 2, N'published'),
+    (N'If on a winter''s night a traveler', 1979, 2, N'published'),
+    (N'Kindred', 1979, 3, N'published'),
+    (N'Parable of the Sower', 1993, 3, N'published'),
+    (N'The Dispossessed', 1974, 1, N'draft'),
+    (N'Cosmicomics', 1965, 2, N'draft');`;
+
+const mssqlSeed = ({
+  auth,
+}: ProjectValues) => `-- db-init runs this on every \`docker compose up\`, so it only creates the tables
 -- when they are missing. \`docker compose down -v\` resets the database.
 IF OBJECT_ID(N'dbo.authors') IS NULL
 BEGIN
@@ -932,7 +1084,7 @@ BEGIN
     id INT IDENTITY PRIMARY KEY,
     title NVARCHAR(255) NOT NULL,
     published_year INT NOT NULL,
-    author_id INT NOT NULL REFERENCES dbo.authors (id)
+    author_id INT NOT NULL REFERENCES dbo.authors (id)${auth ? `,\n${statusColumn("    ", "NVARCHAR(20)", "N'draft'")}` : ""}
   );
 
   INSERT INTO dbo.authors (name) VALUES
@@ -940,17 +1092,13 @@ BEGIN
     (N'Italo Calvino'),
     (N'Octavia E. Butler');
 
-  INSERT INTO dbo.books (title, published_year, author_id) VALUES
-    (N'A Wizard of Earthsea', 1968, 1),
-    (N'The Left Hand of Darkness', 1969, 1),
-    (N'Invisible Cities', 1972, 2),
-    (N'If on a winter''s night a traveler', 1979, 2),
-    (N'Kindred', 1979, 3),
-    (N'Parable of the Sower', 1993, 3);
+${auth ? MSSQL_BOOK_ROWS_WITH_STATUS : MSSQL_BOOK_ROWS}
 END;
 `;
 
-const SQLITE_SEED = `-- graphoria.ts runs this on the first boot, while the database file has no
+const sqliteSeed = ({
+  auth,
+}: ProjectValues) => `-- graphoria.ts runs this on the first boot, while the database file has no
 -- authors table. Delete the file (\`docker compose down -v\` in Docker) to reset it.
 BEGIN;
 
@@ -963,7 +1111,7 @@ CREATE TABLE books (
   id INTEGER PRIMARY KEY,
   title TEXT NOT NULL,
   published_year INTEGER NOT NULL,
-  author_id INTEGER NOT NULL REFERENCES authors (id)
+  author_id INTEGER NOT NULL REFERENCES authors (id)${auth ? `,\n${statusColumn("  ", "TEXT", "'draft'")}` : ""}
 );
 
 INSERT INTO authors (name) VALUES
@@ -971,22 +1119,16 @@ INSERT INTO authors (name) VALUES
   ('Italo Calvino'),
   ('Octavia E. Butler');
 
-INSERT INTO books (title, published_year, author_id) VALUES
-  ('A Wizard of Earthsea', 1968, 1),
-  ('The Left Hand of Darkness', 1969, 1),
-  ('Invisible Cities', 1972, 2),
-  ('If on a winter''s night a traveler', 1979, 2),
-  ('Kindred', 1979, 3),
-  ('Parable of the Sower', 1993, 3);
+${bookRows(auth)}
 
 COMMIT;
 `;
 
-const SEEDS: Record<DatabaseType, string> = {
-  pg: PG_SEED,
-  mysql: MYSQL_SEED,
-  mssql: MSSQL_SEED,
-  sqlite: SQLITE_SEED,
+const SEEDS: Record<DatabaseType, (values: ProjectValues) => string> = {
+  pg: pgSeed,
+  mysql: mysqlSeed,
+  mssql: mssqlSeed,
+  sqlite: sqliteSeed,
 };
 
 const BUNFIG = `# Bun.serve bundles web/ with Tailwind.
@@ -1093,6 +1235,86 @@ if (import.meta.hot) {
 }
 `;
 };
+
+const AUTH_WS_CLIENT = `
+// Graphoria upgrades GET /graphql to its websocket; the queued book-added
+// events arrive through the events_onBookAdded subscription. connection_init
+// carries the token, so a new token closes the socket and graphql-ws
+// reconnects with that token after its retry delay.
+const wsClient = createWSClient({
+  url: \`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/graphql\`,
+  connectionParams: () => {
+    const token = getAccessToken();
+    return token ? { Authorization: \`Bearer \${token}\` } : {};
+  },
+});
+subscribeAccessToken(() => wsClient.terminate());
+`;
+
+const AUTH_SUBSCRIPTION_EXCHANGE = `      subscriptionExchange({
+        forwardSubscription: (request) => ({
+          subscribe: (sink) => ({
+            unsubscribe: wsClient.subscribe(
+              { query: request.query ?? "", variables: request.variables },
+              sink,
+            ),
+          }),
+        }),
+      }),
+`;
+
+const frontendTsxAuth = ({
+  rabbitmq,
+}: ProjectValues) => `import { StrictMode, useMemo } from "react";
+import type { ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { Client, Provider, cacheExchange, fetchExchange } from "urql";
+${rabbitmq ? 'import { subscriptionExchange } from "@urql/core";\nimport { createClient as createWSClient } from "graphql-ws";\n' : ""}import { AuthProvider, getAccessToken, ${rabbitmq ? "subscribeAccessToken, " : ""}useAuth } from "@graphoria/react";
+
+import { App, type Role } from "./App.tsx";
+${rabbitmq ? AUTH_WS_CLIENT : ""}
+// Every request carries the signed-in user's access token; without one the
+// server reads it as anonymous.
+const createClient = () =>
+  new Client({
+    url: "/graphql",
+    // Graphoria answers queries over POST; GET /graphql is its websocket.
+    preferGetMethod: false,
+    fetchOptions: () => {
+      const token = getAccessToken();
+      return token ? { headers: { Authorization: \`Bearer \${token}\` } } : {};
+    },
+    exchanges: [
+      cacheExchange,
+      fetchExchange,
+${rabbitmq ? AUTH_SUBSCRIPTION_EXCHANGE : ""}    ],
+  });
+
+// A new client per role: no cached result crosses a login or a logout.
+function GraphQLProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth<Role>();
+  const client = useMemo(createClient, [user?.role]);
+  return <Provider value={client}>{children}</Provider>;
+}
+
+const app = (
+  <StrictMode>
+    <AuthProvider<Role>>
+      <GraphQLProvider>
+        <App />
+      </GraphQLProvider>
+    </AuthProvider>
+  </StrictMode>
+);
+
+const root = document.getElementById("root")!;
+if (import.meta.hot) {
+  // Hot reload keeps one React root across updates.
+  (import.meta.hot.data.root ??= createRoot(root)).render(app);
+} else {
+  createRoot(root).render(app);
+}
+`;
 
 // With RabbitMQ the list refreshes when the queued book-added event arrives.
 const BOOK_ADDED_SUBSCRIPTION = `
@@ -1224,6 +1446,242 @@ ${
 `;
 };
 
+// A reader's schema has no events_onBookAdded, so only an editor subscribes.
+const BOOK_ADDED_REFRESH_EDITOR = `  const [subscription] = useSubscription({
+    query: BookAddedSubscription,
+    pause: role !== "editor",
+  });
+
+  useEffect(() => {
+    if (subscription.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscription.data, reexecute]);
+`;
+
+const appTsxAuth = (values: ProjectValues) => {
+  const schema = seedSchema(values);
+
+  return `import { ${values.rabbitmq ? "useEffect, " : ""}useState } from "react";
+import type { FormEvent } from "react";
+import { useQuery${values.rabbitmq ? ", useSubscription" : ""} } from "urql";
+import { getAccessToken, useAuth } from "@graphoria/react";
+
+import { graphql } from "./graphql.ts";
+
+export type Role = "reader" | "editor";
+
+// What a visitor without a token reads.
+const AuthorsQuery = graphql(\`
+  query Authors {
+    ${schema}_authors(orderBy: [{ id: ASC }]) {
+      id
+      name
+    }
+  }
+\`);
+
+// A reader gets the published books, an editor every book.
+const CatalogQuery = graphql(\`
+  query Catalog {
+    ${schema}_authors(orderBy: [{ id: ASC }]) {
+      id
+      name
+      ${schema}_books(orderBy: [{ published_year: ASC }]) {
+        id
+        title
+        published_year
+        status
+      }
+    }
+  }
+\`);
+${values.rabbitmq ? BOOK_ADDED_SUBSCRIPTION : ""}
+// The write operations answer an editor's token only.
+const post = (path: string, body: object) =>
+  fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: \`Bearer \${getAccessToken()}\`,
+    },
+    body: JSON.stringify(body),
+  });
+
+export function App() {
+  const { user } = useAuth<Role>();
+  return user ? <Catalog role={user.role} /> : <SignIn />;
+}
+
+function SignIn() {
+  const { login, error } = useAuth<Role>();
+  const [{ data }] = useQuery({ query: AuthorsQuery });
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  // login() keeps this form mounted, so it holds its own pending state.
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    await login(username, password);
+    setSubmitting(false);
+  };
+
+  return (
+    <main className="mx-auto max-w-2xl p-8 font-sans">
+      <h1 className="mb-6 text-3xl font-bold">Authors</h1>
+      <form className="mb-8 space-y-2" onSubmit={submit}>
+        <input
+          className="block w-full rounded border border-gray-300 p-2"
+          autoComplete="username"
+          placeholder="Username"
+          required
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+        />
+        <input
+          className="block w-full rounded border border-gray-300 p-2"
+          autoComplete="current-password"
+          placeholder="Password"
+          required
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        <button
+          className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
+          disabled={submitting}
+          type="submit"
+        >
+          {submitting ? "Signing in…" : "Sign in"}
+        </button>
+        {error && <p className="text-red-600">{error}</p>}
+      </form>
+      <ul className="list-disc space-y-1 pl-6">
+        {data?.${schema}_authors.map((author) => (
+          <li key={author.id}>{author.name}</li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+
+function Catalog({ role }: { role: Role }) {
+  const { logout } = useAuth<Role>();
+  const [{ data, fetching, error }, reexecute] = useQuery({ query: CatalogQuery });
+${values.rabbitmq ? BOOK_ADDED_REFRESH_EDITOR : ""}
+  const [title, setTitle] = useState("");
+  const [year, setYear] = useState("");
+  const [authorId, setAuthorId] = useState("");
+
+  const addBook = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await post("/rest/add-book", {
+      title,
+      publishedYear: Number(year),
+      authorId: Number(authorId),
+    });
+    if (!response.ok) return;
+${
+  values.rabbitmq
+    ? "    // The list refreshes when the queued book-added event arrives.\n"
+    : '    // No queued event announces the book, so fetch the list again.\n    reexecute({ requestPolicy: "network-only" });\n'
+}    setTitle("");
+    setYear("");
+  };
+
+  const publish = async (id: number) => {
+    const response = await post("/rest/publish-book", { id });
+    if (response.ok) reexecute({ requestPolicy: "network-only" });
+  };
+
+  return (
+    <main className="mx-auto max-w-2xl p-8 font-sans">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Authors</h1>
+        <p className="text-gray-600">
+          Signed in as {role}{" "}
+          <button className="underline" type="button" onClick={() => void logout()}>
+            Sign out
+          </button>
+        </p>
+      </div>
+      {role === "editor" && (
+        <form className="mb-8 space-y-2" onSubmit={addBook}>
+          <input
+            className="block w-full rounded border border-gray-300 p-2"
+            placeholder="Title"
+            required
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+          <input
+            className="block w-full rounded border border-gray-300 p-2"
+            placeholder="Year"
+            required
+            type="number"
+            value={year}
+            onChange={(event) => setYear(event.target.value)}
+          />
+          <select
+            className="block w-full rounded border border-gray-300 p-2"
+            required
+            value={authorId}
+            onChange={(event) => setAuthorId(event.target.value)}
+          >
+            <option value="">Pick an author…</option>
+            {data?.${schema}_authors.map((author) => (
+              <option key={author.id} value={author.id}>
+                {author.name}
+              </option>
+            ))}
+          </select>
+          <button className="rounded bg-black px-4 py-2 text-white" type="submit">
+            Add book
+          </button>
+        </form>
+      )}
+      {fetching && <p className="text-gray-500">Loading…</p>}
+      {error && <p className="text-red-600">{error.message}</p>}
+      <ul className="space-y-6">
+        {data?.${schema}_authors.map((author) => (
+          <li key={author.id}>
+            <h2 className="text-xl font-semibold">{author.name}</h2>
+            <ul className="mt-2 list-disc pl-6">
+              {author.${schema}_books?.map(
+                (book) =>
+                  book && (
+                    <li key={book.id}>
+                      {book.title} <span className="text-gray-500">({book.published_year})</span>
+                      {book.status === "draft" && (
+                        <>
+                          {" "}
+                          <span className="rounded bg-amber-100 px-1 text-sm text-amber-800">
+                            draft
+                          </span>
+                          {role === "editor" && (
+                            <button
+                              className="ml-2 text-sm underline"
+                              type="button"
+                              onClick={() => void publish(book.id)}
+                            >
+                              Publish
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </li>
+                  ),
+              )}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+`;
+};
+
 const GRAPHQL_TS = `import { initGraphQLTada } from "gql.tada";
 
 // \`bun run types\` writes this file from the schema \`bun run dev\` prints.
@@ -1235,8 +1693,8 @@ export const graphql = initGraphQLTada<{ introspection: introspection }>();
 const frontendFiles = (values: ProjectValues): Record<(typeof FRONTEND_FILES)[number], string> => ({
   "bunfig.toml": BUNFIG,
   "web/index.html": indexHtml(values),
-  "web/frontend.tsx": frontendTsx(values),
-  "web/App.tsx": appTsx(values),
+  "web/frontend.tsx": values.auth ? frontendTsxAuth(values) : frontendTsx(values),
+  "web/App.tsx": values.auth ? appTsxAuth(values) : appTsx(values),
   "web/graphql.ts": GRAPHQL_TS,
   "web/styles.css": `@import "tailwindcss";\n`,
 });
@@ -1246,7 +1704,9 @@ export const renderProject = (
   versions: Versions,
 ): Record<string, string> => ({
   "package.json": packageJson(values, versions),
-  "tsconfig.json": values.frontend ? TSCONFIG_FRONTEND : TSCONFIG,
+  "tsconfig.json": values.frontend
+    ? tsconfigFrontend(values.auth ? "editor" : "anonymous")
+    : TSCONFIG,
   "graphoria.ts": graphoriaConfig(values),
   "repository.ts": repository(values),
   "index.ts": values.frontend ? INDEX_FRONTEND : INDEX,
@@ -1255,6 +1715,6 @@ export const renderProject = (
   Dockerfile: dockerfile(values, versions),
   ".dockerignore": dockerignore(values),
   "docker-compose.yml": dockerCompose(values),
-  "seed.sql": SEEDS[values.database],
+  "seed.sql": SEEDS[values.database](values),
   ...(values.frontend && frontendFiles(values)),
 });

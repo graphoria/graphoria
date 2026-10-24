@@ -1,7 +1,12 @@
 import { describe, expect, test as it } from "bun:test";
+import { buildSchema } from "graphql";
+import { z } from "zod";
+
+import type { GraphQLInputObjectType, GraphQLObjectType, GraphQLSchema } from "graphql";
 
 import {
   generateAggregationTypes,
+  generateMutationType,
   generateOrderByInputType,
   generateQueryType,
   generateTableType,
@@ -154,6 +159,92 @@ describe("Type definition generator", () => {
       expect(result).toContain("input StringCondition");
       expect(result).toContain("type dbo_products");
       expect(result).toContain("type Query");
+    });
+  });
+
+  describe("Operation mutation output", () => {
+    const schemaFor = (
+      output?: z.ZodType,
+      input: z.ZodType = z.object({ id: z.number().int() }),
+    ) => {
+      const typeDefs = generateMutationType({
+        storedProcedures: [],
+        queues: [],
+        remoteSchemas: [],
+        operations: {
+          publishBook: {
+            graphql: { enabled: true },
+            rest: { path: "/publish-book", method: "POST" },
+            input,
+            output,
+          },
+        },
+      } as unknown as Parameters<typeof generateMutationType>[0]);
+      return buildSchema(`type Query { ok: Boolean }\n${typeDefs}`);
+    };
+
+    const mutationField = (output?: z.ZodType) =>
+      schemaFor(output).getMutationType()!.getFields().publishBook!.type.toString();
+
+    const fieldsOf = (schema: GraphQLSchema, name: string) =>
+      Object.fromEntries(
+        Object.entries(
+          (schema.getType(name) as GraphQLObjectType | GraphQLInputObjectType).getFields(),
+        ).map(([field, { type }]) => [field, type.toString()]),
+      );
+
+    const book = z.object({ id: z.number().int(), title: z.string() });
+
+    it("types an object output as its own non-null type", () => {
+      expect(mutationField(book)).toBe("publishBookOutput!");
+    });
+
+    // `.nullable()` converts to anyOf [object, null], which used to fall back
+    // to Boolean!, so selecting the row's fields failed validation.
+    it("types a nullable object output as a nullable field of the object's type", () => {
+      expect(mutationField(book.nullable())).toBe("publishBookOutput");
+    });
+
+    it("keeps Boolean! for an output that is not an object", () => {
+      expect(mutationField(z.boolean())).toBe("Boolean!");
+      expect(mutationField(z.string().nullable())).toBe("Boolean!");
+      expect(mutationField(z.union([book, z.string()]))).toBe("Boolean!");
+      expect(mutationField(z.union([book, z.null(), z.string()]))).toBe("Boolean!");
+      expect(mutationField()).toBe("Boolean!");
+    });
+
+    // A nullable field converts to type [<type>, "null"] or anyOf [<schema>, null],
+    // which used to read as a required String whatever the type.
+    it("types a nullable field of the output as nullable, of its own type", () => {
+      const schema = schemaFor(
+        z.object({
+          id: z.number().int(),
+          year: z.number().int().nullable(),
+          note: z.string().nullable(),
+          author: z.object({ name: z.string() }).nullable(),
+          tags: z.array(z.object({ label: z.string() })).nullable(),
+          scores: z.array(z.number().nullable()),
+        }),
+      );
+
+      expect(fieldsOf(schema, "publishBookOutput")).toEqual({
+        id: "Int!",
+        year: "Int",
+        note: "String",
+        author: "publishBookOutputauthor",
+        tags: "[publishBookOutputtags]",
+        scores: "[Float]!",
+      });
+      expect(fieldsOf(schema, "publishBookOutputauthor")).toEqual({ name: "String!" });
+    });
+
+    it("types a nullable input field as nullable, of its own type", () => {
+      const schema = schemaFor(
+        book,
+        z.object({ id: z.number().int(), year: z.number().int().nullable() }),
+      );
+
+      expect(fieldsOf(schema, "publishBookInput")).toEqual({ id: "Int!", year: "Int" });
     });
   });
 
