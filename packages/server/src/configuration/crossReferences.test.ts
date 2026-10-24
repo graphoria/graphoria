@@ -413,6 +413,23 @@ describe("collectCrossReferenceErrors", () => {
       expect(errors).toEqual([]);
     });
 
+    it("passes a queue grant that grants nothing", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: {
+            reader: { queues: { events: {}, feed: { publishers: [], subscribers: [] } } },
+          },
+          queues: [
+            { name: "events", topics: {}, publishers: {}, subscribers: {} },
+            { name: "feed", topics: {}, publishers: {}, subscribers: {} },
+          ],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([]);
+    });
+
     it("resolves an operation the role names but REST does not expose", () => {
       const errors = collectCrossReferenceErrors(
         config({

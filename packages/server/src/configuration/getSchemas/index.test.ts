@@ -72,4 +72,11 @@ describe("queue grants in a role's schema", () => {
       "events_onBookPublished",
     ]);
   });
+
+  it("compiles no queue field for a grant that grants nothing", () => {
+    const { schema } = readerSchema({ events: {} });
+
+    expect(fieldsOf(schema.getMutationType())).toEqual([]);
+    expect(fieldsOf(schema.getSubscriptionType())).toEqual([]);
+  });
 });

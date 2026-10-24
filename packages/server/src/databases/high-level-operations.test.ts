@@ -380,6 +380,18 @@ describe("sourcesForEachRole", () => {
       expect(namesIn(events)).toEqual(namesIn(bookEvents()));
     });
 
+    it("names publishers and subscribers only in the four views the role filter trims", () => {
+      const events = bookEvents();
+      const names = [...Object.keys(events.publishers), ...Object.keys(events.subscribers)];
+      const views = Object.entries(events)
+        .filter(([, view]) =>
+          names.some((name) => JSON.stringify(view ?? null).includes(`"${name}"`)),
+        )
+        .map(([key]) => key);
+
+      expect(views.sort()).toEqual(["exchanges", "publishers", "queues", "subscribers"]);
+    });
+
     it("filters stored procedures by allowlist", () => {
       const out = sourcesForEachRole(
         [],
