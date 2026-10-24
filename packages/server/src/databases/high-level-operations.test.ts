@@ -392,6 +392,20 @@ describe("sourcesForEachRole", () => {
       expect(views.sort()).toEqual(["exchanges", "publishers", "queues", "subscribers"]);
     });
 
+    it("grants nothing from a queue mapped to a string other than ALL", () => {
+      const out = sourcesForEachRole(
+        [],
+        [],
+        [bookEvents()],
+        {},
+        mkPerms({ reader: { queues: { events: "SOME" } } }),
+      );
+
+      expect(out.reader!.queues.map(namesIn)).toEqual([
+        { publishers: [], subscribers: [], exchangePublishers: [], queues: [] },
+      ]);
+    });
+
     it("filters stored procedures by allowlist", () => {
       const out = sourcesForEachRole(
         [],

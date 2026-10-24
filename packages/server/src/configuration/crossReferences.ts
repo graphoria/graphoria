@@ -216,7 +216,7 @@ export const collectCrossReferenceErrors = (
       const queue = queuesByName.get(key.toLowerCase());
 
       if (!queue) return [unresolved(queuePath, "queue", key, queueNames)];
-      if (isString(grant)) return [];
+      if (grant === "ALL") return [];
 
       const on = `on queue ${JSON.stringify(queue.name)}`;
 

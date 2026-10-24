@@ -272,7 +272,7 @@ const filterQueuesByPermission = (
   return filterByPermission(queues, [...grants.keys()], (queue) => queue.name).map((queue) => {
     const grant = grants.get(queue.name.toLowerCase())!;
 
-    if (isString(grant)) return queue;
+    if (grant === "ALL") return queue;
 
     return {
       ...queue,

@@ -102,12 +102,12 @@ export type TablePermission = z.input<typeof TablePermissionZod>;
  * Queue-level permission configuration
  */
 export const QueuePermissionZod = z.strictObject({
-  /** Allowed publishers (mutations) — "ALL" or array of publisher names */
+  /** Allowed publishers (mutations) — "ALL" or array of publisher names. Default [] — none */
   publishers: z
     .union([z.literal("ALL"), z.array(z.string())])
     .optional()
     .default([]),
-  /** Allowed subscribers (subscriptions) — "ALL" or array of subscriber names */
+  /** Allowed subscribers (subscriptions) — "ALL" or array of subscriber names. Default [] — none */
   subscribers: z
     .union([z.literal("ALL"), z.array(z.string())])
     .optional()
