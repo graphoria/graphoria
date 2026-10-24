@@ -423,12 +423,16 @@ export const generateOpenAPI = ({
                   description: "Successful response",
                   content: {
                     "application/json": {
-                      schema: {
-                        type: "object",
-                        properties: {
-                          data: responseDataSchema,
-                        },
-                      },
+                      // A handler's answer is sent as it returns it; a query's
+                      // and an auth route's inside `data`.
+                      schema: value.handler
+                        ? responseDataSchema
+                        : {
+                            type: "object",
+                            properties: {
+                              data: responseDataSchema,
+                            },
+                          },
                     },
                   },
                 },
