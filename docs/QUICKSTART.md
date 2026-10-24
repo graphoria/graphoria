@@ -47,6 +47,8 @@ bun run dev
 
 With `--database sqlite` there is no database server: the database is the file `app.db` (named after the database name) next to `graphoria.ts`, and the first boot creates it and seeds it from `seed.sql`. `bun run dev` is all it takes, and `docker compose up -d --build` runs Graphoria alone, with the file on a volume. See [SQLite](./CONFIGURATION.md#sqlite) for what the engine cannot do.
 
+With `--rabbitmq` or `--redis` (below), a run on your machine needs those containers too, so the steps `init` prints add them to `docker compose up -d --wait`.
+
 Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the `ADMIN_SECRET` from `.env`, and query the seed:
 
 ```graphql

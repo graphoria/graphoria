@@ -574,20 +574,24 @@ describe("nextSteps", () => {
     );
   });
 
-  it("starts Redis for a host run only when auth keeps its tokens there", () => {
-    const withAuth = { ...ANSWERS, auth: true, redis: true };
+  it("starts the broker and Redis too for a host run", () => {
+    const both = { ...ANSWERS, rabbitmq: true, redis: true };
 
-    expect(nextSteps(withAuth, true, USERS)).toContain(
+    expect(nextSteps(both, true)).toContain(
+      "  docker compose up -d --wait db rabbitmq redis\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...both, database: "sqlite", dbPort: 0 }, true)).toContain(
+      "seeds it:\n  docker compose up -d --wait rabbitmq redis\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...both, database: "mssql" }, true)).toContain(
+      "  docker compose run --rm db-init\n  docker compose up -d --wait rabbitmq redis\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, redis: true, auth: true }, true, USERS)).toContain(
       "  docker compose up -d --wait db redis\n  bun run dev\n",
     );
-    expect(nextSteps({ ...withAuth, database: "sqlite", dbPort: 0 }, true, USERS)).toContain(
-      "seeds it:\n  docker compose up -d --wait redis\n  bun run dev\n",
-    );
-    expect(nextSteps({ ...withAuth, database: "mssql" }, true, USERS)).toContain(
-      "  docker compose run --rm db-init\n  docker compose up -d --wait redis\n  bun run dev\n",
-    );
-    expect(nextSteps({ ...ANSWERS, redis: true }, true)).toContain(
-      "  docker compose up -d --wait db\n  bun run dev\n",
+    expect(nextSteps(ANSWERS, true)).toContain("  docker compose up -d --wait db\n  bun run dev\n");
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0 }, true)).toContain(
+      "seeds it:\n  bun run dev\n",
     );
   });
 

@@ -198,16 +198,19 @@ export const nextSteps = (
     ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
     : "  then open http://localhost:3000/graphiql";
 
-  // Without Redis a host run only misses the cache, but with auth the server
-  // checks every token there and reads one it cannot check as no token.
-  const hostRedis = answers.auth && answers.redis;
+  // Besides the database, what graphoria.ts connects to: a host run starts
+  // their containers too.
+  const services = [
+    ...(answers.rabbitmq ? ["rabbitmq"] : []),
+    ...(answers.redis ? ["redis"] : []),
+  ].join(" ");
 
   const run =
     answers.database === "sqlite"
       ? [
           ...(installed ? [] : ["First run `bun install`.", ""]),
           `Run it on this machine; the first boot creates ${answers.dbName}.db and seeds it:`,
-          ...(hostRedis ? ["  docker compose up -d --wait redis"] : []),
+          ...(services ? [`  docker compose up -d --wait ${services}`] : []),
           "  bun run dev",
           open,
           "",
@@ -223,9 +226,9 @@ export const nextSteps = (
           "Or run Graphoria on the host against the database container:",
           answers.database === "mssql"
             ? "  docker compose run --rm db-init"
-            : `  docker compose up -d --wait db${hostRedis ? " redis" : ""}`,
-          ...(answers.database === "mssql" && hostRedis
-            ? ["  docker compose up -d --wait redis"]
+            : `  docker compose up -d --wait db${services ? ` ${services}` : ""}`,
+          ...(answers.database === "mssql" && services
+            ? [`  docker compose up -d --wait ${services}`]
             : []),
           "  bun run dev",
         ];
