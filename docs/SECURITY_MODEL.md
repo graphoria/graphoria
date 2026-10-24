@@ -414,9 +414,10 @@ paths are configurable through `OPENAPI_ENDPOINT`, `GRAPHIQL_ENDPOINT` and `SCAL
 ### Queue subscriptions are not row-filtered
 
 A queue-backed subscription delivers the broker message, not a row Graphoria read, so there is no
-filter to apply to it. Access is per role through `permissions.<role>.queues`, and every subscriber
-granted the queue receives the entire message. **Deliberate**, and a real constraint on what may be
-published: do not put data into a queue that fans out to a role which may not read all of it.
+filter to apply to it. Access is per role through `permissions.<role>.queues`, to a whole queue or
+to single subscribers, and every client of a granted subscriber receives the entire message.
+**Deliberate**, and a real constraint on what may be published: do not put data into a queue that
+fans out to a role which may not read all of it.
 
 ### A subscription's authorization is captured once
 

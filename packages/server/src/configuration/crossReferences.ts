@@ -1,6 +1,6 @@
 import { isString } from "es-toolkit/compat";
 
-import type { Configuration } from "../types/configuration";
+import type { Configuration, Role } from "../types/configuration";
 import type { ProcedureResolver, TableResolver } from "../types/db";
 
 import { FILTER_OPERATORS } from "../config/types/auth";
@@ -151,6 +151,9 @@ export const collectCrossReferenceErrors = (
   );
   const procedureNames = known.storedProcedures.map((procedure) => procedure.name);
   const queueNames = configuration.queues.map((queue) => queue.name);
+  const queuesByName = new Map(
+    configuration.queues.map((queue) => [queue.name.toLowerCase(), queue]),
+  );
   const operationNames = Object.keys(configuration.operations);
   const remoteSchemaNames = (configuration.remoteSchemas ?? []).map((remote) => remote.name);
   const remoteRESTNames = (configuration.remoteREST ?? []).map((remote) => remote.name);
@@ -203,6 +206,16 @@ export const collectCrossReferenceErrors = (
     }
   };
 
+  const collectQueueErrors = (path: string, permission: Role["queues"]): string[] => {
+    if (isString(permission) || Array.isArray(permission)) {
+      return collectListErrors(path, "queue", permission, queueNames);
+    }
+
+    return Object.keys(permission)
+      .filter((key) => !queuesByName.has(key.toLowerCase()))
+      .map((key) => unresolved(`${path}${segment(key)}`, "queue", key, queueNames));
+  };
+
   for (const [role, permissions] of Object.entries(configuration.auth.permissions ?? {})) {
     const base = `auth.permissions${segment(role)}`;
 
@@ -213,7 +226,7 @@ export const collectCrossReferenceErrors = (
         permissions.storedProcedures,
         procedureNames,
       ),
-      ...collectListErrors(`${base}.queues`, "queue", permissions.queues, queueNames),
+      ...collectQueueErrors(`${base}.queues`, permissions.queues),
       ...collectListErrors(
         `${base}.operations`,
         "operation",

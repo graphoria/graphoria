@@ -5,6 +5,7 @@ import type { RemoteSchemaResolved } from "../remoteSchemas/types";
 import type { Auth, Database, MessageQueue, Operations, Permissions } from "../types/configuration";
 import type { ProcedureResolver, TableResolver } from "../types/db";
 
+import { QueueConfigZod } from "../types/zod/queue";
 import { getDatabasesStructure, sourcesForEachRole } from "./high-level-operations";
 
 const t = (
@@ -41,6 +42,30 @@ const t = (
 const proc = (name: string): ProcedureResolver => ({ name }) as unknown as ProcedureResolver;
 
 const queue = (name: string): MessageQueue => ({ name }) as unknown as MessageQueue;
+
+const bookEvents = (): MessageQueue =>
+  QueueConfigZod.parse({
+    type: "rabbitmq",
+    name: "events",
+    connection: { hostname: "x", port: 5672 },
+    publishers: {
+      bookAdded: { topic: "books", routingKey: "book.added" },
+      bookPublished: { topic: "books", routingKey: "book.published" },
+    },
+    subscribers: {
+      onBookAdded: { topic: "books", pattern: "book.added" },
+      onBookPublished: { topic: "books", pattern: "book.published" },
+    },
+    topics: { books: {} },
+  });
+
+// Every view of a queue that names its publishers or subscribers.
+const namesIn = (queue: MessageQueue) => ({
+  publishers: Object.keys(queue.publishers),
+  subscribers: Object.keys(queue.subscribers),
+  exchangePublishers: queue.exchanges.flatMap((exchange) => exchange.publishers.map((p) => p.name)),
+  queues: queue.queues.map((subscriber) => subscriber.name),
+});
 
 const remoteSchema = (name: string): RemoteSchemaResolved =>
   ({ config: { name } }) as unknown as RemoteSchemaResolved;
@@ -284,6 +309,75 @@ describe("sourcesForEachRole", () => {
       );
 
       expect(out.viewer!.queues.map((q) => q.name)).toEqual(["emails"]);
+    });
+
+    it("grants a queue the record form names whole when it maps to ALL", () => {
+      const events = bookEvents();
+      const out = sourcesForEachRole(
+        [],
+        [],
+        [events, queue("audit")],
+        {},
+        mkPerms({ editor: { queues: { EVENTS: "ALL" } } }),
+      );
+
+      expect(out.editor!.queues).toEqual([events]);
+    });
+
+    it("trims a queue to the publishers and subscribers the role is granted", () => {
+      const out = sourcesForEachRole(
+        [],
+        [],
+        [bookEvents()],
+        {},
+        mkPerms({
+          reader: { queues: { events: { publishers: [], subscribers: ["onBookPublished"] } } },
+        }),
+      );
+
+      expect(out.reader!.queues.map(namesIn)).toEqual([
+        {
+          publishers: [],
+          subscribers: ["onBookPublished"],
+          exchangePublishers: [],
+          queues: ["onBookPublished"],
+        },
+      ]);
+    });
+
+    it("matches publisher and subscriber names case-insensitively", () => {
+      const out = sourcesForEachRole(
+        [],
+        [],
+        [bookEvents()],
+        {},
+        mkPerms({
+          editor: { queues: { events: { publishers: ["BOOKADDED"], subscribers: "ALL" } } },
+        }),
+      );
+
+      expect(out.editor!.queues.map(namesIn)).toEqual([
+        {
+          publishers: ["bookAdded"],
+          subscribers: ["onBookAdded", "onBookPublished"],
+          exchangePublishers: ["bookAdded"],
+          queues: ["onBookAdded", "onBookPublished"],
+        },
+      ]);
+    });
+
+    it("leaves the configured queue whole for the runtime", () => {
+      const events = bookEvents();
+
+      sourcesForEachRole(
+        [],
+        [],
+        [events],
+        {},
+        mkPerms({ reader: { queues: { events: { subscribers: ["onBookPublished"] } } } }),
+      );
+
+      expect(namesIn(events)).toEqual(namesIn(bookEvents()));
     });
 
     it("filters stored procedures by allowlist", () => {

@@ -88,3 +88,28 @@ describe("RolePermissionZod ai", () => {
     expect(() => RolePermissionZod.parse({ ai: "yes" })).toThrow();
   });
 });
+
+describe("RolePermissionZod queues", () => {
+  it("grants a queue whole or down to its publishers and subscribers", () => {
+    const parsed = RolePermissionZod.parse({
+      queues: { events: "ALL", feed: { subscribers: ["onBookPublished"] } },
+    });
+
+    expect(parsed.queues).toEqual({
+      events: "ALL",
+      feed: { publishers: [], subscribers: ["onBookPublished"] },
+    });
+  });
+
+  it("keeps the list and ALL forms", () => {
+    expect(RolePermissionZod.parse({ queues: ["events"] }).queues).toEqual(["events"]);
+    expect(RolePermissionZod.parse({ queues: "ALL" }).queues).toBe("ALL");
+  });
+
+  it("rejects an unknown key inside a queue permission", () => {
+    const result = RolePermissionZod.safeParse({ queues: { events: { subscriber: ["x"] } } });
+
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('"subscriber"');
+  });
+});

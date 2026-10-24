@@ -87,7 +87,7 @@ Note that authentication happens once per WebSocket — if the client's token ex
 
 Row-level filters apply to a table subscription exactly as they apply to a query: the rows pushed to a subscriber are the rows that role and session may read, resolved from the same `permissions.<role>.tables.<table>.filter` and the same `$session.*` values. Subscribers asking for the identical document share one poller, and that sharing is scoped to the caller — role, subject, arguments, and selections all take part in the grouping, so two callers are only ever served the same rows when they asked the same question as the same person.
 
-Queue subscriptions are the exception, and it is a difference in kind: their payload is the broker message, not a row Graphoria read, so there is nothing to filter it against. Access is granted per role through `permissions.<role>.queues`, and every subscriber granted the queue receives the whole message. Do not publish a message to a queue that fans out to a role which may not read all of it.
+Queue subscriptions are the exception, and it is a difference in kind: their payload is the broker message, not a row Graphoria read, so there is nothing to filter it against. Access is granted per role through `permissions.<role>.queues`, to a whole queue or to single subscribers, and every client of a granted subscriber receives the whole message. Do not publish a message to a queue that fans out to a role which may not read all of it.
 
 ## Patterns and pitfalls
 

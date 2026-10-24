@@ -273,6 +273,7 @@ Re-exported Zod library for convenience.
 | `AiPackage`                   | The `@graphoria/ai` runtime seam: `AiToolDeps`, `Agent`, `AgentAnswer`, `AgentCaller`, `ToolCaller`, `McpCaller`. |
 | `RolePermission`              | `{ tables?, storedProcedures?, queues?, operations?, remoteSchemas?, remoteREST?, ai?, rateLimit? }`              |
 | `TablePermission`             | `{ columns, filter?, orderBy? }`                                                                                  |
+| `QueuePermission`             | `{ publishers?, subscribers? }` — each `"ALL"` or names, default `[]`                                             |
 | `FilterCondition`             | `Record<string, Record<string, unknown>>`                                                                         |
 | `DirectionUnion`              | `"ASC" \| "DESC" \| "ASC_NULLS_FIRST" \| ...`                                                                     |
 | `OrderByClause`               | `{ column: string; direction: DirectionUnion }`                                                                   |

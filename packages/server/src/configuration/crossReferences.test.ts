@@ -37,7 +37,10 @@ type Role = {
     | "ALL"
     | Record<string, { columns: "ALL" | string[]; filter?: object; orderBy?: object[] }>;
   storedProcedures?: "ALL" | string[];
-  queues?: "ALL" | string[];
+  queues?:
+    | "ALL"
+    | string[]
+    | Record<string, "ALL" | { publishers?: "ALL" | string[]; subscribers?: "ALL" | string[] }>;
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[];
   remoteREST?: "ALL" | string[];
@@ -333,6 +336,32 @@ describe("collectCrossReferenceErrors", () => {
         'auth.permissions.user.remoteSchemas["biling"] — no remote schema named "biling" (did you mean "billing"?)',
         'auth.permissions.user.remoteREST["wether"] — no remote REST API named "wether" (did you mean "weather"?)',
       ]);
+    });
+
+    it("reports a queue the record form names that does not exist", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: { reader: { queues: { evens: "ALL" } } },
+          queues: [{ name: "events", topics: {}, publishers: {}, subscribers: {} }],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([
+        'auth.permissions.reader.queues.evens — no queue named "evens" (did you mean "events"?)',
+      ]);
+    });
+
+    it("resolves a queue the record form names case-insensitively", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: { reader: { queues: { EVENTS: "ALL" } } },
+          queues: [{ name: "events", topics: {}, publishers: {}, subscribers: {} }],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([]);
     });
 
     it("resolves an operation the role names but REST does not expose", () => {

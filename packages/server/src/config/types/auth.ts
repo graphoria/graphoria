@@ -99,6 +99,24 @@ export const TablePermissionZod = z.strictObject({
 export type TablePermission = z.input<typeof TablePermissionZod>;
 
 /**
+ * Queue-level permission configuration
+ */
+export const QueuePermissionZod = z.strictObject({
+  /** Allowed publishers (mutations) — "ALL" or array of publisher names */
+  publishers: z
+    .union([z.literal("ALL"), z.array(z.string())])
+    .optional()
+    .default([]),
+  /** Allowed subscribers (subscriptions) — "ALL" or array of subscriber names */
+  subscribers: z
+    .union([z.literal("ALL"), z.array(z.string())])
+    .optional()
+    .default([]),
+});
+
+export type QueuePermission = z.input<typeof QueuePermissionZod>;
+
+/**
  * Permission configuration for a role
  */
 export const RolePermissionZod = z
@@ -117,9 +135,13 @@ export const RolePermissionZod = z
       .union([z.array(z.string()), z.literal("ALL")])
       .optional()
       .default([]),
-    /** Queues accessible by this role */
+    /** Queues accessible by this role, whole or down to their publishers and subscribers */
     queues: z
-      .union([z.array(z.string()), z.literal("ALL")])
+      .union([
+        z.array(z.string()),
+        z.literal("ALL"),
+        z.record(z.string(), z.union([z.literal("ALL"), QueuePermissionZod])),
+      ])
       .optional()
       .default([]),
     /** Operations accessible by this role */

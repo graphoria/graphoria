@@ -605,7 +605,7 @@ With auth on, the server also needs `AUTH_STORE`, which names the [token store](
 type RolePermission = {
   tables?: "ALL" | string[] | Record<string, "ALL" | TablePermission>;
   storedProcedures?: "ALL" | string[];
-  queues?: "ALL" | string[];
+  queues?: "ALL" | string[] | Record<string, "ALL" | QueuePermission>;
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[];
   remoteREST?: "ALL" | string[];
@@ -616,6 +616,11 @@ type TablePermission = {
   columns: "ALL" | string[];
   filter?: FilterCondition;
   orderBy?: OrderByClause[];
+};
+
+type QueuePermission = {
+  publishers?: "ALL" | string[];
+  subscribers?: "ALL" | string[];
 };
 ```
 
