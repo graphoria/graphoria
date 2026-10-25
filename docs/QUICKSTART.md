@@ -101,7 +101,7 @@ Answer yes to `Add RabbitMQ?`, or pass `--rabbitmq` (`--no-rabbitmq` answers no,
 | `docker-compose.yml` | A `rabbitmq` service (with its `rabbitmq-data` volume) that Graphoria waits on.                                                            |
 | `graphoria.ts`       | A `queues` entry with a demo publisher and subscriber.                                                                                     |
 
-The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription, and `addBook` publishes `events_bookAdded` after each insert; with `--frontend` too, the app subscribes to `events_onBookAdded` and refetches the list. With `--auth`, both take an editor's token or the admin secret. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
+The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription, and `addBook` publishes `events_bookAdded` after each insert; with `--frontend` too, the app subscribes to `events_onBookAdded` and refetches the list. With `--auth`, both take an editor's token or the admin secret, and `publishBook` publishes `events_bookPublished` once the book is published, which a reader too receives through the `events_onBookPublished` subscription. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
 
 ### Add Redis with `--redis`
 
@@ -147,7 +147,7 @@ Answer yes to `Add login with two roles, reader and editor?`, or pass `--auth` (
 | Caller           | Reads                                        | Calls                                                                                                                    |
 | ---------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | No token         | The authors.                                 | The login only.                                                                                                          |
-| `reader`         | The authors and the published books.         | `GET /rest/books` with `--redis`; the agent with `--ai`.                                                                 |
+| `reader`         | The authors and the published books.         | `GET /rest/books` with `--redis`; the agent with `--ai`; the `events_onBookPublished` subscription with `--rabbitmq`.    |
 | `editor`         | The authors and every book, drafts included. | `addBook`, `publishBook`; `GET /rest/books` with `--redis`; the agent with `--ai`; the `events` queue with `--rabbitmq`. |
 | The admin secret | Everything.                                  | Everything.                                                                                                              |
 

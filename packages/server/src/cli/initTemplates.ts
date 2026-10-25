@@ -246,7 +246,7 @@ ${values.database === "sqlite" ? '    // SQLite has no auth schema to create: th
           ${schema}_authors: "ALL",
           ${schema}_books: { columns: "ALL", filter: { status: { eq: "published" } } },
         },
-${values.redis ? '        operations: ["books"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      },
+${values.rabbitmq ? READER_QUEUE_GRANT : ""}${values.redis ? '        operations: ["books"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      },
       editor: {
         tables: ["${schema}_authors", "${schema}_books"],
 ${values.rabbitmq ? '        queues: ["events"],\n' : ""}        operations: [${editorOperations.join(", ")}],
@@ -256,7 +256,24 @@ ${values.ai ? "        ai: true,\n" : ""}      },
 `;
 };
 
-const QUEUE_CONFIG = `  queues: [
+// A reader hears a book published, not the drafts an editor adds.
+const READER_QUEUE_GRANT = `        queues: {
+          events: {
+            subscribers: ["onBookPublished"],
+          },
+        },
+`;
+
+const ON_BOOK_PUBLISHED = `        onBookPublished: {
+          topic: "books",
+          pattern: "book.published",
+          handler: (message) => {
+            console.log("[events] book published:", message);
+          },
+        },
+`;
+
+const queueConfig = ({ auth }: ProjectValues) => `  queues: [
     {
       type: "rabbitmq",
       name: "events",
@@ -273,16 +290,16 @@ const QUEUE_CONFIG = `  queues: [
       // subscription (events_onBookAdded) and consumes the queue.
       publishers: {
         bookAdded: { topic: "books", routingKey: "book.added", persistent: true },
-      },
+${auth ? '        bookPublished: { topic: "books", routingKey: "book.published", persistent: true },\n' : ""}      },
       subscribers: {
         onBookAdded: {
           topic: "books",
-          pattern: "book.*",
+          pattern: "book.added",
           handler: (message) => {
             console.log("[events] book added:", message);
           },
         },
-      },
+${auth ? ON_BOOK_PUBLISHED : ""}      },
       topics: {
         books: { type: "topic", durable: true },
       },
@@ -495,18 +512,29 @@ const BOOKS_OPERATION = (
     },
 `;
 
-const PUBLISH_BOOK_OPERATION = `    // POST /rest/publish-book: an editor publishes a draft, which readers then
+const PUBLISH_BOOK_HANDLER = `      handler: ({ repository }, { id }) => repository.main.books.publish(id),
+`;
+
+const PUBLISH_BOOK_HANDLER_QUEUED = `      handler: async ({ repository, queues }, { id }) => {
+        const published = await repository.main.books.publish(id);
+        queues.sendMessage("events_bookPublished", { id });
+        return published;
+      },
+`;
+
+const PUBLISH_BOOK_OPERATION = (
+  values: ProjectValues,
+) => `    // POST /rest/publish-book: an editor publishes a draft, which readers then
     // see. Answers the published row, or null when no book has that id.
     publishBook: operation.typed<Repository>()({
       input: publishBookInput,
       output: book.nullable(),
       rest: { path: "/publish-book", method: "POST", body: publishBookInput },
-      handler: ({ repository }, { id }) => repository.main.books.publish(id),
-    }),
+${values.rabbitmq ? PUBLISH_BOOK_HANDLER_QUEUED : PUBLISH_BOOK_HANDLER}    }),
 `;
 
 const operationsConfig = (values: ProjectValues) => `  operations: {
-${values.redis ? BOOKS_OPERATION(values) : ""}${ADD_BOOK_OPERATION(values)}${values.auth ? PUBLISH_BOOK_OPERATION : ""}  },
+${values.redis ? BOOKS_OPERATION(values) : ""}${ADD_BOOK_OPERATION(values)}${values.auth ? PUBLISH_BOOK_OPERATION(values) : ""}  },
 `;
 
 const AI_CONFIG = `  ai: {
@@ -569,7 +597,7 @@ export default (() => ({
       enabled: true,
 ${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}    },
   ],
-${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? queueConfig(values) : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";

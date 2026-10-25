@@ -257,6 +257,11 @@ export const nextSteps = (
           "",
           `RabbitMQ management UI: http://localhost:${RABBITMQ_MANAGEMENT_PORT} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
           `Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.${answers.auth ? " Both take an editor's token or the admin secret." : ""}`,
+          ...(answers.auth
+            ? [
+                "publishBook publishes events_bookPublished; a reader too subscribes with events_onBookPublished.",
+              ]
+            : []),
         ]
       : []),
     ...(answers.ai
