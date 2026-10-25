@@ -1530,6 +1530,16 @@ describe("renderProject with --auth --frontend", () => {
     expect(app).toContain("Authorization: `Bearer ${getAccessToken()}`,");
   });
 
+  it("shows the catalog loading as a spinner by the heading", () => {
+    const app = renderAuthWeb("pg")["web/App.tsx"]!;
+
+    expect(app).toMatch(
+      /<h1 className="text-3xl font-bold">Authors<\/h1>\s*\{fetching && \(\s*<p [^>]*role="status">\s*<span\s*aria-hidden="true"/,
+    );
+    expect(app).toContain('<ul className="space-y-6" aria-busy={fetching}>');
+    expect(app).not.toContain("Loading…");
+  });
+
   it("subscribes to the book-added events for an editor only, and to the published ones for both", () => {
     const queued = renderAuthWeb("pg", { rabbitmq: true })["web/App.tsx"]!;
     const plain = renderAuthWeb("pg")["web/App.tsx"]!;

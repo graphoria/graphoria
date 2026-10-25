@@ -1654,7 +1654,17 @@ ${
   return (
     <main className="mx-auto max-w-2xl p-8 font-sans">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Authors</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold">Authors</h1>
+          {fetching && (
+            <p className="flex items-center gap-2 text-sm text-gray-500" role="status">
+              <span
+                aria-hidden="true"
+                className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600"
+              />
+            </p>
+          )}
+        </div>
         <p className="text-gray-600">
           Signed in as {role}{" "}
           <button className="underline" type="button" onClick={() => void logout()}>
@@ -1697,9 +1707,8 @@ ${
           </button>
         </form>
       )}
-      {fetching && <p className="text-gray-500">Loading…</p>}
       {error && <p className="text-red-600">{error.message}</p>}
-      <ul className="space-y-6">
+      <ul className="space-y-6" aria-busy={fetching}>
         {data?.${schema}_authors.map((author) => (
           <li key={author.id}>
             <h2 className="text-xl font-semibold">{author.name}</h2>
