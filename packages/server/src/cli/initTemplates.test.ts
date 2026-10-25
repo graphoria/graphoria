@@ -612,9 +612,10 @@ describe("renderProject graphoria.ts", () => {
         ],
       },
     ]);
+    expect(entry.queues).toHaveLength(1);
     expect(entry.queues![0]).toMatchObject({
       name: "onBookAdded",
-      bindings: [{ exchange: "books", pattern: "book.*" }],
+      bindings: [{ exchange: "books", pattern: "book.added" }],
     });
     expect(typeof entry.queues![0]!.handler).toBe("function");
   });
@@ -805,7 +806,11 @@ describe("renderProject with --auth", () => {
       { operations: ["books", "addBook", "publishBook"] },
     ],
     [{ ai: true }, { ai: true }, { ai: true }],
-    [{ rabbitmq: true }, { queues: [] }, { queues: ["events"] }],
+    [
+      { rabbitmq: true },
+      { queues: { events: { publishers: [], subscribers: ["onBookPublished"] } } },
+      { queues: ["events"] },
+    ],
   ])("extends the roles for %j", async (patch, reader, editor) => {
     const { auth } = await parse("pg", patch);
 
@@ -858,6 +863,62 @@ describe("renderProject with --auth", () => {
 
     expect(await operations.publishBook!.handler!({ repository } as never, { id: 7 })).toBeNull();
     expect(published).toEqual([7]);
+  });
+
+  it("adds the book-published publisher and subscriber to the queue", async () => {
+    const { queues } = await parse("pg", { rabbitmq: true });
+    const entry = queues![0]!;
+
+    expect(entry.exchanges![0]!.publishers).toEqual([
+      {
+        name: "bookAdded",
+        resolverName: "events_bookAdded",
+        routingKey: "book.added",
+        options: { persistent: true },
+      },
+      {
+        name: "bookPublished",
+        resolverName: "events_bookPublished",
+        routingKey: "book.published",
+        options: { persistent: true },
+      },
+    ]);
+    expect(entry.queues!.map(({ name, bindings }) => ({ name, bindings }))).toEqual([
+      { name: "onBookAdded", bindings: [{ exchange: "books", pattern: "book.added" }] },
+      { name: "onBookPublished", bindings: [{ exchange: "books", pattern: "book.published" }] },
+    ]);
+  });
+
+  it("publishes through the repository, then announces the book", async () => {
+    const { operations } = await parse("pg", { rabbitmq: true });
+    const stored = { id: 7, title: "Kindred", publishedYear: 1979, authorId: 2 };
+    const log: unknown[] = [];
+    const repository = {
+      main: {
+        books: {
+          publish: async (id: number) => {
+            await Promise.resolve();
+            log.push(["publish", id]);
+            return stored;
+          },
+        },
+      },
+    };
+    const queues = {
+      sendMessage: (...args: unknown[]) => {
+        log.push(["send", ...args]);
+        return true;
+      },
+    };
+
+    expect(
+      await operations.publishBook!.handler!({ repository, queues } as never, { id: 7 }),
+    ).toEqual(stored);
+    // The event follows the update: a reader who refetches on it sees the book.
+    expect(log).toEqual([
+      ["publish", 7],
+      ["send", "events_bookPublished", { id: 7 }],
+    ]);
   });
 
   it.each(ENGINES)("leaves publishBook out of the %s scaffold without --auth", (database) => {
@@ -1469,11 +1530,34 @@ describe("renderProject with --auth --frontend", () => {
     expect(app).toContain("Authorization: `Bearer ${getAccessToken()}`,");
   });
 
-  it("subscribes to the book-added events for an editor only", () => {
+  it("shows the catalog loading as a spinner by the heading, with or without login", () => {
+    for (const app of [
+      renderAuthWeb("pg")["web/App.tsx"]!,
+      renderWith({ frontend: true })["web/App.tsx"]!,
+    ]) {
+      expect(app).toMatch(
+        /<h1 className="text-3xl font-bold">Authors<\/h1>\s*\{fetching && \(\s*<p [^>]*role="status">\s*<span\s*aria-hidden="true"/,
+      );
+      expect(app).toContain('<ul className="space-y-6" aria-busy={fetching}>');
+      expect(app).not.toContain("Loading…");
+    }
+  });
+
+  it("subscribes to the book-added events for an editor only, and to the published ones for both", () => {
     const queued = renderAuthWeb("pg", { rabbitmq: true })["web/App.tsx"]!;
     const plain = renderAuthWeb("pg")["web/App.tsx"]!;
 
-    expect(queued).toContain('pause: role !== "editor",');
+    expect(queued).toContain("events_onBookAdded {");
+    expect(queued).toContain("events_onBookPublished {");
+    expect(queued).toContain(
+      'useSubscription({\n    query: BookAddedSubscription,\n    pause: role !== "editor",',
+    );
+    expect(queued).toContain("useSubscription({\n    query: BookPublishedSubscription,\n  });");
+    for (const subscription of ["subscriptionAdded", "subscriptionPublished"]) {
+      expect(queued).toContain(
+        `if (${subscription}.data) reexecute({ requestPolicy: "network-only" });`,
+      );
+    }
     expect(queued).toContain("// The list refreshes when the queued book-added event arrives.");
     expect(plain).not.toContain("useSubscription");
     expect(plain).toContain('    reexecute({ requestPolicy: "network-only" });\n    setTitle("");');

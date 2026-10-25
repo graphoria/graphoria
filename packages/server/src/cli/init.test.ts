@@ -564,6 +564,9 @@ describe("nextSteps", () => {
       "Publish with the events_bookAdded mutation; subscribe with events_onBookAdded. Both take an editor's token or the admin secret.",
     );
     expect(steps).toContain(
+      "publishBook publishes events_bookPublished; a reader too subscribes with events_onBookPublished.",
+    );
+    expect(steps).toContain(
       "The AI agent answers /rest/ai and GraphiQL's ask field for a reader or an editor.",
     );
     expect(steps).toContain(

@@ -246,7 +246,7 @@ ${values.database === "sqlite" ? '    // SQLite has no auth schema to create: th
           ${schema}_authors: "ALL",
           ${schema}_books: { columns: "ALL", filter: { status: { eq: "published" } } },
         },
-${values.redis ? '        operations: ["books"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      },
+${values.rabbitmq ? READER_QUEUE_GRANT : ""}${values.redis ? '        operations: ["books"],\n' : ""}${values.ai ? "        ai: true,\n" : ""}      },
       editor: {
         tables: ["${schema}_authors", "${schema}_books"],
 ${values.rabbitmq ? '        queues: ["events"],\n' : ""}        operations: [${editorOperations.join(", ")}],
@@ -256,7 +256,24 @@ ${values.ai ? "        ai: true,\n" : ""}      },
 `;
 };
 
-const QUEUE_CONFIG = `  queues: [
+// A reader hears a book published, not the drafts an editor adds.
+const READER_QUEUE_GRANT = `        queues: {
+          events: {
+            subscribers: ["onBookPublished"],
+          },
+        },
+`;
+
+const ON_BOOK_PUBLISHED = `        onBookPublished: {
+          topic: "books",
+          pattern: "book.published",
+          handler: (message) => {
+            console.log("[events] book published:", message);
+          },
+        },
+`;
+
+const queueConfig = ({ auth }: ProjectValues) => `  queues: [
     {
       type: "rabbitmq",
       name: "events",
@@ -273,16 +290,16 @@ const QUEUE_CONFIG = `  queues: [
       // subscription (events_onBookAdded) and consumes the queue.
       publishers: {
         bookAdded: { topic: "books", routingKey: "book.added", persistent: true },
-      },
+${auth ? '        bookPublished: { topic: "books", routingKey: "book.published", persistent: true },\n' : ""}      },
       subscribers: {
         onBookAdded: {
           topic: "books",
-          pattern: "book.*",
+          pattern: "book.added",
           handler: (message) => {
             console.log("[events] book added:", message);
           },
         },
-      },
+${auth ? ON_BOOK_PUBLISHED : ""}      },
       topics: {
         books: { type: "topic", durable: true },
       },
@@ -495,18 +512,29 @@ const BOOKS_OPERATION = (
     },
 `;
 
-const PUBLISH_BOOK_OPERATION = `    // POST /rest/publish-book: an editor publishes a draft, which readers then
+const PUBLISH_BOOK_HANDLER = `      handler: ({ repository }, { id }) => repository.main.books.publish(id),
+`;
+
+const PUBLISH_BOOK_HANDLER_QUEUED = `      handler: async ({ repository, queues }, { id }) => {
+        const published = await repository.main.books.publish(id);
+        queues.sendMessage("events_bookPublished", { id });
+        return published;
+      },
+`;
+
+const PUBLISH_BOOK_OPERATION = (
+  values: ProjectValues,
+) => `    // POST /rest/publish-book: an editor publishes a draft, which readers then
     // see. Answers the published row, or null when no book has that id.
     publishBook: operation.typed<Repository>()({
       input: publishBookInput,
       output: book.nullable(),
       rest: { path: "/publish-book", method: "POST", body: publishBookInput },
-      handler: ({ repository }, { id }) => repository.main.books.publish(id),
-    }),
+${values.rabbitmq ? PUBLISH_BOOK_HANDLER_QUEUED : PUBLISH_BOOK_HANDLER}    }),
 `;
 
 const operationsConfig = (values: ProjectValues) => `  operations: {
-${values.redis ? BOOKS_OPERATION(values) : ""}${ADD_BOOK_OPERATION(values)}${values.auth ? PUBLISH_BOOK_OPERATION : ""}  },
+${values.redis ? BOOKS_OPERATION(values) : ""}${ADD_BOOK_OPERATION(values)}${values.auth ? PUBLISH_BOOK_OPERATION(values) : ""}  },
 `;
 
 const AI_CONFIG = `  ai: {
@@ -569,7 +597,7 @@ export default (() => ({
       enabled: true,
 ${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}    },
   ],
-${values.rabbitmq ? QUEUE_CONFIG : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? queueConfig(values) : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -1237,10 +1265,10 @@ if (import.meta.hot) {
 };
 
 const AUTH_WS_CLIENT = `
-// Graphoria upgrades GET /graphql to its websocket; the queued book-added
-// events arrive through the events_onBookAdded subscription. connection_init
-// carries the token, so a new token closes the socket and graphql-ws
-// reconnects with that token after its retry delay.
+// Graphoria upgrades GET /graphql to its websocket; the queued book events
+// arrive through the events_onBookAdded and events_onBookPublished
+// subscriptions. connection_init carries the token, so a new token closes the
+// socket and graphql-ws reconnects with that token after its retry delay.
 const wsClient = createWSClient({
   url: \`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/graphql\`,
   connectionParams: () => {
@@ -1384,7 +1412,17 @@ ${
 
   return (
     <main className="mx-auto max-w-2xl p-8 font-sans">
-      <h1 className="mb-6 text-3xl font-bold">Authors</h1>
+      <div className="mb-6 flex items-center gap-3">
+        <h1 className="text-3xl font-bold">Authors</h1>
+        {fetching && (
+          <p className="flex items-center gap-2 text-sm text-gray-500" role="status">
+            <span
+              aria-hidden="true"
+              className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600"
+            />
+          </p>
+        )}
+      </div>
       <form className="mb-8 space-y-2" onSubmit={submit}>
         <input
           className="block w-full rounded border border-gray-300 p-2"
@@ -1421,9 +1459,8 @@ ${
           Add book
         </button>
       </form>
-      {fetching && <p className="text-gray-500">Loading…</p>}
       {error && <p className="text-red-600">{error.message}</p>}
-      <ul className="space-y-6">
+      <ul className="space-y-6" aria-busy={fetching}>
         {data?.${schema}_authors.map((author) => (
           <li key={author.id}>
             <h2 className="text-xl font-semibold">{author.name}</h2>
@@ -1446,15 +1483,44 @@ ${
 `;
 };
 
-// A reader's schema has no events_onBookAdded, so only an editor subscribes.
-const BOOK_ADDED_REFRESH_EDITOR = `  const [subscription] = useSubscription({
+// With RabbitMQ and auth the list also refreshes when a book is published.
+const BOOK_SUBSCRIPTIONS_AUTH = `
+const BookAddedSubscription = graphql(\`
+  subscription OnBookAdded {
+    events_onBookAdded {
+      id
+      message
+    }
+  }
+\`);
+
+const BookPublishedSubscription = graphql(\`
+  subscription OnBookPublished {
+    events_onBookPublished {
+      id
+      message
+    }
+  }
+\`);
+`;
+
+// A reader's schema has no events_onBookAdded, so only an editor subscribes to
+// it; both roles hear a book published.
+const BOOK_REFRESH_AUTH = `  const [subscriptionAdded] = useSubscription({
     query: BookAddedSubscription,
-    pause: role !== "editor",
+    pause: role !== "editor", // readers don't see the draft books, so they don't need the subscription.
+  });
+  const [subscriptionPublished] = useSubscription({
+    query: BookPublishedSubscription,
   });
 
   useEffect(() => {
-    if (subscription.data) reexecute({ requestPolicy: "network-only" });
-  }, [subscription.data, reexecute]);
+    if (subscriptionAdded.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscriptionAdded.data, reexecute]);
+
+  useEffect(() => {
+    if (subscriptionPublished.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscriptionPublished.data, reexecute]);
 `;
 
 const appTsxAuth = (values: ProjectValues) => {
@@ -1494,7 +1560,7 @@ const CatalogQuery = graphql(\`
     }
   }
 \`);
-${values.rabbitmq ? BOOK_ADDED_SUBSCRIPTION : ""}
+${values.rabbitmq ? BOOK_SUBSCRIPTIONS_AUTH : ""}
 // The write operations answer an editor's token only.
 const post = (path: string, body: object) =>
   fetch(path, {
@@ -1568,7 +1634,7 @@ function SignIn() {
 function Catalog({ role }: { role: Role }) {
   const { logout } = useAuth<Role>();
   const [{ data, fetching, error }, reexecute] = useQuery({ query: CatalogQuery });
-${values.rabbitmq ? BOOK_ADDED_REFRESH_EDITOR : ""}
+${values.rabbitmq ? BOOK_REFRESH_AUTH : ""}
   const [title, setTitle] = useState("");
   const [year, setYear] = useState("");
   const [authorId, setAuthorId] = useState("");
@@ -1597,7 +1663,17 @@ ${
   return (
     <main className="mx-auto max-w-2xl p-8 font-sans">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Authors</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold">Authors</h1>
+          {fetching && (
+            <p className="flex items-center gap-2 text-sm text-gray-500" role="status">
+              <span
+                aria-hidden="true"
+                className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600"
+              />
+            </p>
+          )}
+        </div>
         <p className="text-gray-600">
           Signed in as {role}{" "}
           <button className="underline" type="button" onClick={() => void logout()}>
@@ -1640,9 +1716,8 @@ ${
           </button>
         </form>
       )}
-      {fetching && <p className="text-gray-500">Loading…</p>}
       {error && <p className="text-red-600">{error.message}</p>}
-      <ul className="space-y-6">
+      <ul className="space-y-6" aria-busy={fetching}>
         {data?.${schema}_authors.map((author) => (
           <li key={author.id}>
             <h2 className="text-xl font-semibold">{author.name}</h2>

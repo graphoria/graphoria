@@ -101,7 +101,7 @@ Answer yes to `Add RabbitMQ?`, or pass `--rabbitmq` (`--no-rabbitmq` answers no,
 | `docker-compose.yml` | A `rabbitmq` service (with its `rabbitmq-data` volume) that Graphoria waits on.                                                            |
 | `graphoria.ts`       | A `queues` entry with a demo publisher and subscriber.                                                                                     |
 
-The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription, and `addBook` publishes `events_bookAdded` after each insert; with `--frontend` too, the app subscribes to `events_onBookAdded` and refetches the list. With `--auth`, both take an editor's token or the admin secret. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
+The demo publishes through the `events_bookAdded` mutation and consumes it with the `events_onBookAdded` subscription, and `addBook` publishes `events_bookAdded` after each insert; with `--frontend` too, the app subscribes to `events_onBookAdded` and refetches the list. With `--auth`, both take an editor's token or the admin secret, and `publishBook` publishes `events_bookPublished` once the book is published, which a reader too receives through the `events_onBookPublished` subscription. The management UI is at `http://localhost:15672` (set `RABBITMQ_MANAGEMENT_PORT` in `.env` to move it).
 
 ### Add Redis with `--redis`
 
@@ -147,7 +147,7 @@ Answer yes to `Add login with two roles, reader and editor?`, or pass `--auth` (
 | Caller           | Reads                                        | Calls                                                                                                                    |
 | ---------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | No token         | The authors.                                 | The login only.                                                                                                          |
-| `reader`         | The authors and the published books.         | `GET /rest/books` with `--redis`; the agent with `--ai`.                                                                 |
+| `reader`         | The authors and the published books.         | `GET /rest/books` with `--redis`; the agent with `--ai`; the `events_onBookPublished` subscription with `--rabbitmq`.    |
 | `editor`         | The authors and every book, drafts included. | `addBook`, `publishBook`; `GET /rest/books` with `--redis`; the agent with `--ai`; the `events` queue with `--rabbitmq`. |
 | The admin secret | Everything.                                  | Everything.                                                                                                              |
 
@@ -169,7 +169,7 @@ bunx graphoria seed-auth --user editor --password <printed> --role editor --conf
 
 Log in with the `auth_login` mutation in GraphiQL, or `POST /rest/auth/login` with `{ "username": …, "password": … }`, and send the `access_token` it answers as `Authorization: Bearer <access_token>`. An operation a role is not granted answers `404` on its REST route, and that role's schema has no field for it. `publishBook` answers `null` for an id no book has.
 
-With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token. `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor.
+With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token. `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor, and to `events_onBookPublished` for both roles, refetching the list on either.
 
 The rest of this guide sets a project up by hand, against a database you already run.
 
