@@ -8,6 +8,7 @@ import type {
   MessageQueue,
   Operations,
   Permissions,
+  Role,
   TableFilter,
   VirtualColumns,
 } from "../types/configuration";
@@ -249,6 +250,43 @@ const filterRecordByPermission = <T>(
   );
 };
 
+/**
+ * Queue counterpart of {@link filterByPermission}. The record form grants a
+ * queue by name, whole (`"ALL"`) or down to the publishers and subscribers it
+ * lists: the role gets a copy of the queue holding only those, so its schema
+ * has no field for the rest. The configured queue, which the runtime connects
+ * and consumes, keeps all of them.
+ */
+const filterQueuesByPermission = (
+  queues: MessageQueue[],
+  permission: Role["queues"],
+): MessageQueue[] => {
+  if (isString(permission) || Array.isArray(permission)) {
+    return filterByPermission(queues, permission, (queue) => queue.name);
+  }
+
+  const grants = new Map(
+    Object.entries(permission).map(([name, grant]) => [name.toLowerCase(), grant] as const),
+  );
+
+  return filterByPermission(queues, [...grants.keys()], (queue) => queue.name).map((queue) => {
+    const grant = grants.get(queue.name.toLowerCase())!;
+
+    if (grant === "ALL") return queue;
+
+    return {
+      ...queue,
+      publishers: filterRecordByPermission(queue.publishers, grant.publishers),
+      subscribers: filterRecordByPermission(queue.subscribers, grant.subscribers),
+      exchanges: queue.exchanges.map((exchange) => ({
+        ...exchange,
+        publishers: filterByPermission(exchange.publishers, grant.publishers, (p) => p.name),
+      })),
+      queues: filterByPermission(queue.queues, grant.subscribers, (s) => s.name),
+    };
+  });
+};
+
 export const sourcesForEachRole = (
   tables: TableResolver[],
   storedProcedures: ProcedureResolver[],
@@ -320,7 +358,7 @@ export const sourcesForEachRole = (
         (sp) => sp.name,
       );
 
-      const filteredQueues = filterByPermission(queues, permissions.queues, (q) => q.name);
+      const filteredQueues = filterQueuesByPermission(queues, permissions.queues);
 
       const filteredOperations = filterRecordByPermission(operations, permissions.operations);
 

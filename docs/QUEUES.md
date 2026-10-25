@@ -179,11 +179,15 @@ permissions: {
     operations: "ALL",
     queues: ["events"],          // can publish/subscribe to events_*
   },
+  storefront: {
+    // can subscribe to events_invalidateProducts only
+    queues: { events: { subscribers: ["invalidateProducts"] } },
+  },
   admin: { queues: "ALL" },
 }
 ```
 
-A role that can't access a queue won't see its publishers or subscribers in the GraphQL schema served to that role. A call from a disallowed role fails GraphQL validation, since the field is not in its schema, and never reaches the broker.
+A role that can't access a queue won't see its publishers or subscribers in the GraphQL schema served to that role, and a role granted part of a queue sees only that part. A call from a disallowed role fails GraphQL validation, since the field is not in its schema, and never reaches the broker. [Permissions](./PERMISSIONS.md#queues) lists the forms a grant takes.
 
 ## Provider notes
 

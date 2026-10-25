@@ -20,7 +20,7 @@ Key capabilities:
 type RolePermission = {
   tables?: "ALL" | string[] | Record<string, "ALL" | TablePermission>;
   storedProcedures?: "ALL" | string[];
-  queues?: "ALL" | string[];
+  queues?: "ALL" | string[] | Record<string, "ALL" | QueuePermission>;
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[]; // Remote GraphQL schemas (see REMOTE_SCHEMAS.md)
   remoteREST?: "ALL" | string[]; // Remote REST APIs (see REMOTE_REST.md)
@@ -32,6 +32,11 @@ type TablePermission = {
   columns: "ALL" | string[];
   filter?: FilterCondition;
   orderBy?: OrderByClause[];
+};
+
+type QueuePermission = {
+  publishers?: "ALL" | string[]; // Default [] — none
+  subscribers?: "ALL" | string[]; // Default [] — none
 };
 ```
 
@@ -74,6 +79,24 @@ auth: {
 ### The AI agent
 
 `ai: true` lets a role call the [AI agent](./AI.md): the GraphQL `ask` field is compiled into its schema and `POST /rest/ai` answers it, and a [console](./CONSOLE.md) write session can also ask as that role (`POST {CONSOLE_ENDPOINT}/api/ai`) and run a GraphQL query as it (`POST {CONSOLE_ENDPOINT}/api/graphql`). The agent reads what the role reads — its tables and columns, its row filters evaluated with the caller's session — and every row it reads goes to the LLM provider, so grant it only where that is acceptable. The superadmin role (the admin secret) always has it.
+
+### Queues
+
+A queue named in `queues`, in the list or mapped to `"ALL"`, is granted whole: each of its publishers is a mutation in the role's schema and each subscriber a subscription. To grant part of a queue, map its name to the publishers and subscribers the role may use. A list left out grants none:
+
+```typescript
+permissions: {
+  reader: {
+    // events_onBookPublished only: no publish mutation, no other subscription
+    queues: { events: { subscribers: ["onBookPublished"] } },
+  },
+  editor: {
+    queues: { events: "ALL" }, // the same as queues: ["events"]
+  },
+}
+```
+
+What a grant leaves out is not in the role's schema, so a call to it fails GraphQL validation and never reaches the broker. Queue, publisher and subscriber names match case-insensitively. A grant shapes the role's schema only: every subscriber still consumes its queue and runs its `handler`, and server code (operation handlers, `init` hooks, cron) still publishes with any publisher through `queues.sendMessage`.
 
 ## Table Access Modes
 
@@ -264,6 +287,7 @@ and refuses to boot if any of them resolves to nothing:
 
 - `tables` keys, and the `columns`, `filter` and `orderBy` inside each
 - `storedProcedures`, `queues`, `operations`, `remoteSchemas`, `remoteREST`
+- the `publishers` and `subscribers` inside each `queues` key
 
 Nested relation filters are followed into the related table, so a column named
 one level down is checked too. Every unresolved name is reported at once, with

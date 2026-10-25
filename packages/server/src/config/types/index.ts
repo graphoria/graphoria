@@ -92,6 +92,7 @@ export type {
   OrderByClause,
   FilterCondition,
   TablePermission,
+  QueuePermission,
   RolePermission,
   AuthConfig,
 } from "./auth";
@@ -101,6 +102,7 @@ export {
   OrderByClauseZod,
   FilterConditionZod,
   TablePermissionZod,
+  QueuePermissionZod,
   RolePermissionZod,
   AuthConfigZod,
 } from "./auth";

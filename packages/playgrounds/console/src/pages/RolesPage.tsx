@@ -40,6 +40,20 @@ const Permission = ({ value }: { value: PermissionValue }) => {
                   filter: {JSON.stringify(entry.filter)}
                 </span>
               )}
+              {entry.publishers && (
+                <span className="text-gray-400 text-sm">
+                  {" "}
+                  publishers:{" "}
+                  {entry.publishers === "ALL" ? "ALL" : entry.publishers.join(", ") || "none"}
+                </span>
+              )}
+              {entry.subscribers && (
+                <span className="text-gray-400 text-sm">
+                  {" "}
+                  subscribers:{" "}
+                  {entry.subscribers === "ALL" ? "ALL" : entry.subscribers.join(", ") || "none"}
+                </span>
+              )}
             </>
           )}
         </li>

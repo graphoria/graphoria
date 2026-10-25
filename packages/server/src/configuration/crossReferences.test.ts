@@ -37,7 +37,10 @@ type Role = {
     | "ALL"
     | Record<string, { columns: "ALL" | string[]; filter?: object; orderBy?: object[] }>;
   storedProcedures?: "ALL" | string[];
-  queues?: "ALL" | string[];
+  queues?:
+    | "ALL"
+    | string[]
+    | Record<string, "ALL" | { publishers?: "ALL" | string[]; subscribers?: "ALL" | string[] }>;
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[];
   remoteREST?: "ALL" | string[];
@@ -333,6 +336,98 @@ describe("collectCrossReferenceErrors", () => {
         'auth.permissions.user.remoteSchemas["biling"] — no remote schema named "biling" (did you mean "billing"?)',
         'auth.permissions.user.remoteREST["wether"] — no remote REST API named "wether" (did you mean "weather"?)',
       ]);
+    });
+
+    it("reports a queue the record form names that does not exist", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: { reader: { queues: { evens: "ALL" } } },
+          queues: [{ name: "events", topics: {}, publishers: {}, subscribers: {} }],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([
+        'auth.permissions.reader.queues.evens — no queue named "evens" (did you mean "events"?)',
+      ]);
+    });
+
+    it("resolves a queue the record form names case-insensitively", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: { reader: { queues: { EVENTS: "ALL" } } },
+          queues: [{ name: "events", topics: {}, publishers: {}, subscribers: {} }],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([]);
+    });
+
+    it("reports a publisher and a subscriber a queue grant names that the queue lacks", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: {
+            reader: {
+              queues: {
+                events: { publishers: ["bookAdd"], subscribers: ["onBookPublished", "audit"] },
+              },
+            },
+          },
+          queues: [
+            {
+              name: "events",
+              topics: { books: {} },
+              publishers: { bookAdded: { topic: "books" } },
+              subscribers: { onBookPublished: { topic: "books" } },
+            },
+          ],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([
+        'auth.permissions.reader.queues.events.publishers["bookAdd"] — no publisher on queue "events" named "bookAdd" (did you mean "bookAdded"?)',
+        'auth.permissions.reader.queues.events.subscribers["audit"] — no subscriber on queue "events" named "audit"',
+      ]);
+    });
+
+    it("resolves the publishers and subscribers of a queue grant case-insensitively", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: {
+            reader: { queues: { events: { publishers: ["BOOKADDED"], subscribers: "ALL" } } },
+          },
+          queues: [
+            {
+              name: "events",
+              topics: { books: {} },
+              publishers: { bookAdded: { topic: "books" } },
+              subscribers: { onBookPublished: { topic: "books" } },
+            },
+          ],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([]);
+    });
+
+    it("passes a queue grant that grants nothing", () => {
+      const errors = collectCrossReferenceErrors(
+        config({
+          permissions: {
+            reader: { queues: { events: {}, feed: { publishers: [], subscribers: [] } } },
+          },
+          queues: [
+            { name: "events", topics: {}, publishers: {}, subscribers: {} },
+            { name: "feed", topics: {}, publishers: {}, subscribers: {} },
+          ],
+        }),
+        known(),
+      );
+
+      expect(errors).toEqual([]);
     });
 
     it("resolves an operation the role names but REST does not expose", () => {

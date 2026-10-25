@@ -106,6 +106,7 @@ does exist.
 | `…tables.<table>.columns`, `filter` keys, `orderBy`     | that table's columns, relations for nesting  |
 | `auth.permissions.<role>.storedProcedures`              | introspected stored procedures               |
 | `auth.permissions.<role>.queues`                        | `queues[].name`                              |
+| `…queues.<queue>.publishers` / `subscribers`            | that queue's publishers and subscribers      |
 | `auth.permissions.<role>.operations`                    | `operations` keys                            |
 | `auth.permissions.<role>.remoteSchemas` / `remoteREST`  | `remoteSchemas[].name` / `remoteREST[].name` |
 | `queues[].publishers` / `subscribers` `.topic`          | that queue's `topics` keys                   |
@@ -605,10 +606,11 @@ With auth on, the server also needs `AUTH_STORE`, which names the [token store](
 type RolePermission = {
   tables?: "ALL" | string[] | Record<string, "ALL" | TablePermission>;
   storedProcedures?: "ALL" | string[];
-  queues?: "ALL" | string[];
+  queues?: "ALL" | string[] | Record<string, "ALL" | QueuePermission>;
   operations?: "ALL" | string[];
   remoteSchemas?: "ALL" | string[];
   remoteREST?: "ALL" | string[];
+  ai?: boolean;
   rateLimit?: { max: number; windowMs?: number };
 };
 
@@ -616,6 +618,11 @@ type TablePermission = {
   columns: "ALL" | string[];
   filter?: FilterCondition;
   orderBy?: OrderByClause[];
+};
+
+type QueuePermission = {
+  publishers?: "ALL" | string[];
+  subscribers?: "ALL" | string[];
 };
 ```
 

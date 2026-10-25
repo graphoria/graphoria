@@ -33,7 +33,17 @@ export type TablesResponse = {
 export type PermissionValue =
   | "ALL"
   | string[]
-  | Record<string, "ALL" | { columns?: "ALL" | string[]; filter?: unknown; orderBy?: unknown }>;
+  | Record<
+      string,
+      | "ALL"
+      | {
+          columns?: "ALL" | string[];
+          filter?: unknown;
+          orderBy?: unknown;
+          publishers?: "ALL" | string[];
+          subscribers?: "ALL" | string[];
+        }
+    >;
 
 export type RolesResponse = {
   roles: string[];
