@@ -1530,11 +1530,21 @@ describe("renderProject with --auth --frontend", () => {
     expect(app).toContain("Authorization: `Bearer ${getAccessToken()}`,");
   });
 
-  it("subscribes to the book-added events for an editor only", () => {
+  it("subscribes to the book-added events for an editor only, and to the published ones for both", () => {
     const queued = renderAuthWeb("pg", { rabbitmq: true })["web/App.tsx"]!;
     const plain = renderAuthWeb("pg")["web/App.tsx"]!;
 
-    expect(queued).toContain('pause: role !== "editor",');
+    expect(queued).toContain("events_onBookAdded {");
+    expect(queued).toContain("events_onBookPublished {");
+    expect(queued).toContain(
+      'useSubscription({\n    query: BookAddedSubscription,\n    pause: role !== "editor",',
+    );
+    expect(queued).toContain("useSubscription({\n    query: BookPublishedSubscription,\n  });");
+    for (const subscription of ["subscriptionAdded", "subscriptionPublished"]) {
+      expect(queued).toContain(
+        `if (${subscription}.data) reexecute({ requestPolicy: "network-only" });`,
+      );
+    }
     expect(queued).toContain("// The list refreshes when the queued book-added event arrives.");
     expect(plain).not.toContain("useSubscription");
     expect(plain).toContain('    reexecute({ requestPolicy: "network-only" });\n    setTitle("");');

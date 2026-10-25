@@ -1265,10 +1265,10 @@ if (import.meta.hot) {
 };
 
 const AUTH_WS_CLIENT = `
-// Graphoria upgrades GET /graphql to its websocket; the queued book-added
-// events arrive through the events_onBookAdded subscription. connection_init
-// carries the token, so a new token closes the socket and graphql-ws
-// reconnects with that token after its retry delay.
+// Graphoria upgrades GET /graphql to its websocket; the queued book events
+// arrive through the events_onBookAdded and events_onBookPublished
+// subscriptions. connection_init carries the token, so a new token closes the
+// socket and graphql-ws reconnects with that token after its retry delay.
 const wsClient = createWSClient({
   url: \`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/graphql\`,
   connectionParams: () => {
@@ -1474,15 +1474,44 @@ ${
 `;
 };
 
-// A reader's schema has no events_onBookAdded, so only an editor subscribes.
-const BOOK_ADDED_REFRESH_EDITOR = `  const [subscription] = useSubscription({
+// With RabbitMQ and auth the list also refreshes when a book is published.
+const BOOK_SUBSCRIPTIONS_AUTH = `
+const BookAddedSubscription = graphql(\`
+  subscription OnBookAdded {
+    events_onBookAdded {
+      id
+      message
+    }
+  }
+\`);
+
+const BookPublishedSubscription = graphql(\`
+  subscription OnBookPublished {
+    events_onBookPublished {
+      id
+      message
+    }
+  }
+\`);
+`;
+
+// A reader's schema has no events_onBookAdded, so only an editor subscribes to
+// it; both roles hear a book published.
+const BOOK_REFRESH_AUTH = `  const [subscriptionAdded] = useSubscription({
     query: BookAddedSubscription,
-    pause: role !== "editor",
+    pause: role !== "editor", // readers don't see the draft books, so they don't need the subscription.
+  });
+  const [subscriptionPublished] = useSubscription({
+    query: BookPublishedSubscription,
   });
 
   useEffect(() => {
-    if (subscription.data) reexecute({ requestPolicy: "network-only" });
-  }, [subscription.data, reexecute]);
+    if (subscriptionAdded.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscriptionAdded.data, reexecute]);
+
+  useEffect(() => {
+    if (subscriptionPublished.data) reexecute({ requestPolicy: "network-only" });
+  }, [subscriptionPublished.data, reexecute]);
 `;
 
 const appTsxAuth = (values: ProjectValues) => {
@@ -1522,7 +1551,7 @@ const CatalogQuery = graphql(\`
     }
   }
 \`);
-${values.rabbitmq ? BOOK_ADDED_SUBSCRIPTION : ""}
+${values.rabbitmq ? BOOK_SUBSCRIPTIONS_AUTH : ""}
 // The write operations answer an editor's token only.
 const post = (path: string, body: object) =>
   fetch(path, {
@@ -1596,7 +1625,7 @@ function SignIn() {
 function Catalog({ role }: { role: Role }) {
   const { logout } = useAuth<Role>();
   const [{ data, fetching, error }, reexecute] = useQuery({ query: CatalogQuery });
-${values.rabbitmq ? BOOK_ADDED_REFRESH_EDITOR : ""}
+${values.rabbitmq ? BOOK_REFRESH_AUTH : ""}
   const [title, setTitle] = useState("");
   const [year, setYear] = useState("");
   const [authorId, setAuthorId] = useState("");

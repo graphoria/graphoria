@@ -169,7 +169,7 @@ bunx graphoria seed-auth --user editor --password <printed> --role editor --conf
 
 Log in with the `auth_login` mutation in GraphiQL, or `POST /rest/auth/login` with `{ "username": …, "password": … }`, and send the `access_token` it answers as `Authorization: Bearer <access_token>`. An operation a role is not granted answers `404` on its REST route, and that role's schema has no field for it. `publishBook` answers `null` for an id no book has.
 
-With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token. `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor.
+With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token. `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor, and to `events_onBookPublished` for both roles, refetching the list on either.
 
 The rest of this guide sets a project up by hand, against a database you already run.
 
