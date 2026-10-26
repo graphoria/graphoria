@@ -221,16 +221,59 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
+export type Paint = Record<
+  "code" | "url" | "name" | "secret" | "warning",
+  (text: string) => string
+>;
+
+const plain = (text: string) => text;
+
+export const PLAIN_PAINT: Paint = {
+  code: plain,
+  url: plain,
+  name: plain,
+  secret: plain,
+  warning: plain,
+};
+
+const tint = (code: number) => (text: string) => `\x1b[${code}m${text}\x1b[39m`;
+
+// 16-color codes (36 cyan, 94 bright blue, 33 yellow), not 256 or truecolor: the terminal's theme
+// then chooses shades its background reads. Errors need none: on a terminal, Bun's console.error
+// prints them red by itself.
+export const COLOR_PAINT: Paint = {
+  code: tint(36),
+  url: tint(94),
+  name: (text) => `\x1b[1m${text}\x1b[22m`,
+  secret: tint(33),
+  warning: tint(33),
+};
+
+// Bun.color's "ansi" weighs TERM, NO_COLOR and FORCE_COLOR but never the stream, and
+// Bun.enableANSIColors holds while either stdout or stderr is a terminal: each stream decides alone.
+export const paintFor = (
+  stream: { isTTY?: boolean },
+  ansi = Bun.color("white", "ansi"),
+  forced = process.env.FORCE_COLOR !== undefined,
+): Paint => (ansi && (stream.isTTY || forced) ? COLOR_PAINT : PLAIN_PAINT);
+
 export const nextSteps = (
   answers: InitAnswers,
   installed: boolean,
   users?: { reader: string; editor: string },
+  paint: Paint = PLAIN_PAINT,
 ) => {
   if (answers.auth && !users) throw new Error("nextSteps: auth needs the demo users' passwords");
 
+  const command = (line: string) => `  ${paint.code(line)}`;
+  const inline = (code: string) => paint.code(`\`${code}\``);
+  const link = (port: number, path = "") => paint.url(`http://localhost:${port}${path}`);
+  const seed = (role: "reader" | "editor", password: string) =>
+    `  ${paint.code(`bunx graphoria seed-auth --user ${role} --password `)}${paint.secret(password)}${paint.code(` --role ${role} --config ./graphoria.ts`)}`;
+
   const open = answers.frontend
-    ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
-    : "  then open http://localhost:3000/graphiql";
+    ? `  then open ${link(3000)} (the app) or ${link(3000, "/graphiql")}`
+    : `  then open ${link(3000, "/graphiql")}`;
 
   // Besides the database, what graphoria.ts connects to: a host run starts
   // their containers too.
@@ -242,29 +285,33 @@ export const nextSteps = (
   const run =
     answers.database === "sqlite"
       ? [
-          ...(installed ? [] : ["First run `bun install`.", ""]),
+          ...(installed ? [] : [`First run ${inline("bun install")}.`, ""]),
           `Run it on this machine; the first boot creates ${answers.dbName}.db and seeds it:`,
-          ...(services ? [`  docker compose up -d --wait ${services}`] : []),
-          "  bun run dev",
+          ...(services ? [command(`docker compose up -d --wait ${services}`)] : []),
+          command("bun run dev"),
           open,
           "",
           "Or in Docker, with the database file on a volume:",
-          "  docker compose up -d --build",
+          command("docker compose up -d --build"),
         ]
       : [
-          ...(installed ? [] : ["First run `bun install`: the Dockerfile needs its bun.lock.", ""]),
+          ...(installed
+            ? []
+            : [`First run ${inline("bun install")}: the Dockerfile needs its bun.lock.`, ""]),
           "Run everything in Docker:",
-          "  docker compose up -d --build",
+          command("docker compose up -d --build"),
           open,
           "",
           "Or run Graphoria on the host against the database container:",
-          answers.database === "mssql"
-            ? "  docker compose run --rm db-init"
-            : `  docker compose up -d --wait db${services ? ` ${services}` : ""}`,
+          command(
+            answers.database === "mssql"
+              ? "docker compose run --rm db-init"
+              : `docker compose up -d --wait db${services ? ` ${services}` : ""}`,
+          ),
           ...(answers.database === "mssql" && services
-            ? [`  docker compose up -d --wait ${services}`]
+            ? [command(`docker compose up -d --wait ${services}`)]
             : []),
-          "  bun run dev",
+          command("bun run dev"),
         ];
 
   return [
@@ -272,24 +319,24 @@ export const nextSteps = (
     ...(answers.auth && users
       ? [
           "",
-          "Two demo users, one per role. Once the database is up, create them:",
-          `  bunx graphoria seed-auth --user reader --password ${users.reader} --role reader --config ./graphoria.ts`,
-          `  bunx graphoria seed-auth --user editor --password ${users.editor} --role editor --config ./graphoria.ts`,
+          `${paint.name("Two demo users")}, one per role. Once the database is up, create them:`,
+          seed("reader", users.reader),
+          seed("editor", users.editor),
           ...(answers.database === "sqlite"
             ? [
-                "(SQLite in Docker: run them inside the container, prefixed with `docker compose exec graphoria`.)",
+                `(SQLite in Docker: run them inside the container, prefixed with ${inline("docker compose exec graphoria")}.)`,
               ]
             : []),
           "Without a token you read the authors. A reader also reads the published books; an editor",
           "reads every book, adds drafts (addBook) and publishes them (publishBook).",
           "Log in with auth_login in GraphiQL or POST /rest/auth/login, then send",
-          `Authorization: Bearer <access_token>${answers.frontend ? ", or sign in at http://localhost:3000" : ""}.`,
+          `Authorization: Bearer <access_token>${answers.frontend ? `, or sign in at ${link(3000)}` : ""}.`,
         ]
       : []),
     ...(answers.rabbitmq
       ? [
           "",
-          `RabbitMQ management UI: http://localhost:${RABBITMQ_MANAGEMENT_PORT} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
+          `${paint.name("RabbitMQ")} management UI: ${link(RABBITMQ_MANAGEMENT_PORT)} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
           `Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.${answers.auth ? " Both take an editor's token or the admin secret." : ""}`,
           ...(answers.auth
             ? [
@@ -301,40 +348,40 @@ export const nextSteps = (
     ...(answers.ai
       ? [
           "",
-          `The AI agent answers /rest/ai and GraphiQL's ask field${answers.auth ? " for a reader or an editor" : ""}.`,
-          "Ollama must run on the host, so use bun run dev, not docker compose up.",
+          `The ${paint.name("AI agent")} answers /rest/ai and GraphiQL's ask field${answers.auth ? " for a reader or an editor" : ""}.`,
+          `Ollama must run on the host, so use ${paint.code("bun run dev")}, not ${paint.code("docker compose up")}.`,
         ]
       : []),
     ...(answers.redis
       ? [
           "",
           answers.auth
-            ? "Redis caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits once you turn them on. With bun run dev, start it first: a token the server cannot check there reads as no token."
-            : "Redis caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.",
+            ? `${paint.name("Redis")} caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits once you turn them on. With ${paint.code("bun run dev")}, start it first: a token the server cannot check there reads as no token.`
+            : `${paint.name("Redis")} caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.`,
         ]
       : []),
     ...(answers.dataTools
       ? [
           "",
-          `dbgate explores the database at http://localhost:${DBGATE_PORT} once \`docker compose up\` runs it.`,
+          `${paint.name("dbgate")} explores the database at ${link(DBGATE_PORT)} once ${inline("docker compose up")} runs it.`,
           ...(answers.redis
-            ? [`Redis Commander inspects Redis at http://localhost:${REDIS_COMMANDER_PORT}.`]
+            ? [`${paint.name("Redis Commander")} inspects Redis at ${link(REDIS_COMMANDER_PORT)}.`]
             : []),
         ]
       : []),
     ...(answers.frontend
       ? [
           "",
-          "Once `bun run dev` has printed the schema, `bun run types` writes",
+          `Once ${inline("bun run dev")} has printed the schema, ${inline("bun run types")} writes`,
           "web/graphql-env.d.ts, which types the app's queries. Commit it.",
         ]
       : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
-    `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${sampleQuery(answers)}`,
+    `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
     "",
     "Recreate this setup in a new directory without prompts (the secrets are regenerated):",
-    `  ${recreateCommand(answers, installed)}`,
+    command(recreateCommand(answers, installed)),
   ].join("\n");
 };
 
@@ -403,7 +450,8 @@ export const initCommand = async (argv: string[]): Promise<never> => {
         })
       : undefined,
   ];
-  for (const warning of warnings) if (warning) console.warn(warning);
+  const stderrPaint = paintFor(process.stderr);
+  for (const warning of warnings) if (warning) console.warn(stderrPaint.warning(warning));
 
   const name = projectName(dir);
   // Printed with the seed-auth commands only: not in .env, never in recreateCommand.
@@ -449,6 +497,6 @@ export const initCommand = async (argv: string[]): Promise<never> => {
     console.log("");
   }
 
-  console.log(nextSteps(answers, args.install, users));
+  console.log(nextSteps(answers, args.install, users, paintFor(process.stdout)));
   process.exit(0);
 };

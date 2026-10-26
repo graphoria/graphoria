@@ -9,12 +9,15 @@ import type { InitAnswers } from "./initTemplates";
 import type { Choice } from "./prompt";
 
 import {
+  COLOR_PAINT,
+  PLAIN_PAINT,
   collectAnswers,
   findConflicts,
   generatePassword,
   generateSecret,
   isPortFree,
   nextSteps,
+  paintFor,
   passwordError,
   portWarning,
   projectName,
@@ -623,5 +626,126 @@ describe("nextSteps", () => {
     const answers = { ...ANSWERS, rabbitmq: true, ai: true, redis: true, frontend: true };
 
     expect(nextSteps(answers, true, USERS)).toBe(nextSteps(answers, true));
+  });
+
+  it.each([
+    {
+      what: "every extra",
+      answers: {
+        ...ANSWERS,
+        rabbitmq: true,
+        ai: true,
+        auth: true,
+        redis: true,
+        dataTools: true,
+        frontend: true,
+      },
+      installed: true,
+    },
+    {
+      what: "SQLite before bun install",
+      answers: { ...ANSWERS, database: "sqlite" as const, dbPort: 0, auth: true, rabbitmq: true },
+      installed: false,
+    },
+    {
+      what: "SQL Server with Redis before bun install",
+      answers: { ...ANSWERS, database: "mssql" as const, redis: true },
+      installed: false,
+    },
+  ])("adds nothing but color codes for $what", ({ answers, installed }) => {
+    expect(Bun.stripANSI(nextSteps(answers, installed, USERS, COLOR_PAINT))).toBe(
+      nextSteps(answers, installed, USERS),
+    );
+  });
+
+  it("colors what to type cyan and what to open blue", () => {
+    const steps = nextSteps(
+      { ...ANSWERS, dataTools: true, frontend: true },
+      true,
+      USERS,
+      COLOR_PAINT,
+    );
+
+    expect(steps).toContain("\n  \x1b[36mbun run dev\x1b[39m\n");
+    expect(steps).toContain("once \x1b[36m`docker compose up`\x1b[39m runs it.");
+    expect(steps).toContain(
+      "Try: \x1b[36m{ public_authors { name public_books { title } } }\x1b[39m",
+    );
+    expect(steps).toContain(
+      "then open \x1b[94mhttp://localhost:3000\x1b[39m (the app) or \x1b[94mhttp://localhost:3000/graphiql\x1b[39m",
+    );
+  });
+
+  it("colors the commands the AI and Redis paragraphs name", () => {
+    const steps = nextSteps(
+      { ...ANSWERS, ai: true, auth: true, redis: true },
+      true,
+      USERS,
+      COLOR_PAINT,
+    );
+
+    expect(steps).toContain(
+      "so use \x1b[36mbun run dev\x1b[39m, not \x1b[36mdocker compose up\x1b[39m.",
+    );
+    expect(steps).toContain("With \x1b[36mbun run dev\x1b[39m, start it first");
+  });
+
+  it("bolds the name that opens each extra's paragraph, and colors the demo passwords yellow", () => {
+    const steps = nextSteps(
+      { ...ANSWERS, rabbitmq: true, ai: true, auth: true, redis: true, dataTools: true },
+      true,
+      USERS,
+      COLOR_PAINT,
+    );
+
+    for (const name of [
+      "Two demo users",
+      "RabbitMQ",
+      "AI agent",
+      "Redis",
+      "dbgate",
+      "Redis Commander",
+    ]) {
+      expect(steps).toContain(`\x1b[1m${name}\x1b[22m`);
+    }
+    expect(steps).toContain(
+      "  \x1b[36mbunx graphoria seed-auth --user reader --password \x1b[39m\x1b[33mReaderPass123\x1b[39m\x1b[36m --role reader --config ./graphoria.ts\x1b[39m",
+    );
+  });
+});
+
+describe("paintFor", () => {
+  it.each([
+    {
+      what: "a terminal whose TERM takes color",
+      isTTY: true,
+      ansi: "\x1b[97m",
+      forced: false,
+      want: COLOR_PAINT,
+    },
+    { what: "a pipe", isTTY: undefined, ansi: "\x1b[97m", forced: false, want: PLAIN_PAINT },
+    {
+      what: "a pipe under FORCE_COLOR",
+      isTTY: undefined,
+      ansi: "\x1b[97m",
+      forced: true,
+      want: COLOR_PAINT,
+    },
+    {
+      what: "a pipe under FORCE_COLOR=0",
+      isTTY: undefined,
+      ansi: "",
+      forced: true,
+      want: PLAIN_PAINT,
+    },
+    {
+      what: "a terminal under NO_COLOR, TERM=dumb or no TERM",
+      isTTY: true,
+      ansi: "",
+      forced: false,
+      want: PLAIN_PAINT,
+    },
+  ])("picks the paint for $what", ({ isTTY, ansi, forced, want }) => {
+    expect(paintFor({ isTTY }, ansi, forced)).toBe(want);
   });
 });

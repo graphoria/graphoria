@@ -139,24 +139,37 @@ describe("cli init", () => {
     "tsconfig.json",
   ];
 
-  const init = async (args: string[], stdin?: string) => {
+  const init = async (args: string[], stdin?: string, extraEnv: Record<string, string> = {}) => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
     const result = Bun.spawnSync(["bun", join(import.meta.dir, "cli.ts"), "init", ...args], {
       cwd,
-      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
       stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
     });
     return { cwd, result };
   };
 
   /** Runs init in a terminal, typing each step's keys once its prompt shows. */
-  const initInTerminal = async (args: string[], steps: [prompt: string, keys: string][]) => {
+  const initInTerminal = async (
+    args: string[],
+    steps: [prompt: string, keys: string][],
+    {
+      extraEnv = {},
+      pipeStdout = false,
+    }: { extraEnv?: Record<string, string>; pipeStdout?: boolean } = {},
+  ) => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
     const decoder = new TextDecoder();
     let output = "";
-    const proc = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "init", ...args], {
+    const cli = join(import.meta.dir, "cli.ts");
+    // Bun's terminal takes all three streams, so sh pipes stdout alone out of it, as `| tee` does
+    // (the exit code is then cat's).
+    const command = pipeStdout
+      ? ["sh", "-c", 'bun "$0" init "$@" | cat', cli, ...args]
+      : ["bun", cli, "init", ...args];
+    const proc = Bun.spawn(command, {
       cwd,
-      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
       terminal: {
         cols: 60,
         rows: 30,
@@ -452,6 +465,68 @@ describe("cli init", () => {
     expect(output).toContain("\x1b[?25h");
     expect(await readdir(cwd)).toEqual([]);
   }, 30_000);
+
+  it("colors the guide in a terminal that takes color", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(["--yes", "--no-install"], [], {
+      extraEnv: { TERM: "xterm-256color" },
+    });
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain("  \x1b[36mbun run dev\x1b[39m");
+    expect(output).toContain("\x1b[94mhttp://localhost:3000/graphiql\x1b[39m");
+  }, 30_000);
+
+  it("prints the guide without color under NO_COLOR, or into a pipe", async () => {
+    const terminal = await initInTerminal(["--yes", "--no-install"], [], {
+      extraEnv: { TERM: "xterm-256color", NO_COLOR: "1" },
+    });
+    const pipe = await init(["--yes", "--no-install"], undefined, { TERM: "xterm-256color" });
+    cwds.push(terminal.cwd, pipe.cwd);
+
+    expect(terminal.exitCode).toBe(0);
+    expect(terminal.output).toContain("  bun run dev");
+    expect(terminal.output).not.toContain("\x1b[");
+    expect(pipe.result.exitCode).toBe(0);
+    expect(pipe.result.stdout.toString()).toContain("  bun run dev");
+    expect(pipe.result.stdout.toString()).not.toContain("\x1b[");
+  }, 30_000);
+
+  it("colors stderr's warning but not the guide when only stdout is piped, as into tee", async () => {
+    const holder = Bun.listen({ hostname: "0.0.0.0", port: 0, socket: { data() {} } });
+    const { cwd, output } = await initInTerminal(
+      ["--yes", "--db-port", String(holder.port), "--no-install"],
+      [],
+      { extraEnv: { TERM: "xterm-256color" }, pipeStdout: true },
+    ).finally(() => holder.stop(true));
+    cwds.push(cwd);
+
+    expect(output).toContain(`\x1b[33mPort ${holder.port} is in use on this host`);
+    expect(output).toContain("  bun run dev");
+    expect(output).not.toContain("\x1b[36m");
+    expect(output).not.toContain("\x1b[94m");
+    expect(await readdir(cwd)).toContain("graphoria.ts");
+  }, 30_000);
+
+  it("colors a port warning yellow in a terminal", async () => {
+    const holder = Bun.listen({ hostname: "0.0.0.0", port: 0, socket: { data() {} } });
+    const { cwd, output } = await initInTerminal(
+      ["--yes", "--db-port", String(holder.port), "--no-install"],
+      [],
+      { extraEnv: { TERM: "xterm-256color" } },
+    ).finally(() => holder.stop(true));
+    cwds.push(cwd);
+
+    expect(output).toContain(`\x1b[33mPort ${holder.port} is in use on this host`);
+  }, 30_000);
+
+  it("colors the guide through a pipe under FORCE_COLOR", async () => {
+    const { cwd, result } = await init(["--yes", "--no-install"], undefined, { FORCE_COLOR: "1" });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("  \x1b[36mbun run dev\x1b[39m");
+  });
 
   it("writes nothing when a file it would create exists", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
