@@ -3,8 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { InitIO } from "./init";
 import type { InitArgs } from "./initArgs";
 import type { InitAnswers } from "./initTemplates";
+import type { Choice } from "./prompt";
 
 import {
   collectAnswers,
@@ -22,12 +24,15 @@ import {
 
 const ARGS: InitArgs = { yes: false, install: true };
 
-const prompter = (answers: (string | null)[]) => {
+type Menus = { select?: number[]; multiSelect?: number[][] };
+
+const prompter = (answers: (string | null)[] = [], menus: Menus = {}) => {
   const fallbacks: string[] = [];
   const said: string[] = [];
-  return {
-    fallbacks,
-    said,
+  const selected: string[] = [];
+  const multi: string[] = [];
+  const multiOptions: string[][] = [];
+  const io: InitIO = {
     ask: (_question: string, fallback: string) => {
       fallbacks.push(fallback);
       return answers.length > 0 ? answers.shift()! : null;
@@ -35,51 +40,170 @@ const prompter = (answers: (string | null)[]) => {
     say: (line: string) => {
       said.push(line);
     },
+    select: <T>(_question: string, choices: readonly Choice<T>[], initial: number) => {
+      selected.push(_question);
+      const index = menus.select?.shift();
+      return choices[index ?? initial].value;
+    },
+    multiSelect: <T>(_question: string, choices: readonly Choice<T>[], initial: readonly T[]) => {
+      multi.push(_question);
+      multiOptions.push(choices.map((choice) => choice.label));
+      const picks = menus.multiSelect?.shift();
+      return picks === undefined ? [...initial] : picks.map((index) => choices[index].value);
+    },
   };
+  return { fallbacks, multi, multiOptions, said, selected, io };
 };
 
 describe("collectAnswers", () => {
-  it("takes every default on EOF", () => {
+  it("takes every default on EOF", async () => {
     const io = prompter([]);
-    const answers = collectAnswers(ARGS, io.ask, io.say);
+    const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers.database).toBe("pg");
     expect(answers.dbName).toBe("app");
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
     expect(answers.dbPort).toBe(5432);
-    expect(answers.frontend).toBe(false);
+    expect(answers.rabbitmq).toBe(false);
+    expect(answers.ai).toBe(false);
     expect(answers.auth).toBe(false);
-    expect(io.fallbacks).toEqual([
-      "pg",
-      "app",
-      answers.dbPassword,
-      "5432",
-      "n",
-      "n",
-      "n",
-      "n",
-      "n",
-      "n",
-    ]);
+    expect(answers.redis).toBe(false);
+    expect(answers.dataTools).toBe(false);
+    expect(answers.frontend).toBe(false);
+    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "5432"]);
+    expect(io.selected).toEqual(["Database engine"]);
+    expect(io.multi).toEqual(["Select extras"]);
     expect(io.said).toEqual([]);
   });
 
-  it("takes the default on an empty line", () => {
-    const io = prompter(["", " ", "", ""]);
-    const answers = collectAnswers(ARGS, io.ask, io.say);
+  it("takes the default on an empty line", async () => {
+    const io = prompter(["", " ", ""]);
+    const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({ database: "pg", dbName: "app", dbPort: 5432 });
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
   });
 
-  it("takes the answers given", () => {
-    const io = prompter(["mysql", " shop ", "S3cret.pass", "13306"]);
+  it("takes the engine from the menu and the rest from the answers", async () => {
+    const io = prompter([" shop ", "S3cret.pass", "13306"], {
+      select: [1],
+      multiSelect: [[0, 2]],
+    });
 
-    expect(collectAnswers(ARGS, io.ask, io.say)).toEqual({
+    expect(await collectAnswers(ARGS, io.io)).toEqual({
       database: "mysql",
       dbName: "shop",
       dbPassword: "S3cret.pass",
       dbPort: 13306,
+      rabbitmq: true,
+      ai: false,
+      auth: true,
+      redis: false,
+      dataTools: false,
+      frontend: false,
+    });
+  });
+
+  it("defaults the port to the engine chosen in the menu", async () => {
+    const io = prompter(["shop", "pw"], { select: [1] });
+
+    expect((await collectAnswers(ARGS, io.io)).dbPort).toBe(3306);
+  });
+
+  it("skips the engine question when --database chose it, and defaults to its port", async () => {
+    const io = prompter([]);
+    const answers = await collectAnswers({ ...ARGS, database: "mssql" }, io.io);
+
+    expect(answers.database).toBe("mssql");
+    expect(answers.dbPort).toBe(1433);
+    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433"]);
+    expect(io.selected).toEqual([]);
+  });
+
+  it("skips the name and port questions when --db-name and --db-port answered them", async () => {
+    const io = prompter([]);
+    const answers = await collectAnswers({ ...ARGS, dbName: "shop", dbPort: 15432 }, io.io);
+
+    expect(answers).toMatchObject({ dbName: "shop", dbPort: 15432 });
+    expect(io.fallbacks).toEqual([answers.dbPassword]);
+  });
+
+  it.each([
+    { what: "an uppercase name", engine: 0, answers: ["My-DB", "shop"], want: { dbName: "shop" } },
+    {
+      what: "a name with a dash",
+      engine: 0,
+      answers: ["my-db", "my_db"],
+      want: { dbName: "my_db" },
+    },
+    {
+      what: "a password with $",
+      engine: 0,
+      answers: ["shop", "pa$$word", "password"],
+      want: { dbPassword: "password" },
+    },
+    {
+      what: "a password starting with -",
+      engine: 0,
+      answers: ["shop", "-password", "pass-word"],
+      want: { dbPassword: "pass-word" },
+    },
+    {
+      what: "a weak SQL Server password",
+      engine: 2,
+      answers: ["shop", "abcdefgh", "Abcdefg1"],
+      want: { dbPassword: "Abcdefg1" },
+    },
+    {
+      what: "a short SQL Server password",
+      engine: 2,
+      answers: ["shop", "Ab1.", "Ab1.Ab1."],
+      want: { dbPassword: "Ab1.Ab1." },
+    },
+    {
+      what: "a port out of range",
+      engine: 0,
+      answers: ["shop", "pw", "70000", "15432"],
+      want: { dbPort: 15432 },
+    },
+    {
+      what: "a port that is not a number",
+      engine: 0,
+      answers: ["shop", "pw", "54x", "15432"],
+      want: { dbPort: 15432 },
+    },
+    {
+      what: "port 0",
+      engine: 0,
+      answers: ["shop", "pw", "0", "15432"],
+      want: { dbPort: 15432 },
+    },
+  ])("asks again after $what, saying why", async ({ engine, answers, want }) => {
+    const io = prompter([...answers], { select: [engine] });
+
+    expect(await collectAnswers(ARGS, io.io)).toMatchObject(want);
+    expect(io.fallbacks).toHaveLength(4);
+    expect(io.said).toHaveLength(1);
+  });
+
+  it("takes the default after EOF on a re-ask", async () => {
+    const io = prompter(["My-DB", null], { select: [0] });
+
+    expect((await collectAnswers(ARGS, io.io)).dbName).toBe("app");
+  });
+
+  it("adds the extras ticked in the list", async () => {
+    const io = prompter([], { multiSelect: [[0, 2, 5]] });
+    const answers = await collectAnswers(ARGS, io.io);
+
+    expect(answers).toMatchObject({ rabbitmq: true, ai: false, auth: true, frontend: true });
+  });
+
+  it("leaves every extra out when none is ticked", async () => {
+    const io = prompter([]);
+    const answers = await collectAnswers(ARGS, io.io);
+
+    expect(answers).toMatchObject({
       rabbitmq: false,
       ai: false,
       auth: false,
@@ -87,116 +211,95 @@ describe("collectAnswers", () => {
       dataTools: false,
       frontend: false,
     });
-  });
-
-  it("skips the engine question when --database chose it, and defaults to its port", () => {
-    const io = prompter([]);
-    const answers = collectAnswers({ ...ARGS, database: "mssql" }, io.ask, io.say);
-
-    expect(answers.database).toBe("mssql");
-    expect(answers.dbPort).toBe(1433);
-    expect(io.fallbacks).toEqual(["app", answers.dbPassword, "1433", "n", "n", "n", "n", "n", "n"]);
-  });
-
-  it("skips the name and port questions when --db-name and --db-port answered them", () => {
-    const io = prompter([]);
-    const answers = collectAnswers({ ...ARGS, dbName: "shop", dbPort: 15432 }, io.ask, io.say);
-
-    expect(answers).toMatchObject({ dbName: "shop", dbPort: 15432 });
-    expect(io.fallbacks).toEqual(["pg", answers.dbPassword, "n", "n", "n", "n", "n", "n"]);
-  });
-
-  it.each([
-    { what: "an unknown engine", answers: ["oracle", "mysql"], want: { database: "mysql" } },
-    { what: "an uppercase name", answers: ["pg", "My-DB", "shop"], want: { dbName: "shop" } },
-    { what: "a name with a dash", answers: ["pg", "my-db", "my_db"], want: { dbName: "my_db" } },
-    {
-      what: "a password with $",
-      answers: ["pg", "shop", "pa$$word", "password"],
-      want: { dbPassword: "password" },
-    },
-    {
-      what: "a password starting with -",
-      answers: ["pg", "shop", "-password", "pass-word"],
-      want: { dbPassword: "pass-word" },
-    },
-    {
-      what: "a weak SQL Server password",
-      answers: ["mssql", "shop", "abcdefgh", "Abcdefg1"],
-      want: { dbPassword: "Abcdefg1" },
-    },
-    {
-      what: "a short SQL Server password",
-      answers: ["mssql", "shop", "Ab1.", "Ab1.Ab1."],
-      want: { dbPassword: "Ab1.Ab1." },
-    },
-    {
-      what: "a port out of range",
-      answers: ["pg", "shop", "pw", "70000", "15432"],
-      want: { dbPort: 15432 },
-    },
-    {
-      what: "a port that is not a number",
-      answers: ["pg", "shop", "pw", "54x", "15432"],
-      want: { dbPort: 15432 },
-    },
-    { what: "port 0", answers: ["pg", "shop", "pw", "0", "15432"], want: { dbPort: 15432 } },
-  ])("asks again after $what, saying why", ({ answers, want }) => {
-    const io = prompter([...answers]);
-
-    expect(collectAnswers(ARGS, io.ask, io.say)).toMatchObject(want);
-    expect(io.fallbacks).toHaveLength(11);
-    expect(io.said).toHaveLength(1);
-  });
-
-  it("takes the default after EOF on a re-ask", () => {
-    const io = prompter(["pg", "My-DB", null]);
-
-    expect(collectAnswers(ARGS, io.ask, io.say).dbName).toBe("app");
-  });
-
-  it.each(["y", "yes", "Y", "YES", " Yes "])("adds the frontend on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", "n", answer]);
-
-    expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
-  });
-
-  it.each(["", "n", "no", "N", "No"])("leaves the frontend out on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", "n", answer]);
-
-    expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(false);
     expect(io.said).toEqual([]);
   });
 
-  it("asks the frontend question again after another answer, saying why", () => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n", "n", "n", "maybe", "y"]);
+  it("offers the extras in the order of their flags", async () => {
+    const io = prompter();
+    await collectAnswers(ARGS, io.io);
 
-    expect(collectAnswers(ARGS, io.ask, io.say).frontend).toBe(true);
-    expect(io.fallbacks).toHaveLength(11);
-    expect(io.said).toHaveLength(1);
-  });
-
-  it.each([true, false])("skips the frontend question when --frontend is %p", (frontend) => {
-    const io = prompter([]);
-    const answers = collectAnswers({ ...ARGS, frontend }, io.ask, io.say);
-
-    expect(answers.frontend).toBe(frontend);
-    expect(io.fallbacks).toEqual([
-      "pg",
-      "app",
-      answers.dbPassword,
-      "5432",
-      "n",
-      "n",
-      "n",
-      "n",
-      "n",
+    expect(io.multiOptions[0]).toEqual([
+      "RabbitMQ",
+      "AI agent",
+      "Login",
+      "Redis",
+      "Data tools",
+      "React frontend",
     ]);
   });
 
-  it("asks neither a password nor a port for SQLite, which has no server", () => {
+  it("asks no extras when every flag answered them", async () => {
+    const io = prompter();
+    await collectAnswers(
+      {
+        ...ARGS,
+        rabbitmq: false,
+        ai: false,
+        auth: false,
+        redis: false,
+        dataTools: false,
+        frontend: false,
+      },
+      io.io,
+    );
+
+    expect(io.multi).toEqual([]);
+  });
+
+  it.each([true, false])("skips the RabbitMQ extra when --rabbitmq is %p", async (rabbitmq) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, rabbitmq }, io.io);
+
+    expect(answers.rabbitmq).toBe(rabbitmq);
+    expect(io.multiOptions[0]).not.toContain("RabbitMQ");
+  });
+
+  it.each([true, false])("skips the AI extra when --ai is %p", async (ai) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, ai }, io.io);
+
+    expect(answers.ai).toBe(ai);
+    expect(io.multiOptions[0]).not.toContain("AI agent");
+  });
+
+  it.each([true, false])("skips the login extra when --auth is %p", async (auth) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, auth }, io.io);
+
+    expect(answers.auth).toBe(auth);
+    expect(io.multiOptions[0]).not.toContain("Login");
+  });
+
+  it.each([true, false])("skips the Redis extra when --redis is %p", async (redis) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, redis }, io.io);
+
+    expect(answers.redis).toBe(redis);
+    expect(io.multiOptions[0]).not.toContain("Redis");
+  });
+
+  it.each([true, false])(
+    "skips the data-tools extra when --data-tools is %p",
+    async (dataTools) => {
+      const io = prompter();
+      const answers = await collectAnswers({ ...ARGS, dataTools }, io.io);
+
+      expect(answers.dataTools).toBe(dataTools);
+      expect(io.multiOptions[0]).not.toContain("Data tools");
+    },
+  );
+
+  it.each([true, false])("skips the frontend extra when --frontend is %p", async (frontend) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, frontend }, io.io);
+
+    expect(answers.frontend).toBe(frontend);
+    expect(io.multiOptions[0]).not.toContain("React frontend");
+  });
+
+  it("asks neither a password nor a port for SQLite, which has no server", async () => {
     const io = prompter([]);
-    const answers = collectAnswers({ ...ARGS, database: "sqlite" }, io.ask, io.say);
+    const answers = await collectAnswers({ ...ARGS, database: "sqlite" }, io.io);
 
     expect(answers).toEqual({
       database: "sqlite",
@@ -210,99 +313,7 @@ describe("collectAnswers", () => {
       dataTools: false,
       frontend: false,
     });
-    expect(io.fallbacks).toEqual(["app", "n", "n", "n", "n", "n", "n"]);
-  });
-
-  it.each([
-    ["y", "yes"],
-    ["Y", "no"],
-  ])("adds RabbitMQ and the AI agent on %p", (rabbitAnswer, aiAnswer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", rabbitAnswer, aiAnswer]);
-    const answers = collectAnswers(ARGS, io.ask, io.say);
-
-    expect(answers.rabbitmq).toBe(true);
-    expect(answers.ai).toBe(aiAnswer === "yes");
-  });
-
-  it.each([true, false])("skips the RabbitMQ question when --rabbitmq is %p", (rabbitmq) => {
-    const io = prompter(["pg", "shop", null, "15432", "n"]);
-    const answers = collectAnswers({ ...ARGS, rabbitmq }, io.ask, io.say);
-
-    expect(answers.rabbitmq).toBe(rabbitmq);
-    expect(io.fallbacks).toEqual([
-      "pg",
-      "app",
-      answers.dbPassword,
-      "5432",
-      "n",
-      "n",
-      "n",
-      "n",
-      "n",
-    ]);
-  });
-
-  it.each([true, false])("skips the AI question when --ai is %p", (ai) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n"]);
-    const answers = collectAnswers({ ...ARGS, ai }, io.ask, io.say);
-
-    expect(answers.ai).toBe(ai);
-  });
-
-  it("asks for login with two roles right after the AI question", () => {
-    const questions: string[] = [];
-    collectAnswers(
-      ARGS,
-      (question) => {
-        questions.push(question);
-        return null;
-      },
-      () => {},
-    );
-
-    expect(questions.slice(5, 8)).toEqual([
-      "Enable the AI agent? (y/N)",
-      "Add login with two roles, reader and editor? (y/N)",
-      "Add Redis? (y/N)",
-    ]);
-  });
-
-  it.each(["y", "yes"])("adds login with two roles on %p", (answer) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", answer]);
-
-    expect(collectAnswers(ARGS, io.ask, io.say).auth).toBe(true);
-  });
-
-  it.each([true, false])("skips the auth question when --auth is %p", (auth) => {
-    const io = prompter([]);
-    const answers = collectAnswers({ ...ARGS, auth }, io.ask, io.say);
-
-    expect(answers.auth).toBe(auth);
-    expect(io.fallbacks).toEqual([
-      "pg",
-      "app",
-      answers.dbPassword,
-      "5432",
-      "n",
-      "n",
-      "n",
-      "n",
-      "n",
-    ]);
-  });
-
-  it.each([true, false])("skips the Redis question when --redis is %p", (redis) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n"]);
-    const answers = collectAnswers({ ...ARGS, redis }, io.ask, io.say);
-
-    expect(answers.redis).toBe(redis);
-  });
-
-  it.each([true, false])("skips the data-tools question when --data-tools is %p", (dataTools) => {
-    const io = prompter(["pg", "shop", "pw", "15432", "n", "n", "n"]);
-    const answers = collectAnswers({ ...ARGS, dataTools }, io.ask, io.say);
-
-    expect(answers.dataTools).toBe(dataTools);
+    expect(io.fallbacks).toEqual(["app"]);
   });
 });
 

@@ -19,7 +19,7 @@ mkdir my-api && cd my-api
 bunx graphoria init
 ```
 
-`init` asks for the database engine (`pg`, `mysql`, `mssql` or `sqlite`), the database name, its password, the port it gets on your machine (SQLite asks for neither) and whether to add a React frontend; Enter takes the default shown. It then writes the project and runs `bun install`:
+`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, login with two roles, Redis, data inspection tools and a React frontend. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
 
 | File                                          | What it holds                                                                                                                                                  |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -68,7 +68,7 @@ Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server
 
 ### Add a React frontend with `--frontend`
 
-Answer yes to `Add a React frontend?`, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books and adds new ones through `addBook` (with `--auth` too, behind a sign-in: see [Add login with two roles](#add-login-with-two-roles-with---auth)):
+Tick `React frontend` in the extras list, or pass `--frontend` (`--no-frontend` answers no, and so does `--yes` alone). The project then gets a one-page React app, served by the same Bun server on `http://localhost:3000`, that lists the seed's authors with their books and adds new ones through `addBook` (with `--auth` too, behind a sign-in: see [Add login with two roles](#add-login-with-two-roles-with---auth)):
 
 | File                                                | What it holds                                                                                                           |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -92,7 +92,7 @@ It writes `web/graphql-env.d.ts`; commit that file. Until it exists the app stil
 
 ### Add a RabbitMQ broker with `--rabbitmq`
 
-Answer yes to `Add RabbitMQ?`, or pass `--rabbitmq` (`--no-rabbitmq` answers no, and so does `--yes` alone). The project then gets:
+Tick `RabbitMQ` in the extras list, or pass `--rabbitmq` (`--no-rabbitmq` answers no, and so does `--yes` alone). The project then gets:
 
 | File                 | What it holds                                                                                                                              |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -105,7 +105,7 @@ The demo publishes through the `events_bookAdded` mutation and consumes it with 
 
 ### Add Redis with `--redis`
 
-Answer yes to `Add Redis?`, or pass `--redis` (`--no-redis` answers no, and so does `--yes` alone). The project then gets:
+Tick `Redis` in the extras list, or pass `--redis` (`--no-redis` answers no, and so does `--yes` alone). The project then gets:
 
 | File                 | What it holds                                                                                                                                |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -117,7 +117,7 @@ Answer yes to `Add Redis?`, or pass `--redis` (`--no-redis` answers no, and so d
 
 ### Browse the data with `--data-tools`
 
-Answer yes to `Add data inspection tools?`, or pass `--data-tools` (`--no-data-tools` answers no, and so does `--yes` alone). The project then gets:
+Tick `Data tools` in the extras list, or pass `--data-tools` (`--no-data-tools` answers no, and so does `--yes` alone). The project then gets:
 
 | File                 | What it holds                                                                      |
 | -------------------- | ---------------------------------------------------------------------------------- |
@@ -130,7 +130,7 @@ With `--redis` too, the project also gets a `redis-commander` service (image `re
 
 ### Enable the AI agent with `--ai`
 
-Answer yes to `Enable the AI agent?`, or pass `--ai` (`--no-ai` answers no, and so does `--yes` alone). The project then gets:
+Tick `AI agent` in the extras list, or pass `--ai` (`--no-ai` answers no, and so does `--yes` alone). The project then gets:
 
 | File           | What it holds                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------- |
@@ -142,7 +142,7 @@ The agent answers `/rest/ai` and GraphiQL's `ask`; with the console on (`CONSOLE
 
 ### Add login with two roles with `--auth`
 
-Answer yes to `Add login with two roles, reader and editor?`, or pass `--auth` (`--no-auth` answers no, and so does `--yes` alone). Auth is then on, and each book has a `status`: `addBook` stores a draft, and a new `publishBook` operation publishes it. Three tiers read the seed, and the admin secret reads everything:
+Tick `Login` in the extras list, or pass `--auth` (`--no-auth` answers no, and so does `--yes` alone). Auth is then on, and each book has a `status`: `addBook` stores a draft, and a new `publishBook` operation publishes it. Three tiers read the seed, and the admin secret reads everything:
 
 | Caller           | Reads                                        | Calls                                                                                                                    |
 | ---------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |

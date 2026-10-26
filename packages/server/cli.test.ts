@@ -346,12 +346,43 @@ describe("cli init", () => {
     expect(await readFile(join(cwd, "repository.ts"), "utf8")).toBe("mine");
   });
 
-  it("reads the answers from stdin", async () => {
+  it("reads no answers from a pipe, writing nothing", async () => {
     const { cwd, result } = await init(["--no-install"], "mysql\nshop\n\n13306\n");
     cwds.push(cwd);
 
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain('no terminal to ask "Database engine" in');
+    expect(result.stderr.toString()).toContain("Usage: graphoria init");
+    expect(await readdir(cwd)).toEqual([]);
+  });
+
+  it("stops at the first question no flag answers, without a terminal", async () => {
+    const { cwd, result } = await init(["--database", "pg", "--db-name", "shop", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain('no terminal to ask "Database password" in');
+    expect(await readdir(cwd)).toEqual([]);
+  });
+
+  it("needs no terminal when the flags answer every question", async () => {
+    const { cwd, result } = await init([
+      "--database",
+      "sqlite",
+      "--db-name",
+      "shop",
+      "--no-rabbitmq",
+      "--no-ai",
+      "--no-auth",
+      "--no-redis",
+      "--no-data-tools",
+      "--no-frontend",
+      "--no-install",
+    ]);
+    cwds.push(cwd);
+
     expect(result.exitCode).toBe(0);
-    expect(await env(cwd)).toMatchObject({ DB_USER: "root", DB_NAME: "shop", DB_PORT: "13306" });
+    expect((await env(cwd)).DB_FILE).toBe("shop.db");
   });
 
   it("writes nothing when a file it would create exists", async () => {
