@@ -489,7 +489,11 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   console.log(`\nCreated ${name} (${label}): ${written.join(", ")}\n`);
 
   if (args.install) {
-    const install = Bun.spawn(["bun", "install"], {
+    console.log("Installing dependencies (bun install)…");
+    // --silent drops the progress and the package list, though a failed install still prints
+    // Bun's error. --no-env-file drops the line naming the .env just written, which the install
+    // reads nothing from (Bun 1.4.2 ignores the flag and prints the line).
+    const install = Bun.spawn(["bun", "install", "--silent", "--no-env-file"], {
       cwd: dir,
       stdout: "inherit",
       stderr: "inherit",

@@ -141,12 +141,28 @@ describe("cli init", () => {
 
   const init = async (args: string[], stdin?: string, extraEnv: Record<string, string> = {}) => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
-    const result = Bun.spawnSync(["bun", join(import.meta.dir, "cli.ts"), "init", ...args], {
-      cwd,
-      env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
-      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
-    });
+    // process.execPath, not "bun": the PATH in extraEnv may lead to a fake bun.
+    const result = Bun.spawnSync(
+      [process.execPath, join(import.meta.dir, "cli.ts"), "init", ...args],
+      {
+        cwd,
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
+        stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      },
+    );
     return { cwd, result };
+  };
+
+  /** A directory whose `bun` prints its arguments, then fails with FAKE_BUN_ERROR when set. */
+  const fakeBun = async () => {
+    const bin = await mkdtemp(join(tmpdir(), "graphoria-fake-bun-"));
+    await writeFile(
+      join(bin, "bun"),
+      '#!/bin/sh\necho "fake bun $*"\nif [ -n "$FAKE_BUN_ERROR" ]; then echo "$FAKE_BUN_ERROR" >&2; exit 1; fi\n',
+      { mode: 0o755 },
+    );
+    cwds.push(bin);
+    return bin;
   };
 
   /** Runs init in a terminal, typing each step's keys once its prompt shows. */
@@ -563,6 +579,32 @@ describe("cli init", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("  \x1b[36mbun run dev\x1b[39m");
+  });
+
+  it("runs bun install silently, saying so first", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(["--yes", "--database", "sqlite"], undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("Installing dependencies (bun install)…");
+    expect(result.stdout.toString()).toContain("fake bun install --silent --no-env-file\n");
+  });
+
+  it("exits 1 when bun install fails, after Bun's own error, keeping the files", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(["--yes", "--database", "sqlite"], undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+      FAKE_BUN_ERROR: "error: GET https://registry.npmjs.org/nope - 404",
+    });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("error: GET https://registry.npmjs.org/nope - 404");
+    expect(result.stderr.toString()).toContain("init: bun install failed.");
+    expect(await readdir(cwd)).toContain("graphoria.ts");
   });
 
   it("writes nothing when a file it would create exists", async () => {
