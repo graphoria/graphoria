@@ -445,12 +445,49 @@ describe("cli init", () => {
 
     expect(exitCode).toBe(0);
     expect(output).toContain("? Database engine MySQL");
-    // Echoed: the menu handed the terminal back in line mode.
+    // The text prompt echoes what is typed.
     expect(output).toContain("Database name [app] shop");
     expect(output).toContain("? Select extras RabbitMQ, Redis");
     expect(await env(cwd)).toMatchObject({ DB_USER: "root", DB_NAME: "shop", DB_PORT: "3306" });
     const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
     expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq", "redis"]);
+  }, 30_000);
+
+  it("takes answers typed ahead of their questions, as a paste", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--no-install"],
+      [["Database engine", "\x1b[B\rBad\rshop\rSecret12\r3307\r \x1b[B\x1b[B\x1b[B \r"]],
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain("Database name [app] Bad");
+    expect(output).toContain("Use lowercase letters");
+    expect(output).toContain("Database name [app] shop");
+    expect(await env(cwd)).toMatchObject({
+      DB_USER: "root",
+      DB_NAME: "shop",
+      DB_PASSWORD: "Secret12",
+      DB_PORT: "3307",
+    });
+    const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
+    expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq", "redis"]);
+  }, 30_000);
+
+  it("exits 130 on ctrl+c at a text prompt, writing nothing", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--no-install"],
+      [
+        ["Database engine", "\r"],
+        ["Database name", "sh\x03"],
+      ],
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(130);
+    // The line is ended, so the shell's prompt starts on a line of its own.
+    expect(output).toContain("Database name [app] sh\r\n");
+    expect(await readdir(cwd)).toEqual([]);
   }, 30_000);
 
   it("exits 130 on ctrl+c in a menu, writing nothing", async () => {

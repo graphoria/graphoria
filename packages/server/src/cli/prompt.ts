@@ -2,7 +2,7 @@ import { emitKeypressEvents } from "node:readline";
 
 export type Choice<T> = { value: T; label: string; hint?: string };
 
-export type Ask = (question: string, fallback: string) => string | null;
+export type Ask = (question: string, fallback: string) => string | null | Promise<string | null>;
 export type Say = (line: string) => void;
 export type Select = <T>(
   question: string,
@@ -44,6 +44,20 @@ export const reduceMenu = (
   return { state, done: false };
 };
 
+export type LineResult = { line: string; echo: string; done: boolean } | "cancel";
+
+export const reduceLine = (line: string, text: string | undefined, key: Key): LineResult => {
+  if (key.ctrl && key.name === "c") return "cancel";
+  if (key.name === "enter" || key.name === "return") return { line, echo: "", done: true };
+  if (key.name === "backspace") {
+    return line
+      ? { line: Array.from(line).slice(0, -1).join(""), echo: "\b \b", done: false }
+      : { line, echo: "", done: false };
+  }
+  if (key.ctrl || !text || text < " ") return { line, echo: "", done: false };
+  return { line: line + text, echo: text, done: false };
+};
+
 type RawStdin = NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void };
 
 const stdin = process.stdin as RawStdin;
@@ -60,7 +74,34 @@ export const interactive = (): boolean =>
 
 const fit = (line: string): string => line.slice(0, Math.max(20, (stdout.columns ?? 80) - 1));
 
+type OnKey = (text: string | undefined, key: Key) => void;
+
 let keysReady = false;
+let current: OnKey | undefined;
+// A read can carry keys past the one that answers a question (a paste, fast typing): they wait
+// here for the next question instead of reaching no one.
+const pending: [text: string | undefined, key: Key][] = [];
+
+const listen = (onKey: OnKey) => {
+  if (!keysReady) {
+    emitKeypressEvents(stdin);
+    stdin.on("keypress", (text: string | undefined, key: Key) => {
+      if (current) current(text, key);
+      else pending.push([text, key]);
+    });
+    keysReady = true;
+  }
+  current = onKey;
+  stdin.setRawMode!(true);
+  stdin.resume();
+  while (current === onKey && pending.length > 0) onKey(...pending.shift()!);
+};
+
+const release = () => {
+  current = undefined;
+  stdin.setRawMode?.(false);
+  stdin.pause();
+};
 
 const menuLines = <T>(
   question: string,
@@ -100,12 +141,6 @@ const run = <T>(
   let state: MenuState = { active, selected: initial };
   let drawn = 0;
 
-  if (!keysReady) {
-    emitKeypressEvents(stdin);
-    keysReady = true;
-  }
-  stdin.setRawMode!(true);
-  stdin.resume();
   stdout.write(HIDE_CURSOR);
 
   const render = () => {
@@ -121,10 +156,8 @@ const run = <T>(
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
-      stdin.off("keypress", onKey);
+      release();
       process.off("exit", cleanup);
-      stdin.setRawMode?.(false);
-      stdin.pause();
       stdout.write(SHOW_CURSOR);
     };
 
@@ -134,7 +167,7 @@ const run = <T>(
       resolve([...indices]);
     };
 
-    const onKey = (_text: string, key: Key) => {
+    const onKey = (_text: string | undefined, key: Key) => {
       const result = reduceMenu(state, key, choices.length, multi);
       if (result === "cancel") {
         cleanup();
@@ -147,10 +180,30 @@ const run = <T>(
     };
 
     process.once("exit", cleanup);
-    stdin.on("keypress", onKey);
     render();
+    listen(onKey);
   });
 };
+
+export const ask = (question: string, fallback: string): Promise<string> =>
+  new Promise((resolve) => {
+    let line = "";
+    stdout.write(`${question} [${fallback}] `);
+    listen((text, key) => {
+      const result = reduceLine(line, text, key);
+      if (result === "cancel") {
+        release();
+        stdout.write("\n");
+        process.exit(130);
+      }
+      line = result.line;
+      if (result.done) {
+        release();
+        stdout.write("\n");
+        resolve(line);
+      } else if (result.echo) stdout.write(result.echo);
+    });
+  });
 
 export async function select<T>(
   question: string,

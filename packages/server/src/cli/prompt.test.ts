@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { MenuState } from "./prompt";
 
-import { finishLines, multiSelect, reduceMenu, select } from "./prompt";
+import { finishLines, multiSelect, reduceLine, reduceMenu, select } from "./prompt";
 
 const CHOICES = [
   { value: "pg", label: "PostgreSQL" },
@@ -75,6 +75,60 @@ describe("reduceMenu", () => {
   it("leaves the state alone on any other key", () => {
     expect(reduceMenu(START, { name: "x" }, 3, true)).toEqual({ state: START, done: false });
     expect(reduceMenu(START, {}, 3, false)).toEqual({ state: START, done: false });
+  });
+});
+
+describe("reduceLine", () => {
+  it("adds a typed character and echoes it", () => {
+    expect(reduceLine("sh", "o", { name: "o" })).toEqual({ line: "sho", echo: "o", done: false });
+  });
+
+  it("erases the last character on backspace", () => {
+    expect(reduceLine("shop", "\x7f", { name: "backspace" })).toEqual({
+      line: "sho",
+      echo: "\b \b",
+      done: false,
+    });
+  });
+
+  it("erases a whole character outside the basic plane on backspace", () => {
+    expect(reduceLine("shop😀", "\x7f", { name: "backspace" })).toEqual({
+      line: "shop",
+      echo: "\b \b",
+      done: false,
+    });
+  });
+
+  it("leaves an empty line alone on backspace", () => {
+    expect(reduceLine("", "\x7f", { name: "backspace" })).toEqual({
+      line: "",
+      echo: "",
+      done: false,
+    });
+  });
+
+  it("finishes on enter, as a carriage return or a line feed", () => {
+    expect(reduceLine("shop", "\r", { name: "return" })).toEqual({
+      line: "shop",
+      echo: "",
+      done: true,
+    });
+    expect(reduceLine("shop", "\n", { name: "enter" })).toEqual({
+      line: "shop",
+      echo: "",
+      done: true,
+    });
+  });
+
+  it("cancels on ctrl+c", () => {
+    expect(reduceLine("shop", "\x03", { name: "c", ctrl: true })).toBe("cancel");
+  });
+
+  it("ignores arrows, tab and other control keys", () => {
+    const unchanged = { line: "shop", echo: "", done: false };
+    expect(reduceLine("shop", undefined, { name: "left" })).toEqual(unchanged);
+    expect(reduceLine("shop", "\t", { name: "tab" })).toEqual(unchanged);
+    expect(reduceLine("shop", "\x01", { name: "a", ctrl: true })).toEqual(unchanged);
   });
 });
 

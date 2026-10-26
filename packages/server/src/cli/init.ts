@@ -21,7 +21,7 @@ import {
   renderProject,
   seedSchema,
 } from "./initTemplates";
-import { interactive, multiSelect, select } from "./prompt";
+import { ask, interactive, multiSelect, select } from "./prompt";
 
 export type InitIO = {
   ask: Ask;
@@ -45,7 +45,7 @@ const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> =
   hint,
 });
 
-const TERMINAL_IO: InitIO = { ask: prompt, say: console.log, select, multiSelect };
+const TERMINAL_IO: InitIO = { ask, say: console.log, select, multiSelect };
 
 const NO_PROMPT_IO: InitIO = {
   ask: () => null,
@@ -102,14 +102,14 @@ export const passwordError = (database: DatabaseType, password: string): string 
   return undefined;
 };
 
-const question = (
+const question = async (
   io: Pick<InitIO, "ask" | "say">,
   text: string,
   fallback: string,
   error: (answer: string) => string | undefined,
-): string => {
+): Promise<string> => {
   for (;;) {
-    const answer = io.ask(text, fallback)?.trim();
+    const answer = (await io.ask(text, fallback))?.trim();
     if (!answer) return fallback;
     const reason = error(answer);
     if (!reason) return answer;
@@ -126,13 +126,13 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
       0,
     ));
 
-  const dbName = args.dbName ?? question(io, "Database name", "app", dbNameError);
+  const dbName = args.dbName ?? (await question(io, "Database name", "app", dbNameError));
 
   // A SQLite project has no database server: no password, and no port to publish.
   const dbPassword =
     database === "sqlite"
       ? ""
-      : question(io, "Database password", generatePassword(), (answer) =>
+      : await question(io, "Database password", generatePassword(), (answer) =>
           passwordError(database, answer),
         );
 
@@ -141,7 +141,12 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
       ? 0
       : (args.dbPort ??
         Number(
-          question(io, "Database port on this host", String(ENGINES[database].port), portError),
+          await question(
+            io,
+            "Database port on this host",
+            String(ENGINES[database].port),
+            portError,
+          ),
         ));
 
   const extraChoices: Choice<Extra>[] = [
