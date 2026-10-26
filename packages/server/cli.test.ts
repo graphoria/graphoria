@@ -149,6 +149,38 @@ describe("cli init", () => {
     return { cwd, result };
   };
 
+  /** Runs init in a terminal, typing each step's keys once its prompt shows. */
+  const initInTerminal = async (args: string[], steps: [prompt: string, keys: string][]) => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    const decoder = new TextDecoder();
+    let output = "";
+    const proc = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "init", ...args], {
+      cwd,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      terminal: {
+        cols: 60,
+        rows: 30,
+        data: (_terminal, chunk) => {
+          output += decoder.decode(chunk, { stream: true });
+        },
+      },
+    });
+    spawned.push(proc.pid);
+    let seen = 0;
+    for (const [prompt, keys] of steps) {
+      const deadline = Date.now() + 10_000;
+      while (output.indexOf(prompt, seen) === -1) {
+        if (Date.now() > deadline) throw new Error(`no "${prompt}" in:\n${output}`);
+        await Bun.sleep(20);
+      }
+      seen = output.indexOf(prompt, seen) + prompt.length;
+      proc.terminal!.write(keys);
+    }
+    const exitCode = await proc.exited;
+    proc.terminal!.close();
+    return { cwd, exitCode, output };
+  };
+
   const env = async (cwd: string) =>
     Object.fromEntries(
       (await readFile(join(cwd, ".env"), "utf8"))
@@ -384,6 +416,42 @@ describe("cli init", () => {
     expect(result.exitCode).toBe(0);
     expect((await env(cwd)).DB_FILE).toBe("shop.db");
   });
+
+  it("takes the answers given in a terminal", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--no-install"],
+      [
+        ["Database engine", "\x1b[B\r"],
+        ["Database name", "shop\r"],
+        ["Database password", "\r"],
+        ["Database port on this host", "\r"],
+        ["Select extras", " \x1b[B\x1b[B\x1b[B \r"],
+      ],
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain("? Database engine MySQL");
+    // Echoed: the menu handed the terminal back in line mode.
+    expect(output).toContain("Database name [app] shop");
+    expect(output).toContain("? Select extras RabbitMQ, Redis");
+    expect(await env(cwd)).toMatchObject({ DB_USER: "root", DB_NAME: "shop", DB_PORT: "3306" });
+    const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
+    expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq", "redis"]);
+  }, 30_000);
+
+  it("exits 130 on ctrl+c in a menu, writing nothing", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--no-install"],
+      [["Database engine", "\x03"]],
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(130);
+    // The cursor the menu hid is shown again.
+    expect(output).toContain("\x1b[?25h");
+    expect(await readdir(cwd)).toEqual([]);
+  }, 30_000);
 
   it("writes nothing when a file it would create exists", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
