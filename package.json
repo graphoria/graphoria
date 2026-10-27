@@ -29,6 +29,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "type-check": "bun run --filter '!@graphoria/playgrounds' type-check",
+    "audit": "bun audit --audit-level=high --ignore=GHSA-xcx6-jx8p-x3h5",
     "test": "bun test",
     "test:integration": "INTEGRATION=1 bun --config=bunfig.integration.toml test packages/server/src/__test/integration packages/ai/integration",
     "test:integration:up": "docker compose -f docker-compose.test.yml up -d --wait",

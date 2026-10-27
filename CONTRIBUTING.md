@@ -67,6 +67,7 @@ bun run dev          # Hot-reload dev server
 bun run build        # Compile to packages/*/dist
 bun run type-check   # tsc --noEmit across every package
 bun run lint         # oxlint over all source files
+bun run audit        # Dependency audit as CI runs it (high and critical fail)
 bun test             # Run the full Bun test suite
 bun run prepublishOnly  # Type-check, build, and test (the publish gate)
 ```

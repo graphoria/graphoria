@@ -71,8 +71,17 @@ jobs:
       # are reported by the run but do not fail it, so a low-severity advisory
       # in a transitive dev dependency cannot block an unrelated merge.
       # Dependabot is what carries those forward.
+      #
+      # The step runs the root `audit` script, so a local `bun run audit`
+      # matches it. The script also ignores GHSA-xcx6-jx8p-x3h5
+      # (@azure/msal-node <7.1.0): it sits in MSAL's authorization-code flow,
+      # and msal-node is here only as a dependency of @azure/identity, which
+      # tedious (under mssql) requires when it loads. Graphoria logs into SQL
+      # Server with a SQL login, so that flow never runs. No @azure/identity
+      # release accepts a fixed msal-node yet (as of 2026-10-27, 4.14.0 and
+      # 4.15.0-beta.1 both need ^6.0.0): drop the --ignore once one does.
       - name: Audit dependencies
-        run: bun audit --audit-level=high
+        run: bun run audit
 
   # Runs on every PR and is a required status check under this name: renaming it
   # blocks every merge until branch protection is updated to match. SQLite runs
