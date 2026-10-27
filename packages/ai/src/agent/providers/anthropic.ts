@@ -6,8 +6,6 @@ export interface AnthropicConfig {
   apiKey: string;
   model: string;
   maxTokens?: number;
-  /** Sent only when set: Claude Haiku 5.5 rejects any temperature but 1. */
-  temperature?: number;
 }
 
 function toAnthropicTool(t: ToolDefinition): Anthropic.Tool {
@@ -91,7 +89,6 @@ export function makeAnthropic(cfg: AnthropicConfig): Provider {
         {
           model: cfg.model,
           max_tokens: maxTokens,
-          temperature: cfg.temperature,
           system,
           tools: tools.map(toAnthropicTool),
           messages: anthropicMessages,

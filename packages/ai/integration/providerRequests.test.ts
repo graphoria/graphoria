@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Message } from "@graphoria/server";
 
 import { getProvider } from "../src/agent/providers";
-import { makeAnthropic } from "../src/agent/providers/anthropic";
 import { makeOpenAICompatible } from "../src/agent/providers/openai";
 
 /**
@@ -121,14 +120,6 @@ describe.skipIf(!process.env.INTEGRATION)("what each provider sends", () => {
     expect(sent.map((r) => r.url)).toEqual(["https://api.anthropic.com/v1/messages"]);
     expect(sent[0]?.body).toMatchObject({ model: "claude-haiku-5-5" });
     expect(sent[0]?.body).not.toHaveProperty("temperature");
-  });
-
-  it("anthropic sends a temperature that is configured", async () => {
-    answerWith(ANTHROPIC_MESSAGE);
-
-    await makeAnthropic({ apiKey: "test", model: "m", temperature: 0.5 }).chat(message, []);
-
-    expect(sent[0]?.body).toMatchObject({ temperature: 0.5 });
   });
 
   it("leaves reasoning_effort out unless it is configured", async () => {
