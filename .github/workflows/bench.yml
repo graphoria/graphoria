@@ -32,7 +32,7 @@ concurrency:
 
 env:
   # Same pin as ci.yml, for the same reason.
-  BUN_VERSION: 1.4.3
+  BUN_VERSION: 1.4.4
   ENGINE: ${{ inputs.engine || 'pg' }}
 
 jobs:
