@@ -53,7 +53,7 @@ describe("websocketHandlerFactory message", () => {
     const { handler } = websocketHandlerFactory({}, HEADER);
     const { socket, ws } = fakeSocket();
 
-    await handler.message(ws, frame);
+    await handler.message!(ws, frame);
 
     expect(socket.close).toHaveBeenCalledWith(4400, "Invalid message");
     expect(socket.send).not.toHaveBeenCalled();
@@ -63,7 +63,7 @@ describe("websocketHandlerFactory message", () => {
     const { handler } = websocketHandlerFactory({}, HEADER);
     const { socket, ws } = fakeSocket();
 
-    await handler.message(
+    await handler.message!(
       ws,
       JSON.stringify({ id: "1", type: "subscribe", payload: { query: "subscription { x }" } }),
     );
@@ -87,8 +87,8 @@ describe("websocketHandlerFactory message", () => {
     const { handler } = websocketHandlerFactory(roles, HEADER);
     const { socket, ws } = fakeSocket();
 
-    await handler.message(ws, JSON.stringify({ type: "connection_init", payload: {} }));
-    await handler.message(ws, JSON.stringify({ id: "1", type: "subscribe", payload: {} }));
+    await handler.message!(ws, JSON.stringify({ type: "connection_init", payload: {} }));
+    await handler.message!(ws, JSON.stringify({ id: "1", type: "subscribe", payload: {} }));
 
     expect(sent(socket)).toEqual([
       { type: "connection_ack" },
@@ -101,7 +101,7 @@ describe("websocketHandlerFactory message", () => {
     const { handler } = websocketHandlerFactory({}, HEADER);
     const { socket, ws } = fakeSocket();
 
-    await handler.message(
+    await handler.message!(
       ws,
       JSON.stringify({ type: "connection_init", payload: { Authorization: 1 } }),
     );
@@ -125,7 +125,7 @@ describe("websocketHandlerFactory connection_init", () => {
     const { handler } = websocketHandlerFactory({}, adminSecretHeader);
     const { socket, ws } = fakeSocket();
 
-    await handler.message(ws, JSON.stringify({ type: "connection_init", payload: { headers } }));
+    await handler.message!(ws, JSON.stringify({ type: "connection_init", payload: { headers } }));
 
     return sent(socket);
   };
