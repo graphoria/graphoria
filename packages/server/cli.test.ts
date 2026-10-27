@@ -139,14 +139,75 @@ describe("cli init", () => {
     "tsconfig.json",
   ];
 
-  const init = async (args: string[], stdin?: string) => {
+  const init = async (args: string[], stdin?: string, extraEnv: Record<string, string> = {}) => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
-    const result = Bun.spawnSync(["bun", join(import.meta.dir, "cli.ts"), "init", ...args], {
-      cwd,
-      env: { PATH: process.env.PATH, HOME: process.env.HOME },
-      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
-    });
+    // process.execPath, not "bun": the PATH in extraEnv may lead to a fake bun.
+    const result = Bun.spawnSync(
+      [process.execPath, join(import.meta.dir, "cli.ts"), "init", ...args],
+      {
+        cwd,
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
+        stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      },
+    );
     return { cwd, result };
+  };
+
+  /** A directory whose `bun` prints its arguments, then fails with FAKE_BUN_ERROR when set. */
+  const fakeBun = async () => {
+    const bin = await mkdtemp(join(tmpdir(), "graphoria-fake-bun-"));
+    await writeFile(
+      join(bin, "bun"),
+      '#!/bin/sh\necho "fake bun $*"\nif [ -n "$FAKE_BUN_ERROR" ]; then echo "$FAKE_BUN_ERROR" >&2; exit 1; fi\n',
+      { mode: 0o755 },
+    );
+    cwds.push(bin);
+    return bin;
+  };
+
+  /** Runs init in a terminal, typing each step's keys once its prompt shows. */
+  const initInTerminal = async (
+    args: string[],
+    steps: [prompt: string, keys: string][],
+    {
+      extraEnv = {},
+      pipeStdout = false,
+    }: { extraEnv?: Record<string, string>; pipeStdout?: boolean } = {},
+  ) => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    const decoder = new TextDecoder();
+    let output = "";
+    const cli = join(import.meta.dir, "cli.ts");
+    // Bun's terminal takes all three streams, so sh pipes stdout alone out of it, as `| tee` does
+    // (the exit code is then cat's).
+    const command = pipeStdout
+      ? ["sh", "-c", 'bun "$0" init "$@" | cat', cli, ...args]
+      : ["bun", cli, "init", ...args];
+    const proc = Bun.spawn(command, {
+      cwd,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
+      terminal: {
+        cols: 60,
+        rows: 30,
+        data: (_terminal, chunk) => {
+          output += decoder.decode(chunk, { stream: true });
+        },
+      },
+    });
+    spawned.push(proc.pid);
+    let seen = 0;
+    for (const [prompt, keys] of steps) {
+      const deadline = Date.now() + 10_000;
+      while (output.indexOf(prompt, seen) === -1) {
+        if (Date.now() > deadline) throw new Error(`no "${prompt}" in:\n${output}`);
+        await Bun.sleep(20);
+      }
+      seen = output.indexOf(prompt, seen) + prompt.length;
+      proc.terminal!.write(keys);
+    }
+    const exitCode = await proc.exited;
+    proc.terminal!.close();
+    return { cwd, exitCode, output };
   };
 
   const env = async (cwd: string) =>
@@ -242,6 +303,23 @@ describe("cli init", () => {
     expect((await readdir(cwd)).sort()).toEqual(FILES);
     expect(result.stdout.toString()).toContain("http://localhost:15672");
     expect(result.stdout.toString()).toContain("/rest/ai");
+  });
+
+  it("scaffolds the MCP server with --mcp, with no LLM settings", async () => {
+    const { cwd, result } = await init(["--yes", "--mcp", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies).toEqual({
+      "@graphoria/server": `^${version}`,
+      "@graphoria/ai": `^${version}`,
+    });
+    expect((await env(cwd)).LLM_PROVIDER).toBeUndefined();
+    expect(await readFile(join(cwd, "graphoria.ts"), "utf8")).toContain(
+      "  ai: {\n    // POST /mcp answers MCP clients",
+    );
+    expect(result.stdout.toString()).toContain("http://localhost:3000/mcp");
+    expect(result.stdout.toString()).toContain("--db-port 5432 --mcp --no-install");
   });
 
   it("scaffolds Redis for the cache, the auth token store and the rate limits with --redis", async () => {
@@ -346,12 +424,205 @@ describe("cli init", () => {
     expect(await readFile(join(cwd, "repository.ts"), "utf8")).toBe("mine");
   });
 
-  it("reads the answers from stdin", async () => {
+  it("reads no answers from a pipe, writing nothing", async () => {
     const { cwd, result } = await init(["--no-install"], "mysql\nshop\n\n13306\n");
     cwds.push(cwd);
 
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain('no terminal to ask "Database engine" in');
+    expect(result.stderr.toString()).toContain("Usage: graphoria init");
+    expect(await readdir(cwd)).toEqual([]);
+  });
+
+  it("stops at the first question no flag answers, without a terminal", async () => {
+    const { cwd, result } = await init(["--database", "pg", "--db-name", "shop", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain('no terminal to ask "Database password" in');
+    expect(await readdir(cwd)).toEqual([]);
+  });
+
+  it("needs no terminal when the flags answer every question", async () => {
+    const { cwd, result } = await init([
+      "--database",
+      "sqlite",
+      "--db-name",
+      "shop",
+      "--no-rabbitmq",
+      "--no-ai",
+      "--no-mcp",
+      "--no-auth",
+      "--no-redis",
+      "--no-data-tools",
+      "--no-frontend",
+      "--no-install",
+    ]);
+    cwds.push(cwd);
+
     expect(result.exitCode).toBe(0);
-    expect(await env(cwd)).toMatchObject({ DB_USER: "root", DB_NAME: "shop", DB_PORT: "13306" });
+    expect((await env(cwd)).DB_FILE).toBe("shop.db");
+  });
+
+  it("takes the answers given in a terminal", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--no-install"],
+      [
+        ["Database engine", "\x1b[B\r"],
+        ["Database name", "shop\r"],
+        ["Database password", "\r"],
+        ["Database port on this host", "\r"],
+        ["Select extras", " \x1b[B\x1b[B\x1b[B\x1b[B \r"],
+      ],
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain("? Database engine MySQL");
+    // The text prompt echoes what is typed.
+    expect(output).toContain("Database name [app] shop");
+    expect(output).toContain("? Select extras RabbitMQ, Redis");
+    expect(await env(cwd)).toMatchObject({ DB_USER: "root", DB_NAME: "shop", DB_PORT: "3306" });
+    const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
+    expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq", "redis"]);
+  }, 30_000);
+
+  it("takes answers typed ahead of their questions, as a paste", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--no-install"],
+      [["Database engine", "\x1b[B\rBad\rshop\rSecret12\r3307\r \x1b[B\x1b[B\x1b[B\x1b[B \r"]],
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain("Database name [app] Bad");
+    expect(output).toContain("Use lowercase letters");
+    expect(output).toContain("Database name [app] shop");
+    expect(await env(cwd)).toMatchObject({
+      DB_USER: "root",
+      DB_NAME: "shop",
+      DB_PASSWORD: "Secret12",
+      DB_PORT: "3307",
+    });
+    const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
+    expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq", "redis"]);
+  }, 30_000);
+
+  it("exits 130 on ctrl+c at a text prompt, writing nothing", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--no-install"],
+      [
+        ["Database engine", "\r"],
+        ["Database name", "sh\x03"],
+      ],
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(130);
+    // The line is ended, so the shell's prompt starts on a line of its own.
+    expect(output).toContain("Database name [app] sh\r\n");
+    expect(await readdir(cwd)).toEqual([]);
+  }, 30_000);
+
+  it("exits 130 on ctrl+c in a menu, writing nothing", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--no-install"],
+      [["Database engine", "\x03"]],
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(130);
+    // The cursor the menu hid is shown again.
+    expect(output).toContain("\x1b[?25h");
+    expect(await readdir(cwd)).toEqual([]);
+  }, 30_000);
+
+  it("colors the guide in a terminal that takes color", async () => {
+    const { cwd, exitCode, output } = await initInTerminal(["--yes", "--no-install"], [], {
+      extraEnv: { TERM: "xterm-256color" },
+    });
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain("  \x1b[36mbun run dev\x1b[39m");
+    expect(output).toContain("\x1b[94mhttp://localhost:3000/graphiql\x1b[39m");
+  }, 30_000);
+
+  it("prints the guide without color under NO_COLOR, or into a pipe", async () => {
+    const terminal = await initInTerminal(["--yes", "--no-install"], [], {
+      extraEnv: { TERM: "xterm-256color", NO_COLOR: "1" },
+    });
+    const pipe = await init(["--yes", "--no-install"], undefined, { TERM: "xterm-256color" });
+    cwds.push(terminal.cwd, pipe.cwd);
+
+    expect(terminal.exitCode).toBe(0);
+    expect(terminal.output).toContain("  bun run dev");
+    expect(terminal.output).not.toContain("\x1b[");
+    expect(pipe.result.exitCode).toBe(0);
+    expect(pipe.result.stdout.toString()).toContain("  bun run dev");
+    expect(pipe.result.stdout.toString()).not.toContain("\x1b[");
+  }, 30_000);
+
+  it("colors stderr's warning but not the guide when only stdout is piped, as into tee", async () => {
+    const holder = Bun.listen({ hostname: "0.0.0.0", port: 0, socket: { data() {} } });
+    const { cwd, output } = await initInTerminal(
+      ["--yes", "--db-port", String(holder.port), "--no-install"],
+      [],
+      { extraEnv: { TERM: "xterm-256color" }, pipeStdout: true },
+    ).finally(() => holder.stop(true));
+    cwds.push(cwd);
+
+    expect(output).toContain(`\x1b[33mPort ${holder.port} is in use on this host`);
+    expect(output).toContain("  bun run dev");
+    expect(output).not.toContain("\x1b[36m");
+    expect(output).not.toContain("\x1b[94m");
+    expect(await readdir(cwd)).toContain("graphoria.ts");
+  }, 30_000);
+
+  it("colors a port warning yellow in a terminal", async () => {
+    const holder = Bun.listen({ hostname: "0.0.0.0", port: 0, socket: { data() {} } });
+    const { cwd, output } = await initInTerminal(
+      ["--yes", "--db-port", String(holder.port), "--no-install"],
+      [],
+      { extraEnv: { TERM: "xterm-256color" } },
+    ).finally(() => holder.stop(true));
+    cwds.push(cwd);
+
+    expect(output).toContain(`\x1b[33mPort ${holder.port} is in use on this host`);
+  }, 30_000);
+
+  it("colors the guide through a pipe under FORCE_COLOR", async () => {
+    const { cwd, result } = await init(["--yes", "--no-install"], undefined, { FORCE_COLOR: "1" });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("  \x1b[36mbun run dev\x1b[39m");
+  });
+
+  it("runs bun install silently, saying so first", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(["--yes", "--database", "sqlite"], undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("Installing dependencies (bun install)…");
+    expect(result.stdout.toString()).toContain("fake bun install --silent --no-env-file\n");
+  });
+
+  it("exits 1 when bun install fails, after Bun's own error, keeping the files", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(["--yes", "--database", "sqlite"], undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+      FAKE_BUN_ERROR: "error: GET https://registry.npmjs.org/nope - 404",
+    });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("error: GET https://registry.npmjs.org/nope - 404");
+    expect(result.stderr.toString()).toContain("init: bun install failed.");
+    expect(await readdir(cwd)).toContain("graphoria.ts");
   });
 
   it("writes nothing when a file it would create exists", async () => {

@@ -24,6 +24,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   dbPort: 15432,
   rabbitmq: false,
   ai: false,
+  mcp: false,
   auth: false,
   redis: false,
   dataTools: false,
@@ -120,6 +121,8 @@ describe("renderProject package.json", () => {
     [{}, {}],
     [{ rabbitmq: true }, { "@graphoria/queues": "^0.6.0" }],
     [{ ai: true }, { "@graphoria/ai": "^0.6.0" }],
+    [{ mcp: true }, { "@graphoria/ai": "^0.6.0" }],
+    [{ ai: true, mcp: true }, { "@graphoria/ai": "^0.6.0" }],
     [
       { rabbitmq: true, ai: true },
       { "@graphoria/queues": "^0.6.0", "@graphoria/ai": "^0.6.0" },
@@ -168,6 +171,13 @@ describe("renderProject .env", () => {
       expect(lines).toContain("LLM_PROVIDER=ollama");
       expect(lines).toContain("OLLAMA_HOST=http://localhost:11434");
       expect(render(database)[".env"]).not.toContain("LLM_PROVIDER");
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)(
+    "adds no settings for the MCP server, which calls no LLM, for %s",
+    (database) => {
+      expect(renderWith({ mcp: true }, database)[".env"]).toBe(render(database)[".env"]);
     },
   );
 
@@ -366,6 +376,15 @@ describe("renderProject docker-compose.yml", () => {
   it("leaves Redis out by default", () => {
     expect(compose("pg").services.redis).toBeUndefined();
   });
+
+  it.each(["pg", "sqlite"] as const)(
+    "adds no service for the MCP server, which Graphoria serves itself (%s)",
+    (database) => {
+      expect(renderWith({ mcp: true }, database)["docker-compose.yml"]).toBe(
+        render(database)["docker-compose.yml"],
+      );
+    },
+  );
 
   it.each([
     { database: "pg" as const, engine: "postgres@dbgate-plugin-postgres", port: "5432" },
@@ -627,6 +646,19 @@ describe("renderProject graphoria.ts", () => {
     expect(ConfigurationZod.parse((await load("pg", {}))({})).ai.enabled).toBe(false);
   });
 
+  it.each([
+    [{ mcp: true }, false, true],
+    [{ ai: true, mcp: true }, true, true],
+    [{ ai: true }, true, false],
+    [{}, false, false],
+  ])("enables the MCP server apart from the agent for %j", async (patch, agent, mcp) => {
+    setEnv();
+    const { ai } = ConfigurationZod.parse((await load("pg", patch))({}));
+
+    expect(ai.enabled).toBe(agent);
+    expect(ai.mcp.enabled).toBe(mcp);
+  });
+
   it("declares the redis store behind the in-process one", async () => {
     setEnv();
 
@@ -665,9 +697,11 @@ describe("renderProject graphoria.ts", () => {
   it.each([
     { rabbitmq: true },
     { ai: true },
+    { mcp: true },
     { rabbitmq: true, ai: true },
+    { ai: true, mcp: true },
     { redis: true },
-    { rabbitmq: true, ai: true, redis: true },
+    { rabbitmq: true, ai: true, mcp: true, redis: true },
   ])("still parses with %j", async (patch) => {
     setEnv();
     setRabbitEnv();
@@ -1714,7 +1748,7 @@ describe("renderProject types the add-book operation", () => {
         files.push(`${project}/${name}`);
       }
     };
-    const everything = { frontend: true, rabbitmq: true, redis: true, ai: true };
+    const everything = { frontend: true, rabbitmq: true, redis: true, ai: true, mcp: true };
     for (const database of ENGINES) {
       await write(database, renderWith(everything, database));
       await write(`${database}-plain`, renderWith({}, database));

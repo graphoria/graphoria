@@ -6,9 +6,10 @@ import { customAlphabet } from "nanoid";
 import type { DatabaseType } from "../config";
 import type { InitArgs } from "./initArgs";
 import type { InitAnswers } from "./initTemplates";
+import type { Ask, Choice, MultiSelect, Say, Select } from "./prompt";
 
 import { version } from "../../package.json";
-import { DATABASE_TYPES, dbNameError, isDatabaseType, parseInitArgs, portError } from "./initArgs";
+import { DATABASE_TYPES, dbNameError, parseInitArgs, portError } from "./initArgs";
 import {
   DBGATE_PORT,
   ENGINES,
@@ -20,9 +21,38 @@ import {
   renderProject,
   seedSchema,
 } from "./initTemplates";
+import { ask, interactive, multiSelect, select } from "./prompt";
 
-type Ask = (question: string, fallback: string) => string | null;
-type Say = (line: string) => void;
+export type InitIO = {
+  ask: Ask;
+  say: Say;
+  select: Select;
+  multiSelect: MultiSelect;
+};
+
+const DATABASE_LABELS: Record<DatabaseType, string> = {
+  pg: ENGINES.pg.label,
+  mysql: ENGINES.mysql.label,
+  mssql: ENGINES.mssql.label,
+  sqlite: "SQLite",
+};
+
+type Extra = "rabbitmq" | "ai" | "mcp" | "auth" | "redis" | "dataTools" | "frontend";
+
+const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
+  value,
+  label,
+  hint,
+});
+
+const TERMINAL_IO: InitIO = { ask, say: console.log, select, multiSelect };
+
+const NO_PROMPT_IO: InitIO = {
+  ask: () => null,
+  say: () => {},
+  select: (_question, choices, initial) => choices[initial].value,
+  multiSelect: (_question, _choices, initial) => [...initial],
+};
 
 // 16, not more: see the MySQL rule in passwordError.
 const randomAlphanumeric = customAlphabet(
@@ -72,36 +102,37 @@ export const passwordError = (database: DatabaseType, password: string): string 
   return undefined;
 };
 
-const question = (
-  ask: Ask,
-  say: Say,
+const question = async (
+  io: Pick<InitIO, "ask" | "say">,
   text: string,
   fallback: string,
   error: (answer: string) => string | undefined,
-): string => {
+): Promise<string> => {
   for (;;) {
-    const answer = ask(text, fallback)?.trim();
+    const answer = (await io.ask(text, fallback))?.trim();
     if (!answer) return fallback;
     const reason = error(answer);
     if (!reason) return answer;
-    say(reason);
+    io.say(reason);
   }
 };
 
-export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers => {
+export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAnswers> => {
   const database =
     args.database ??
-    (question(ask, say, `Database engine (${DATABASE_TYPES.join(", ")})`, "pg", (answer) =>
-      isDatabaseType(answer) ? undefined : `Choose one of ${DATABASE_TYPES.join(", ")}.`,
-    ) as DatabaseType);
+    (await io.select(
+      "Database engine",
+      DATABASE_TYPES.map((value) => ({ value, label: DATABASE_LABELS[value] })),
+      0,
+    ));
 
-  const dbName = args.dbName ?? question(ask, say, "Database name", "app", dbNameError);
+  const dbName = args.dbName ?? (await question(io, "Database name", "app", dbNameError));
 
   // A SQLite project has no database server: no password, and no port to publish.
   const dbPassword =
     database === "sqlite"
       ? ""
-      : question(ask, say, "Database password", generatePassword(), (answer) =>
+      : await question(io, "Database password", generatePassword(), (answer) =>
           passwordError(database, answer),
         );
 
@@ -110,40 +141,52 @@ export const collectAnswers = (args: InitArgs, ask: Ask, say: Say): InitAnswers 
       ? 0
       : (args.dbPort ??
         Number(
-          question(
-            ask,
-            say,
+          await question(
+            io,
             "Database port on this host",
             String(ENGINES[database].port),
             portError,
           ),
         ));
 
-  const yesNo = (answer: string) => (/^(y(es)?|no?)$/i.test(answer) ? undefined : "Answer y or n.");
-  const rabbitmq =
-    args.rabbitmq ?? /^y(es)?$/i.test(question(ask, say, "Add RabbitMQ? (y/N)", "n", yesNo));
-  const ai =
-    args.ai ?? /^y(es)?$/i.test(question(ask, say, "Enable the AI agent? (y/N)", "n", yesNo));
-  const auth =
-    args.auth ??
-    /^y(es)?$/i.test(
-      question(ask, say, "Add login with two roles, reader and editor? (y/N)", "n", yesNo),
-    );
-  const redis = args.redis ?? /^y(es)?$/i.test(question(ask, say, "Add Redis? (y/N)", "n", yesNo));
+  const extraChoices: Choice<Extra>[] = [
+    ...(args.rabbitmq === undefined ? [extraChoice("rabbitmq", "RabbitMQ", "queues demo")] : []),
+    ...(args.ai === undefined
+      ? [extraChoice("ai", "AI agent", "natural-language queries, needs Ollama")]
+      : []),
+    ...(args.mcp === undefined
+      ? [extraChoice("mcp", "MCP server", "tools for LLM clients at /mcp")]
+      : []),
+    ...(args.auth === undefined
+      ? [extraChoice("auth", "Login", "two roles, reader and editor")]
+      : []),
+    ...(args.redis === undefined
+      ? [extraChoice("redis", "Redis", "cache, token store, rate limits")]
+      : []),
+    ...(args.dataTools === undefined
+      ? [extraChoice("dataTools", "Data tools", "dbgate, and Redis Commander with Redis")]
+      : []),
+    ...(args.frontend === undefined
+      ? [extraChoice("frontend", "React frontend", "app at localhost:3000")]
+      : []),
+  ];
+  const extras =
+    extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
+  const chosen = new Set(extras);
 
-  const dataTools =
-    args.dataTools ??
-    /^y(es)?$/i.test(question(ask, say, "Add data inspection tools? (y/N)", "n", yesNo));
-
-  const frontend =
-    args.frontend ??
-    /^y(es)?$/i.test(
-      question(ask, say, "Add a React frontend? (y/N)", "n", (answer) =>
-        /^(y(es)?|no?)$/i.test(answer) ? undefined : "Answer y or n.",
-      ),
-    );
-
-  return { database, dbName, dbPassword, dbPort, rabbitmq, ai, auth, redis, dataTools, frontend };
+  return {
+    database,
+    dbName,
+    dbPassword,
+    dbPort,
+    rabbitmq: args.rabbitmq ?? chosen.has("rabbitmq"),
+    ai: args.ai ?? chosen.has("ai"),
+    mcp: args.mcp ?? chosen.has("mcp"),
+    auth: args.auth ?? chosen.has("auth"),
+    redis: args.redis ?? chosen.has("redis"),
+    dataTools: args.dataTools ?? chosen.has("dataTools"),
+    frontend: args.frontend ?? chosen.has("frontend"),
+  };
 };
 
 export const isPortFree = (port: number): boolean => {
@@ -180,6 +223,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.database === "sqlite" ? [] : [`--db-port ${answers.dbPort}`]),
     ...(answers.rabbitmq ? ["--rabbitmq"] : []),
     ...(answers.ai ? ["--ai"] : []),
+    ...(answers.mcp ? ["--mcp"] : []),
     ...(answers.auth ? ["--auth"] : []),
     ...(answers.redis ? ["--redis"] : []),
     ...(answers.dataTools ? ["--data-tools"] : []),
@@ -187,16 +231,59 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
+export type Paint = Record<
+  "code" | "url" | "name" | "secret" | "warning",
+  (text: string) => string
+>;
+
+const plain = (text: string) => text;
+
+export const PLAIN_PAINT: Paint = {
+  code: plain,
+  url: plain,
+  name: plain,
+  secret: plain,
+  warning: plain,
+};
+
+const tint = (code: number) => (text: string) => `\x1b[${code}m${text}\x1b[39m`;
+
+// 16-color codes (36 cyan, 94 bright blue, 33 yellow), not 256 or truecolor: the terminal's theme
+// then chooses shades its background reads. Errors need none: on a terminal, Bun's console.error
+// prints them red by itself.
+export const COLOR_PAINT: Paint = {
+  code: tint(36),
+  url: tint(94),
+  name: (text) => `\x1b[1m${text}\x1b[22m`,
+  secret: tint(33),
+  warning: tint(33),
+};
+
+// Bun.color's "ansi" weighs TERM, NO_COLOR and FORCE_COLOR but never the stream, and
+// Bun.enableANSIColors holds while either stdout or stderr is a terminal: each stream decides alone.
+export const paintFor = (
+  stream: { isTTY?: boolean },
+  ansi = Bun.color("white", "ansi"),
+  forced = process.env.FORCE_COLOR !== undefined,
+): Paint => (ansi && (stream.isTTY || forced) ? COLOR_PAINT : PLAIN_PAINT);
+
 export const nextSteps = (
   answers: InitAnswers,
   installed: boolean,
   users?: { reader: string; editor: string },
+  paint: Paint = PLAIN_PAINT,
 ) => {
   if (answers.auth && !users) throw new Error("nextSteps: auth needs the demo users' passwords");
 
+  const command = (line: string) => `  ${paint.code(line)}`;
+  const inline = (code: string) => paint.code(`\`${code}\``);
+  const link = (port: number, path = "") => paint.url(`http://localhost:${port}${path}`);
+  const seed = (role: "reader" | "editor", password: string) =>
+    `  ${paint.code(`bunx graphoria seed-auth --user ${role} --password `)}${paint.secret(password)}${paint.code(` --role ${role} --config ./graphoria.ts`)}`;
+
   const open = answers.frontend
-    ? "  then open http://localhost:3000 (the app) or http://localhost:3000/graphiql"
-    : "  then open http://localhost:3000/graphiql";
+    ? `  then open ${link(3000)} (the app) or ${link(3000, "/graphiql")}`
+    : `  then open ${link(3000, "/graphiql")}`;
 
   // Besides the database, what graphoria.ts connects to: a host run starts
   // their containers too.
@@ -208,29 +295,33 @@ export const nextSteps = (
   const run =
     answers.database === "sqlite"
       ? [
-          ...(installed ? [] : ["First run `bun install`.", ""]),
+          ...(installed ? [] : [`First run ${inline("bun install")}.`, ""]),
           `Run it on this machine; the first boot creates ${answers.dbName}.db and seeds it:`,
-          ...(services ? [`  docker compose up -d --wait ${services}`] : []),
-          "  bun run dev",
+          ...(services ? [command(`docker compose up -d --wait ${services}`)] : []),
+          command("bun run dev"),
           open,
           "",
           "Or in Docker, with the database file on a volume:",
-          "  docker compose up -d --build",
+          command("docker compose up -d --build"),
         ]
       : [
-          ...(installed ? [] : ["First run `bun install`: the Dockerfile needs its bun.lock.", ""]),
+          ...(installed
+            ? []
+            : [`First run ${inline("bun install")}: the Dockerfile needs its bun.lock.`, ""]),
           "Run everything in Docker:",
-          "  docker compose up -d --build",
+          command("docker compose up -d --build"),
           open,
           "",
           "Or run Graphoria on the host against the database container:",
-          answers.database === "mssql"
-            ? "  docker compose run --rm db-init"
-            : `  docker compose up -d --wait db${services ? ` ${services}` : ""}`,
+          command(
+            answers.database === "mssql"
+              ? "docker compose run --rm db-init"
+              : `docker compose up -d --wait db${services ? ` ${services}` : ""}`,
+          ),
           ...(answers.database === "mssql" && services
-            ? [`  docker compose up -d --wait ${services}`]
+            ? [command(`docker compose up -d --wait ${services}`)]
             : []),
-          "  bun run dev",
+          command("bun run dev"),
         ];
 
   return [
@@ -238,24 +329,24 @@ export const nextSteps = (
     ...(answers.auth && users
       ? [
           "",
-          "Two demo users, one per role. Once the database is up, create them:",
-          `  bunx graphoria seed-auth --user reader --password ${users.reader} --role reader --config ./graphoria.ts`,
-          `  bunx graphoria seed-auth --user editor --password ${users.editor} --role editor --config ./graphoria.ts`,
+          `${paint.name("Two demo users")}, one per role. Once the database is up, create them:`,
+          seed("reader", users.reader),
+          seed("editor", users.editor),
           ...(answers.database === "sqlite"
             ? [
-                "(SQLite in Docker: run them inside the container, prefixed with `docker compose exec graphoria`.)",
+                `(SQLite in Docker: run them inside the container, prefixed with ${inline("docker compose exec graphoria")}.)`,
               ]
             : []),
           "Without a token you read the authors. A reader also reads the published books; an editor",
           "reads every book, adds drafts (addBook) and publishes them (publishBook).",
           "Log in with auth_login in GraphiQL or POST /rest/auth/login, then send",
-          `Authorization: Bearer <access_token>${answers.frontend ? ", or sign in at http://localhost:3000" : ""}.`,
+          `Authorization: Bearer <access_token>${answers.frontend ? `, or sign in at ${link(3000)}` : ""}.`,
         ]
       : []),
     ...(answers.rabbitmq
       ? [
           "",
-          `RabbitMQ management UI: http://localhost:${RABBITMQ_MANAGEMENT_PORT} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
+          `${paint.name("RabbitMQ")} management UI: ${link(RABBITMQ_MANAGEMENT_PORT)} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
           `Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.${answers.auth ? " Both take an editor's token or the admin secret." : ""}`,
           ...(answers.auth
             ? [
@@ -267,45 +358,72 @@ export const nextSteps = (
     ...(answers.ai
       ? [
           "",
-          `The AI agent answers /rest/ai and GraphiQL's ask field${answers.auth ? " for a reader or an editor" : ""}.`,
-          "Ollama must run on the host, so use bun run dev, not docker compose up.",
+          `The ${paint.name("AI agent")} answers /rest/ai and GraphiQL's ask field${answers.auth ? " for a reader or an editor" : ""}.`,
+          `Ollama must run on the host, so use ${paint.code("bun run dev")}, not ${paint.code("docker compose up")}.`,
+        ]
+      : []),
+    ...(answers.mcp
+      ? [
+          "",
+          `The ${paint.name("MCP server")} answers MCP clients at ${link(3000, "/mcp")}. Its tools run as the caller, as on /graphql:`,
+          answers.auth
+            ? "without a header a client reads the authors; send a reader's or an editor's token, or the admin secret."
+            : answers.frontend
+              ? "without a header a client reads what anyone reads; send the admin secret to read everything."
+              : "without a header a client reads no table; send the admin secret.",
         ]
       : []),
     ...(answers.redis
       ? [
           "",
           answers.auth
-            ? "Redis caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits once you turn them on. With bun run dev, start it first: a token the server cannot check there reads as no token."
-            : "Redis caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.",
+            ? `${paint.name("Redis")} caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits once you turn them on. With ${paint.code("bun run dev")}, start it first: a token the server cannot check there reads as no token.`
+            : `${paint.name("Redis")} caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.`,
         ]
       : []),
     ...(answers.dataTools
       ? [
           "",
-          `dbgate explores the database at http://localhost:${DBGATE_PORT} once \`docker compose up\` runs it.`,
+          `${paint.name("dbgate")} explores the database at ${link(DBGATE_PORT)} once ${inline("docker compose up")} runs it.`,
           ...(answers.redis
-            ? [`Redis Commander inspects Redis at http://localhost:${REDIS_COMMANDER_PORT}.`]
+            ? [`${paint.name("Redis Commander")} inspects Redis at ${link(REDIS_COMMANDER_PORT)}.`]
             : []),
         ]
       : []),
     ...(answers.frontend
       ? [
           "",
-          "Once `bun run dev` has printed the schema, `bun run types` writes",
+          `Once ${inline("bun run dev")} has printed the schema, ${inline("bun run types")} writes`,
           "web/graphql-env.d.ts, which types the app's queries. Commit it.",
         ]
       : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
-    `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${sampleQuery(answers)}`,
+    `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
     "",
     "Recreate this setup in a new directory without prompts (the secrets are regenerated):",
-    `  ${recreateCommand(answers, installed)}`,
+    command(recreateCommand(answers, installed)),
   ].join("\n");
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--auth] [--redis] [--data-tools] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--no-install]";
+
+const noTerminal = (question: string): never => {
+  console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);
+  console.error(
+    "Run it in a terminal, without piping or redirecting it, or pass --yes to take the defaults, with flags for the rest:",
+  );
+  console.error(USAGE);
+  process.exit(2);
+};
+
+const NO_TERMINAL_IO: InitIO = {
+  ask: noTerminal,
+  say: () => {},
+  select: noTerminal,
+  multiSelect: noTerminal,
+};
 
 export const initCommand = async (argv: string[]): Promise<never> => {
   let args: InitArgs;
@@ -327,7 +445,8 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   };
 
   refuseExisting([...PROJECT_FILES, "bun.lock"]);
-  const answers = collectAnswers(args, args.yes ? () => null : prompt, console.log);
+  const io = args.yes ? NO_PROMPT_IO : interactive() ? TERMINAL_IO : NO_TERMINAL_IO;
+  const answers = await collectAnswers(args, io);
   if (answers.frontend) refuseExisting(FRONTEND_FILES);
   const warnings = [
     answers.database === "sqlite"
@@ -352,7 +471,8 @@ export const initCommand = async (argv: string[]): Promise<never> => {
         })
       : undefined,
   ];
-  for (const warning of warnings) if (warning) console.warn(warning);
+  const stderrPaint = paintFor(process.stderr);
+  for (const warning of warnings) if (warning) console.warn(stderrPaint.warning(warning));
 
   const name = projectName(dir);
   // Printed with the seed-auth commands only: not in .env, never in recreateCommand.
@@ -385,7 +505,11 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   console.log(`\nCreated ${name} (${label}): ${written.join(", ")}\n`);
 
   if (args.install) {
-    const install = Bun.spawn(["bun", "install"], {
+    console.log("Installing dependencies (bun install)…");
+    // --silent drops the progress and the package list, though a failed install still prints
+    // Bun's error. --no-env-file drops the line naming the .env just written, which the install
+    // reads nothing from (Bun 1.4.2 ignores the flag and prints the line).
+    const install = Bun.spawn(["bun", "install", "--silent", "--no-env-file"], {
       cwd: dir,
       stdout: "inherit",
       stderr: "inherit",
@@ -398,6 +522,6 @@ export const initCommand = async (argv: string[]): Promise<never> => {
     console.log("");
   }
 
-  console.log(nextSteps(answers, args.install, users));
+  console.log(nextSteps(answers, args.install, users, paintFor(process.stdout)));
   process.exit(0);
 };
