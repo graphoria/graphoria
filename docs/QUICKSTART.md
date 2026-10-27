@@ -19,7 +19,7 @@ mkdir my-api && cd my-api
 bunx graphoria init
 ```
 
-`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, login with two roles, Redis, data inspection tools and a React frontend. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
+`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, the MCP server, login with two roles, Redis, data inspection tools and a React frontend. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
 
 | File                                          | What it holds                                                                                                                                                  |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,7 +64,7 @@ Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the 
 
 Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, `main_` on SQLite, and the database name on MySQL (`app_authors` with the default name).
 
-`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--auth` adds login with two roles (below), `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time. In a terminal, the steps it prints are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
+`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--mcp` the MCP server, `--auth` adds login with two roles (below), `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time. In a terminal, the steps it prints are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
 
 ### Add a React frontend with `--frontend`
 
@@ -80,7 +80,7 @@ Its add-book form POSTs `/rest/add-book`, and the app fetches the list again onc
 
 Five files change too: `graphoria.ts` opens the seed and `addBook` to anonymous callers without `--auth` (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
 
-Without `--auth`, the app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too. Tables are read-only in the generated API, but the grant also lets anyone add books through `addBook`, with `--redis` read `GET /rest/books`, with `--rabbitmq` publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off. With `--auth`, see [Add login with two roles](#add-login-with-two-roles-with---auth).
+Without `--auth`, the app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too, and with `--mcp` through the MCP server. Tables are read-only in the generated API, but the grant also lets anyone add books through `addBook`, with `--redis` read `GET /rest/books`, with `--rabbitmq` publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off. With `--auth`, see [Add login with two roles](#add-login-with-two-roles-with---auth).
 
 The query types come from the schema, which `bun run dev` prints to `.graphoria/schemas/`. Once it has, run:
 
@@ -139,6 +139,17 @@ Tick `AI agent` in the extras list, or pass `--ai` (`--no-ai` answers no, and so
 | `graphoria.ts` | `ai: { enabled: true }`.                                                                     |
 
 The agent answers `/rest/ai` and GraphiQL's `ask`; with the console on (`CONSOLE_ENABLED`), a write session also asks it at `POST {CONSOLE_ENDPOINT}/api/ai`. Ollama must be running on the host, so `--ai` works with `bun run dev`, not `docker compose up`.
+
+### Enable the MCP server with `--mcp`
+
+Tick `MCP server` in the extras list, or pass `--mcp` (`--no-mcp` answers no, and so does `--yes` alone). The project then gets:
+
+| File           | What it holds                                                         |
+| -------------- | --------------------------------------------------------------------- |
+| `package.json` | `@graphoria/ai` as a dependency.                                      |
+| `graphoria.ts` | `ai: { mcp: { enabled: true } }`, beside `enabled: true` with `--ai`. |
+
+`POST /mcp` answers [MCP](./MCP.md) clients, such as the MCP Inspector (`npx @modelcontextprotocol/inspector`, pointed at `http://localhost:3000/mcp`). It calls no LLM, so it needs neither `--ai` nor Ollama, and it runs under `docker compose up` as well as `bun run dev`. Its tools run as the caller, as on `/graphql`: a client without a header reads what the anonymous role reads (no table by default, the seed tables with `--frontend`, the authors with `--auth`), so give it the admin secret in the `x-admin-secret` header, or with `--auth` a reader's or an editor's token.
 
 ### Add login with two roles with `--auth`
 

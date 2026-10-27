@@ -7,6 +7,7 @@ export type InitAnswers = {
   dbPort: number;
   rabbitmq: boolean;
   ai: boolean;
+  mcp: boolean;
   auth: boolean;
   redis: boolean;
   dataTools: boolean;
@@ -113,7 +114,7 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
 };
 
 const packageJson = (
-  { name, rabbitmq, ai, auth, frontend }: ProjectValues,
+  { name, rabbitmq, ai, mcp, auth, frontend }: ProjectValues,
   { graphoria }: Versions,
 ) =>
   JSON.stringify(
@@ -131,7 +132,7 @@ const packageJson = (
       dependencies: {
         "@graphoria/server": `^${graphoria}`,
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
-        ...(ai && { "@graphoria/ai": `^${graphoria}` }),
+        ...((ai || mcp) && { "@graphoria/ai": `^${graphoria}` }),
         ...(auth && frontend && { "@graphoria/react": `^${graphoria}` }),
         ...(frontend && FRONTEND_DEPENDENCIES),
         ...(frontend && rabbitmq && FRONTEND_QUEUE_DEPENDENCIES),
@@ -537,9 +538,14 @@ const operationsConfig = (values: ProjectValues) => `  operations: {
 ${values.redis ? BOOKS_OPERATION(values) : ""}${ADD_BOOK_OPERATION(values)}${values.auth ? PUBLISH_BOOK_OPERATION(values) : ""}  },
 `;
 
-const AI_CONFIG = `  ai: {
-    enabled: true,
-  },
+const MCP_CONFIG = `    // POST /mcp answers MCP clients, each as its caller, as /graphql does.
+    mcp: {
+      enabled: true,
+    },
+`;
+
+const aiConfig = ({ ai, mcp }: ProjectValues) => `  ai: {
+${ai ? "    enabled: true,\n" : ""}${mcp ? MCP_CONFIG : ""}  },
 `;
 
 const CACHES_CONFIG = `  // A cached operation answers from this process first, then from Redis.
@@ -597,7 +603,7 @@ export default (() => ({
       enabled: true,
 ${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}    },
   ],
-${values.rabbitmq ? queueConfig(values) : ""}${values.ai ? AI_CONFIG : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? queueConfig(values) : ""}${values.ai || values.mcp ? aiConfig(values) : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";

@@ -37,7 +37,7 @@ const DATABASE_LABELS: Record<DatabaseType, string> = {
   sqlite: "SQLite",
 };
 
-type Extra = "rabbitmq" | "ai" | "auth" | "redis" | "dataTools" | "frontend";
+type Extra = "rabbitmq" | "ai" | "mcp" | "auth" | "redis" | "dataTools" | "frontend";
 
 const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
   value,
@@ -154,6 +154,9 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     ...(args.ai === undefined
       ? [extraChoice("ai", "AI agent", "natural-language queries, needs Ollama")]
       : []),
+    ...(args.mcp === undefined
+      ? [extraChoice("mcp", "MCP server", "tools for LLM clients at /mcp")]
+      : []),
     ...(args.auth === undefined
       ? [extraChoice("auth", "Login", "two roles, reader and editor")]
       : []),
@@ -178,6 +181,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     dbPort,
     rabbitmq: args.rabbitmq ?? chosen.has("rabbitmq"),
     ai: args.ai ?? chosen.has("ai"),
+    mcp: args.mcp ?? chosen.has("mcp"),
     auth: args.auth ?? chosen.has("auth"),
     redis: args.redis ?? chosen.has("redis"),
     dataTools: args.dataTools ?? chosen.has("dataTools"),
@@ -219,6 +223,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.database === "sqlite" ? [] : [`--db-port ${answers.dbPort}`]),
     ...(answers.rabbitmq ? ["--rabbitmq"] : []),
     ...(answers.ai ? ["--ai"] : []),
+    ...(answers.mcp ? ["--mcp"] : []),
     ...(answers.auth ? ["--auth"] : []),
     ...(answers.redis ? ["--redis"] : []),
     ...(answers.dataTools ? ["--data-tools"] : []),
@@ -357,6 +362,17 @@ export const nextSteps = (
           `Ollama must run on the host, so use ${paint.code("bun run dev")}, not ${paint.code("docker compose up")}.`,
         ]
       : []),
+    ...(answers.mcp
+      ? [
+          "",
+          `The ${paint.name("MCP server")} answers MCP clients at ${link(3000, "/mcp")}. Its tools run as the caller, as on /graphql:`,
+          answers.auth
+            ? "without a header a client reads the authors; send a reader's or an editor's token, or the admin secret."
+            : answers.frontend
+              ? "without a header a client reads what anyone reads; send the admin secret to read everything."
+              : "without a header a client reads no table; send the admin secret.",
+        ]
+      : []),
     ...(answers.redis
       ? [
           "",
@@ -391,7 +407,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--auth] [--redis] [--data-tools] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--no-install]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);

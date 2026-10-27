@@ -305,6 +305,23 @@ describe("cli init", () => {
     expect(result.stdout.toString()).toContain("/rest/ai");
   });
 
+  it("scaffolds the MCP server with --mcp, with no LLM settings", async () => {
+    const { cwd, result } = await init(["--yes", "--mcp", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies).toEqual({
+      "@graphoria/server": `^${version}`,
+      "@graphoria/ai": `^${version}`,
+    });
+    expect((await env(cwd)).LLM_PROVIDER).toBeUndefined();
+    expect(await readFile(join(cwd, "graphoria.ts"), "utf8")).toContain(
+      "  ai: {\n    // POST /mcp answers MCP clients",
+    );
+    expect(result.stdout.toString()).toContain("http://localhost:3000/mcp");
+    expect(result.stdout.toString()).toContain("--db-port 5432 --mcp --no-install");
+  });
+
   it("scaffolds Redis for the cache, the auth token store and the rate limits with --redis", async () => {
     const { cwd, result } = await init(["--yes", "--redis", "--no-install"]);
     cwds.push(cwd);
@@ -434,6 +451,7 @@ describe("cli init", () => {
       "shop",
       "--no-rabbitmq",
       "--no-ai",
+      "--no-mcp",
       "--no-auth",
       "--no-redis",
       "--no-data-tools",
@@ -454,7 +472,7 @@ describe("cli init", () => {
         ["Database name", "shop\r"],
         ["Database password", "\r"],
         ["Database port on this host", "\r"],
-        ["Select extras", " \x1b[B\x1b[B\x1b[B \r"],
+        ["Select extras", " \x1b[B\x1b[B\x1b[B\x1b[B \r"],
       ],
     );
     cwds.push(cwd);
@@ -472,7 +490,7 @@ describe("cli init", () => {
   it("takes answers typed ahead of their questions, as a paste", async () => {
     const { cwd, exitCode, output } = await initInTerminal(
       ["--no-install"],
-      [["Database engine", "\x1b[B\rBad\rshop\rSecret12\r3307\r \x1b[B\x1b[B\x1b[B \r"]],
+      [["Database engine", "\x1b[B\rBad\rshop\rSecret12\r3307\r \x1b[B\x1b[B\x1b[B\x1b[B \r"]],
     );
     cwds.push(cwd);
 

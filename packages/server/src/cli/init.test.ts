@@ -69,6 +69,7 @@ describe("collectAnswers", () => {
     expect(answers.dbPort).toBe(5432);
     expect(answers.rabbitmq).toBe(false);
     expect(answers.ai).toBe(false);
+    expect(answers.mcp).toBe(false);
     expect(answers.auth).toBe(false);
     expect(answers.redis).toBe(false);
     expect(answers.dataTools).toBe(false);
@@ -90,7 +91,7 @@ describe("collectAnswers", () => {
   it("takes the engine from the menu and the rest from the answers", async () => {
     const io = prompter([" shop ", "S3cret.pass", "13306"], {
       select: [1],
-      multiSelect: [[0, 2]],
+      multiSelect: [[0, 3]],
     });
 
     expect(await collectAnswers(ARGS, io.io)).toEqual({
@@ -100,6 +101,7 @@ describe("collectAnswers", () => {
       dbPort: 13306,
       rabbitmq: true,
       ai: false,
+      mcp: false,
       auth: true,
       redis: false,
       dataTools: false,
@@ -196,10 +198,16 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 5]] });
+    const io = prompter([], { multiSelect: [[0, 2, 3, 6]] });
     const answers = await collectAnswers(ARGS, io.io);
 
-    expect(answers).toMatchObject({ rabbitmq: true, ai: false, auth: true, frontend: true });
+    expect(answers).toMatchObject({
+      rabbitmq: true,
+      ai: false,
+      mcp: true,
+      auth: true,
+      frontend: true,
+    });
   });
 
   it("leaves every extra out when none is ticked", async () => {
@@ -209,6 +217,7 @@ describe("collectAnswers", () => {
     expect(answers).toMatchObject({
       rabbitmq: false,
       ai: false,
+      mcp: false,
       auth: false,
       redis: false,
       dataTools: false,
@@ -224,6 +233,7 @@ describe("collectAnswers", () => {
     expect(io.multiOptions[0]).toEqual([
       "RabbitMQ",
       "AI agent",
+      "MCP server",
       "Login",
       "Redis",
       "Data tools",
@@ -238,6 +248,7 @@ describe("collectAnswers", () => {
         ...ARGS,
         rabbitmq: false,
         ai: false,
+        mcp: false,
         auth: false,
         redis: false,
         dataTools: false,
@@ -263,6 +274,14 @@ describe("collectAnswers", () => {
 
     expect(answers.ai).toBe(ai);
     expect(io.multiOptions[0]).not.toContain("AI agent");
+  });
+
+  it.each([true, false])("skips the MCP extra when --mcp is %p", async (mcp) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, mcp }, io.io);
+
+    expect(answers.mcp).toBe(mcp);
+    expect(io.multiOptions[0]).not.toContain("MCP server");
   });
 
   it.each([true, false])("skips the login extra when --auth is %p", async (auth) => {
@@ -311,6 +330,7 @@ describe("collectAnswers", () => {
       dbPort: 0,
       rabbitmq: false,
       ai: false,
+      mcp: false,
       auth: false,
       redis: false,
       dataTools: false,
@@ -462,6 +482,7 @@ const ANSWERS: InitAnswers = {
   dbPort: 5432,
   rabbitmq: false,
   ai: false,
+  mcp: false,
   auth: false,
   redis: false,
   dataTools: false,
@@ -476,6 +497,7 @@ describe("recreateCommand", () => {
           ...ANSWERS,
           rabbitmq: true,
           ai: true,
+          mcp: true,
           auth: true,
           redis: true,
           dataTools: true,
@@ -484,7 +506,7 @@ describe("recreateCommand", () => {
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --auth --redis --data-tools --frontend",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend",
     );
   });
 
@@ -591,6 +613,32 @@ describe("nextSteps", () => {
     );
   });
 
+  it.each([
+    {
+      what: "without auth",
+      answers: { ...ANSWERS, mcp: true },
+      caller: "without a header a client reads no table; send the admin secret.",
+    },
+    {
+      what: "with the frontend's anonymous grant",
+      answers: { ...ANSWERS, mcp: true, frontend: true },
+      caller:
+        "without a header a client reads what anyone reads; send the admin secret to read everything.",
+    },
+    {
+      what: "with auth",
+      answers: { ...ANSWERS, mcp: true, auth: true },
+      caller:
+        "without a header a client reads the authors; send a reader's or an editor's token, or the admin secret.",
+    },
+  ])("points MCP clients at /mcp and says what they read $what", ({ answers, caller }) => {
+    expect(nextSteps(answers, true, USERS)).toContain(
+      "The MCP server answers MCP clients at http://localhost:3000/mcp. Its tools run as the caller, as on /graphql:\n" +
+        caller,
+    );
+    expect(nextSteps({ ...answers, mcp: false }, true, USERS)).not.toContain("/mcp");
+  });
+
   it("starts the broker and Redis too for a host run", () => {
     const both = { ...ANSWERS, rabbitmq: true, redis: true };
 
@@ -623,7 +671,14 @@ describe("nextSteps", () => {
   });
 
   it("prints the same steps without auth, whatever users are passed", () => {
-    const answers = { ...ANSWERS, rabbitmq: true, ai: true, redis: true, frontend: true };
+    const answers = {
+      ...ANSWERS,
+      rabbitmq: true,
+      ai: true,
+      mcp: true,
+      redis: true,
+      frontend: true,
+    };
 
     expect(nextSteps(answers, true, USERS)).toBe(nextSteps(answers, true));
   });
@@ -635,6 +690,7 @@ describe("nextSteps", () => {
         ...ANSWERS,
         rabbitmq: true,
         ai: true,
+        mcp: true,
         auth: true,
         redis: true,
         dataTools: true,
@@ -692,7 +748,7 @@ describe("nextSteps", () => {
 
   it("bolds the name that opens each extra's paragraph, and colors the demo passwords yellow", () => {
     const steps = nextSteps(
-      { ...ANSWERS, rabbitmq: true, ai: true, auth: true, redis: true, dataTools: true },
+      { ...ANSWERS, rabbitmq: true, ai: true, mcp: true, auth: true, redis: true, dataTools: true },
       true,
       USERS,
       COLOR_PAINT,
@@ -702,6 +758,7 @@ describe("nextSteps", () => {
       "Two demo users",
       "RabbitMQ",
       "AI agent",
+      "MCP server",
       "Redis",
       "dbgate",
       "Redis Commander",

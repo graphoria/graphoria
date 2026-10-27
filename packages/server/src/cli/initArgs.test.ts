@@ -50,6 +50,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("ai");
   });
 
+  it("answers the MCP question with --mcp or --no-mcp", () => {
+    expect(parseInitArgs(["--mcp"]).mcp).toBe(true);
+    expect(parseInitArgs(["--no-mcp"]).mcp).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("mcp");
+  });
+
   it("answers the auth question with --auth or --no-auth", () => {
     expect(parseInitArgs(["--auth"]).auth).toBe(true);
     expect(parseInitArgs(["--no-auth"]).auth).toBe(false);

@@ -9,6 +9,7 @@ export type InitArgs = {
   dbPort?: number;
   rabbitmq?: boolean;
   ai?: boolean;
+  mcp?: boolean;
   auth?: boolean;
   redis?: boolean;
   dataTools?: boolean;
@@ -45,6 +46,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       "db-port": { type: "string" },
       rabbitmq: { type: "boolean" },
       ai: { type: "boolean" },
+      mcp: { type: "boolean" },
       auth: { type: "boolean" },
       redis: { type: "boolean" },
       "data-tools": { type: "boolean" },
@@ -72,6 +74,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values["db-port"] !== undefined && { dbPort: Number(values["db-port"]) }),
     ...(values.rabbitmq !== undefined && { rabbitmq: values.rabbitmq }),
     ...(values.ai !== undefined && { ai: values.ai }),
+    ...(values.mcp !== undefined && { mcp: values.mcp }),
     ...(values.auth !== undefined && { auth: values.auth }),
     ...(values.redis !== undefined && { redis: values.redis }),
     ...(values["data-tools"] !== undefined && { dataTools: values["data-tools"] }),
