@@ -29,6 +29,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "type-check": "bun run --filter '!@graphoria/playgrounds' type-check",
+    "audit": "bun audit --audit-level=high --ignore=GHSA-xcx6-jx8p-x3h5",
     "test": "bun test",
     "test:integration": "INTEGRATION=1 bun --config=bunfig.integration.toml test packages/server/src/__test/integration packages/ai/integration",
     "test:integration:up": "docker compose -f docker-compose.test.yml up -d --wait",
@@ -47,7 +48,7 @@
   },
   "overrides": {
     "postcss": "^8.5.26",
-    "undici": "^7.29.1",
+    "undici": "^7.30.1",
     "vue": "^3.5.42"
   },
   "engines": {
