@@ -70,6 +70,12 @@ export class S404 extends ClientResponse {
   }
 }
 
+export class S409 extends ClientResponse {
+  constructor(body?: object | null, init?: ResponseInit) {
+    super(body, { ...init, status: 409 });
+  }
+}
+
 export class S429 extends ClientResponse {
   constructor(retryAfterMs: number) {
     super({ errors: [{ message: "Rate limit exceeded" }] }, { status: 429 });

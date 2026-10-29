@@ -8,6 +8,7 @@ import type { Configuration } from "../types/configuration";
 import type { Env } from "../types/env";
 import type { RateLimiter } from "../utils/rateLimit";
 import type { BunRequest } from "bun";
+import type { AuthUserSummary } from "../databases/core/function-mapping";
 import type { DatabasesConnections } from "../singletons/databases";
 
 import { renderAnswerHtml } from "./markdown";
@@ -17,9 +18,26 @@ import { audit } from "../logging/audit";
 import { askAgent, resolveAISurfaces } from "../singletons/ai";
 import { getCronJobs } from "../singletons/cron";
 import { databasesConnections, pingConnection } from "../singletons/databases";
+import {
+  AuthUserProtectedError,
+  deleteAuthUser,
+  getAuthUser,
+  insertAuthUser,
+  listAuthUsers,
+  parseAuthUserActiveInput,
+  parseAuthUserInput,
+  parseAuthUserPasswordInput,
+  parseAuthUserUpdateInput,
+  parseAuthUsername,
+  resetAuthUserPassword,
+  setAuthUserActive,
+  updateAuthUser,
+  userRoles,
+} from "../databases";
+import { AUTH_USERNAME_MAX_LENGTH } from "../databases/auth/users";
 import { queueManager } from "../singletons/queues";
 import { resolveClientAddress } from "../utils/rateLimit";
-import { S200, S400, S401, S403, S404, S429 } from "../utils/responses";
+import { S200, S400, S401, S403, S404, S409, S429 } from "../utils/responses";
 
 type ConsoleRoutesFactoryOptions = {
   env: Env;
@@ -39,6 +57,7 @@ type ConsoleRouteHandler = (
 ) => Response | Promise<Response>;
 
 const PING_TIMEOUT_MS = 2000;
+const USERS_PAGE_SIZE = 50;
 
 const measureLatency = async (connection: DatabasesConnections[string], type: string) => {
   const start = performance.now();
@@ -89,6 +108,12 @@ export const consoleRoutesFactory = ({
   const sessions = createConsoleSessions({ env, consolePath, tokenService });
   const aiSurfaces = resolveAISurfaces(env, projectConfiguration.ai);
 
+  const auth = projectConfiguration.auth;
+  // The superadmin role bypasses RBAC, so a console session may not mint a user
+  // who holds it: only `graphoria seed-auth` assigns it.
+  const consoleUserRoles = () =>
+    userRoles(auth, env).filter((role) => role !== env.superadmin.role);
+
   const clientAddress = (req: BunRequest, server?: Bun.Server<unknown>) =>
     resolveClientAddress(req, server, env.rateLimit.trustProxy);
 
@@ -120,9 +145,20 @@ export const consoleRoutesFactory = ({
         const result = await handler(req, server, scope);
         return result instanceof Response ? result : new S200(result);
       } catch (error) {
+        if (error instanceof AuthUserProtectedError)
+          return new S403({ errors: [{ message: error.message }] });
         return new S400({ errors: [{ message: (error as Error)?.message }] });
       }
     };
+
+  // A missing user answers 400, never 404: the console client reads any 404 as
+  // an expired session and logs the operator out.
+  const managedUser = async (username: string): Promise<AuthUserSummary> => {
+    const user = await getAuthUser(auth, username);
+    if (!user) throw new Error(`User "${username}" does not exist`);
+    if (user.role === env.superadmin.role) throw new AuthUserProtectedError(username);
+    return user;
+  };
 
   const cors: Record<string, ConsoleRouteHandler> = env.enableCors
     ? { OPTIONS: () => new S200(null) }
@@ -383,6 +419,192 @@ export const consoleRoutesFactory = ({
         return { ok: true };
       }, "write"),
     },
+
+    ...(auth.enabled
+      ? {
+          [`${base}/users/roles`]: {
+            ...cors,
+            GET: guarded(() => ({ roles: consoleUserRoles() }), "write"),
+          },
+          [`${base}/users`]: {
+            ...cors,
+            // Any console session: only creating a user needs a write session.
+            GET: guarded(async (req) => {
+              const params = new URL(req.url).searchParams;
+              const search = params.get("search") ?? "";
+              const page = Number(params.get("page") ?? 1);
+              // No username is longer, so a longer search could match nothing.
+              if (search.length > AUTH_USERNAME_MAX_LENGTH)
+                throw new Error(`search must be at most ${AUTH_USERNAME_MAX_LENGTH} characters`);
+              if (!Number.isSafeInteger(page) || page < 1)
+                throw new Error("page must be a positive integer");
+
+              const { users, total } = await listAuthUsers(auth, {
+                search,
+                role: params.get("role") ?? "",
+                offset: (page - 1) * USERS_PAGE_SIZE,
+                limit: USERS_PAGE_SIZE,
+              });
+              return { users, total, pageSize: USERS_PAGE_SIZE, roles: userRoles(auth, env) };
+            }),
+            POST: guarded(async (req, server) => {
+              const input = parseAuthUserInput(await req.json());
+              if (input.role === env.superadmin.role)
+                throw new Error(
+                  `Role "${input.role}" is assigned with graphoria seed-auth, not from the console`,
+                );
+              const roles = consoleUserRoles();
+              if (!roles.includes(input.role))
+                throw new Error(
+                  `Role "${input.role}" is not a role a user can hold (${roles.join(", ") || "none"})`,
+                );
+
+              const actor = { type: "console", ip: clientAddress(req, server) } as const;
+              const target = { kind: "user", name: input.username, role: input.role };
+              try {
+                await insertAuthUser(auth, input);
+              } catch (error) {
+                audit().emit({
+                  action: "console.user.create",
+                  outcome: "failure",
+                  actor,
+                  target,
+                  reason: (error as Error)?.message,
+                });
+                if ((error as Error)?.name === "AuthUserExistsError")
+                  return new S409({ errors: [{ message: (error as Error).message }] });
+                throw error;
+              }
+              audit().emit({ action: "console.user.create", outcome: "success", actor, target });
+              return { ok: true };
+            }, "write"),
+            PATCH: guarded(async (req, server) => {
+              const input = parseAuthUserUpdateInput(await req.json());
+              const roles = consoleUserRoles();
+              if (!roles.includes(input.role))
+                throw new Error(
+                  `Role "${input.role}" is not a role a user can hold (${roles.join(", ") || "none"})`,
+                );
+
+              const previous = await managedUser(input.username);
+              const actor = { type: "console", ip: clientAddress(req, server) } as const;
+              const target = {
+                kind: "user",
+                name: input.username,
+                role: input.role,
+                previousRole: previous.role,
+              } as const;
+              try {
+                // A new role or new claims invalidate every refresh token the
+                // user holds, so they must re-authenticate under the new grant.
+                await tokenService.revokeUserRefreshTokens(input.username);
+                await updateAuthUser(auth, input);
+              } catch (error) {
+                audit().emit({
+                  action: "console.user.update",
+                  outcome: "failure",
+                  actor,
+                  target,
+                  reason: (error as Error)?.message,
+                });
+                throw error;
+              }
+              audit().emit({ action: "console.user.update", outcome: "success", actor, target });
+              return { ok: true };
+            }, "write"),
+            DELETE: guarded(async (req, server) => {
+              const username = parseAuthUsername(new URL(req.url).searchParams.get("username"));
+              const user = await managedUser(username);
+              const actor = { type: "console", ip: clientAddress(req, server) } as const;
+              const target = { kind: "user", name: username, role: user.role } as const;
+              // A deleted user must not keep minting access tokens from the
+              // refresh tokens they already hold.
+              try {
+                await tokenService.revokeUserRefreshTokens(username);
+                await deleteAuthUser(auth, username);
+              } catch (error) {
+                audit().emit({
+                  action: "console.user.delete",
+                  outcome: "failure",
+                  actor,
+                  target,
+                  reason: (error as Error)?.message,
+                });
+                throw error;
+              }
+              audit().emit({ action: "console.user.delete", outcome: "success", actor, target });
+              return { ok: true };
+            }, "write"),
+          },
+          [`${base}/users/active`]: {
+            ...cors,
+            POST: guarded(async (req, server) => {
+              const input = parseAuthUserActiveInput(await req.json());
+              const user = await managedUser(input.username);
+              const actor = { type: "console", ip: clientAddress(req, server) } as const;
+              const target = {
+                kind: "user",
+                name: input.username,
+                role: user.role,
+                active: input.isActive,
+              } as const;
+              // A deactivated user must not keep minting access tokens from the
+              // refresh tokens they already hold.
+              try {
+                if (!input.isActive) await tokenService.revokeUserRefreshTokens(input.username);
+                await setAuthUserActive(auth, input);
+              } catch (error) {
+                audit().emit({
+                  action: input.isActive ? "console.user.activate" : "console.user.deactivate",
+                  outcome: "failure",
+                  actor,
+                  target,
+                  reason: (error as Error)?.message,
+                });
+                throw error;
+              }
+              audit().emit({
+                action: input.isActive ? "console.user.activate" : "console.user.deactivate",
+                outcome: "success",
+                actor,
+                target,
+              });
+              return { ok: true };
+            }, "write"),
+          },
+          [`${base}/users/password`]: {
+            ...cors,
+            POST: guarded(async (req, server) => {
+              const input = parseAuthUserPasswordInput(await req.json());
+              const user = await managedUser(input.username);
+              const actor = { type: "console", ip: clientAddress(req, server) } as const;
+              const target = { kind: "user", name: input.username, role: user.role } as const;
+              // The old password may already have bought sessions, so the
+              // refresh tokens go before the write rather than after it.
+              try {
+                await tokenService.revokeUserRefreshTokens(input.username);
+                await resetAuthUserPassword(auth, input);
+              } catch (error) {
+                audit().emit({
+                  action: "console.user.resetPassword",
+                  outcome: "failure",
+                  actor,
+                  target,
+                  reason: (error as Error)?.message,
+                });
+                throw error;
+              }
+              audit().emit({
+                action: "console.user.resetPassword",
+                outcome: "success",
+                actor,
+                target,
+              });
+              return { ok: true };
+            }, "write"),
+          },
+        }
+      : {}),
 
     ...(aiSurfaces.agent
       ? {
