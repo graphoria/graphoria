@@ -7,6 +7,7 @@ import type { DatabaseType, RelationshipCondition, VirtualColumn } from "../type
 
 import { isTypename } from "../analyzeQuery/metaFields";
 import { FILTER_OPERATORS } from "../config/types/auth";
+import { mappingDbTypeCharVar } from "./core/placeholders";
 import { applyDirectives } from "./directives";
 import { SqlTypeCategory, categorizeSqlType } from "./sqlTypeUtils";
 
@@ -78,13 +79,6 @@ export const generateTableAlias = (level: number): string => `t${level}`;
  * enclosing scope from a sibling that merely ran earlier.
  */
 export type QueryPathFrame = { table: string; alias: string };
-
-const mappingDbTypeCharVar: Record<DatabaseType, string> = {
-  pg: "$",
-  mysql: "$",
-  mssql: "@",
-  sqlite: "$",
-};
 
 export const buildConditions = (
   entities: MergedEntities,
