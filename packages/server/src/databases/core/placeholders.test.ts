@@ -37,6 +37,13 @@ describe("compactPlaceholders", () => {
     expect(namesOf(result.variablesDefinition)).toEqual(["id"]);
   });
 
+  it("leaves a statement that uses every definition untouched", () => {
+    const result = compactPlaceholders("SELECT * FROM t WHERE a = $1 AND b = $2", vars("a", "b"));
+
+    expect(result.query).toBe("SELECT * FROM t WHERE a = $1 AND b = $2");
+    expect(namesOf(result.variablesDefinition)).toEqual(["a", "b"]);
+  });
+
   it("drops every definition from a statement that references none", () => {
     const result = compactPlaceholders("SELECT 1", vars("unused"));
 

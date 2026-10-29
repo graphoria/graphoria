@@ -172,6 +172,26 @@ describe("generateSQL dispatcher", () => {
     ]);
   });
 
+  it("compacts the hash statement's variables too", () => {
+    const pgPrimary: Database = { ...dbPostgreSQL, name: "primary" };
+    const liteReports: Database = { ...dbSQLite, name: "reports" };
+    const variables: VariableDefinition[] = [
+      { name: "pgVar", type: "Text", required: false },
+      { name: "liteVar", type: "Text", required: false },
+    ];
+
+    restorers.push(stubAdapter("pg", () => "PG HASH $1"));
+    restorers.push(stubAdapter("sqlite", () => "LITE HASH $2"));
+
+    const entities = buildEntities({ users: pgPrimary, authors: liteReports });
+    const result = generateSQL(entities, buildAnalysis(["users", "authors"], variables), {}, true);
+
+    expect(result).toEqual([
+      { db: pgPrimary, query: "PG HASH $1", variablesDefinition: [variables[0]] },
+      { db: liteReports, query: "LITE HASH $1", variablesDefinition: [variables[1]] },
+    ]);
+  });
+
   it("throws on unsupported database type", () => {
     const bogus = { ...dbPostgreSQL, type: "oracle" } as unknown as Database;
     const entities = buildEntities({ users: bogus });
