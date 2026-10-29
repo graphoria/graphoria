@@ -9,6 +9,14 @@ export const mappingDbTypeCharVar: Record<DatabaseType, string> = {
   sqlite: "$",
 };
 
+/** How a dialect delimits the runs a placeholder may not appear in. */
+export type PlaceholderScanOptions = {
+  /** MySQL reads a backslash inside a string literal as an escape. */
+  backslashEscapes?: boolean;
+  /** T-SQL quotes identifiers with `[...]`, and an identifier may hold `@` + digits. */
+  bracketIdentifiers?: boolean;
+};
+
 /**
  * Replaces every `<prefix><n>` placeholder that sits outside a quoted run, in
  * text order.
@@ -25,27 +33,29 @@ export const rewritePlaceholders = (
   query: string,
   prefix: string,
   replace: (position: number) => string,
-  backslashEscapes = false,
+  { backslashEscapes = false, bracketIdentifiers = false }: PlaceholderScanOptions = {},
 ): string => {
   let rewritten = "";
   let index = 0;
 
   while (index < query.length) {
     const char = query[index]!;
+    const closer = char === "[" ? "]" : char;
 
-    if (char === "'" || char === '"' || char === "`") {
+    if (char === "'" || char === '"' || char === "`" || (bracketIdentifiers && char === "[")) {
       const start = index;
       index++;
 
       while (index < query.length) {
         // Backslash escapes apply inside string literals but never inside a
-        // backtick-quoted identifier, where the only escape is a doubled tick.
-        if (backslashEscapes && char !== "`" && query[index] === "\\") {
+        // backtick- or bracket-quoted identifier, where the only escape is a
+        // doubled closer.
+        if (backslashEscapes && char !== "`" && char !== "[" && query[index] === "\\") {
           index += 2;
           continue;
         }
-        if (query[index] === char) {
-          if (query[index + 1] === char) {
+        if (query[index] === closer) {
+          if (query[index + 1] === closer) {
             index += 2;
             continue;
           }
@@ -97,7 +107,7 @@ export const compactPlaceholders = (
   dbType: DatabaseType = "pg",
 ): { query: string; variablesDefinition: VariableDefinition[] } => {
   const prefix = mappingDbTypeCharVar[dbType];
-  const backslashEscapes = dbType === "mysql";
+  const options = { backslashEscapes: dbType === "mysql", bracketIdentifiers: dbType === "mssql" };
   const referenced = new Set<number>();
 
   rewritePlaceholders(
@@ -107,7 +117,7 @@ export const compactPlaceholders = (
       referenced.add(position);
       return "";
     },
-    backslashEscapes,
+    options,
   );
 
   const ordered = [...referenced].sort((a, b) => a - b);
@@ -133,7 +143,7 @@ export const compactPlaceholders = (
     (position) => {
       return `${prefix}${renumbered.get(position)!}`;
     },
-    backslashEscapes,
+    options,
   );
 
   return { query: compacted, variablesDefinition: used };

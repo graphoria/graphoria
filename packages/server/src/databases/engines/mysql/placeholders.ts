@@ -39,7 +39,7 @@ export const toMySQLPlaceholders = (
 
       return "?";
     },
-    true,
+    { backslashEscapes: true },
   );
 
   return { query: rewritten, params };

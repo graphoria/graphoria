@@ -51,6 +51,16 @@ describe("compactPlaceholders", () => {
     expect(result.variablesDefinition).toEqual([]);
   });
 
+  it("leaves a placeholder inside a doubled-quote literal alone", () => {
+    const result = compactPlaceholders(
+      "SELECT * FROM t WHERE name = 'O''Brien $1' AND id = $2",
+      vars("name", "id"),
+    );
+
+    expect(result.query).toBe("SELECT * FROM t WHERE name = 'O''Brien $1' AND id = $1");
+    expect(namesOf(result.variablesDefinition)).toEqual(["id"]);
+  });
+
   it("keeps scanning past a literal that ends in a backslash", () => {
     const result = compactPlaceholders(
       "SELECT * FROM t WHERE name LIKE $1 ESCAPE '\\' AND id = $3",
@@ -60,6 +70,17 @@ describe("compactPlaceholders", () => {
 
     expect(result.query).toBe("SELECT * FROM t WHERE name LIKE $1 ESCAPE '\\' AND id = $2");
     expect(namesOf(result.variablesDefinition)).toEqual(["pattern", "id"]);
+  });
+
+  it("leaves a placeholder-shaped run inside a bracketed identifier alone", () => {
+    const result = compactPlaceholders(
+      "SELECT t1.[sales@2024] FROM t WHERE x = @1",
+      vars("only"),
+      "mssql",
+    );
+
+    expect(result.query).toBe("SELECT t1.[sales@2024] FROM t WHERE x = @1");
+    expect(namesOf(result.variablesDefinition)).toEqual(["only"]);
   });
 
   it("renumbers the engine's own placeholder character", () => {
