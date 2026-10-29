@@ -15,7 +15,7 @@
 | Postgres   | 5432        | `postgres` / `postgrespassword`, db `my_app`       | a database Graphoria introspects       |
 | MySQL      | 3306        | `root` / `mysqlpassword`, db `my_app`              | a database Graphoria introspects       |
 | SQL Server | 1433        | `sa` / `Str0ng!Passw0rd`, db `my_app`              | a database Graphoria introspects       |
-| Redis      | 6379        | none                                               | auth token store / `CACHE_STORE=redis` |
+| Redis      | 6379        | none                                               | `AUTH_STORE` / a `caches.stores` entry |
 | RabbitMQ   | 5672, 15672 | `guest` / `guest`                                  | message-queue features (optional)      |
 | DbGate     | 9000        | none                                               | a web UI over the three databases      |
 | Taskly     | 3000        | see [`taskly/.env.example`](./taskly/.env.example) | only with `--profile taskly`           |

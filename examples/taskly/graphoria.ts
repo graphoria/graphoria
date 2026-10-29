@@ -222,6 +222,16 @@ export default {
     },
   ],
 
+  // AUTH_STORE names one of these; `memory` keeps revocations in this process only.
+  caches: {
+    stores: {
+      redis: { type: "redis", url: process.env.REDIS_URL ?? "redis://localhost:6379" },
+    },
+    // Memory first, so `cache.max` on an operation caps the fast tier and Redis
+    // keeps the entries across a restart.
+    default: ["memory", "redis"],
+  },
+
   auth: {
     enabled: true,
     database: "pg",

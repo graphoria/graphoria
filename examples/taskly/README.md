@@ -134,7 +134,7 @@ Create `.env` next to [`index.ts`](./index.ts):
 ```bash
 ADMIN_SECRET=dev-admin-change-me
 JWT_SECRET=dev-secret-change-me
-CACHE_STORE=redis
+AUTH_STORE=redis            # or `memory`, which loses revocations on restart
 REDIS_URL=redis://localhost:6379
 LLM_PROVIDER=ollama          # AI agent default; or set OPENAI_API_KEY / ANTHROPIC_API_KEY
 ```
