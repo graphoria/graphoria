@@ -1,11 +1,23 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 
+import { BigInt, Bit, Int, MAX, NVarChar } from "mssql";
+
 import type { ConnectionPool } from "mssql";
 import type { Auth, Database } from "../../../types/configuration";
 
 import { hashPassword, verifyPassword } from "../../auth/password";
+import { AuthUserExistsError } from "../../auth/users";
 import { dbMSSQL } from "../../../__test/dbMocks";
-import { checkUserCredentials, insertAuthUser } from "./auth";
+import {
+  checkUserCredentials,
+  deleteAuthUser,
+  getAuthUser,
+  insertAuthUser,
+  listAuthUsers,
+  resetAuthUserPassword,
+  setAuthUserActive,
+  updateAuthUser,
+} from "./auth";
 
 type Recordset = Array<{
   username: string;
@@ -153,6 +165,16 @@ const recordingPool = (): {
   return { pool, calls };
 };
 
+const throwingPool = (error: unknown): ConnectionPool => {
+  const request: { input: () => typeof request; query: () => Promise<never> } = {
+    input: () => request,
+    query: async () => {
+      throw error;
+    },
+  };
+  return { request: () => request } as unknown as ConnectionPool;
+};
+
 const authConfig = {
   schema: "auth",
   databaseEntity: dbMSSQL,
@@ -211,5 +233,250 @@ describe("mssql insertAuthUser", () => {
     await expect(
       insertAuthUser(evil, { username: "x", password: "p", role: "r" }, pool),
     ).rejects.toThrow();
+  });
+
+  it.each([
+    ["primary key", 2627],
+    ["unique index", 2601],
+  ])("names a taken username instead of the driver's %s violation", async (_what, number) => {
+    const violation = Object.assign(
+      new Error("Cannot insert duplicate key in object 'auth.user'"),
+      {
+        number,
+      },
+    );
+
+    const insert = insertAuthUser(
+      authConfig,
+      { username: "alice", password: "plain", role: "admin" },
+      throwingPool(violation),
+    );
+
+    await expect(insert).rejects.toBeInstanceOf(AuthUserExistsError);
+    await expect(insert).rejects.toThrow('User "alice" already exists');
+  });
+
+  it("rethrows any other driver error untouched", async () => {
+    const deadlock = Object.assign(new Error("Transaction was deadlocked"), { number: 1205 });
+
+    await expect(
+      insertAuthUser(
+        authConfig,
+        { username: "alice", password: "plain", role: "admin" },
+        throwingPool(deadlock),
+      ),
+    ).rejects.toBe(deadlock);
+  });
+});
+
+const listingPool = (recordset: object[], total: number) => {
+  const calls: { query: string; inputs: Record<string, unknown> }[] = [];
+  const types: Record<string, unknown>[] = [];
+  let bound: Record<string, unknown> = {};
+  const request: {
+    inputs: Record<string, unknown>;
+    input: (name: string, type: unknown, value: unknown) => typeof request;
+    query: (text: string) => Promise<{ recordset: object[] }>;
+  } = {
+    inputs: {},
+    input: (name, type, value) => {
+      request.inputs[name] = value;
+      bound[name] = type;
+      return request;
+    },
+    query: async (text) => {
+      calls.push({ query: text, inputs: { ...request.inputs } });
+      types.push(bound);
+      bound = {};
+      request.inputs = {};
+      return { recordset: text.startsWith("SELECT COUNT(*)") ? [{ total }] : recordset };
+    },
+  };
+  return { pool: { request: () => request } as unknown as ConnectionPool, calls, types };
+};
+
+describe("mssql listAuthUsers", () => {
+  it("reads a page and the total over one filter, every value bound", async () => {
+    const { pool, calls } = listingPool(
+      [
+        { username: "ada", role: "editor", is_active: true },
+        { username: "bob", role: "editor", is_active: false },
+      ],
+      52,
+    );
+
+    expect(
+      await listAuthUsers(
+        authConfig,
+        { search: "a_", role: "editor", offset: 50, limit: 50 },
+        pool,
+      ),
+    ).toEqual({
+      users: [
+        { username: "ada", role: "editor", isActive: true },
+        { username: "bob", role: "editor", isActive: false },
+      ],
+      total: 52,
+    });
+    const from =
+      "FROM auth.[user] WHERE LOWER(username) LIKE LOWER(@pattern) ESCAPE '!' AND (role = @role OR @role = '')";
+    expect(calls).toEqual([
+      {
+        query: `SELECT username, role, is_active ${from} ORDER BY username OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`,
+        inputs: { pattern: "%a!_%", role: "editor", offset: 50, limit: 50 },
+      },
+      { query: `SELECT COUNT(*) AS total ${from}`, inputs: { pattern: "%a!_%", role: "editor" } },
+    ]);
+  });
+
+  it("binds the offset as a 64-bit integer, so a page past 2^31 is not refused", async () => {
+    const { pool, types } = listingPool([], 0);
+
+    await listAuthUsers(
+      authConfig,
+      { search: "", role: "", offset: 2_499_999_950, limit: 50 },
+      pool,
+    );
+
+    expect(types[0]?.offset).toBe(BigInt);
+    expect(types[0]?.limit).toBe(Int);
+  });
+});
+
+type RecordedCall = {
+  query: string;
+  inputs: Record<string, unknown>;
+  types: Record<string, unknown>;
+};
+
+const mutationPool = (recordset: object[] = []) => {
+  const calls: RecordedCall[] = [];
+  let inputs: Record<string, unknown> = {};
+  let types: Record<string, unknown> = {};
+  const request: {
+    input: (name: string, type: unknown, value: unknown) => typeof request;
+    query: (text: string) => Promise<{ recordset: object[] }>;
+  } = {
+    input: (name, type, value) => {
+      inputs[name] = value;
+      types[name] = type;
+      return request;
+    },
+    query: async (text) => {
+      calls.push({ query: text, inputs: { ...inputs }, types: { ...types } });
+      inputs = {};
+      types = {};
+      return { recordset };
+    },
+  };
+  return { pool: { request: () => request } as unknown as ConnectionPool, calls };
+};
+
+describe("mssql user mutations", () => {
+  it("reads one user by username, without its password", async () => {
+    const { pool, calls } = mutationPool([{ username: "ada", role: "editor", is_active: true }]);
+
+    expect(await getAuthUser(authConfig, "ada", pool)).toEqual({
+      username: "ada",
+      role: "editor",
+      isActive: true,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].query).toBe(
+      "SELECT username, role, is_active FROM auth.[user] WHERE username = @username",
+    );
+    expect(calls[0].inputs).toEqual({ username: "ada" });
+    expect(calls[0].types.username).toEqual(NVarChar(50));
+  });
+
+  it("returns null when no user matches", async () => {
+    const { pool } = mutationPool([]);
+
+    expect(await getAuthUser(authConfig, "nobody", pool)).toBeNull();
+  });
+
+  it("replaces role and claims, leaving the password alone", async () => {
+    const { pool, calls } = mutationPool();
+
+    await updateAuthUser(authConfig, { username: "ada", role: "editor", claims: { a: 1 } }, pool);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].query).toBe(
+      "UPDATE auth.[user] SET role = @role, claims = @claims WHERE username = @username",
+    );
+    expect(calls[0].inputs).toEqual({
+      username: "ada",
+      role: "editor",
+      claims: '{"a":1}',
+    });
+    expect(calls[0].types.username).toEqual(NVarChar(50));
+    expect(calls[0].types.role).toEqual(NVarChar(20));
+    expect(calls[0].types.claims).toEqual(NVarChar(MAX));
+  });
+
+  it("sets the active flag", async () => {
+    const { pool, calls } = mutationPool();
+
+    await setAuthUserActive(authConfig, { username: "ada", isActive: false }, pool);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].query).toBe(
+      "UPDATE auth.[user] SET is_active = @is_active WHERE username = @username",
+    );
+    expect(calls[0].inputs).toEqual({ username: "ada", is_active: false });
+    expect(calls[0].types.is_active).toEqual(Bit);
+  });
+
+  it("deletes the user", async () => {
+    const { pool, calls } = mutationPool();
+
+    await deleteAuthUser(authConfig, "ada", pool);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].query).toBe("DELETE FROM auth.[user] WHERE username = @username");
+    expect(calls[0].inputs).toEqual({ username: "ada" });
+  });
+
+  it("stores a new argon2id password, never the plain text", async () => {
+    const { pool, calls } = mutationPool();
+
+    await resetAuthUserPassword(authConfig, { username: "ada", password: "another-horse" }, pool);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].query).toBe(
+      "UPDATE auth.[user] SET password = @password WHERE username = @username",
+    );
+    expect(calls[0].inputs.username).toBe("ada");
+    expect(calls[0].types.password).toEqual(NVarChar(255));
+
+    const hashed = calls[0].inputs.password as string;
+    expect(hashed).not.toBe("another-horse");
+    expect(hashed.startsWith("$argon2id$")).toBe(true);
+    expect(await verifyPassword("another-horse", hashed)).toBe(true);
+  });
+
+  it.each([
+    ["getAuthUser", (evil: Auth, pool: ConnectionPool) => getAuthUser(evil, "ada", pool)],
+    [
+      "updateAuthUser",
+      (evil: Auth, pool: ConnectionPool) =>
+        updateAuthUser(evil, { username: "ada", role: "editor", claims: {} }, pool),
+    ],
+    [
+      "setAuthUserActive",
+      (evil: Auth, pool: ConnectionPool) =>
+        setAuthUserActive(evil, { username: "ada", isActive: true }, pool),
+    ],
+    ["deleteAuthUser", (evil: Auth, pool: ConnectionPool) => deleteAuthUser(evil, "ada", pool)],
+    [
+      "resetAuthUserPassword",
+      (evil: Auth, pool: ConnectionPool) =>
+        resetAuthUserPassword(evil, { username: "ada", password: "p" }, pool),
+    ],
+  ])("refuses an unsafe schema identifier in %s", async (_name, call) => {
+    const { pool } = mutationPool();
+    const evil = { schema: 'auth"; DROP TABLE users--' } as unknown as Auth;
+
+    await expect(call(evil, pool)).rejects.toThrow();
   });
 });

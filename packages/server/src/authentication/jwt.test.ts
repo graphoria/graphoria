@@ -10,6 +10,7 @@ type FakeRepo = TokenRepository & { closes: number };
 const createFakeRepo = (): FakeRepo => {
   const revoked = new Set<string>();
   const used = new Set<string>();
+  const cutoffs = new Map<string, number>();
   const repo: FakeRepo = {
     closes: 0,
     close: () => {
@@ -24,6 +25,10 @@ const createFakeRepo = (): FakeRepo => {
     },
     isRevoked: async (jti) => revoked.has(jti),
     checkRefresh: async (jti) => ({ isUsed: used.has(jti), isRevoked: revoked.has(jti) }),
+    revokeUserRefreshTokens: async (name) => {
+      cutoffs.set(name, Math.floor(Date.now() / 1000));
+    },
+    isUserRefreshTokenRevoked: async (name, issuedAt) => (cutoffs.get(name) ?? -1) >= issuedAt,
     ping: async () => true,
   };
   return repo;
@@ -147,6 +152,18 @@ describe("JWT Service", () => {
     await svc.revoke(refreshPayload.jti);
 
     await expect(svc.refreshAccessToken(pair.refresh_token)).rejects.toThrow("Token revoked");
+  });
+
+  it("rejects a refresh token issued before the user's revocation", async () => {
+    const repo = createFakeRepo();
+    const svc = createJWTService(envMock, repo);
+    const pair = await svc.createTokenPair({ sub: "ada", role: "editor" });
+
+    await svc.revokeUserRefreshTokens("ada");
+
+    await expect(svc.refreshAccessToken(pair.refresh_token)).rejects.toThrow("Token revoked");
+    const other = await svc.createTokenPair({ sub: "bob", role: "editor" });
+    expect(await svc.refreshAccessToken(other.refresh_token)).toHaveProperty("access_token");
   });
 });
 

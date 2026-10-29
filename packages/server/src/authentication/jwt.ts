@@ -198,6 +198,10 @@ export const createJWTService = (
       throw new Error("Token reuse detected");
     }
 
+    if (await tokenRepository.isUserRefreshTokenRevoked(payload.sub, payload.iat ?? 0)) {
+      throw new Error("Token revoked");
+    }
+
     // Mark this refresh token as used BEFORE issuing new tokens
     await tokenRepository.saveJti(payload.jti, env.jwt.rtExpiresIn);
 
@@ -223,6 +227,10 @@ export const createJWTService = (
     // the TTL for a JTI the repository has not seen before.
     revoke: (jti: string) => tokenRepository.revoke(jti, env.jwt.rtExpiresIn),
     isRevoked: tokenRepository.isRevoked,
+    // One cutoff covers every refresh token the user holds, so its record only
+    // has to outlive the lifetime of the tokens it revokes.
+    revokeUserRefreshTokens: (username: string) =>
+      tokenRepository.revokeUserRefreshTokens(username, env.jwt.rtExpiresIn),
     close: tokenRepository.close,
   };
 };

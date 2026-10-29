@@ -1,12 +1,24 @@
 import type { Database as SQLiteDatabase } from "bun:sqlite";
 import type { Auth, Database } from "../../../types/configuration";
-import type { CheckUserCredentialsResult, InsertAuthUserInput } from "../../core/function-mapping";
+import type {
+  AuthUserPage,
+  AuthUserSummary,
+  CheckUserCredentialsResult,
+  InsertAuthUserInput,
+  ListAuthUsersInput,
+  ResetAuthUserPasswordInput,
+  SetAuthUserActiveInput,
+  UpdateAuthUserInput,
+} from "../../core/function-mapping";
 import type { UserRecord } from "../shared/types";
 
 import { databasesConnections } from "../../../singletons/databases";
 import { hashPassword, verifyPassword } from "../../auth/password";
+import { AuthUserExistsError } from "../../auth/users";
 import { assertSafeIdentifier } from "../../core/identifier";
 import { parseUserClaims } from "../shared/claims";
+import type { AuthUserRow } from "../shared/users";
+import { containsPattern, toAuthUserSummary } from "../shared/users";
 import { schemasOf } from "./connection";
 
 export const userTableCreation = (schema: string) => `
@@ -83,14 +95,105 @@ export const insertAuthUser = async (
   const schema = assertSafeIdentifier(auth.schema!, "schema");
   const hashed = await hashPassword(input.password);
 
+  try {
+    connectionOf(auth.databaseEntity.name, injected)
+      .query(
+        `INSERT INTO "${schema}"."user" (username, password, role, is_active, claims) VALUES ($1, $2, $3, TRUE, $4)`,
+      )
+      .run({
+        $1: input.username,
+        $2: hashed,
+        $3: input.role,
+        $4: JSON.stringify(input.claims ?? {}),
+      });
+  } catch (error) {
+    // The primary key, or a unique index on a table made by hand.
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "SQLITE_CONSTRAINT_PRIMARYKEY" || code === "SQLITE_CONSTRAINT_UNIQUE")
+      throw new AuthUserExistsError(input.username);
+    throw error;
+  }
+};
+
+export const listAuthUsers = async (
+  auth: Auth,
+  { search, role, offset, limit }: ListAuthUsersInput,
+  injected?: SQLiteDatabase,
+): Promise<AuthUserPage> => {
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+  const connection = connectionOf(auth.databaseEntity.name, injected);
+  const from = `FROM "${schema}"."user" WHERE LOWER(username) LIKE LOWER($1) ESCAPE '!' AND (role = $2 OR $2 = '')`;
+  const filter = { $1: containsPattern(search), $2: role };
+
+  const rows = connection
+    .query(`SELECT username, role, is_active ${from} ORDER BY username LIMIT $3 OFFSET $4`)
+    .all({ ...filter, $3: limit, $4: offset }) as AuthUserRow[];
+  const { total } = connection.query(`SELECT COUNT(*) AS total ${from}`).get(filter) as {
+    total: number;
+  };
+
+  return { users: rows.map(toAuthUserSummary), total };
+};
+
+export const getAuthUser = async (
+  auth: Auth,
+  username: string,
+  injected?: SQLiteDatabase,
+): Promise<AuthUserSummary | null> => {
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+
+  const row = connectionOf(auth.databaseEntity.name, injected)
+    .query(`SELECT username, role, is_active FROM "${schema}"."user" WHERE username = $1`)
+    .get({ $1: username }) as AuthUserRow | null;
+
+  return row ? toAuthUserSummary(row) : null;
+};
+
+export const updateAuthUser = async (
+  auth: Auth,
+  { username, role, claims }: UpdateAuthUserInput,
+  injected?: SQLiteDatabase,
+): Promise<void> => {
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+
   connectionOf(auth.databaseEntity.name, injected)
-    .query(
-      `INSERT INTO "${schema}"."user" (username, password, role, is_active, claims) VALUES ($1, $2, $3, TRUE, $4)`,
-    )
-    .run({
-      $1: input.username,
-      $2: hashed,
-      $3: input.role,
-      $4: JSON.stringify(input.claims ?? {}),
-    });
+    .query(`UPDATE "${schema}"."user" SET role = $2, claims = $3 WHERE username = $1`)
+    .run({ $1: username, $2: role, $3: JSON.stringify(claims) });
+};
+
+export const setAuthUserActive = async (
+  auth: Auth,
+  { username, isActive }: SetAuthUserActiveInput,
+  injected?: SQLiteDatabase,
+): Promise<void> => {
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+
+  connectionOf(auth.databaseEntity.name, injected)
+    .query(`UPDATE "${schema}"."user" SET is_active = $2 WHERE username = $1`)
+    .run({ $1: username, $2: isActive });
+};
+
+export const deleteAuthUser = async (
+  auth: Auth,
+  username: string,
+  injected?: SQLiteDatabase,
+): Promise<void> => {
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+
+  connectionOf(auth.databaseEntity.name, injected)
+    .query(`DELETE FROM "${schema}"."user" WHERE username = $1`)
+    .run({ $1: username });
+};
+
+export const resetAuthUserPassword = async (
+  auth: Auth,
+  { username, password }: ResetAuthUserPasswordInput,
+  injected?: SQLiteDatabase,
+): Promise<void> => {
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+  const hashed = await hashPassword(password);
+
+  connectionOf(auth.databaseEntity.name, injected)
+    .query(`UPDATE "${schema}"."user" SET password = $2 WHERE username = $1`)
+    .run({ $1: username, $2: hashed });
 };

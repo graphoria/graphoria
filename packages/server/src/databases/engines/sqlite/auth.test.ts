@@ -6,9 +6,16 @@ import type { Auth, Database } from "../../../types/configuration";
 import {
   checkUserCredentials,
   createAuthTables,
+  deleteAuthUser,
+  getAuthUser,
   insertAuthUser,
+  listAuthUsers,
+  resetAuthUserPassword,
+  setAuthUserActive,
+  updateAuthUser,
   verifyAuthTablesExist,
 } from "./auth";
+import { AuthUserExistsError } from "../../auth/users";
 
 const sqliteDb = (attach?: Record<string, string>) =>
   ({
@@ -113,5 +120,139 @@ describe("sqlite login", () => {
       role: null,
       claims: null,
     });
+  });
+
+  it("names a taken username instead of the driver's constraint error", async () => {
+    const insert = insertAuthUser(
+      auth,
+      { username: "alice", password: "other", role: "admin" },
+      connection,
+    );
+
+    await expect(insert).rejects.toBeInstanceOf(AuthUserExistsError);
+    await expect(insert).rejects.toThrow('User "alice" already exists');
+  });
+});
+
+describe("sqlite insertAuthUser", () => {
+  it("rethrows any other driver error untouched", async () => {
+    // The top-level beforeEach attaches the schema but creates no table.
+    await expect(
+      insertAuthUser(auth, { username: "alice", password: "plain", role: "admin" }, connection),
+    ).rejects.toThrow("no such table");
+  });
+});
+
+describe("sqlite listAuthUsers", () => {
+  const list = (search = "", role = "", offset = 0, limit = 10) =>
+    listAuthUsers(auth, { search, role, offset, limit }, connection);
+  const names = async (...args: Parameters<typeof list>) =>
+    (await list(...args)).users.map((user) => user.username);
+
+  beforeEach(async () => {
+    await createAuthTables(auth, connection);
+    connection.run(
+      `INSERT INTO auth."user" (username, password, role, is_active) VALUES
+         ('bob', 'x', 'reader', TRUE), ('Adam', 'x', 'editor', TRUE), ('ada', 'x', 'editor', FALSE),
+         ('a_b', 'x', 'editor', TRUE), ('axb', 'x', 'editor', TRUE)`,
+    );
+  });
+
+  it("lists users by username with whether each is active, and their total", async () => {
+    expect(await list()).toEqual({
+      users: [
+        { username: "Adam", role: "editor", isActive: true },
+        { username: "a_b", role: "editor", isActive: true },
+        { username: "ada", role: "editor", isActive: false },
+        { username: "axb", role: "editor", isActive: true },
+        { username: "bob", role: "reader", isActive: true },
+      ],
+      total: 5,
+    });
+  });
+
+  it("reads limit rows after offset, the total counting every row", async () => {
+    const { users, total } = await list("", "", 1, 2);
+
+    expect(users.map((user) => user.username)).toEqual(["a_b", "ada"]);
+    expect(total).toBe(5);
+  });
+
+  it("keeps the usernames that contain the search, in any case, wildcards taken literally", async () => {
+    expect(await names("AD")).toEqual(["Adam", "ada"]);
+    expect(await names("a_b")).toEqual(["a_b"]);
+    expect(await names("%")).toEqual([]);
+  });
+
+  it("keeps one role, with the search too, and counts only what matches", async () => {
+    expect(await list("", "reader")).toEqual({
+      users: [{ username: "bob", role: "reader", isActive: true }],
+      total: 1,
+    });
+    expect((await list("a", "editor")).total).toBe(4);
+  });
+});
+
+describe("sqlite user mutations", () => {
+  const seed = async () =>
+    insertAuthUser(
+      auth,
+      { username: "ada", password: "correct-horse", role: "editor", claims: { a: 1 } },
+      connection,
+    );
+
+  beforeEach(async () => {
+    await createAuthTables(auth, connection);
+  });
+
+  it("reads a user without its password", async () => {
+    await seed();
+    expect(await getAuthUser(auth, "ada", connection)).toEqual({
+      username: "ada",
+      role: "editor",
+      isActive: true,
+    });
+    expect(await getAuthUser(auth, "nobody", connection)).toBeNull();
+  });
+
+  it("replaces role and claims, keeping the password", async () => {
+    await seed();
+    await updateAuthUser(auth, { username: "ada", role: "reader", claims: { b: 2 } }, connection);
+    expect(await getAuthUser(auth, "ada", connection)).toEqual({
+      username: "ada",
+      role: "reader",
+      isActive: true,
+    });
+    expect((await checkUserCredentials(db, auth, "ada", "correct-horse", connection)).valid).toBe(
+      true,
+    );
+    expect(connection.query(`SELECT claims FROM "user" WHERE username = 'ada'`).get()).toEqual({
+      claims: '{"b":2}',
+    });
+  });
+
+  it("sets the active flag both ways", async () => {
+    await seed();
+    await setAuthUserActive(auth, { username: "ada", isActive: false }, connection);
+    expect((await getAuthUser(auth, "ada", connection))!.isActive).toBe(false);
+    await setAuthUserActive(auth, { username: "ada", isActive: true }, connection);
+    expect((await getAuthUser(auth, "ada", connection))!.isActive).toBe(true);
+  });
+
+  it("deletes the user", async () => {
+    await seed();
+    await deleteAuthUser(auth, "ada", connection);
+    expect(await getAuthUser(auth, "ada", connection)).toBeNull();
+  });
+
+  it("stores a new argon2id password the old one no longer opens", async () => {
+    await seed();
+    await resetAuthUserPassword(auth, { username: "ada", password: "another-horse" }, connection);
+    expect((await checkUserCredentials(db, auth, "ada", "another-horse", connection)).valid).toBe(
+      true,
+    );
+    expect((await checkUserCredentials(db, auth, "ada", "correct-horse", connection)).valid).toBe(
+      false,
+    );
   });
 });

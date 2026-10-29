@@ -143,6 +143,42 @@ describe("tokenRepository", () => {
     expect(await failRepo.checkRefresh("any")).toEqual({ isUsed: true, isRevoked: true });
   });
 
+  describe("user refresh revocation", () => {
+    it("records a cutoff with the refresh token's lifetime", async () => {
+      await repo.revokeUserRefreshTokens("ada", "7d");
+      expect(client.ttls.get("user-refresh:ada")).toBe(604_800);
+    });
+
+    it("revokes a token issued at or before the cutoff, and only that user's", async () => {
+      await repo.revokeUserRefreshTokens("ada", "7d");
+      const cutoff = Math.floor(Date.now() / 1000);
+      expect(await repo.isUserRefreshTokenRevoked("ada", cutoff)).toBe(true);
+      expect(await repo.isUserRefreshTokenRevoked("ada", cutoff + 1)).toBe(false);
+      expect(await repo.isUserRefreshTokenRevoked("bob", cutoff)).toBe(false);
+    });
+
+    it("keeps a JTI record and a user record apart", async () => {
+      await repo.saveJti("ada", "7d");
+      expect(await repo.isUserRefreshTokenRevoked("ada", 0)).toBe(false);
+    });
+
+    it("fails closed when the client throws", async () => {
+      const failing = createTokenRepositoryWithClient({
+        ...client,
+        hmget: async () => {
+          throw new Error("down");
+        },
+      });
+      expect(await failing.isUserRefreshTokenRevoked("ada", 0)).toBe(true);
+    });
+
+    it("lives under the store prefix", async () => {
+      const prefixed = createTokenRepositoryWithClient(client, "app:");
+      await prefixed.revokeUserRefreshTokens("ada", "7d");
+      expect(client.store.has("app:user-refresh:ada")).toBe(true);
+    });
+  });
+
   it("close() closes its Redis client", () => {
     repo.close();
 
@@ -320,6 +356,18 @@ describe("memory token repository", () => {
     expect(await repository.isTokenUsed("c")).toBe(true);
     clock.now = 1_000;
     expect(await repository.isTokenUsed("c")).toBe(false);
+  });
+
+  it("revokes a user's refresh tokens, and forgets the cutoff when it expires", async () => {
+    const { clock, repository } = clocked();
+    await repository.revokeUserRefreshTokens("ada", "1s");
+    const cutoff = Math.floor(Date.now() / 1000);
+
+    clock.now = 999;
+    expect(await repository.isUserRefreshTokenRevoked("ada", cutoff)).toBe(true);
+
+    clock.now = 1_000;
+    expect(await repository.isUserRefreshTokenRevoked("ada", cutoff)).toBe(false);
   });
 
   it("keeps a used JTI's TTL when it is revoked, as the Redis store does", async () => {

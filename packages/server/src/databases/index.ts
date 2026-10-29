@@ -13,9 +13,32 @@ export {
   createAuthTables,
   getLoginFn,
   checkUserCredentials,
+  deleteAuthUser,
+  getAuthUser,
   insertAuthUser,
+  listAuthUsers,
+  resetAuthUserPassword,
+  setAuthUserActive,
+  updateAuthUser,
   verifyAuthTablesExist,
 } from "./auth/auth-operations";
+
+export type {
+  ResetAuthUserPasswordInput,
+  SetAuthUserActiveInput,
+  UpdateAuthUserInput,
+} from "./core/function-mapping";
+
+export {
+  AuthUserExistsError,
+  AuthUserProtectedError,
+  parseAuthUserActiveInput,
+  parseAuthUserInput,
+  parseAuthUserPasswordInput,
+  parseAuthUserUpdateInput,
+  parseAuthUsername,
+  userRoles,
+} from "./auth/users";
 
 // Data transformation operations
 export {

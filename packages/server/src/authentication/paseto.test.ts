@@ -11,6 +11,7 @@ type FakeRepo = TokenRepository & { closes: number };
 const createFakeRepo = (): FakeRepo => {
   const revoked = new Set<string>();
   const used = new Set<string>();
+  const cutoffs = new Map<string, number>();
   const repo: FakeRepo = {
     closes: 0,
     close: () => {
@@ -25,6 +26,10 @@ const createFakeRepo = (): FakeRepo => {
     },
     isRevoked: async (jti) => revoked.has(jti),
     checkRefresh: async (jti) => ({ isUsed: used.has(jti), isRevoked: revoked.has(jti) }),
+    revokeUserRefreshTokens: async (name) => {
+      cutoffs.set(name, Math.floor(Date.now() / 1000));
+    },
+    isUserRefreshTokenRevoked: async (name, issuedAt) => (cutoffs.get(name) ?? -1) >= issuedAt,
     ping: async () => true,
   };
   return repo;
@@ -173,6 +178,18 @@ describe("PASETO Service - v4.local", () => {
 
     await expect(svc.refreshAccessToken(pair.refresh_token)).rejects.toThrow("Token revoked");
   });
+
+  it("rejects a refresh token issued before the user's revocation", async () => {
+    const repo = createFakeRepo();
+    const svc = createPASETOService(envMock, "local", repo);
+    const pair = await svc.createTokenPair({ sub: "ada", role: "editor" });
+
+    await svc.revokeUserRefreshTokens("ada");
+
+    await expect(svc.refreshAccessToken(pair.refresh_token)).rejects.toThrow("Token revoked");
+    const other = await svc.createTokenPair({ sub: "bob", role: "editor" });
+    expect(await svc.refreshAccessToken(other.refresh_token)).toHaveProperty("access_token");
+  });
 });
 
 describe("PASETO Service - v4.public", () => {
@@ -254,6 +271,18 @@ describe("PASETO Service - v4.public", () => {
     expect(session.claims).toEqual({ orgId: "org-123" });
     expect(typeof session.iat).toBe("number");
     expect(typeof session.exp).toBe("number");
+  });
+
+  it("rejects a refresh token issued before the user's revocation", async () => {
+    const repo = createFakeRepo();
+    const svc = createPASETOService(envMock, "public", repo);
+    const pair = await svc.createTokenPair({ sub: "ada", role: "editor" });
+
+    await svc.revokeUserRefreshTokens("ada");
+
+    await expect(svc.refreshAccessToken(pair.refresh_token)).rejects.toThrow("Token revoked");
+    const other = await svc.createTokenPair({ sub: "bob", role: "editor" });
+    expect(await svc.refreshAccessToken(other.refresh_token)).toHaveProperty("access_token");
   });
 });
 

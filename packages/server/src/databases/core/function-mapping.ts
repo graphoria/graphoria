@@ -8,7 +8,13 @@ import type { PageLimits } from "../common";
 import {
   checkUserCredentials as checkUserCredentialsMSSQL,
   createAuthTables as createAuthTablesMSSQL,
+  deleteAuthUser as deleteAuthUserMSSQL,
+  getAuthUser as getAuthUserMSSQL,
   insertAuthUser as insertAuthUserMSSQL,
+  listAuthUsers as listAuthUsersMSSQL,
+  resetAuthUserPassword as resetAuthUserPasswordMSSQL,
+  setAuthUserActive as setAuthUserActiveMSSQL,
+  updateAuthUser as updateAuthUserMSSQL,
   verifyAuthTablesExist as verifyAuthTablesExistMSSQL,
 } from "../engines/mssql/auth";
 import {
@@ -23,7 +29,13 @@ import { generateSQL as queryMssql } from "../engines/mssql/query";
 import {
   checkUserCredentials as checkUserCredentialsMySQL,
   createAuthTables as createAuthTablesMySQL,
+  deleteAuthUser as deleteAuthUserMySQL,
+  getAuthUser as getAuthUserMySQL,
   insertAuthUser as insertAuthUserMySQL,
+  listAuthUsers as listAuthUsersMySQL,
+  resetAuthUserPassword as resetAuthUserPasswordMySQL,
+  setAuthUserActive as setAuthUserActiveMySQL,
+  updateAuthUser as updateAuthUserMySQL,
   verifyAuthTablesExist as verifyAuthTablesExistMySQL,
 } from "../engines/mysql/auth";
 import {
@@ -38,7 +50,13 @@ import { generateSQL as queryMySQL } from "../engines/mysql/query";
 import {
   checkUserCredentials as checkUserCredentialsPostgreSQL,
   createAuthTables as createAuthTablesPostgreSQL,
+  deleteAuthUser as deleteAuthUserPostgreSQL,
+  getAuthUser as getAuthUserPostgreSQL,
   insertAuthUser as insertAuthUserPostgreSQL,
+  listAuthUsers as listAuthUsersPostgreSQL,
+  resetAuthUserPassword as resetAuthUserPasswordPostgreSQL,
+  setAuthUserActive as setAuthUserActivePostgreSQL,
+  updateAuthUser as updateAuthUserPostgreSQL,
   verifyAuthTablesExist as verifyAuthTablesExistPostgreSQL,
 } from "../engines/postgresql/auth";
 import {
@@ -53,7 +71,13 @@ import { generateSQL as queryPostgreSQL } from "../engines/postgresql/query";
 import {
   checkUserCredentials as checkUserCredentialsSQLite,
   createAuthTables as createAuthTablesSQLite,
+  deleteAuthUser as deleteAuthUserSQLite,
+  getAuthUser as getAuthUserSQLite,
   insertAuthUser as insertAuthUserSQLite,
+  listAuthUsers as listAuthUsersSQLite,
+  resetAuthUserPassword as resetAuthUserPasswordSQLite,
+  setAuthUserActive as setAuthUserActiveSQLite,
+  updateAuthUser as updateAuthUserSQLite,
   verifyAuthTablesExist as verifyAuthTablesExistSQLite,
 } from "../engines/sqlite/auth";
 import {
@@ -96,6 +120,22 @@ export type InsertAuthUserInput = {
   role: string;
   claims?: Record<string, unknown>;
 };
+
+export type ListAuthUsersInput = { search: string; role: string; offset: number; limit: number };
+
+export type UpdateAuthUserInput = {
+  username: string;
+  role: string;
+  claims: Record<string, unknown>;
+};
+
+export type SetAuthUserActiveInput = { username: string; isActive: boolean };
+
+export type ResetAuthUserPasswordInput = { username: string; password: string };
+
+export type AuthUserSummary = { username: string; role: string; isActive: boolean };
+
+export type AuthUserPage = { users: AuthUserSummary[]; total: number };
 
 export type DatabaseFunctions = {
   query: (
@@ -145,6 +185,12 @@ export type DatabaseFunctions = {
     password: string,
   ) => Promise<CheckUserCredentialsResult>;
   insertAuthUser: (auth: Auth, input: InsertAuthUserInput) => Promise<void>;
+  listAuthUsers: (auth: Auth, query: ListAuthUsersInput) => Promise<AuthUserPage>;
+  getAuthUser: (auth: Auth, username: string) => Promise<AuthUserSummary | null>;
+  updateAuthUser: (auth: Auth, input: UpdateAuthUserInput) => Promise<void>;
+  setAuthUserActive: (auth: Auth, input: SetAuthUserActiveInput) => Promise<void>;
+  deleteAuthUser: (auth: Auth, username: string) => Promise<void>;
+  resetAuthUserPassword: (auth: Auth, input: ResetAuthUserPasswordInput) => Promise<void>;
   verifyAuthTablesExist: (auth: Auth) => Promise<void>;
 };
 
@@ -162,6 +208,12 @@ export const databaseAdapters: Record<DatabaseType, DatabaseFunctions> = {
     createAuthTables: createAuthTablesMSSQL,
     checkUserCredentials: checkUserCredentialsMSSQL,
     insertAuthUser: insertAuthUserMSSQL,
+    listAuthUsers: listAuthUsersMSSQL,
+    getAuthUser: getAuthUserMSSQL,
+    updateAuthUser: updateAuthUserMSSQL,
+    setAuthUserActive: setAuthUserActiveMSSQL,
+    deleteAuthUser: deleteAuthUserMSSQL,
+    resetAuthUserPassword: resetAuthUserPasswordMSSQL,
     verifyAuthTablesExist: verifyAuthTablesExistMSSQL,
   },
   pg: {
@@ -177,6 +229,12 @@ export const databaseAdapters: Record<DatabaseType, DatabaseFunctions> = {
     createAuthTables: createAuthTablesPostgreSQL,
     checkUserCredentials: checkUserCredentialsPostgreSQL,
     insertAuthUser: insertAuthUserPostgreSQL,
+    listAuthUsers: listAuthUsersPostgreSQL,
+    getAuthUser: getAuthUserPostgreSQL,
+    updateAuthUser: updateAuthUserPostgreSQL,
+    setAuthUserActive: setAuthUserActivePostgreSQL,
+    deleteAuthUser: deleteAuthUserPostgreSQL,
+    resetAuthUserPassword: resetAuthUserPasswordPostgreSQL,
     verifyAuthTablesExist: verifyAuthTablesExistPostgreSQL,
   },
   mysql: {
@@ -192,6 +250,12 @@ export const databaseAdapters: Record<DatabaseType, DatabaseFunctions> = {
     createAuthTables: createAuthTablesMySQL,
     checkUserCredentials: checkUserCredentialsMySQL,
     insertAuthUser: insertAuthUserMySQL,
+    listAuthUsers: listAuthUsersMySQL,
+    getAuthUser: getAuthUserMySQL,
+    updateAuthUser: updateAuthUserMySQL,
+    setAuthUserActive: setAuthUserActiveMySQL,
+    deleteAuthUser: deleteAuthUserMySQL,
+    resetAuthUserPassword: resetAuthUserPasswordMySQL,
     verifyAuthTablesExist: verifyAuthTablesExistMySQL,
   },
   sqlite: {
@@ -207,6 +271,12 @@ export const databaseAdapters: Record<DatabaseType, DatabaseFunctions> = {
     createAuthTables: createAuthTablesSQLite,
     checkUserCredentials: checkUserCredentialsSQLite,
     insertAuthUser: insertAuthUserSQLite,
+    listAuthUsers: listAuthUsersSQLite,
+    getAuthUser: getAuthUserSQLite,
+    updateAuthUser: updateAuthUserSQLite,
+    setAuthUserActive: setAuthUserActiveSQLite,
+    deleteAuthUser: deleteAuthUserSQLite,
+    resetAuthUserPassword: resetAuthUserPasswordSQLite,
     verifyAuthTablesExist: verifyAuthTablesExistSQLite,
   },
 } as const;
