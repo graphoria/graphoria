@@ -71,7 +71,6 @@ describe("createDatabasePoller — tracing", () => {
   const poller = async () =>
     createDatabasePoller({
       analysis,
-      variableDefinitions: [],
       variables: {},
       schemaEntity,
       subscriptionKey: "sub-1",

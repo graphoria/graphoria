@@ -207,7 +207,6 @@ const handleGraphQLSubscriptionFactory = (
           subscriptionId: id,
           analysis: resolvedAnalysis,
           field: resolved.fields[0],
-          variableDefinitions: resolved.variables,
           variables: resolved.allVariables,
           schemaEntity,
           session,

@@ -38,16 +38,8 @@ export const createDatabaseSubscriptionStrategy = (): SubscriptionStrategy => ({
   },
 
   async subscribe(context: SubscriptionContext): Promise<SubscriptionResult> {
-    const {
-      ws,
-      subscriptionId,
-      analysis,
-      variableDefinitions,
-      variables,
-      schemaEntity,
-      eventEmitter,
-      session,
-    } = context;
+    const { ws, subscriptionId, analysis, variables, schemaEntity, eventEmitter, session } =
+      context;
 
     const subscriptionKey = this.getSubscriptionKey(context);
 
@@ -64,7 +56,6 @@ export const createDatabaseSubscriptionStrategy = (): SubscriptionStrategy => ({
     // Create and start the poller
     const poller = await createDatabasePoller({
       analysis,
-      variableDefinitions,
       variables,
       schemaEntity,
       subscriptionKey,

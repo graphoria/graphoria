@@ -11,7 +11,6 @@ import { env } from "../../singletons/env";
 
 export interface DatabasePollerConfig {
   analysis: AnalysisResult;
-  variableDefinitions: VariableDefinition[];
   variables: Record<string, unknown>;
   schemaEntity: GetSchemaReturn;
   subscriptionKey: string;
