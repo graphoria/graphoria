@@ -57,9 +57,9 @@ Graphoria creates one table per auth schema:
 
 | Column      | Type                               | Notes                                                                                                        |
 | ----------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `username`  | `VARCHAR(50)` / `NVARCHAR(50)`     | Primary key. Must match `^[A-Za-z_][A-Za-z0-9_]*$` style strings; otherwise the database itself decides.     |
+| `username`  | `VARCHAR(50)` / `NVARCHAR(50)`     | Primary key. `seed-auth` and the console take 1 to 50 characters, without leading or trailing spaces.        |
 | `password`  | `VARCHAR(255)` / `NVARCHAR(255)`   | Argon2id hash, stored as a single string.                                                                    |
-| `role`      | `VARCHAR(20)` / `NVARCHAR(20)`     | Maps to a key under `auth.permissions`.                                                                      |
+| `role`      | `VARCHAR(20)` / `NVARCHAR(20)`     | Maps to a key under `auth.permissions`, so a role name is at most 20 characters.                             |
 | `is_active` | `BOOLEAN` / `BIT`                  | When `false`, login fails with "Invalid username or password" without exposing the cause.                    |
 | `claims`    | `JSONB` / `NVARCHAR(MAX)` / `JSON` | Arbitrary JSON object copied into the JWT/PASETO payload. Surfaced as `$session.claims.<key>` at query time. |
 
@@ -72,23 +72,27 @@ Use the bundled CLI subcommand:
 ```bash
 bunx graphoria seed-auth \
   --user alice \
-  --password 's3cret' \
+  --password 'correct-horse-42' \
   --role admin \
   --config ./graphoria.ts \
   --claims '{"organizationId":"org_42"}'
 ```
 
-| Flag         | Required | Notes                                                                                                                       |
-| ------------ | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `--user`     | yes      | `username` PK on the auth user table.                                                                                       |
-| `--password` | yes      | Plaintext; the CLI hashes with argon2id (`Bun.password.hash`) before INSERT.                                                |
-| `--role`     | yes      | A key of `auth.permissions` other than the anonymous role, or the superadmin role. Anything else exits 1 before connecting. |
-| `--config`   | yes      | Path to your `graphoria.ts`.                                                                                                |
-| `--claims`   | no       | JSON object copied into the user's `claims` column.                                                                         |
+| Flag         | Required | Notes                                                                                                        |
+| ------------ | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `--user`     | yes      | `username` PK on the auth user table: 1 to 50 characters, without leading or trailing spaces.                |
+| `--password` | yes      | Plaintext, at least 8 characters; the CLI hashes with argon2id (`Bun.password.hash`) before INSERT.          |
+| `--role`     | yes      | A key of `auth.permissions` other than the anonymous role, or the superadmin role, of at most 20 characters. |
+| `--config`   | yes      | Path to your `graphoria.ts`.                                                                                 |
+| `--claims`   | no       | JSON object copied into the user's `claims` column.                                                          |
+
+A value outside these rules exits 1 before connecting, naming the rule: a password under 8 characters, which `seed-auth` used to store, is one. A username already in the table exits 1 with `User "<name>" already exists`. Users already in the table log in as before, whatever their password.
 
 The same dispatcher backs the `bun run auth:seed` script for in-repo development. With `auth.autoCreateTables: true`, `seed-auth` creates the auth user table itself, as the server does on boot; with it off, the table must exist before seeding: apply the schema yourself.
 
 Anything you put in `claims` is later available as `$session.claims.<key>` in row-level filters. You can store the user's tenant ID, feature flags, or any other identity attribute that should travel with the token.
+
+With the [admin console](./CONSOLE.md) on, a write session creates users from its Users page (`POST {CONSOLE_ENDPOINT}/api/users`) under the same rules, for every role but the superadmin role, which only `seed-auth` assigns.
 
 ## Token strategies
 
@@ -181,6 +185,8 @@ mutation Refresh($refresh_token: String!) {
 ```
 
 Validates the refresh token, marks its JTI as used in the token store, and issues a brand-new pair. Reusing a refresh token throws `"Token reuse detected"` — surface this in your client as a forced logout, since it usually means either an honest race or a stolen token.
+
+A password reset, a deactivation, a deletion or a role/claims change made from the [console](./CONSOLE.md) revokes every refresh token issued up to that second for that user, so `auth_refresh` answers `"Token revoked"` for each of them; access tokens are unaffected until they expire.
 
 ### `auth_logout`
 
