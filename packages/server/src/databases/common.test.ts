@@ -96,6 +96,40 @@ describe("buildWhereClauseFp", () => {
       );
       expect(sql).toBe('WHERE t1."id" = $3');
     });
+
+    // The old inline copy of the numbering had no guard, so a name that is not
+    // a definition emitted `$0` — a statement every engine then rejected.
+    it("refuses an operand naming a variable that is not defined", () => {
+      expect(() =>
+        buildWhereClauseFp("pg")(
+          stubEntities(),
+          vars("first"),
+          { first: 1 },
+          field({ where: { id: { eq: "$ghost" } } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        ),
+      ).toThrow('Filter on column "id" references $ghost, which is not a variable');
+    });
+
+    it("refuses an undefined name inside an in-list", () => {
+      expect(() =>
+        buildWhereClauseFp("pg")(
+          stubEntities(),
+          vars("first"),
+          { first: 1 },
+          field({ where: { id: { in: ["$first", "$ghost"] } } }),
+          "t1",
+          null,
+          null,
+          0,
+          {},
+        ),
+      ).toThrow('Filter on column "id" references $ghost, which is not a variable');
+    });
   });
 
   describe("operators", () => {

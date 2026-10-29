@@ -66,6 +66,22 @@ const resolveBooleanOperand = (
     : Boolean(variablesDefinition.find((v) => v.name === name)?.defaultValue);
 };
 
+// Helper to convert variable reference to positional placeholder
+const toPositionalPlaceholder = (
+  value: unknown,
+  variablesDefinition: VariableDefinition[],
+  dbType: DatabaseType,
+): string | null => {
+  if (isString(value) && value.startsWith("$")) {
+    const varName = value.substring(1);
+    const index = variablesDefinition.findIndex((v) => v.name === varName);
+    if (index >= 0) {
+      return `${mappingDbTypeCharVar[dbType]}${index + 1}`;
+    }
+  }
+  return null;
+};
+
 export const generateTableAlias = (level: number): string => `t${level}`;
 
 /**
@@ -97,6 +113,25 @@ export const buildConditions = (
 
   const conditions: string[] = [];
 
+  // An operand is either a hoisted `$name` reference or a literal. A name that
+  // is not a definition can only be an upstream bug: numbering it with the
+  // findIndex result handed the engine `$0`, a parameter that cannot exist.
+  const resolveFilterOperand = (column: string, operand: unknown): unknown => {
+    if (Array.isArray(operand)) return operand.map((op) => resolveFilterOperand(column, op));
+
+    if (!isString(operand) || !operand.startsWith("$")) return operand;
+
+    const placeholder = toPositionalPlaceholder(operand, variablesDefinition, dbType);
+
+    if (!placeholder) {
+      throw new Error(
+        `Filter on column "${column}" references ${operand}, which is not a variable`,
+      );
+    }
+
+    return placeholder;
+  };
+
   const whereArg: Record<string, object> = resolveVariable(whereArgs, variables);
 
   for (const [fieldName, value] of Object.entries(whereArg)) {
@@ -105,17 +140,7 @@ export const buildConditions = (
         // All values are now variable references (e.g., "$varName" or ["$var1", "$var2"])
         const resolvedValue = NULL_CHECK_OPERATORS.has(operator)
           ? resolveBooleanOperand(operand, variables, variablesDefinition)
-          : Array.isArray(operand)
-            ? operand.map((op) => {
-                if (isString(op) && op.startsWith("$")) {
-                  const index = variablesDefinition.findIndex((v) => v.name === op.substring(1));
-                  return `${mappingDbTypeCharVar[dbType]}${index + 1}`;
-                }
-                return op;
-              })
-            : isString(operand) && operand.startsWith("$")
-              ? `${mappingDbTypeCharVar[dbType]}${variablesDefinition.findIndex((v) => v.name === operand.substring(1)) + 1}`
-              : operand;
+          : resolveFilterOperand(fieldName, operand);
 
         const condition = buildCondition(
           columnTargetFp(dbType)(entities, tableName, fieldName, tableAlias),
@@ -953,22 +978,6 @@ export const extractAggregationInfo = (
 
 // Helper function to check if a query is for a single item
 export const isSingleQuery = (fieldName: string): boolean => fieldName.endsWith("_single");
-
-// Helper to convert variable reference to positional placeholder
-const toPositionalPlaceholder = (
-  value: unknown,
-  variablesDefinition: VariableDefinition[],
-  dbType: DatabaseType,
-): string | null => {
-  if (isString(value) && value.startsWith("$")) {
-    const varName = value.substring(1);
-    const index = variablesDefinition.findIndex((v) => v.name === varName);
-    if (index >= 0) {
-      return `${mappingDbTypeCharVar[dbType]}${index + 1}`;
-    }
-  }
-  return null;
-};
 
 /**
  * Page bounds applied to a list field. `null` at a call site means the query is
