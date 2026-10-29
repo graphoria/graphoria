@@ -692,6 +692,7 @@ const sqliteDotEnv = (
 ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
+CONSOLE_ENABLED=true
 ${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
@@ -705,6 +706,7 @@ DB_PORT=${values.dbPort}
 DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
+CONSOLE_ENABLED=true
 ${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
 };
 
