@@ -15,7 +15,7 @@
     },
     "packages/ai": {
       "name": "@graphoria/ai",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@anthropic-ai/sdk": "^1.3.0",
         "@cfworker/json-schema": "^4.1.1",
@@ -30,22 +30,22 @@
         "typescript": "6.0.3",
       },
       "peerDependencies": {
-        "@graphoria/server": "0.6.0",
+        "@graphoria/server": "0.7.0",
       },
     },
     "packages/graphoria": {
       "name": "graphoria",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "bin": {
         "graphoria": "./cli.ts",
       },
       "dependencies": {
-        "@graphoria/server": "0.6.0",
+        "@graphoria/server": "0.7.0",
       },
     },
     "packages/playgrounds": {
       "name": "@graphoria/playgrounds",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@graphiql/plugin-explorer": "5.1.5",
         "@graphiql/toolkit": "0.12.1",
@@ -69,7 +69,7 @@
     },
     "packages/queues": {
       "name": "@graphoria/queues",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "amqplib": "2.2.0",
         "kafkajs": "2.2.4",
@@ -80,12 +80,12 @@
         "typescript": "6.0.3",
       },
       "peerDependencies": {
-        "@graphoria/server": "0.6.0",
+        "@graphoria/server": "0.7.0",
       },
     },
     "packages/react": {
       "name": "@graphoria/react",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "devDependencies": {
         "@happy-dom/global-registrator": "^21.0.4",
         "@sinonjs/fake-timers": "^15.4.0",
@@ -105,7 +105,7 @@
     },
     "packages/server": {
       "name": "@graphoria/server",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "bin": {
         "graphoria": "./cli.ts",
       },
@@ -130,8 +130,8 @@
         "@types/mssql": "12.3.0",
       },
       "peerDependencies": {
-        "@graphoria/ai": "0.6.0",
-        "@graphoria/queues": "0.6.0",
+        "@graphoria/ai": "0.7.0",
+        "@graphoria/queues": "0.7.0",
         "typescript": "^6.0.0",
       },
       "optionalPeers": [

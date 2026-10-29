@@ -1,6 +1,6 @@
 {
   "name": "@graphoria/queues",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "RabbitMQ and Kafka adapter runtimes for Graphoria",
   "keywords": [
     "amqp",
@@ -56,7 +56,7 @@
     "typescript": "6.0.3"
   },
   "peerDependencies": {
-    "@graphoria/server": "0.6.0"
+    "@graphoria/server": "0.7.0"
   },
   "engines": {
     "bun": ">=1.4.2"
