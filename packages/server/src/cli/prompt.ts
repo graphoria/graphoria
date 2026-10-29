@@ -82,18 +82,34 @@ let current: OnKey | undefined;
 // here for the next question instead of reaching no one.
 const pending: [text: string | undefined, key: Key][] = [];
 
-const listen = (onKey: OnKey) => {
-  if (!keysReady) {
-    emitKeypressEvents(stdin);
-    stdin.on("keypress", (text: string | undefined, key: Key) => {
-      if (current) current(text, key);
-      else pending.push([text, key]);
-    });
-    keysReady = true;
-  }
-  current = onKey;
-  stdin.setRawMode!(true);
+const installKeypress = () => {
+  if (keysReady) return;
+  emitKeypressEvents(stdin);
+  stdin.on("keypress", (text: string | undefined, key: Key) => {
+    if (current) current(text, key);
+    else pending.push([text, key]);
+  });
+  keysReady = true;
+};
+
+/**
+ * Puts the terminal in raw mode, so an interrupt arrives as a keypress the
+ * prompt can answer instead of a SIGINT that kills the process mid-question.
+ *
+ * Call this before anything is painted. The driver echoes `^C` and raises the
+ * signal while the terminal is still cooked, and a signal takes the process out
+ * without the cursor restore — leaving the user's terminal without a cursor.
+ * A key pressed in the gap between this and `listen` waits in `pending`.
+ */
+const takeTerminal = () => {
+  installKeypress();
+  stdin.setRawMode?.(true);
   stdin.resume();
+};
+
+const listen = (onKey: OnKey) => {
+  takeTerminal();
+  current = onKey;
   while (current === onKey && pending.length > 0) onKey(...pending.shift()!);
 };
 
@@ -153,12 +169,16 @@ const run = <T>(
   return new Promise<number[]>((resolve) => {
     let cleaned = false;
 
-    const cleanup = () => {
+    // `process.exit` truncates a write that has not reached the terminal, and
+    // the cursor restore is the one write that must not be lost: the terminal
+    // stays broken for the rest of the session. The callback runs once the
+    // restore has been handed to the stream, so `then` is where exit belongs.
+    const cleanup = (then?: () => void) => {
       if (cleaned) return;
       cleaned = true;
       release();
       process.off("exit", cleanup);
-      stdout.write(SHOW_CURSOR);
+      stdout.write(SHOW_CURSOR, then);
     };
 
     const finish = (indices: readonly number[]) => {
@@ -170,8 +190,8 @@ const run = <T>(
     const onKey = (_text: string | undefined, key: Key) => {
       const result = reduceMenu(state, key, choices.length, multi);
       if (result === "cancel") {
-        cleanup();
-        process.exit(130);
+        cleanup(() => process.exit(130));
+        return;
       }
       const previous = state;
       state = result.state;
@@ -179,7 +199,9 @@ const run = <T>(
       else if (state !== previous) render();
     };
 
-    process.once("exit", cleanup);
+    process.once("exit", () => cleanup());
+    takeTerminal();
+    stdout.write(HIDE_CURSOR);
     render();
     listen(onKey);
   });
@@ -188,13 +210,16 @@ const run = <T>(
 export const ask = (question: string, fallback: string): Promise<string> =>
   new Promise((resolve) => {
     let line = "";
+    // Raw mode first, then the question: a Ctrl+C answered by the driver instead
+    // of the prompt leaves the line unterminated on screen.
+    takeTerminal();
     stdout.write(`${question} [${fallback}] `);
     listen((text, key) => {
       const result = reduceLine(line, text, key);
       if (result === "cancel") {
         release();
-        stdout.write("\n");
-        process.exit(130);
+        stdout.write("\n", () => process.exit(130));
+        return;
       }
       line = result.line;
       if (result.done) {
