@@ -171,6 +171,23 @@ for (const engine of ["pg", "mysql", "mssql"] as const) {
       expect(response.data?.[`${authors}_single`]).toEqual({ id: 2 });
     });
 
+    it("binds a directive's arguments on the second database", async () => {
+      // A data-transform directive mints its own placeholders, so this covers the
+      // third way a request gains a variable besides a filter and a hoisted
+      // literal: the statement for one database binds them, the other never sees
+      // them.
+      const response = await gql<Record<string, { id: number; name?: string }[]>>(`
+        query {
+          ${users}(where: { email: { neq: "nobody@nowhere.test" } }) { id }
+          ${authors}(orderBy: [{ id: ASC }]) { id name @pad(length: 5, char: "0", side: "left") }
+        }
+      `);
+
+      expect(response.errors ?? []).toEqual([]);
+      expect(ids(response.data?.[users])).toEqual(USERS);
+      expect(response.data?.[authors]?.map((row) => row.name)).toEqual(["00Ana", "Brian", "0Cleo"]);
+    });
+
     it("paginates a root on each database with its own limit variable", async () => {
       const response = await gql<Record<string, { id: number }[]>>(
         `

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import type { AnalysisResult } from "../../analyzeQuery/types";
+import type { AnalysisResult, VariableDefinition } from "../../analyzeQuery/types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
 import type { QueryEventEmitter } from "../types";
 
@@ -129,6 +129,54 @@ describe("createDatabasePoller — tracing", () => {
 
     expect(polls.length).toBeGreaterThan(1);
     expect(new Set(polls.map((span) => span.traceId)).size).toBe(polls.length);
+  });
+
+  it("binds each statement to the definitions it references", async () => {
+    // The request numbers its variables once; each statement gets the subset it
+    // actually uses, renumbered — the request-wide list is what made PostgreSQL
+    // reject a second database's parameters.
+    const variables: VariableDefinition[] = [
+      { name: "first", type: "Text", required: false },
+      { name: "second", type: "Text", required: false },
+    ];
+    const calls: Array<{ query: string; definitions: VariableDefinition[] }> = [];
+
+    stub("query", ((_entities: unknown, _operation: unknown, _values: unknown, forHash: boolean) =>
+      forHash ? "SELECT hash WHERE id = $2" : "SELECT data WHERE id = $2") as never);
+
+    stub("execute", (async (query: string, _db: unknown, definitions: VariableDefinition[]) => {
+      calls.push({ query, definitions });
+      return [{ ResultHash: "hash" }];
+    }) as never);
+    stub("executeJson", (async (query: string, _db: unknown, definitions: VariableDefinition[]) => {
+      calls.push({ query, definitions });
+      return { orders: [] };
+    }) as never);
+
+    await createDatabasePoller({
+      analysis: {
+        operations: [
+          {
+            name: "WatchOrders",
+            operation: "subscription",
+            variables,
+            fields: [{ name: "orders" }],
+          },
+        ],
+        fragments: [],
+      } as unknown as AnalysisResult,
+      variables: { first: "a", second: "b" },
+      schemaEntity,
+      subscriptionKey: "sub-vars",
+      eventEmitter,
+      pollIntervalMs: 5,
+      role: "user",
+    });
+
+    expect(calls).toEqual([
+      { query: "SELECT hash WHERE id = $1", definitions: [variables[1]] },
+      { query: "SELECT data WHERE id = $1", definitions: [variables[1]] },
+    ]);
   });
 
   it("records nothing while tracing is disabled", async () => {
