@@ -9,6 +9,8 @@ export const useApi = <T>(path: string, pollMs?: number): ApiState<T> => {
 
   useEffect(() => {
     let cancelled = false;
+    // The previous data feeds the filter menus; `loading` keeps its rows off screen.
+    setState((previous) => ({ data: previous.data, loading: true }));
     const load = () =>
       apiFetch<T>(path)
         .then((data) => !cancelled && setState({ data, loading: false }))

@@ -1,12 +1,24 @@
 import type { SQL } from "bun";
 import type { Auth, Database } from "../../../types/configuration";
-import type { CheckUserCredentialsResult, InsertAuthUserInput } from "../../core/function-mapping";
+import type {
+  AuthUserPage,
+  AuthUserSummary,
+  CheckUserCredentialsResult,
+  InsertAuthUserInput,
+  ListAuthUsersInput,
+  ResetAuthUserPasswordInput,
+  SetAuthUserActiveInput,
+  UpdateAuthUserInput,
+} from "../../core/function-mapping";
 
 import { databasesConnections } from "../../../singletons/databases";
 import { hashPassword, verifyPassword } from "../../auth/password";
+import { AuthUserExistsError } from "../../auth/users";
 import { assertSafeIdentifier } from "../../core/identifier";
 import { parseUserClaims } from "../shared/claims";
 import type { UserRecord } from "../shared/types";
+import type { AuthUserRow } from "../shared/users";
+import { containsPattern, toAuthUserSummary } from "../shared/users";
 
 export const userTableCreation = (schema: string) => `
     CREATE TABLE IF NOT EXISTS \`${assertSafeIdentifier(schema, "schema")}\`.\`user\` (
@@ -92,9 +104,108 @@ export const insertAuthUser = async (
   const schema = assertSafeIdentifier(auth.schema!, "schema");
   const hashed = await hashPassword(input.password);
 
-  await pool.unsafe(
-    `INSERT INTO \`${schema}\`.\`user\` (username, password, role, is_active, claims)
+  try {
+    await pool.unsafe(
+      `INSERT INTO \`${schema}\`.\`user\` (username, password, role, is_active, claims)
        VALUES (?, ?, ?, TRUE, ?)`,
-    [input.username, hashed, input.role, JSON.stringify(input.claims ?? {})],
+      [input.username, hashed, input.role, JSON.stringify(input.claims ?? {})],
+    );
+  } catch (error) {
+    // ER_DUP_ENTRY: username is the primary key.
+    if ((error as { errno?: unknown } | null)?.errno === 1062)
+      throw new AuthUserExistsError(input.username);
+    throw error;
+  }
+};
+
+export const listAuthUsers = async (
+  auth: Auth,
+  { search, role, offset, limit }: ListAuthUsersInput,
+  injectedPool?: SQL,
+): Promise<AuthUserPage> => {
+  const pool = injectedPool ?? (databasesConnections[auth.databaseEntity.name] as SQL);
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+  const from = `FROM \`${schema}\`.\`user\` WHERE LOWER(username) LIKE LOWER(?) ESCAPE '!' AND (role = ? OR ? = '')`;
+  const filter = [containsPattern(search), role, role];
+
+  const [rows, [count]] = await Promise.all([
+    pool.unsafe<AuthUserRow[]>(
+      `SELECT username, role, is_active ${from} ORDER BY username LIMIT ? OFFSET ?`,
+      [...filter, limit, offset],
+    ),
+    pool.unsafe<{ total: unknown }[]>(`SELECT COUNT(*) AS total ${from}`, filter),
+  ]);
+
+  return { users: rows.map(toAuthUserSummary), total: Number(count.total) };
+};
+
+export const getAuthUser = async (
+  auth: Auth,
+  username: string,
+  injectedPool?: SQL,
+): Promise<AuthUserSummary | null> => {
+  const pool = injectedPool ?? (databasesConnections[auth.databaseEntity.name] as SQL);
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+
+  const rows = await pool.unsafe<AuthUserRow[]>(
+    `SELECT username, role, is_active FROM \`${schema}\`.\`user\` WHERE username = ?`,
+    [username],
   );
+
+  return rows[0] ? toAuthUserSummary(rows[0]) : null;
+};
+
+export const updateAuthUser = async (
+  auth: Auth,
+  { username, role, claims }: UpdateAuthUserInput,
+  injectedPool?: SQL,
+): Promise<void> => {
+  const pool = injectedPool ?? (databasesConnections[auth.databaseEntity.name] as SQL);
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+
+  await pool.unsafe(`UPDATE \`${schema}\`.\`user\` SET role = ?, claims = ? WHERE username = ?`, [
+    role,
+    JSON.stringify(claims),
+    username,
+  ]);
+};
+
+export const setAuthUserActive = async (
+  auth: Auth,
+  { username, isActive }: SetAuthUserActiveInput,
+  injectedPool?: SQL,
+): Promise<void> => {
+  const pool = injectedPool ?? (databasesConnections[auth.databaseEntity.name] as SQL);
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+
+  await pool.unsafe(`UPDATE \`${schema}\`.\`user\` SET is_active = ? WHERE username = ?`, [
+    isActive,
+    username,
+  ]);
+};
+
+export const deleteAuthUser = async (
+  auth: Auth,
+  username: string,
+  injectedPool?: SQL,
+): Promise<void> => {
+  const pool = injectedPool ?? (databasesConnections[auth.databaseEntity.name] as SQL);
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+
+  await pool.unsafe(`DELETE FROM \`${schema}\`.\`user\` WHERE username = ?`, [username]);
+};
+
+export const resetAuthUserPassword = async (
+  auth: Auth,
+  { username, password }: ResetAuthUserPasswordInput,
+  injectedPool?: SQL,
+): Promise<void> => {
+  const pool = injectedPool ?? (databasesConnections[auth.databaseEntity.name] as SQL);
+  const schema = assertSafeIdentifier(auth.schema!, "schema");
+  const hashed = await hashPassword(password);
+
+  await pool.unsafe(`UPDATE \`${schema}\`.\`user\` SET password = ? WHERE username = ?`, [
+    hashed,
+    username,
+  ]);
 };

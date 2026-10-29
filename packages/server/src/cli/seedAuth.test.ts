@@ -213,4 +213,37 @@ describe("runSeedAuth", () => {
 
     await expect(seed(config, "reader")).rejects.toThrow("no such table");
   });
+
+  it("rejects a password under 8 characters, before opening the database", async () => {
+    const { config, file } = await project(true);
+
+    await expect(
+      runSeedAuth({ user: "ada", password: "s3cret", role: "reader", config, claims: {} }),
+    ).rejects.toThrow("password must be at least 8 characters");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("rejects a username over 50 characters, before opening the database", async () => {
+    const { config, file } = await project(true);
+
+    await expect(
+      runSeedAuth({
+        user: "a".repeat(51),
+        password: "Pa55word.x",
+        role: "reader",
+        config,
+        claims: {},
+      }),
+    ).rejects.toThrow("username must be 1 to 50 characters, without leading or trailing spaces");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("names a username seeded twice as taken", async () => {
+    const { config } = await project(true);
+    await seed(config, "reader");
+    // A second run opens the database anew, as a second CLI invocation would.
+    (databasesConnections[opened.at(-1)!] as Database).close();
+
+    await expect(seed(config, "reader")).rejects.toThrow('User "ada" already exists');
+  });
 });

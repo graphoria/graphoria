@@ -1,5 +1,11 @@
 import type { Auth } from "../../types/configuration";
-import type { InsertAuthUserInput } from "../core/function-mapping";
+import type {
+  InsertAuthUserInput,
+  ListAuthUsersInput,
+  ResetAuthUserPasswordInput,
+  SetAuthUserActiveInput,
+  UpdateAuthUserInput,
+} from "../core/function-mapping";
 
 import { databaseAdapters } from "../core/function-mapping";
 
@@ -23,6 +29,24 @@ export const checkUserCredentials = async (auth: Auth, username: string, passwor
 
 export const insertAuthUser = async (auth: Auth, input: InsertAuthUserInput) =>
   databaseAdapters[auth.databaseEntity.type].insertAuthUser(auth, input);
+
+export const listAuthUsers = async (auth: Auth, query: ListAuthUsersInput) =>
+  databaseAdapters[auth.databaseEntity.type].listAuthUsers(auth, query);
+
+export const getAuthUser = async (auth: Auth, username: string) =>
+  databaseAdapters[auth.databaseEntity.type].getAuthUser(auth, username);
+
+export const updateAuthUser = async (auth: Auth, input: UpdateAuthUserInput) =>
+  databaseAdapters[auth.databaseEntity.type].updateAuthUser(auth, input);
+
+export const setAuthUserActive = async (auth: Auth, input: SetAuthUserActiveInput) =>
+  databaseAdapters[auth.databaseEntity.type].setAuthUserActive(auth, input);
+
+export const deleteAuthUser = async (auth: Auth, username: string) =>
+  databaseAdapters[auth.databaseEntity.type].deleteAuthUser(auth, username);
+
+export const resetAuthUserPassword = async (auth: Auth, input: ResetAuthUserPasswordInput) =>
+  databaseAdapters[auth.databaseEntity.type].resetAuthUserPassword(auth, input);
 
 export const verifyAuthTablesExist = async (auth: Auth) => {
   try {

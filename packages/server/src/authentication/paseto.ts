@@ -242,6 +242,12 @@ export const createPASETOService = (
       throw new Error("Token reuse detected");
     }
 
+    if (
+      await tokenRepository.isUserRefreshTokenRevoked(payload.sub, isoToEpoch(payload.iat) ?? 0)
+    ) {
+      throw new Error("Token revoked");
+    }
+
     await tokenRepository.saveJti(payload.jti, env.jwt.rtExpiresIn);
 
     return createTokenPair(
@@ -265,6 +271,10 @@ export const createPASETOService = (
     // the TTL for a JTI the repository has not seen before.
     revoke: (jti: string) => tokenRepository.revoke(jti, env.jwt.rtExpiresIn),
     isRevoked: tokenRepository.isRevoked,
+    // One cutoff covers every refresh token the user holds, so its record only
+    // has to outlive the lifetime of the tokens it revokes.
+    revokeUserRefreshTokens: (username: string) =>
+      tokenRepository.revokeUserRefreshTokens(username, env.jwt.rtExpiresIn),
     close: tokenRepository.close,
   };
 };

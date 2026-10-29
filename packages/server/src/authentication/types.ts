@@ -76,6 +76,9 @@ export type TokenService = {
 
   isRevoked(jti: string): Promise<boolean>;
 
+  /** Revokes every refresh token this user holds now, in one write. */
+  revokeUserRefreshTokens(username: string): Promise<void>;
+
   /** Closes the token store's Redis client. */
   close(): void;
 };

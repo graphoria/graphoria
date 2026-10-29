@@ -14,6 +14,9 @@ export type TokenRepository = {
   isRevoked(jti: string): Promise<boolean>;
   /** Both flags in one round trip — the refresh rotation reads them together. */
   checkRefresh(jti: string): Promise<{ isUsed: boolean; isRevoked: boolean }>;
+  /** One cutoff per user, so every refresh token issued at or before it is revoked at once. */
+  revokeUserRefreshTokens(username: string, expiresIn: string): Promise<void>;
+  isUserRefreshTokenRevoked(username: string, issuedAt: number): Promise<boolean>;
   /** Readiness: whether every connection the store holds answers. */
   ping(): Promise<boolean>;
   close(): void;
@@ -94,12 +97,40 @@ export const createTokenRepositoryWithClient = (
     }
   };
 
+  const revokeUserRefreshTokens = async (username: string, expiresIn: string) => {
+    const key = `${prefix}user-refresh:${username}`;
+    try {
+      await client.hset(key, { revokedBefore: String(Math.floor(Date.now() / 1000)) });
+      await client.expire(key, parseDurationToMs(expiresIn) / 1000);
+    } catch (error) {
+      log.error({ err: error }, "failed to revoke user refresh tokens");
+      throw new Error("Token revocation failed");
+    }
+  };
+
+  const isUserRefreshTokenRevoked = async (
+    username: string,
+    issuedAt: number,
+  ): Promise<boolean> => {
+    try {
+      const [revokedBefore] = await client.hmget(`${prefix}user-refresh:${username}`, [
+        "revokedBefore",
+      ]);
+      return revokedBefore !== null && issuedAt <= Number(revokedBefore);
+    } catch (error) {
+      log.error({ err: error }, "failed to check user refresh revocation, failing closed");
+      return true;
+    }
+  };
+
   return {
     saveJti,
     isTokenUsed,
     revoke,
     isRevoked,
     checkRefresh,
+    revokeUserRefreshTokens,
+    isUserRefreshTokenRevoked,
     ping: async () => (await client.ping()) === "PONG",
     close: () => closeRedisClient(client),
   };

@@ -17,6 +17,8 @@ const noopRepository: TokenRepository = {
   revoke: async () => {},
   isRevoked: async () => false,
   checkRefresh: async () => ({ isUsed: false, isRevoked: false }),
+  revokeUserRefreshTokens: async () => {},
+  isUserRefreshTokenRevoked: async () => false,
   ping: async () => true,
   close: () => {},
 };

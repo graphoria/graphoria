@@ -3,7 +3,7 @@ export const apiBase = `${location.pathname.replace(/\/+$/, "")}/api`;
 
 export type Meta = { name: string; version: string };
 
-/** `read` sees state; `write` may also publish to queues, control cron and ask the AI agent. */
+/** `read` sees state; `write` may also publish to queues, control cron, ask the AI agent and create auth users. */
 export type ConsoleScope = "read" | "write";
 
 export type TablesResponse = {
@@ -104,6 +104,15 @@ export type AiRolesResponse = { roles: string[] };
 
 export type AiAnswerResponse = { answer: string; answerHtml: string; queries: string[] };
 
+export type UserRolesResponse = { roles: string[] };
+
+export type UsersResponse = {
+  users: { username: string; role: string; isActive: boolean }[];
+  total: number;
+  pageSize: number;
+  roles: string[];
+};
+
 export class AuthError extends Error {}
 
 let authFailHandler: () => void = () => {};
@@ -148,11 +157,16 @@ export const apiFetch = async <T>(path: string): Promise<T> => {
   return res.json();
 };
 
-export const apiPost = async <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> => {
+const send = async <T>(
+  path: string,
+  method: "POST" | "PATCH" | "DELETE",
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> => {
   const res = await fetch(`${apiBase}${path}`, {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
 
@@ -169,3 +183,11 @@ export const apiPost = async <T>(path: string, body: unknown, signal?: AbortSign
 
   return res.json();
 };
+
+export const apiPost = <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> =>
+  send<T>(path, "POST", body, signal);
+
+export const apiPatch = <T>(path: string, body: unknown): Promise<T> =>
+  send<T>(path, "PATCH", body);
+
+export const apiDelete = <T>(path: string): Promise<T> => send<T>(path, "DELETE");

@@ -1,4 +1,5 @@
 import { CookieMap } from "bun";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { buildSchema } from "graphql";
 
@@ -73,6 +74,8 @@ beforeAll(async () => {
     revoke: async () => {},
     isRevoked: async () => false,
     checkRefresh: async () => ({ isUsed: false, isRevoked: false }),
+    revokeUserRefreshTokens: async () => {},
+    isUserRefreshTokenRevoked: async () => false,
     ping: async () => true,
     close: () => {},
   });
@@ -1228,5 +1231,867 @@ describe("console AI", () => {
     expect(otherRole.status).toBe(200);
     expect(second.status).toBe(429);
     expect(executed?.query).toBe("query { b }");
+  });
+});
+
+describe("console users", () => {
+  let records: AuditEvent[];
+  let connection: Database;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let createAuthTables: any;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let checkUserCredentials: any;
+
+  const fakeServer = { requestIP: () => ({ address: "10.0.0.7" }) };
+  const usersAuth = {
+    enabled: true,
+    database: "console_users",
+    schema: "main",
+    autoCreateTables: true,
+    permissions: { anonymous: {}, editor: {}, superadmin: {} },
+    databaseEntity: {
+      name: "console_users",
+      type: "sqlite",
+      enabled: true,
+      connection: { filename: ":memory:" },
+    },
+  };
+  // A second editable role, so an edit can move a user between two roles the
+  // console manages; `usersAuth` alone offers only "editor".
+  const twoRoleAuth = {
+    ...usersAuth,
+    permissions: { anonymous: {}, editor: {}, reader: {}, superadmin: {} },
+  };
+  const valid = {
+    username: "ada",
+    password: "correct-horse",
+    role: "editor",
+    claims: { organizationId: 7 },
+  };
+
+  const usersRoutes = (auth: object = usersAuth, service = tokenService) =>
+    consoleRoutesFactory({
+      env: { ...fakeEnv, anonymousRole: "anonymous" },
+      consolePath: "/_console",
+      prefixes,
+      projectConfiguration: { ...fakeProjectConfiguration, auth },
+      analyzedConfiguration: fakeAnalyzedConfiguration,
+      tokenService: service,
+    });
+
+  const create = (body: unknown, cookie = sessionCookie) =>
+    usersRoutes()["/_console/api/users"].POST(
+      bunReq(
+        "http://localhost/_console/api/users",
+        { method: "POST", body: JSON.stringify(body) },
+        cookie,
+      ),
+      fakeServer,
+    );
+
+  const patch = (body: unknown, cookie = sessionCookie) =>
+    usersRoutes()["/_console/api/users"].PATCH(
+      bunReq(
+        "http://localhost/_console/api/users",
+        { method: "PATCH", body: JSON.stringify(body) },
+        cookie,
+      ),
+      fakeServer,
+    );
+
+  const readCookie = async () => {
+    const login = bunReq(
+      "http://localhost/_console/api/login",
+      { method: "POST", body: JSON.stringify({ secret: READ_SECRET }) },
+      "",
+    );
+    await buildRoutes()["/_console/api/login"].POST(login);
+    return `${SESSION_COOKIE}=${login.cookies.get(SESSION_COOKIE)}`;
+  };
+
+  const stored = () => connection.query(`SELECT username, role FROM "user"`).all();
+
+  beforeAll(async () => {
+    ({ createAuthTables, checkUserCredentials } = await import("../databases"));
+  });
+
+  beforeEach(async () => {
+    records = [];
+    setAuditLog({ emit: (event) => records.push(event) });
+    connection = new Database(":memory:");
+    databasesConnections.console_users = connection;
+    await createAuthTables(usersAuth);
+  });
+
+  afterEach(() => {
+    setAuditLog(null);
+    delete databasesConnections.console_users;
+    connection.close();
+  });
+
+  it("mounts no users route while auth is off", () => {
+    const routes = usersRoutes({ ...usersAuth, enabled: false });
+
+    expect(routes["/_console/api/users"]).toBeUndefined();
+    expect(routes["/_console/api/users/roles"]).toBeUndefined();
+    expect(routes["/_console/api/users/active"]).toBeUndefined();
+    expect(routes["/_console/api/users/password"]).toBeUndefined();
+  });
+
+  it("lists the roles a console-made user may hold: neither anonymous nor superadmin", async () => {
+    const res = await usersRoutes()["/_console/api/users/roles"].GET(bunReq());
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ roles: ["editor"] });
+  });
+
+  it("creates a user who logs in with the role and claims given", async () => {
+    const res = await create(valid);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(await checkUserCredentials(usersAuth, "ada", "correct-horse")).toEqual({
+      valid: true,
+      role: "editor",
+      claims: { organizationId: 7 },
+    });
+  });
+
+  it("answers 404 without a session and 403 to a read session, storing nothing", async () => {
+    const read = await readCookie();
+    records = [];
+
+    expect((await create(valid, "")).status).toBe(404);
+    const refused = await create(valid, read);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ errors: [{ message: "Console session is read-only" }] });
+    const roles = await usersRoutes()["/_console/api/users/roles"].GET(
+      bunReq(undefined, undefined, read),
+    );
+    expect(roles.status).toBe(403);
+    expect(stored()).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a padded username",
+      { ...valid, username: " ada" },
+      "username must be 1 to 50 characters, without leading or trailing spaces",
+    ],
+    ["a short password", { ...valid, password: "short" }, "password must be at least 8 characters"],
+    ["claims that are not an object", { ...valid, claims: ["x"] }, "claims must be a JSON object"],
+    [
+      "an unknown role",
+      { ...valid, role: "edtior" },
+      'Role "edtior" is not a role a user can hold (editor)',
+    ],
+    [
+      "the anonymous role",
+      { ...valid, role: "anonymous" },
+      'Role "anonymous" is not a role a user can hold (editor)',
+    ],
+    [
+      "the superadmin role",
+      { ...valid, role: "superadmin" },
+      'Role "superadmin" is assigned with graphoria seed-auth, not from the console',
+    ],
+    [
+      "a null body",
+      null,
+      "username must be 1 to 50 characters, without leading or trailing spaces",
+    ],
+    [
+      "a body that is not an object",
+      "ada",
+      "username must be 1 to 50 characters, without leading or trailing spaces",
+    ],
+  ])("answers 400 for %s, storing and recording nothing", async (_what, body, message) => {
+    const res = await create(body);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ errors: [{ message }] });
+    expect(stored()).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it("answers 409 naming a taken username, and keeps the first password", async () => {
+    await create(valid);
+    const res = await create({ ...valid, password: "another-horse" });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ errors: [{ message: 'User "ada" already exists' }] });
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(true);
+  });
+
+  it("records one console.user.create per stored user, without the password or the claims", async () => {
+    await create(valid);
+
+    expect(records).toEqual([
+      {
+        action: "console.user.create",
+        outcome: "success",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor" },
+      },
+    ]);
+    expect(JSON.stringify(records)).not.toContain("correct-horse");
+    expect(JSON.stringify(records)).not.toContain("organizationId");
+  });
+
+  it("records an insert the database refused as a failure, with the reason", async () => {
+    await create(valid);
+    records = [];
+
+    await create(valid);
+
+    expect(records).toEqual([
+      {
+        action: "console.user.create",
+        outcome: "failure",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor" },
+        reason: 'User "ada" already exists',
+      },
+    ]);
+  });
+
+  it("answers 400 for a user that does not exist, writing no record", async () => {
+    const res = await patch({ username: "ghost", role: "editor" });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ errors: [{ message: 'User "ghost" does not exist' }] });
+    expect(records).toEqual([]);
+  });
+
+  it("refuses to edit a superadmin user and leaves the row alone", async () => {
+    connection.run(
+      `INSERT INTO "user" (username, password, role) VALUES ('root', 'x', 'superadmin')`,
+    );
+
+    const res = await patch({ username: "root", role: "editor" });
+
+    expect(res.status).toBe(403);
+    expect(stored()).toEqual([{ username: "root", role: "superadmin" }]);
+    expect(records).toEqual([]);
+  });
+
+  it("replaces role and claims, keeping the password, and revokes the refresh tokens", async () => {
+    await create(valid);
+    const revoked: string[] = [];
+    records = [];
+
+    const res = await usersRoutes(twoRoleAuth, {
+      ...tokenService,
+      revokeUserRefreshTokens: async (name: string) => {
+        revoked.push(name);
+      },
+    })["/_console/api/users"].PATCH(
+      bunReq(undefined, {
+        method: "PATCH",
+        body: JSON.stringify({ username: "ada", role: "reader", claims: { b: 2 } }),
+      }),
+      fakeServer,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(stored()).toEqual([{ username: "ada", role: "reader" }]);
+    expect(revoked).toEqual(["ada"]);
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(true);
+    expect(records).toEqual([
+      {
+        action: "console.user.update",
+        outcome: "success",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "reader", previousRole: "editor" },
+      },
+    ]);
+  });
+
+  it("records a write the database refused as a failure, with the reason", async () => {
+    await create(valid);
+    records = [];
+    connection.run(
+      `CREATE TRIGGER refuse BEFORE UPDATE ON "user" BEGIN SELECT RAISE(ABORT, 'refused'); END`,
+    );
+
+    const res = await patch({ username: "ada", role: "editor" });
+
+    expect(res.status).toBe(400);
+    expect(records).toEqual([
+      {
+        action: "console.user.update",
+        outcome: "failure",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor", previousRole: "editor" },
+        reason: expect.stringContaining("refused"),
+      },
+    ]);
+  });
+
+  it.each([
+    [
+      "the superadmin role",
+      "superadmin",
+      'Role "superadmin" is not a role a user can hold (editor',
+    ],
+    ["an unknown role", "ghost", 'Role "ghost" is not a role a user can hold (editor'],
+  ])("answers 400 for %s", async (_what, role, message) => {
+    await create(valid);
+
+    const res = await patch({ username: "ada", role });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors[0].message).toContain(message);
+    expect(stored()).toEqual([{ username: "ada", role: "editor" }]);
+  });
+
+  it("answers 403 to a read session and changes nothing", async () => {
+    await create(valid);
+
+    const res = await patch({ username: "ada", role: "reader" }, await readCookie());
+
+    expect(res.status).toBe(403);
+    expect(stored()).toEqual([{ username: "ada", role: "editor" }]);
+  });
+
+  const setActive = (
+    body: unknown,
+    cookie = sessionCookie,
+    // oxlint-disable-next-line typescript/no-explicit-any
+    service: any = tokenService,
+  ) =>
+    usersRoutes(usersAuth, service)["/_console/api/users/active"].POST(
+      bunReq(
+        "http://localhost/_console/api/users/active",
+        { method: "POST", body: JSON.stringify(body) },
+        cookie,
+      ),
+      fakeServer,
+    );
+
+  const activeOf = async (username: string) => {
+    const { users } = await (await list()).json();
+    return users.find((user: { username: string }) => user.username === username)?.isActive;
+  };
+
+  it("deactivates a user, who can no longer log in, and records it once", async () => {
+    await create(valid);
+    records = [];
+
+    const res = await setActive({ username: "ada", isActive: false });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(await activeOf("ada")).toBe(false);
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(false);
+    expect(records).toEqual([
+      {
+        action: "console.user.deactivate",
+        outcome: "success",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor", active: false },
+      },
+    ]);
+  });
+
+  it("reactivates a user, who logs in again with the same password", async () => {
+    await create(valid);
+    await setActive({ username: "ada", isActive: false });
+    records = [];
+
+    const res = await setActive({ username: "ada", isActive: true });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(await activeOf("ada")).toBe(true);
+    expect(await checkUserCredentials(usersAuth, "ada", "correct-horse")).toEqual({
+      valid: true,
+      role: "editor",
+      claims: { organizationId: 7 },
+    });
+    expect(records).toEqual([
+      {
+        action: "console.user.activate",
+        outcome: "success",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor", active: true },
+      },
+    ]);
+  });
+
+  it("revokes the refresh tokens of a user it deactivates, and none it reactivates", async () => {
+    await create(valid);
+    const revoked: string[] = [];
+    const service = {
+      ...tokenService,
+      revokeUserRefreshTokens: async (name: string) => {
+        revoked.push(name);
+      },
+    };
+
+    await setActive({ username: "ada", isActive: true }, sessionCookie, service);
+    expect(revoked).toEqual([]);
+
+    await setActive({ username: "ada", isActive: false }, sessionCookie, service);
+    expect(revoked).toEqual(["ada"]);
+  });
+
+  it("records a deactivation whose token revocation threw as a failure, leaving the row active", async () => {
+    await create(valid);
+    records = [];
+
+    const res = await setActive({ username: "ada", isActive: false }, sessionCookie, {
+      ...tokenService,
+      revokeUserRefreshTokens: async () => {
+        throw new Error("token store down");
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await activeOf("ada")).toBe(true);
+    expect(records).toEqual([
+      {
+        action: "console.user.deactivate",
+        outcome: "failure",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor", active: false },
+        reason: "token store down",
+      },
+    ]);
+  });
+
+  it.each([
+    ["a string", "true"],
+    ["missing", undefined],
+  ])("answers 400 for an isActive that is %s, leaving the row alone", async (_what, isActive) => {
+    await create(valid);
+    records = [];
+
+    const res = await setActive({ username: "ada", isActive });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ errors: [{ message: "isActive must be true or false" }] });
+    expect(await activeOf("ada")).toBe(true);
+    expect(records).toEqual([]);
+  });
+
+  it("answers 400 for an active flag on a user that does not exist, writing no record", async () => {
+    const res = await setActive({ username: "ghost", isActive: false });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ errors: [{ message: 'User "ghost" does not exist' }] });
+    expect(records).toEqual([]);
+  });
+
+  it("refuses to deactivate a superadmin user and leaves the row alone", async () => {
+    connection.run(
+      `INSERT INTO "user" (username, password, role) VALUES ('root', 'x', 'superadmin')`,
+    );
+
+    const res = await setActive({ username: "root", isActive: false });
+
+    expect(res.status).toBe(403);
+    expect(await activeOf("root")).toBe(true);
+    expect(records).toEqual([]);
+  });
+
+  it("answers 403 to a read session setting an active flag, and changes nothing", async () => {
+    await create(valid);
+    const read = await readCookie();
+    records = [];
+
+    const res = await setActive({ username: "ada", isActive: false }, read);
+
+    expect(res.status).toBe(403);
+    expect(await activeOf("ada")).toBe(true);
+    expect(records).toEqual([]);
+  });
+
+  const list = (query = "", cookie = sessionCookie) =>
+    usersRoutes()["/_console/api/users"].GET(
+      bunReq(`http://localhost/_console/api/users${query}`, undefined, cookie),
+    );
+
+  const insertUsers = (usernames: string[], role = "editor") => {
+    const insert = connection.prepare(
+      `INSERT INTO "user" (username, password, role) VALUES ($1, 'x', $2)`,
+    );
+    connection.transaction(() => {
+      for (const username of usernames) insert.run({ $1: username, $2: role });
+    })();
+  };
+
+  const names = async (query: string) => {
+    const { users } = await (await list(query)).json();
+    return (users as { username: string }[]).map((user) => user.username);
+  };
+
+  it("lists stored users by username with their total, the page size and the roles a user can hold", async () => {
+    await create(valid);
+    await create({ ...valid, username: "bob" });
+    connection.run(`UPDATE "user" SET is_active = FALSE WHERE username = 'bob'`);
+
+    const res = await list();
+
+    expect(res.status).toBe(200);
+    // Nothing else of a user: no password, no claims.
+    expect(await res.json()).toEqual({
+      users: [
+        { username: "ada", role: "editor", isActive: true },
+        { username: "bob", role: "editor", isActive: false },
+      ],
+      total: 2,
+      pageSize: 50,
+      roles: ["editor", "superadmin"],
+    });
+  });
+
+  it("pages 50 users at a time, the total counting every page", async () => {
+    insertUsers(Array.from({ length: 51 }, (_, i) => `user-${String(i).padStart(2, "0")}`));
+
+    const first = await (await list("?page=1")).json();
+    const second = await (await list("?page=2")).json();
+
+    expect(first.users).toHaveLength(50);
+    expect(first.users.at(-1).username).toBe("user-49");
+    expect(first.total).toBe(51);
+    expect(second.users).toEqual([{ username: "user-50", role: "editor", isActive: true }]);
+    expect(second.total).toBe(51);
+  });
+
+  it("keeps the usernames that contain the search, in any case, wildcards taken literally", async () => {
+    insertUsers(["Adam", "ada", "a_b", "axb", "bob"]);
+
+    expect(await names("?search=AD")).toEqual(["Adam", "ada"]);
+    expect(await names("?search=a_b")).toEqual(["a_b"]);
+  });
+
+  it("keeps one role, the search applying too, and counts what it keeps", async () => {
+    insertUsers(["ada", "adam"]);
+    insertUsers(["alan", "bob"], "reader");
+
+    const body = await (await list("?role=reader&search=a")).json();
+
+    expect(body.users.map((user: { username: string }) => user.username)).toEqual(["alan"]);
+    expect(body.total).toBe(1);
+  });
+
+  it.each([
+    ["a page of 0", "?page=0", "page must be a positive integer"],
+    ["a fractional page", "?page=1.5", "page must be a positive integer"],
+    ["a page that is no number", "?page=x", "page must be a positive integer"],
+    [
+      "a search over 50 characters",
+      `?search=${"a".repeat(51)}`,
+      "search must be at most 50 characters",
+    ],
+  ])("answers 400 for %s", async (_what, query, message) => {
+    const res = await list(query);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ errors: [{ message }] });
+  });
+
+  it("lists users to a read session too", async () => {
+    await create(valid);
+
+    const res = await list("", await readCookie());
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).users).toEqual([{ username: "ada", role: "editor", isActive: true }]);
+  });
+
+  const remove = (query: string, cookie = sessionCookie, service = tokenService) =>
+    usersRoutes(usersAuth, service)["/_console/api/users"].DELETE(
+      bunReq(`http://localhost/_console/api/users${query}`, { method: "DELETE" }, cookie),
+      fakeServer,
+    );
+
+  const revokingService = (revoked: string[]) => ({
+    ...tokenService,
+    revokeUserRefreshTokens: async (name: string) => {
+      revoked.push(name);
+    },
+  });
+
+  it("deletes a user, who can no longer log in, revoking the refresh tokens and recording it once", async () => {
+    await create(valid);
+    const revoked: string[] = [];
+    records = [];
+
+    const res = await remove("?username=ada", sessionCookie, revokingService(revoked));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(await names("")).toEqual([]);
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(false);
+    expect(revoked).toEqual(["ada"]);
+    expect(records).toEqual([
+      {
+        action: "console.user.delete",
+        outcome: "success",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor" },
+      },
+    ]);
+  });
+
+  it("records a delete whose token revocation threw as a failure, leaving the row alone", async () => {
+    await create(valid);
+    records = [];
+
+    const res = await remove("?username=ada", sessionCookie, {
+      ...tokenService,
+      revokeUserRefreshTokens: async () => {
+        throw new Error("token store down");
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(stored()).toEqual([{ username: "ada", role: "editor" }]);
+    expect(records).toEqual([
+      {
+        action: "console.user.delete",
+        outcome: "failure",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor" },
+        reason: "token store down",
+      },
+    ]);
+  });
+
+  it.each(["%", "!", "["])(
+    "deletes a username holding %s literally, and no other",
+    async (char) => {
+      const username = `a${char}b`;
+      insertUsers([username, "axb", "ada"]);
+
+      const res = await remove(`?username=${encodeURIComponent(username)}`);
+
+      expect(res.status).toBe(200);
+      expect(await names("")).toEqual(["ada", "axb"]);
+    },
+  );
+
+  it.each([
+    ["missing", "", "username must be 1 to 50 characters, without leading or trailing spaces"],
+    ["unknown", "?username=ghost", 'User "ghost" does not exist'],
+  ])(
+    "answers 400 for a %s username, revoking and recording nothing",
+    async (_what, query, message) => {
+      await create(valid);
+      const revoked: string[] = [];
+      records = [];
+
+      const res = await remove(query, sessionCookie, revokingService(revoked));
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ errors: [{ message }] });
+      expect(revoked).toEqual([]);
+      expect(records).toEqual([]);
+      expect(stored()).toEqual([{ username: "ada", role: "editor" }]);
+    },
+  );
+
+  it("refuses to delete a superadmin user and leaves the row alone", async () => {
+    connection.run(
+      `INSERT INTO "user" (username, password, role) VALUES ('root', 'x', 'superadmin')`,
+    );
+    const revoked: string[] = [];
+
+    const res = await remove("?username=root", sessionCookie, revokingService(revoked));
+
+    expect(res.status).toBe(403);
+    expect(stored()).toEqual([{ username: "root", role: "superadmin" }]);
+    expect(revoked).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it("answers 403 to a read session deleting a user, and leaves the row alone", async () => {
+    await create(valid);
+    const read = await readCookie();
+    const revoked: string[] = [];
+    records = [];
+
+    const res = await remove("?username=ada", read, revokingService(revoked));
+
+    expect(res.status).toBe(403);
+    expect(stored()).toEqual([{ username: "ada", role: "editor" }]);
+    expect(revoked).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  const resetPassword = (body: unknown, cookie = sessionCookie, service = tokenService) =>
+    usersRoutes(usersAuth, service)["/_console/api/users/password"].POST(
+      bunReq(
+        "http://localhost/_console/api/users/password",
+        { method: "POST", body: JSON.stringify(body) },
+        cookie,
+      ),
+      fakeServer,
+    );
+
+  const storedPassword = (username: string) =>
+    (
+      connection.query(`SELECT password FROM "user" WHERE username = ?`).get(username) as {
+        password: string;
+      } | null
+    )?.password ?? "";
+
+  it("resets a password, so only the new one logs the user in, and records it once", async () => {
+    await create(valid);
+    records = [];
+
+    const res = await resetPassword({ username: "ada", password: "another-horse" });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(false);
+    expect(await checkUserCredentials(usersAuth, "ada", "another-horse")).toEqual({
+      valid: true,
+      role: "editor",
+      claims: { organizationId: 7 },
+    });
+    expect(records).toEqual([
+      {
+        action: "console.user.resetPassword",
+        outcome: "success",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor" },
+      },
+    ]);
+    expect(JSON.stringify(records)).not.toContain("another-horse");
+    expect(JSON.stringify(records)).not.toContain(storedPassword("ada"));
+  });
+
+  it("revokes the refresh tokens before it writes the new password", async () => {
+    await create(valid);
+    const revoked: string[] = [];
+    const verifiedAtRevoke: boolean[] = [];
+    const service = {
+      ...tokenService,
+      revokeUserRefreshTokens: async (name: string) => {
+        revoked.push(name);
+        verifiedAtRevoke.push(
+          (await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid,
+        );
+      },
+    };
+
+    const res = await resetPassword(
+      { username: "ada", password: "another-horse" },
+      sessionCookie,
+      service,
+    );
+
+    expect(res.status).toBe(200);
+    expect(revoked).toEqual(["ada"]);
+    expect(verifiedAtRevoke).toEqual([true]);
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(false);
+  });
+
+  it("records a password reset whose token revocation threw as a failure, keeping the old password", async () => {
+    await create(valid);
+    records = [];
+
+    const res = await resetPassword({ username: "ada", password: "another-horse" }, sessionCookie, {
+      ...tokenService,
+      revokeUserRefreshTokens: async () => {
+        throw new Error("token store down");
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(true);
+    expect(records).toEqual([
+      {
+        action: "console.user.resetPassword",
+        outcome: "failure",
+        actor: { type: "console", ip: "10.0.0.7" },
+        target: { kind: "user", name: "ada", role: "editor" },
+        reason: "token store down",
+      },
+    ]);
+  });
+
+  it("answers 400 for a 7-character password, keeping the old one and recording nothing", async () => {
+    await create(valid);
+    const before = storedPassword("ada");
+    const revoked: string[] = [];
+    records = [];
+
+    const res = await resetPassword(
+      { username: "ada", password: "1234567" },
+      sessionCookie,
+      revokingService(revoked),
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      errors: [{ message: "password must be at least 8 characters" }],
+    });
+    expect(storedPassword("ada")).toBe(before);
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(true);
+    expect(revoked).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it.each([
+    ["unknown", { username: "ghost", password: "another-horse" }, 'User "ghost" does not exist'],
+    [
+      "missing",
+      { password: "another-horse" },
+      "username must be 1 to 50 characters, without leading or trailing spaces",
+    ],
+  ])("answers 400 for a %s user, revoking and recording nothing", async (_what, body, message) => {
+    await create(valid);
+    const revoked: string[] = [];
+    records = [];
+
+    const res = await resetPassword(body, sessionCookie, revokingService(revoked));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ errors: [{ message }] });
+    expect(revoked).toEqual([]);
+    expect(records).toEqual([]);
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(true);
+  });
+
+  it("refuses to reset a superadmin password and leaves the row alone", async () => {
+    connection.run(
+      `INSERT INTO "user" (username, password, role) VALUES ('root', 'x', 'superadmin')`,
+    );
+    const revoked: string[] = [];
+
+    const res = await resetPassword(
+      { username: "root", password: "another-horse" },
+      sessionCookie,
+      revokingService(revoked),
+    );
+
+    expect(res.status).toBe(403);
+    expect(storedPassword("root")).toBe("x");
+    expect(revoked).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it("answers 403 to a read session resetting a password, and leaves the row alone", async () => {
+    await create(valid);
+    const read = await readCookie();
+    const revoked: string[] = [];
+    records = [];
+
+    const res = await resetPassword(
+      { username: "ada", password: "another-horse" },
+      read,
+      revokingService(revoked),
+    );
+
+    expect(res.status).toBe(403);
+    expect((await checkUserCredentials(usersAuth, "ada", "correct-horse")).valid).toBe(true);
+    expect(revoked).toEqual([]);
+    expect(records).toEqual([]);
   });
 });

@@ -14,6 +14,7 @@ import { ConfigPage } from "./pages/ConfigPage";
 import { RolesPage } from "./pages/RolesPage";
 import { StatusPage } from "./pages/StatusPage";
 import { TablesPage } from "./pages/TablesPage";
+import { UsersPage } from "./pages/UsersPage";
 
 import "./index.css";
 
@@ -26,6 +27,7 @@ const NAV = [
 ];
 
 const AI_NAV = { path: "/ai", label: "AI" };
+const USERS_NAV = { path: "/users", label: "Users" };
 
 export const App = () => {
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -35,8 +37,9 @@ export const App = () => {
   // yet" and `null` is "no session".
   const [scope, setScope] = useState<ConsoleScope | null | undefined>(undefined);
   const [aiEnabled, setAiEnabled] = useState(false);
-  // The routes wait for the config read: until it resolves, `aiEnabled` is false,
-  // so `#/ai` would fall through the catch-all redirect after a login.
+  const [authEnabled, setAuthEnabled] = useState(false);
+  // The routes wait for the config read: until it resolves, `aiEnabled` and `authEnabled`
+  // are false, so `#/ai` or `#/users` would fall through the catch-all redirect after a login.
   const [configReady, setConfigReady] = useState(false);
 
   // One read answers what the session may do and whether the agent is on. A login
@@ -45,6 +48,7 @@ export const App = () => {
   const loadConfig = () =>
     apiFetch<ConfigResponse>("/config").then((config) => {
       setAiEnabled(config.features.ai === true);
+      setAuthEnabled(config.features.auth === true);
       setScope(config.session.scope);
     });
 
@@ -52,6 +56,7 @@ export const App = () => {
     onAuthFail(() => {
       clearAiHistory();
       setAiEnabled(false);
+      setAuthEnabled(false);
       setScope(null);
     });
     getMeta()
@@ -80,7 +85,7 @@ export const App = () => {
     );
 
   const showAi = aiEnabled && scope === "write";
-  const nav = showAi ? [...NAV, AI_NAV] : NAV;
+  const nav = [...NAV, ...(authEnabled ? [USERS_NAV] : []), ...(showAi ? [AI_NAV] : [])];
 
   return (
     <Router hook={useHashLocation}>
@@ -115,6 +120,7 @@ export const App = () => {
               await logout();
               clearAiHistory();
               setAiEnabled(false);
+              setAuthEnabled(false);
               setScope(null);
             }}
           >
@@ -130,6 +136,9 @@ export const App = () => {
             <Route path="/apis" component={ApisPage} />
             <Route path="/status">{() => <StatusPage readOnly={scope === "read"} />}</Route>
             <Route path="/config" component={ConfigPage} />
+            {authEnabled && (
+              <Route path="/users">{() => <UsersPage readOnly={scope === "read"} />}</Route>
+            )}
             {showAi && <Route path="/ai" component={AiPage} />}
             <Route>
               <Redirect to="/tables" />
