@@ -19,7 +19,7 @@ export const genSql = (
   hash = false,
   pageLimits: PageLimits | null = null,
 ) => {
-  const [[, sql]] = generateSQL(entitites, query, variables, hash, pageLimits);
+  const [{ query: sql }] = generateSQL(entitites, query, variables, hash, pageLimits);
 
   return format(sql);
 };

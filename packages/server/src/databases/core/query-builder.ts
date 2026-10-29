@@ -1,9 +1,21 @@
-import type { AnalysisResult, SelectionAnalysis } from "../../analyzeQuery/types";
+import type {
+  AnalysisResult,
+  SelectionAnalysis,
+  VariableDefinition,
+} from "../../analyzeQuery/types";
 import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
 import type { Database } from "../../types/configuration";
 import type { PageLimits } from "../common";
 
 import { databaseAdapters } from "./function-mapping";
+import { compactPlaceholders } from "./placeholders";
+
+export type GeneratedStatement = {
+  db: Database;
+  query: string;
+  /** The definitions this statement's placeholders index into. */
+  variablesDefinition: VariableDefinition[];
+};
 
 export const generateSQL = (
   entities: MergedEntities,
@@ -14,7 +26,7 @@ export const generateSQL = (
   pageLimits: PageLimits | null = null,
   /** Per-operation override. `undefined` leaves the engine on its own default. */
   timeoutMs?: number,
-) => {
+): GeneratedStatement[] => {
   const operation = analysisResult.operations[0];
 
   return operation.fields
@@ -49,6 +61,10 @@ export const generateSQL = (
         timeoutMs,
       );
 
-      return [db, query] as const;
+      // The request numbers its variables once; a statement references only
+      // its own roots' — PostgreSQL rejects the rest as untyped parameters.
+      const compacted = compactPlaceholders(query, operation.variables ?? [], db.type);
+
+      return { db, ...compacted };
     });
 };

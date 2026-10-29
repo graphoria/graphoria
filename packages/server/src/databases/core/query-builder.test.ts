@@ -4,15 +4,16 @@ import type {
   AnalysisResult,
   OperationAnalysis,
   SelectionAnalysis,
+  VariableDefinition,
 } from "../../analyzeQuery/types";
 import type { MergedEntities } from "../../configuration/getSchemas/mergeEntities";
 import type { Database } from "../../types/configuration";
 
-import { dbMSSQL, dbMySQL, dbPostgreSQL } from "../../__test/dbMocks";
+import { dbMSSQL, dbMySQL, dbPostgreSQL, dbSQLite } from "../../__test/dbMocks";
 import { databaseAdapters } from "./function-mapping";
 import { generateSQL } from "./query-builder";
 
-type EngineKey = "pg" | "mssql" | "mysql";
+type EngineKey = "pg" | "mssql" | "mysql" | "sqlite";
 
 type RecordedQueryCall = {
   entities: MergedEntities;
@@ -43,7 +44,7 @@ const buildEntities = (fieldsByDb: Record<string, Database>): MergedEntities => 
   return { queriesMap } as unknown as MergedEntities;
 };
 
-const buildAnalysis = (fieldNames: string[]): AnalysisResult => {
+const buildAnalysis = (fieldNames: string[], variables?: VariableDefinition[]): AnalysisResult => {
   const fields = fieldNames.map((name) => ({ name }) as SelectionAnalysis);
   return {
     operations: [
@@ -51,6 +52,7 @@ const buildAnalysis = (fieldNames: string[]): AnalysisResult => {
         name: null,
         operation: "query",
         fields,
+        variables,
       } satisfies OperationAnalysis,
     ],
     fragments: [],
@@ -89,7 +91,7 @@ describe("generateSQL dispatcher", () => {
       const entities = buildEntities({ users: db });
       const result = generateSQL(entities, buildAnalysis(["users"]), { x: 1 });
 
-      expect(result).toEqual([[db, tag]]);
+      expect(result).toEqual([{ db, query: tag, variablesDefinition: [] }]);
       expect(calls).toHaveLength(1);
       expect(calls[0].entities).toBe(entities);
       expect(calls[0].operation.fields.map((f) => f.name)).toEqual(["users"]);
@@ -126,8 +128,8 @@ describe("generateSQL dispatcher", () => {
     const result = generateSQL(entities, buildAnalysis(["users", "orders", "profiles"]));
 
     expect(result).toEqual([
-      [pgPrimary, "PG"],
-      [mssqlWarehouse, "MSSQL"],
+      { db: pgPrimary, query: "PG", variablesDefinition: [] },
+      { db: mssqlWarehouse, query: "MSSQL", variablesDefinition: [] },
     ]);
     expect(pgCalls).toHaveLength(1);
     expect(mssqlCalls).toHaveLength(1);
@@ -148,6 +150,26 @@ describe("generateSQL dispatcher", () => {
 
     expect(calls[0].forHashMethod).toBe(true);
     expect(calls[0].variables).toEqual({ y: 2 });
+  });
+
+  it("gives each statement the variables it references, renumbered from $1", () => {
+    const pgPrimary: Database = { ...dbPostgreSQL, name: "primary" };
+    const liteReports: Database = { ...dbSQLite, name: "reports" };
+    const variables: VariableDefinition[] = [
+      { name: "pgVar", type: "Text", required: false },
+      { name: "liteVar", type: "Text", required: false },
+    ];
+
+    restorers.push(stubAdapter("pg", () => "PG WHERE name = $1"));
+    restorers.push(stubAdapter("sqlite", () => "LITE WHERE name = $2"));
+
+    const entities = buildEntities({ users: pgPrimary, authors: liteReports });
+    const result = generateSQL(entities, buildAnalysis(["users", "authors"], variables));
+
+    expect(result).toEqual([
+      { db: pgPrimary, query: "PG WHERE name = $1", variablesDefinition: [variables[0]] },
+      { db: liteReports, query: "LITE WHERE name = $1", variablesDefinition: [variables[1]] },
+    ]);
   });
 
   it("throws on unsupported database type", () => {

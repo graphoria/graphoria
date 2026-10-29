@@ -79,3 +79,62 @@ export const rewritePlaceholders = (
 
   return rewritten;
 };
+
+/**
+ * Renumbers a statement's placeholders to a contiguous `1..k` and returns the
+ * definitions that numbering indexes into.
+ *
+ * A request numbers its variables once, across every database it touches, but a
+ * statement references only the ones its own roots use. PostgreSQL refuses to
+ * infer a type for a parameter the statement never uses (42P18), so each
+ * statement has to carry its own subset. Positions keep their original order
+ * and only the gaps close, so a statement that uses every definition is left
+ * exactly as the builder wrote it.
+ */
+export const compactPlaceholders = (
+  query: string,
+  variablesDefinition: VariableDefinition[],
+  dbType: DatabaseType = "pg",
+): { query: string; variablesDefinition: VariableDefinition[] } => {
+  const prefix = mappingDbTypeCharVar[dbType];
+  const backslashEscapes = dbType === "mysql";
+  const referenced = new Set<number>();
+
+  rewritePlaceholders(
+    query,
+    prefix,
+    (position) => {
+      referenced.add(position);
+      return "";
+    },
+    backslashEscapes,
+  );
+
+  const ordered = [...referenced].sort((a, b) => a - b);
+  const renumbered = new Map(ordered.map((position, index) => [position, index + 1]));
+
+  const used = ordered.map((position) => {
+    const definition = variablesDefinition[position - 1];
+
+    if (!definition) {
+      throw new Error(
+        `Statement references ${prefix}${position} but only ${variablesDefinition.length} variable${
+          variablesDefinition.length === 1 ? " is" : "s are"
+        } defined`,
+      );
+    }
+
+    return definition;
+  });
+
+  const compacted = rewritePlaceholders(
+    query,
+    prefix,
+    (position) => {
+      return `${prefix}${renumbered.get(position)!}`;
+    },
+    backslashEscapes,
+  );
+
+  return { query: compacted, variablesDefinition: used };
+};

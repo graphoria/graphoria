@@ -56,7 +56,6 @@ export const createDatabasePoller = async (
 ): Promise<DatabasePoller> => {
   const {
     analysis,
-    variableDefinitions,
     variables,
     schemaEntity,
     subscriptionKey,
@@ -71,8 +70,8 @@ export const createDatabasePoller = async (
   // Generate SQL queries (data query and hash query). A subscription query is
   // caller-authored, so it carries the same page bounds an HTTP query does.
   const pageLimits = { defaultPageSize: env.defaultPageSize, maxPageSize: env.maxPageSize };
-  const [[, queryData]] = generateSQL(schemaEntity, analysis, variables, false, pageLimits);
-  const [[, queryHash]] = generateSQL(schemaEntity, analysis, variables, true, pageLimits);
+  const [dataStatement] = generateSQL(schemaEntity, analysis, variables, false, pageLimits);
+  const [hashStatement] = generateSQL(schemaEntity, analysis, variables, true, pageLimits);
 
   const operation = analysis.operations[0];
   const source: QuerySource = {
@@ -105,13 +104,19 @@ export const createDatabasePoller = async (
   let previousHash = "";
 
   await pollSpan(async () => {
-    previousHash = await getResultHash(queryHash, db, variableDefinitions, variables, source);
+    previousHash = await getResultHash(
+      hashStatement.query,
+      db,
+      hashStatement.variablesDefinition,
+      variables,
+      source,
+    );
 
     eventEmitter.sendDataUpdate(subscriptionKey, {
       data: await executeQueryJSON(
-        queryData,
+        dataStatement.query,
         db,
-        variableDefinitions,
+        dataStatement.variablesDefinition,
         variables,
         undefined,
         source,
@@ -125,9 +130,9 @@ export const createDatabasePoller = async (
     pollSpan(async () => {
       try {
         const currentHash = await getResultHash(
-          queryHash,
+          hashStatement.query,
           db,
-          variableDefinitions,
+          hashStatement.variablesDefinition,
           variables,
           source,
         );
@@ -142,9 +147,9 @@ export const createDatabasePoller = async (
 
           eventEmitter.sendDataUpdate(subscriptionKey, {
             data: await executeQueryJSON(
-              queryData,
+              dataStatement.query,
               db,
-              variableDefinitions,
+              dataStatement.variablesDefinition,
               variables,
               undefined,
               source,
