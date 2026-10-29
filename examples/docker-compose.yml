@@ -77,7 +77,7 @@ services:
         '/opt/mssql-tools18/bin/sqlcmd -S mssql -U sa -P "$$MSSQL_SA_PASSWORD" -C -N -b -Q "IF DB_ID(''my_app'') IS NULL CREATE DATABASE [my_app]"',
       ]
 
-  # Required only when auth is enabled (token store) or CACHE_STORE=redis.
+  # Required only when auth is enabled (AUTH_STORE names it) or a caches store does.
   redis:
     image: redis:7
     ports:

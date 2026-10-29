@@ -8,8 +8,10 @@
     "dev": "bun run --watch index.ts"
   },
   "dependencies": {
-    "@graphoria/react": "0.6.0",
-    "@graphoria/server": "0.6.0",
+    "@graphoria/ai": "0.7.0",
+    "@graphoria/queues": "0.7.0",
+    "@graphoria/react": "0.7.0",
+    "@graphoria/server": "0.7.0",
     "@types/mssql": "^12.3.0",
     "@urql/exchange-auth": "3.0.0",
     "bun-plugin-tailwind": "0.1.2",
