@@ -38,7 +38,7 @@ graphoria v${version}
 
 Usage: graphoria [options]
        graphoria seed-auth --user <name> --password <pwd> --role <role> --config <path> [--claims <json>]
-       graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--auth] [--redis] [--data-tools] [--frontend] [--no-install]
+       graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]
 
 Options:
   -c, --config <path>    Path to configuration file (env: CONFIGURATION)

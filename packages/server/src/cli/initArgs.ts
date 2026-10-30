@@ -14,6 +14,11 @@ export type InitArgs = {
   redis?: boolean;
   dataTools?: boolean;
   frontend?: boolean;
+  cron?: boolean;
+  rateLimit?: boolean;
+  metrics?: boolean;
+  tracing?: boolean;
+  virtualColumns?: boolean;
   install: boolean;
 };
 
@@ -51,6 +56,11 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       redis: { type: "boolean" },
       "data-tools": { type: "boolean" },
       frontend: { type: "boolean" },
+      cron: { type: "boolean" },
+      "rate-limit": { type: "boolean" },
+      metrics: { type: "boolean" },
+      tracing: { type: "boolean" },
+      "virtual-columns": { type: "boolean" },
       install: { type: "boolean", default: true },
     },
     allowNegative: true,
@@ -79,6 +89,11 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values.redis !== undefined && { redis: values.redis }),
     ...(values["data-tools"] !== undefined && { dataTools: values["data-tools"] }),
     ...(values.frontend !== undefined && { frontend: values.frontend }),
+    ...(values.cron !== undefined && { cron: values.cron }),
+    ...(values["rate-limit"] !== undefined && { rateLimit: values["rate-limit"] }),
+    ...(values.metrics !== undefined && { metrics: values.metrics }),
+    ...(values.tracing !== undefined && { tracing: values.tracing }),
+    ...(values["virtual-columns"] !== undefined && { virtualColumns: values["virtual-columns"] }),
     install: values.install,
   };
 };

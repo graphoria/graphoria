@@ -74,6 +74,11 @@ describe("collectAnswers", () => {
     expect(answers.redis).toBe(false);
     expect(answers.dataTools).toBe(false);
     expect(answers.frontend).toBe(false);
+    expect(answers.cron).toBe(false);
+    expect(answers.rateLimit).toBe(false);
+    expect(answers.metrics).toBe(false);
+    expect(answers.tracing).toBe(false);
+    expect(answers.virtualColumns).toBe(false);
     expect(io.fallbacks).toEqual(["app", answers.dbPassword, "5432"]);
     expect(io.selected).toEqual(["Database engine"]);
     expect(io.multi).toEqual(["Select extras"]);
@@ -106,6 +111,11 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      cron: false,
+      rateLimit: false,
+      metrics: false,
+      tracing: false,
+      virtualColumns: false,
     });
   });
 
@@ -198,7 +208,7 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 3, 6]] });
+    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9, 10, 11]] });
     const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({
@@ -207,6 +217,11 @@ describe("collectAnswers", () => {
       mcp: true,
       auth: true,
       frontend: true,
+      cron: true,
+      rateLimit: true,
+      metrics: true,
+      tracing: true,
+      virtualColumns: true,
     });
   });
 
@@ -222,6 +237,11 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      cron: false,
+      rateLimit: false,
+      metrics: false,
+      tracing: false,
+      virtualColumns: false,
     });
     expect(io.said).toEqual([]);
   });
@@ -238,6 +258,11 @@ describe("collectAnswers", () => {
       "Redis",
       "Data tools",
       "React frontend",
+      "Cron job",
+      "Rate limits",
+      "Metrics",
+      "Tracing",
+      "Computed column",
     ]);
   });
 
@@ -253,6 +278,11 @@ describe("collectAnswers", () => {
         redis: false,
         dataTools: false,
         frontend: false,
+        cron: false,
+        rateLimit: false,
+        metrics: false,
+        tracing: false,
+        virtualColumns: false,
       },
       io.io,
     );
@@ -319,6 +349,52 @@ describe("collectAnswers", () => {
     expect(io.multiOptions[0]).not.toContain("React frontend");
   });
 
+  it.each([true, false])("skips the cron extra when --cron is %p", async (cron) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, cron }, io.io);
+
+    expect(answers.cron).toBe(cron);
+    expect(io.multiOptions[0]).not.toContain("Cron job");
+  });
+
+  it.each([true, false])(
+    "skips the rate-limit extra when --rate-limit is %p",
+    async (rateLimit) => {
+      const io = prompter();
+      const answers = await collectAnswers({ ...ARGS, rateLimit }, io.io);
+
+      expect(answers.rateLimit).toBe(rateLimit);
+      expect(io.multiOptions[0]).not.toContain("Rate limits");
+    },
+  );
+
+  it.each([true, false])("skips the metrics extra when --metrics is %p", async (metrics) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, metrics }, io.io);
+
+    expect(answers.metrics).toBe(metrics);
+    expect(io.multiOptions[0]).not.toContain("Metrics");
+  });
+
+  it.each([true, false])("skips the tracing extra when --tracing is %p", async (tracing) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, tracing }, io.io);
+
+    expect(answers.tracing).toBe(tracing);
+    expect(io.multiOptions[0]).not.toContain("Tracing");
+  });
+
+  it.each([true, false])(
+    "skips the computed-column extra when --virtual-columns is %p",
+    async (virtualColumns) => {
+      const io = prompter();
+      const answers = await collectAnswers({ ...ARGS, virtualColumns }, io.io);
+
+      expect(answers.virtualColumns).toBe(virtualColumns);
+      expect(io.multiOptions[0]).not.toContain("Computed column");
+    },
+  );
+
   it("asks neither a password nor a port for SQLite, which has no server", async () => {
     const io = prompter([]);
     const answers = await collectAnswers({ ...ARGS, database: "sqlite" }, io.io);
@@ -335,6 +411,11 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      cron: false,
+      rateLimit: false,
+      metrics: false,
+      tracing: false,
+      virtualColumns: false,
     });
     expect(io.fallbacks).toEqual(["app"]);
   });
@@ -471,7 +552,13 @@ describe("sampleQuery", () => {
     ["mssql", "{ dbo_authors { name dbo_books { title } } }"],
     ["sqlite", "{ main_authors { name main_books { title } } }"],
   ] as const)("uses the %s schema's field names", (database, query) => {
-    expect(sampleQuery({ database, dbName: "shop" })).toBe(query);
+    expect(sampleQuery({ database, dbName: "shop", virtualColumns: false })).toBe(query);
+  });
+
+  it("selects each book's computed age with --virtual-columns", () => {
+    expect(sampleQuery({ database: "pg", dbName: "shop", virtualColumns: true })).toBe(
+      "{ public_authors { name public_books { title age } } }",
+    );
   });
 });
 
@@ -487,6 +574,11 @@ const ANSWERS: InitAnswers = {
   redis: false,
   dataTools: false,
   frontend: false,
+  cron: false,
+  rateLimit: false,
+  metrics: false,
+  tracing: false,
+  virtualColumns: false,
 };
 
 describe("recreateCommand", () => {
@@ -502,11 +594,16 @@ describe("recreateCommand", () => {
           redis: true,
           dataTools: true,
           frontend: true,
+          cron: true,
+          rateLimit: true,
+          metrics: true,
+          tracing: true,
+          virtualColumns: true,
         },
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit --metrics --tracing --virtual-columns",
     );
   });
 
@@ -639,6 +736,86 @@ describe("nextSteps", () => {
     expect(nextSteps({ ...answers, mcp: false }, true, USERS)).not.toContain("/mcp");
   });
 
+  it("says what the cron job logs, and where to read it in Docker", () => {
+    expect(nextSteps({ ...ANSWERS, cron: true }, true)).toContain(
+      "The cron job booksReport (cron in graphoria.ts) logs the number of books every minute; in Docker, read it with docker compose logs -f graphoria.",
+    );
+    expect(nextSteps({ ...ANSWERS, cron: true, auth: true }, true, USERS)).toContain(
+      "logs the number of books and of drafts every minute",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("booksReport");
+  });
+
+  it.each([
+    {
+      what: "graphoria.ts with auth",
+      answers: { ...ANSWERS, rateLimit: true, auth: true },
+      anonymous: "rateLimit in graphoria.ts",
+    },
+    {
+      what: "graphoria.ts with the frontend's grant",
+      answers: { ...ANSWERS, rateLimit: true, frontend: true },
+      anonymous: "rateLimit in graphoria.ts",
+    },
+    {
+      what: ".env without an anonymous grant",
+      answers: { ...ANSWERS, rateLimit: true },
+      anonymous: "RATE_LIMIT_ANONYMOUS_MAX in .env",
+    },
+  ])("says what the rate limits allow, the anonymous one from $what", ({ answers, anonymous }) => {
+    const limits = `Rate limits: an anonymous caller gets 60 requests a minute per address (${anonymous}), any other caller 600, the admin secret included (RATE_LIMIT_MAX in .env); past that, 429 with Retry-After.`;
+
+    expect(nextSteps(answers, true, USERS)).toContain(`${limits} Each process counts on its own.`);
+    expect(nextSteps({ ...answers, redis: true }, true, USERS)).toContain(
+      `${limits} Redis holds the counts, shared by every process.`,
+    );
+    expect(nextSteps({ ...answers, rateLimit: false }, true, USERS)).not.toContain("Rate limits");
+  });
+
+  it("points Prometheus at /metrics with its own secret", () => {
+    expect(nextSteps({ ...ANSWERS, metrics: true }, true)).toContain(
+      "Metrics: http://localhost:3000/metrics answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("/metrics");
+  });
+
+  it("opens Jaeger's UI, and starts Jaeger for a host run", () => {
+    const steps = nextSteps({ ...ANSWERS, tracing: true }, true);
+
+    expect(steps).toContain(
+      "Jaeger shows a trace for each request, down to the SQL it ran, at http://localhost:16686: pick the service named OTEL_SERVICE_NAME in .env.",
+    );
+    expect(steps).toContain("  docker compose up -d --wait db jaeger\n  bun run dev\n");
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, tracing: true }, true)).toContain(
+      "seeds it:\n  docker compose up -d --wait jaeger\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, redis: true, tracing: true }, true)).toContain(
+      "  docker compose up -d --wait db redis jaeger\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("jaeger");
+  });
+
+  it("says where the computed age comes from, and selects it in the sample query", () => {
+    const steps = nextSteps({ ...ANSWERS, virtualColumns: true }, true);
+
+    expect(steps).toContain(
+      "Computed column: each book's age, the years since it was published, is worked out by the database on every read (schema in graphoria.ts) and never stored.",
+    );
+    expect(steps).toContain("Try: { public_authors { name public_books { title age } } }");
+    expect(nextSteps(ANSWERS, true)).not.toContain("age }");
+  });
+
+  it("says the rate limits are on in the Redis paragraph", () => {
+    expect(
+      nextSteps({ ...ANSWERS, redis: true, rateLimit: true, auth: true }, true, USERS),
+    ).toContain(
+      "AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits. With",
+    );
+    expect(nextSteps({ ...ANSWERS, redis: true, rateLimit: true }, true)).toContain(
+      "RATE_LIMIT_STORE in .env points the rate limits at it, and AUTH_STORE the auth token store once you turn auth on.",
+    );
+  });
+
   it("starts the broker and Redis too for a host run", () => {
     const both = { ...ANSWERS, rabbitmq: true, redis: true };
 
@@ -695,6 +872,11 @@ describe("nextSteps", () => {
         redis: true,
         dataTools: true,
         frontend: true,
+        cron: true,
+        rateLimit: true,
+        metrics: true,
+        tracing: true,
+        virtualColumns: true,
       },
       installed: true,
     },
@@ -746,9 +928,28 @@ describe("nextSteps", () => {
     expect(steps).toContain("With \x1b[36mbun run dev\x1b[39m, start it first");
   });
 
+  it("colors the command the cron paragraph names", () => {
+    expect(nextSteps({ ...ANSWERS, cron: true }, true, USERS, COLOR_PAINT)).toContain(
+      "read it with \x1b[36mdocker compose logs -f graphoria\x1b[39m.",
+    );
+  });
+
   it("bolds the name that opens each extra's paragraph, and colors the demo passwords yellow", () => {
     const steps = nextSteps(
-      { ...ANSWERS, rabbitmq: true, ai: true, mcp: true, auth: true, redis: true, dataTools: true },
+      {
+        ...ANSWERS,
+        rabbitmq: true,
+        ai: true,
+        mcp: true,
+        auth: true,
+        redis: true,
+        dataTools: true,
+        cron: true,
+        rateLimit: true,
+        metrics: true,
+        tracing: true,
+        virtualColumns: true,
+      },
       true,
       USERS,
       COLOR_PAINT,
@@ -762,6 +963,11 @@ describe("nextSteps", () => {
       "Redis",
       "dbgate",
       "Redis Commander",
+      "cron job",
+      "Rate limits",
+      "Metrics",
+      "Jaeger",
+      "Computed column",
     ]) {
       expect(steps).toContain(`\x1b[1m${name}\x1b[22m`);
     }

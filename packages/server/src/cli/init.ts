@@ -14,6 +14,7 @@ import {
   DBGATE_PORT,
   ENGINES,
   FRONTEND_FILES,
+  JAEGER_UI_PORT,
   PROJECT_FILES,
   RABBITMQ_MANAGEMENT_PORT,
   RABBITMQ_PORT,
@@ -37,7 +38,19 @@ const DATABASE_LABELS: Record<DatabaseType, string> = {
   sqlite: "SQLite",
 };
 
-type Extra = "rabbitmq" | "ai" | "mcp" | "auth" | "redis" | "dataTools" | "frontend";
+type Extra =
+  | "rabbitmq"
+  | "ai"
+  | "mcp"
+  | "auth"
+  | "redis"
+  | "dataTools"
+  | "frontend"
+  | "cron"
+  | "rateLimit"
+  | "metrics"
+  | "tracing"
+  | "virtualColumns";
 
 const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
   value,
@@ -169,6 +182,21 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     ...(args.frontend === undefined
       ? [extraChoice("frontend", "React frontend", "app at localhost:3000")]
       : []),
+    ...(args.cron === undefined
+      ? [extraChoice("cron", "Cron job", "logs the book count every minute")]
+      : []),
+    ...(args.rateLimit === undefined
+      ? [extraChoice("rateLimit", "Rate limits", "requests a minute per caller")]
+      : []),
+    ...(args.metrics === undefined
+      ? [extraChoice("metrics", "Metrics", "Prometheus /metrics behind its own secret")]
+      : []),
+    ...(args.tracing === undefined
+      ? [extraChoice("tracing", "Tracing", "each request's spans in Jaeger")]
+      : []),
+    ...(args.virtualColumns === undefined
+      ? [extraChoice("virtualColumns", "Computed column", "books.age, worked out in SQL")]
+      : []),
   ];
   const extras =
     extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
@@ -186,6 +214,11 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     redis: args.redis ?? chosen.has("redis"),
     dataTools: args.dataTools ?? chosen.has("dataTools"),
     frontend: args.frontend ?? chosen.has("frontend"),
+    cron: args.cron ?? chosen.has("cron"),
+    rateLimit: args.rateLimit ?? chosen.has("rateLimit"),
+    metrics: args.metrics ?? chosen.has("metrics"),
+    tracing: args.tracing ?? chosen.has("tracing"),
+    virtualColumns: args.virtualColumns ?? chosen.has("virtualColumns"),
   };
 };
 
@@ -210,9 +243,11 @@ export const portWarning = (
   return `Port ${port} is in use on this host, so Docker Compose cannot publish the ${describe.service} on it. Set ${describe.envVar} in .env to a free port${suggestion} before \`docker compose up\`.`;
 };
 
-export const sampleQuery = (answers: Pick<InitAnswers, "database" | "dbName">): string => {
+export const sampleQuery = (
+  answers: Pick<InitAnswers, "database" | "dbName" | "virtualColumns">,
+): string => {
   const schema = seedSchema(answers);
-  return `{ ${schema}_authors { name ${schema}_books { title } } }`;
+  return `{ ${schema}_authors { name ${schema}_books { title${answers.virtualColumns ? " age" : ""} } } }`;
 };
 
 export const recreateCommand = (answers: InitAnswers, installed: boolean): string =>
@@ -228,6 +263,11 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.redis ? ["--redis"] : []),
     ...(answers.dataTools ? ["--data-tools"] : []),
     ...(answers.frontend ? ["--frontend"] : []),
+    ...(answers.cron ? ["--cron"] : []),
+    ...(answers.rateLimit ? ["--rate-limit"] : []),
+    ...(answers.metrics ? ["--metrics"] : []),
+    ...(answers.tracing ? ["--tracing"] : []),
+    ...(answers.virtualColumns ? ["--virtual-columns"] : []),
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
@@ -290,6 +330,7 @@ export const nextSteps = (
   const services = [
     ...(answers.rabbitmq ? ["rabbitmq"] : []),
     ...(answers.redis ? ["redis"] : []),
+    ...(answers.tracing ? ["jaeger"] : []),
   ].join(" ");
 
   const run =
@@ -377,8 +418,8 @@ export const nextSteps = (
       ? [
           "",
           answers.auth
-            ? `${paint.name("Redis")} caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits once you turn them on. With ${paint.code("bun run dev")}, start it first: a token the server cannot check there reads as no token.`
-            : `${paint.name("Redis")} caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.`,
+            ? `${paint.name("Redis")} caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits${answers.rateLimit ? "" : " once you turn them on"}. With ${paint.code("bun run dev")}, start it first: a token the server cannot check there reads as no token.`
+            : `${paint.name("Redis")} caches GET /rest/books behind each process's own copy (caches in graphoria.ts). ${answers.rateLimit ? "RATE_LIMIT_STORE in .env points the rate limits at it, and AUTH_STORE the auth token store once you turn auth on." : "AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on."}`,
         ]
       : []),
     ...(answers.dataTools
@@ -397,6 +438,36 @@ export const nextSteps = (
           "web/graphql-env.d.ts, which types the app's queries. Commit it.",
         ]
       : []),
+    ...(answers.cron
+      ? [
+          "",
+          `The ${paint.name("cron job")} booksReport (cron in graphoria.ts) logs the number of books${answers.auth ? " and of drafts" : ""} every minute; in Docker, read it with ${paint.code("docker compose logs -f graphoria")}.`,
+        ]
+      : []),
+    ...(answers.rateLimit
+      ? [
+          "",
+          `${paint.name("Rate limits")}: an anonymous caller gets 60 requests a minute per address (${answers.auth || answers.frontend ? "rateLimit in graphoria.ts" : "RATE_LIMIT_ANONYMOUS_MAX in .env"}), any other caller 600, the admin secret included (RATE_LIMIT_MAX in .env); past that, 429 with Retry-After. ${answers.redis ? "Redis holds the counts, shared by every process." : "Each process counts on its own."}`,
+        ]
+      : []),
+    ...(answers.metrics
+      ? [
+          "",
+          `${paint.name("Metrics")}: ${link(3000, "/metrics")} answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.`,
+        ]
+      : []),
+    ...(answers.tracing
+      ? [
+          "",
+          `${paint.name("Jaeger")} shows a trace for each request, down to the SQL it ran, at ${link(JAEGER_UI_PORT)}: pick the service named OTEL_SERVICE_NAME in .env.`,
+        ]
+      : []),
+    ...(answers.virtualColumns
+      ? [
+          "",
+          `${paint.name("Computed column")}: each book's age, the years since it was published, is worked out by the database on every read (schema in graphoria.ts) and never stored.`,
+        ]
+      : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
@@ -407,7 +478,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);
@@ -470,6 +541,9 @@ export const initCommand = async (argv: string[]): Promise<never> => {
           envVar: "REDIS_COMMANDER_PORT",
         })
       : undefined,
+    answers.tracing
+      ? portWarning(JAEGER_UI_PORT, { service: "Jaeger UI", envVar: "JAEGER_UI_PORT" })
+      : undefined,
   ];
   const stderrPaint = paintFor(process.stderr);
   for (const warning of warnings) if (warning) console.warn(stderrPaint.warning(warning));
@@ -486,6 +560,7 @@ export const initCommand = async (argv: string[]): Promise<never> => {
       adminSecret: generateSecret(),
       jwtSecret: generateSecret(),
       rabbitmqPassword: generatePassword(),
+      metricsSecret: generateSecret(),
     },
     { graphoria: version, bun: Bun.version },
   );

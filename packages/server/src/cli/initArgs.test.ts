@@ -74,6 +74,36 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("dataTools");
   });
 
+  it("answers the cron question with --cron or --no-cron", () => {
+    expect(parseInitArgs(["--cron"]).cron).toBe(true);
+    expect(parseInitArgs(["--no-cron"]).cron).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("cron");
+  });
+
+  it("answers the rate-limit question with --rate-limit or --no-rate-limit", () => {
+    expect(parseInitArgs(["--rate-limit"]).rateLimit).toBe(true);
+    expect(parseInitArgs(["--no-rate-limit"]).rateLimit).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("rateLimit");
+  });
+
+  it("answers the metrics question with --metrics or --no-metrics", () => {
+    expect(parseInitArgs(["--metrics"]).metrics).toBe(true);
+    expect(parseInitArgs(["--no-metrics"]).metrics).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("metrics");
+  });
+
+  it("answers the tracing question with --tracing or --no-tracing", () => {
+    expect(parseInitArgs(["--tracing"]).tracing).toBe(true);
+    expect(parseInitArgs(["--no-tracing"]).tracing).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("tracing");
+  });
+
+  it("answers the computed-column question with --virtual-columns or --no-virtual-columns", () => {
+    expect(parseInitArgs(["--virtual-columns"]).virtualColumns).toBe(true);
+    expect(parseInitArgs(["--no-virtual-columns"]).virtualColumns).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("virtualColumns");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

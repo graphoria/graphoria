@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -29,9 +29,15 @@ const values = (database: DatabaseType): ProjectValues => ({
   redis: false,
   dataTools: false,
   frontend: false,
+  cron: false,
+  rateLimit: false,
+  metrics: false,
+  tracing: false,
+  virtualColumns: false,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
+  metricsSecret: "metrics-secret-value",
 });
 
 const versions = { graphoria: "0.6.0", bun: "1.4.2" };
@@ -210,6 +216,45 @@ describe("renderProject .env", () => {
     expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
   });
 
+  it("caps every caller, and the anonymous ones only without their grant in graphoria.ts", () => {
+    const lines = renderWith({ rateLimit: true })[".env"]!.split("\n");
+
+    expect(lines).toContain("RATE_LIMIT_MAX=600");
+    expect(lines).toContain("RATE_LIMIT_ANONYMOUS_MAX=60");
+    for (const patch of [{ auth: true }, { frontend: true }]) {
+      const granted = renderWith({ rateLimit: true, ...patch })[".env"]!.split("\n");
+
+      expect(granted).toContain("RATE_LIMIT_MAX=600");
+      expect(granted.some((line) => line.startsWith("RATE_LIMIT_ANONYMOUS_MAX"))).toBe(false);
+    }
+    expect(render("pg")[".env"]).not.toContain("RATE_LIMIT_MAX");
+  });
+
+  it.each(["pg", "sqlite"] as const)(
+    "mounts /metrics behind a secret of its own for %s",
+    (database) => {
+      const lines = renderWith({ metrics: true }, database)[".env"]!.split("\n");
+
+      expect(lines).toContain("METRICS_ENABLED=true");
+      expect(lines).toContain("METRICS_SECRET=metrics-secret-value");
+      expect(render(database)[".env"]).not.toContain("METRICS_");
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)(
+    "sends the traces to Jaeger on localhost, named after the project, for %s",
+    (database) => {
+      const lines = renderWith({ tracing: true }, database)[".env"]!.split("\n");
+
+      expect(lines).toContain("TRACING_ENABLED=true");
+      expect(lines).toContain("OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318");
+      expect(lines).toContain("OTEL_SERVICE_NAME=my-api");
+      expect(lines).toContain("JAEGER_UI_PORT=16686");
+      expect(render(database)[".env"]).not.toContain("TRACING_");
+      expect(render(database)[".env"]).not.toContain("JAEGER_");
+    },
+  );
+
   it("adds every feature's settings together without overlap", () => {
     const lines = renderWith({
       rabbitmq: true,
@@ -250,6 +295,7 @@ describe("renderProject docker-compose.yml", () => {
       redis?: Service;
       dbgate?: Service;
       "redis-commander"?: Service;
+      jaeger?: Service;
     };
     volumes: Record<string, unknown>;
   };
@@ -373,6 +419,29 @@ describe("renderProject docker-compose.yml", () => {
     },
   );
 
+  it.each(["pg", "sqlite"] as const)(
+    "runs Jaeger and points Graphoria's traces at it (%s)",
+    (database) => {
+      const { services, volumes } = compose(database, { tracing: true });
+
+      expect(services.jaeger!.image).toBe("jaegertracing/jaeger:2.22.0");
+      expect(services.jaeger!.ports).toEqual(["${JAEGER_UI_PORT}:16686", "4318:4318"]);
+      expect(services.jaeger!.healthcheck?.test).toBeDefined();
+      expect(services.graphoria!.environment).toMatchObject({
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318",
+      });
+      expect(services.graphoria!.depends_on).toMatchObject({
+        jaeger: { condition: "service_healthy" },
+      });
+      expect(Object.keys(volumes)).toEqual(["db-data"]);
+    },
+  );
+
+  it("leaves Jaeger out by default", () => {
+    expect(compose("pg").services.jaeger).toBeUndefined();
+    expect(compose("sqlite").services.graphoria.depends_on).toBeUndefined();
+  });
+
   it("leaves Redis out by default", () => {
     expect(compose("pg").services.redis).toBeUndefined();
   });
@@ -460,7 +529,7 @@ describe("renderProject docker-compose.yml", () => {
   );
 
   it.each(ENGINES)("sets each %s service apart with a blank line", (database) => {
-    for (const patch of [{}, { rabbitmq: true, redis: true, dataTools: true }]) {
+    for (const patch of [{}, { rabbitmq: true, redis: true, dataTools: true, tracing: true }]) {
       // A service's last, indented line followed straight by the next service.
       expect(renderWith(patch, database)["docker-compose.yml"]).not.toMatch(
         /\n {4}.*\n {2}[a-z-]+:\n/,
@@ -532,6 +601,7 @@ describe("renderProject graphoria.ts", () => {
       "RABBITMQ_PASSWORD",
       "RABBITMQ_VHOST",
       "REDIS_URL",
+      "DB_FILE",
     ]) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
@@ -683,6 +753,90 @@ describe("renderProject graphoria.ts", () => {
     expect(storesInUse(configuration, undefined, undefined)).toEqual(["redis"]);
   });
 
+  it("schedules the books report every minute with --cron", async () => {
+    setEnv();
+    const { cron } = ConfigurationZod.parse((await load("pg", { cron: true }))({}));
+
+    expect(cron).toHaveLength(1);
+    expect(cron[0]).toMatchObject({
+      name: "booksReport",
+      pattern: "* * * * *",
+      protect: true,
+      query: "query { public_books { id } }",
+    });
+    expect(ConfigurationZod.parse((await load("pg"))({})).cron).toEqual([]);
+  });
+
+  it.each([
+    {
+      what: "books",
+      patch: { cron: true },
+      data: { public_books: [{ id: 1 }, { id: 2 }] },
+      line: ["[booksReport] books:", 2],
+    },
+    {
+      what: "books and drafts with --auth",
+      patch: { cron: true, auth: true },
+      data: { public_books: [{ status: "published" }, { status: "draft" }, { status: "draft" }] },
+      line: ["[booksReport] books:", 3, "drafts:", 2],
+    },
+  ])("logs the number of $what from the report's answer", async ({ patch, data, line }) => {
+    setEnv();
+    const [job] = ConfigurationZod.parse((await load("pg", patch))({})).cron;
+    const log = spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await job!.onTick!({} as never, {} as never, { data });
+      expect(log).toHaveBeenCalledWith(...line);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each([
+    ["pg", "public_books", "EXTRACT(YEAR FROM CURRENT_DATE)::int - published_year"],
+    ["mysql", "shop_books", "YEAR(CURDATE()) - published_year"],
+    ["mssql", "dbo_books", "YEAR(GETDATE()) - published_year"],
+    ["sqlite", "main_books", "CAST(strftime('%Y', 'now') AS INTEGER) - published_year"],
+  ] as const)(
+    "computes each %s book's age in the database with --virtual-columns",
+    async (database, table, expression) => {
+      setEnv();
+      process.env.DB_FILE = "unused.db";
+      const tables = async (patch: Partial<ProjectValues>) =>
+        ConfigurationZod.parse((await load(database, patch))({})).databases![0]!.schema?.database;
+
+      expect((await tables({ virtualColumns: true }))![table]!.columns).toEqual([
+        {
+          name: "age",
+          dataType: "int",
+          isNullable: false,
+          description: null,
+          virtual: true,
+          expression,
+        },
+      ]);
+      expect(await tables({})).toBeUndefined();
+    },
+  );
+
+  it("selects each book's status for the report with --auth", async () => {
+    setEnv();
+    const [job] = ConfigurationZod.parse((await load("pg", { cron: true, auth: true }))({})).cron;
+
+    expect(job!.query).toBe("query { public_books { status } }");
+  });
+
+  it("fails the tick with the query's errors when it answered no data", async () => {
+    setEnv();
+    const [job] = ConfigurationZod.parse((await load("pg", { cron: true }))({})).cron;
+    const errors = [{ message: "connection refused" }];
+
+    expect(() => job!.onTick!({} as never, {} as never, { data: null, errors })).toThrow(
+      'booksReport: [{"message":"connection refused"}]',
+    );
+  });
+
   it.each(SERVER_ENGINES)("adds the add-book operation to the %s scaffold", async (database) => {
     setEnv();
     const configuration = ConfigurationZod.parse((await load(database))({}));
@@ -701,7 +855,18 @@ describe("renderProject graphoria.ts", () => {
     { rabbitmq: true, ai: true },
     { ai: true, mcp: true },
     { redis: true },
-    { rabbitmq: true, ai: true, mcp: true, redis: true },
+    { cron: true },
+    { rateLimit: true },
+    { virtualColumns: true },
+    {
+      rabbitmq: true,
+      ai: true,
+      mcp: true,
+      redis: true,
+      cron: true,
+      rateLimit: true,
+      virtualColumns: true,
+    },
   ])("still parses with %j", async (patch) => {
     setEnv();
     setRabbitEnv();
@@ -793,6 +958,15 @@ describe("renderProject with --auth", () => {
     expect(auth.autoCreateTables).toBe(true);
     expect(auth.schema).toBe(database === "sqlite" ? "main" : "auth");
     expect(Object.keys(auth.permissions)).toEqual(["anonymous", "reader", "editor"]);
+  });
+
+  it("caps the tier without a token at 60 requests a minute with --rate-limit", async () => {
+    const { auth } = await parse("pg", { rateLimit: true });
+
+    expect(auth.permissions.anonymous!.rateLimit).toEqual({ max: 60 });
+    expect(auth.permissions.reader!.rateLimit).toBeUndefined();
+    expect(auth.permissions.editor!.rateLimit).toBeUndefined();
+    expect((await parse("pg")).auth.permissions.anonymous!.rateLimit).toBeUndefined();
   });
 
   it.each(ENGINES)("grants the three %s tiers", async (database) => {
@@ -1363,8 +1537,18 @@ describe("renderProject with the frontend", () => {
       },
     );
 
-    it.each([{}, { redis: true }])("grants nothing without the frontend for %j", async (patch) => {
-      expect((await parse(false, "pg", patch)).auth.permissions).toEqual({});
+    it.each([{}, { redis: true }, { rateLimit: true }])(
+      "grants nothing without the frontend for %j",
+      async (patch) => {
+        expect((await parse(false, "pg", patch)).auth.permissions).toEqual({});
+      },
+    );
+
+    it("caps the anonymous grant at 60 requests a minute with --rate-limit", async () => {
+      expect(
+        (await parse(true, "pg", { rateLimit: true })).auth.permissions.anonymous,
+      ).toMatchObject({ rateLimit: { max: 60 } });
+      expect((await parse(true, "pg")).auth.permissions.anonymous!.rateLimit).toBeUndefined();
     });
 
     it("says what else the grant opens to anyone", () => {
@@ -1748,7 +1932,16 @@ describe("renderProject types the add-book operation", () => {
         files.push(`${project}/${name}`);
       }
     };
-    const everything = { frontend: true, rabbitmq: true, redis: true, ai: true, mcp: true };
+    const everything = {
+      frontend: true,
+      rabbitmq: true,
+      redis: true,
+      ai: true,
+      mcp: true,
+      cron: true,
+      rateLimit: true,
+      virtualColumns: true,
+    };
     for (const database of ENGINES) {
       await write(database, renderWith(everything, database));
       await write(`${database}-plain`, renderWith({}, database));

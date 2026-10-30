@@ -236,6 +236,18 @@ describe("cli init", () => {
     });
   });
 
+  it("generates the metrics secret apart from the admin secret with --metrics", async () => {
+    const { cwd, result } = await init(["--yes", "--metrics", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    const values = await env(cwd);
+    expect(values.METRICS_ENABLED).toBe("true");
+    expect(values.METRICS_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(values.METRICS_SECRET).not.toBe(values.ADMIN_SECRET);
+    expect(result.stdout.toString()).toContain("http://localhost:3000/metrics");
+  });
+
   it("adds the React frontend with --frontend", async () => {
     const { cwd, result } = await init(["--yes", "--frontend", "--no-install"]);
     cwds.push(cwd);
@@ -456,6 +468,11 @@ describe("cli init", () => {
       "--no-redis",
       "--no-data-tools",
       "--no-frontend",
+      "--no-cron",
+      "--no-rate-limit",
+      "--no-metrics",
+      "--no-tracing",
+      "--no-virtual-columns",
       "--no-install",
     ]);
     cwds.push(cwd);

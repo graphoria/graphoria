@@ -12,6 +12,11 @@ export type InitAnswers = {
   redis: boolean;
   dataTools: boolean;
   frontend: boolean;
+  cron: boolean;
+  rateLimit: boolean;
+  metrics: boolean;
+  tracing: boolean;
+  virtualColumns: boolean;
 };
 
 export type ProjectValues = InitAnswers & {
@@ -19,6 +24,7 @@ export type ProjectValues = InitAnswers & {
   adminSecret: string;
   jwtSecret: string;
   rabbitmqPassword: string;
+  metricsSecret: string;
 };
 
 export type Versions = { graphoria: string; bun: string };
@@ -62,6 +68,9 @@ export const DBGATE_PORT = 9000;
 
 // Redis Commander's own default port.
 export const REDIS_COMMANDER_PORT = 8081;
+
+// Jaeger's own UI port.
+export const JAEGER_UI_PORT = 16686;
 
 export const PROJECT_FILES = [
   "package.json",
@@ -209,6 +218,11 @@ const SQLITE_CONNECTION = `      connection: { filename: env("DB_FILE") },
       },
 `;
 
+const anonymousRateLimitComment = (indent: string) =>
+  `${indent}// 60 requests a minute per address. Every other caller, the admin
+${indent}// secret included, gets RATE_LIMIT_MAX from .env.
+`;
+
 const anonymousGrant = (values: ProjectValues) => {
   const schema = seedSchema(values);
   const operations = [...(values.redis ? ['"books"'] : []), '"addBook"'];
@@ -223,7 +237,7 @@ ${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provi
       anonymous: {
         tables: ["${schema}_authors", "${schema}_books"],
 ${values.rabbitmq ? '        queues: ["events"],\n' : ""}        operations: [${operations.join(", ")}],
-${values.ai ? "        ai: true,\n" : ""}      },
+${values.ai ? "        ai: true,\n" : ""}${values.rateLimit ? `${anonymousRateLimitComment("        ")}        rateLimit: { max: 60 },\n` : ""}      },
     },
   },
 `;
@@ -241,7 +255,7 @@ const authConfig = (values: ProjectValues) => {
 ${values.database === "sqlite" ? '    // SQLite has no auth schema to create: the user table lives in the database file.\n    schema: "main",\n' : ""}    // The first boot, or seed-auth, creates the auth user table.
     autoCreateTables: true,
     permissions: {
-      anonymous: { tables: ["${schema}_authors"] },
+${values.rateLimit ? anonymousRateLimitComment("      ") : ""}      anonymous: { tables: ["${schema}_authors"]${values.rateLimit ? ", rateLimit: { max: 60 }" : ""} },
       reader: {
         tables: {
           ${schema}_authors: "ALL",
@@ -558,6 +572,66 @@ const CACHES_CONFIG = `  // A cached operation answers from this process first, 
   },
 `;
 
+// Only with --auth do the books carry a status, so only then are drafts counted.
+const cronLog = (books: string, auth: boolean) =>
+  auth
+    ? `        const drafts = data.${books}.filter((book) => book.status === "draft").length;
+        console.log("[booksReport] books:", data.${books}.length, "drafts:", drafts);
+`
+    : `        console.log("[booksReport] books:", data.${books}.length);
+`;
+
+const cronConfig = (values: ProjectValues) => {
+  const books = `${seedSchema(values)}_books`;
+  const fields = values.auth ? "status: string" : "id: number";
+  return `  // Every minute the server runs the query as the superadmin and hands the
+  // answer to onTick, which logs it to the server's output.
+  cron: [
+    {
+      name: "booksReport",
+      pattern: "* * * * *",
+      // A tick still running when the next one is due makes that one skip.
+      protect: true,
+      query: "query { ${books} { ${values.auth ? "status" : "id"} } }",
+      onTick: (_options, _context, response) => {
+        const data = response?.data as { ${books}: { ${fields} }[] } | null | undefined;
+        // A failed query answers no data: throw, and the job logs the errors.
+        if (!data) throw new Error(\`booksReport: \${JSON.stringify(response?.errors)}\`);
+${cronLog(books, values.auth)}      },
+    },
+  ],
+`;
+};
+
+// Per engine, the SQL for a book's age: this year minus its published_year.
+// Postgres's EXTRACT answers a numeric, cast back to the column's int.
+const AGE_EXPRESSIONS: Record<DatabaseType, string> = {
+  pg: "EXTRACT(YEAR FROM CURRENT_DATE)::int - published_year",
+  mysql: "YEAR(CURDATE()) - published_year",
+  mssql: "YEAR(GETDATE()) - published_year",
+  sqlite: "CAST(strftime('%Y', 'now') AS INTEGER) - published_year",
+};
+
+const schemaEntry = (
+  values: ProjectValues,
+) => `      // A book's age, in years since it was published: the database works it
+      // out on every read, so it is selected like a column and never stored.
+      schema: {
+        database: {
+          ${seedSchema(values)}_books: {
+            columns: [
+              virtualColumnExpression(
+                "age",
+                "int",
+                false,
+                ${JSON.stringify(AGE_EXPRESSIONS[values.database])},
+              ),
+            ],
+          },
+        },
+      },
+`;
+
 const repositoryEntry = ({
   auth,
 }: ProjectValues) => `      // The typed data access in repository.ts, which ${auth ? "addBook and publishBook call" : "addBook calls"}.
@@ -571,7 +645,7 @@ const publishBookInput = z.object({ id: z.number().int() });
 
 const graphoriaConfig = (
   values: ProjectValues,
-) => `import { operation, z } from "@graphoria/server/config";
+) => `import { operation, ${values.virtualColumns ? "virtualColumnExpression, " : ""}z } from "@graphoria/server/config";
 import type { ConfigurationFn } from "@graphoria/server/config";
 
 import { createRepository, type Repository } from "./repository";
@@ -601,9 +675,9 @@ export default (() => ({
       name: "main",
       type: "${values.database}",
       enabled: true,
-${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}    },
+${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}${values.virtualColumns ? schemaEntry(values) : ""}    },
   ],
-${values.rabbitmq ? queueConfig(values) : ""}${values.ai || values.mcp ? aiConfig(values) : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? queueConfig(values) : ""}${values.ai || values.mcp ? aiConfig(values) : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.cron ? cronConfig(values) : ""}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
@@ -679,6 +753,23 @@ RATE_LIMIT_STORE=redis
 `
     : "";
 
+// The anonymous ceiling sits on the anonymous role in graphoria.ts when the
+// project grants one there.
+const rateLimitEnv = ({ rateLimit, auth, frontend }: ProjectValues) =>
+  rateLimit ? `RATE_LIMIT_MAX=600\n${auth || frontend ? "" : "RATE_LIMIT_ANONYMOUS_MAX=60\n"}` : "";
+
+const metricsEnv = (values: ProjectValues) =>
+  values.metrics ? `METRICS_ENABLED=true\nMETRICS_SECRET=${values.metricsSecret}\n` : "";
+
+const tracingEnv = (values: ProjectValues) =>
+  values.tracing
+    ? `TRACING_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=${values.name}
+JAEGER_UI_PORT=${JAEGER_UI_PORT}
+`
+    : "";
+
 const dataToolsEnv = (values: ProjectValues) =>
   values.dataTools
     ? `DBGATE_PORT=${DBGATE_PORT}
@@ -693,7 +784,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -707,7 +798,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -939,6 +1030,25 @@ const REDIS_COMMANDER_SERVICE = `  redis-commander:
         condition: service_healthy
 `;
 
+// The healthcheck asks Jaeger's health extension, through the image's busybox wget.
+const JAEGER_SERVICE = `  jaeger:
+    # Keeps the traces in memory: a restart empties it.
+    image: jaegertracing/jaeger:2.22.0
+    ports:
+      - "\${JAEGER_UI_PORT}:16686"
+      # OTLP over HTTP, where Graphoria posts its spans.
+      - "4318:4318"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:13133/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+`;
+
+// Graphoria's environment and depends_on entries for the jaeger service.
+const JAEGER_ENDPOINT = `\n      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318`;
+const JAEGER_DEPENDENCY = `\n      jaeger:\n        condition: service_healthy`;
+
 const initComment = (frontend: boolean) =>
   frontend
     ? "# Keep it: until index.ts reaches handleSignals, Bun as PID 1 ignores SIGTERM."
@@ -951,6 +1061,7 @@ const sqliteCompose = ({
   redis,
   dataTools,
   frontend,
+  tracing,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -958,7 +1069,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     ${initComment(frontend)}
     init: true
@@ -966,11 +1077,11 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
     env_file: .env
     environment:
       # On the volume, not in the image: the file outlives a rebuild.
-      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
+      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
     ports:
       - "3000:3000"
     volumes:
-      - db-data:/app/data${rabbitmq || redis ? `\n    depends_on:${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}` : ""}
+      - db-data:/app/data${rabbitmq || redis || tracing ? `\n    depends_on:${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}${tracing ? JAEGER_DEPENDENCY : ""}` : ""}
 
 volumes:
   db-data:
@@ -978,7 +1089,7 @@ ${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTo
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database, rabbitmq, redis, dataTools, frontend } = values;
+  const { name, database, rabbitmq, redis, dataTools, frontend, tracing } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -994,7 +1105,7 @@ const dockerCompose = (values: ProjectValues) => {
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${DB_SERVICES[database]}
-${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     ${initComment(frontend)}
     init: true
@@ -1003,12 +1114,12 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
     environment:
       # Inside Compose the database is the \`db\` service on its own port.
       DB_HOST: db
-      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
+      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
     ports:
       - "3000:3000"
     # Start once the database is ready. Boot would otherwise retry it for up to 60 s.
     depends_on:
-${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}
+${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}${tracing ? JAEGER_DEPENDENCY : ""}
 
 volumes:
   db-data:

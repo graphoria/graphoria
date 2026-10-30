@@ -19,7 +19,7 @@ mkdir my-api && cd my-api
 bunx graphoria init
 ```
 
-`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, the MCP server, login with two roles, Redis, data inspection tools and a React frontend. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
+`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, the MCP server, login with two roles, Redis, data inspection tools, a React frontend, a cron job, rate limits, metrics, tracing and a computed column. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
 
 | File                                          | What it holds                                                                                                                                                  |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -47,7 +47,7 @@ bun run dev
 
 With `--database sqlite` there is no database server: the database is the file `app.db` (named after the database name) next to `graphoria.ts`, and the first boot creates it and seeds it from `seed.sql`. `bun run dev` is all it takes, and `docker compose up -d --build` runs Graphoria alone, with the file on a volume. See [SQLite](./CONFIGURATION.md#sqlite) for what the engine cannot do.
 
-With `--rabbitmq` or `--redis` (below), a run on your machine needs those containers too, so the steps `init` prints add them to `docker compose up -d --wait`.
+With `--rabbitmq`, `--redis` or `--tracing` (below), a run on your machine needs those containers too, so the steps `init` prints add them to `docker compose up -d --wait`.
 
 Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the `ADMIN_SECRET` from `.env`, and query the seed:
 
@@ -64,7 +64,7 @@ Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the 
 
 Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, `main_` on SQLite, and the database name on MySQL (`app_authors` with the default name).
 
-`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--mcp` the MCP server, `--auth` adds login with two roles (below), `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time. In a terminal, the steps it prints are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
+`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--mcp` the MCP server, `--auth` adds login with two roles (below), `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), `--cron` adds a job that logs the book count every minute (below), `--rate-limit` caps the requests each caller makes a minute (below), `--metrics` mounts a Prometheus endpoint (below), `--tracing` sends a trace of each request to Jaeger (below), `--virtual-columns` gives each book a computed `age` (below), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time. In a terminal, the steps it prints are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
 
 ### Add a React frontend with `--frontend`
 
@@ -113,7 +113,7 @@ Tick `Redis` in the extras list, or pass `--redis` (`--no-redis` answers no, and
 | `graphoria.ts`       | A `caches` block, with the `redis` store read behind each process's own copy, and a `books` operation that caches `GET /rest/books` in both. |
 | `docker-compose.yml` | A `redis` service (with its `redis-data` volume) that Graphoria waits on.                                                                    |
 
-`graphoria.ts` reads `REDIS_URL` into the `redis` store and caches `GET /rest/books` there: call it twice (with the admin secret; with `--auth`, a reader's or an editor's token, each caller getting an entry of its own; with `--frontend` alone, no secret at all), and the second answer comes from the cache. `AUTH_STORE` points the token store at the same store, and `RATE_LIMIT_STORE` the rate limits once you turn a limit on. In Docker Compose the server is pointed at the `redis` service, while `bun run dev` reaches Redis on `localhost:6379`. With `--auth`, start Redis before `bun run dev`, as the printed steps do: the server checks every token there, and reads one it cannot check as no token.
+`graphoria.ts` reads `REDIS_URL` into the `redis` store and caches `GET /rest/books` there: call it twice (with the admin secret; with `--auth`, a reader's or an editor's token, each caller getting an entry of its own; with `--frontend` alone, no secret at all), and the second answer comes from the cache. `AUTH_STORE` points the token store at the same store, and `RATE_LIMIT_STORE` the rate limits once you turn a limit on (`--rate-limit` does). In Docker Compose the server is pointed at the `redis` service, while `bun run dev` reaches Redis on `localhost:6379`. With `--auth`, start Redis before `bun run dev`, as the printed steps do: the server checks every token there, and reads one it cannot check as no token.
 
 ### Browse the data with `--data-tools`
 
@@ -181,6 +181,58 @@ bunx graphoria seed-auth --user editor --password <printed> --role editor --conf
 Log in with the `auth_login` mutation in GraphiQL, or `POST /rest/auth/login` with `{ "username": …, "password": … }`, and send the `access_token` it answers as `Authorization: Bearer <access_token>`. An operation a role is not granted answers `404` on its REST route, and that role's schema has no field for it. `publishBook` answers `null` for an id no book has.
 
 With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token. `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor, and to `events_onBookPublished` for both roles, refetching the list on either.
+
+### Schedule a job with `--cron`
+
+Tick `Cron job` in the extras list, or pass `--cron` (`--no-cron` answers no, and so does `--yes` alone). The project then gets:
+
+| File           | What it holds                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------ |
+| `graphoria.ts` | A `cron` entry, `booksReport`, which queries the books every minute and logs how many there are. |
+
+Every minute the server runs the job's `query` as the superadmin and hands the answer to its `onTick`, which logs `[booksReport] books: 6` to the server's output: the terminal running `bun run dev`, or `docker compose logs -f graphoria` in Docker. With `--auth`, the query selects each book's `status` and the line counts the drafts too. `protect: true` makes a tick that falls due while the previous one still runs skip, and a query that fails throws, so the job logs its errors. Every server process runs the job; see [Cron Jobs](./CRON.md) for the schedule syntax, time zones and running a job once across processes.
+
+### Limit requests with `--rate-limit`
+
+Tick `Rate limits` in the extras list, or pass `--rate-limit` (`--no-rate-limit` answers no, and so does `--yes` alone). The project then gets:
+
+| File           | What it holds                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `.env`         | `RATE_LIMIT_MAX=600`, plus `RATE_LIMIT_ANONYMOUS_MAX=60` without `--auth` or `--frontend`. |
+| `graphoria.ts` | With `--auth` or `--frontend`, `rateLimit: { max: 60 }` on the anonymous role.             |
+
+A caller without a token or a secret gets 60 requests a minute per client address, and any other caller 600: a reader, an editor, and the admin secret too, which is not exempt. One bucket per caller covers every endpoint (`/graphql`, `/rest/*`, `/mcp`, the console's login and AI routes), and past the ceiling the answer is `429` with `Retry-After`. The anonymous ceiling sits on the anonymous role when `graphoria.ts` grants that role, since a role's own `rateLimit` beats both variables, and in `RATE_LIMIT_ANONYMOUS_MAX` otherwise. Each process counts on its own, so `bun run cluster` multiplies the ceilings by its worker count; with `--redis`, `RATE_LIMIT_STORE=redis` shares the counts. See [Rate limiting](./CONFIGURATION.md#rate-limiting).
+
+### Expose metrics with `--metrics`
+
+Tick `Metrics` in the extras list, or pass `--metrics` (`--no-metrics` answers no, and so does `--yes` alone). The project then gets:
+
+| File   | What it holds                                         |
+| ------ | ----------------------------------------------------- |
+| `.env` | `METRICS_ENABLED=true` and a random `METRICS_SECRET`. |
+
+`GET /metrics` then answers a [Prometheus](https://prometheus.io) scrape that carries `METRICS_SECRET` in the `x-admin-secret` header with the server's series: HTTP requests, GraphQL operations, rejections and cron runs, counted and timed. The secret opens `/metrics` and nothing else, so it is the one to hand Prometheus; the admin secret works too, but logs a `warn` on each scrape. `/metrics` is not rate limited. See [Metrics](./OBSERVABILITY.md#metrics) for the series and a scrape configuration.
+
+### Trace requests with `--tracing`
+
+Tick `Tracing` in the extras list, or pass `--tracing` (`--no-tracing` answers no, and so does `--yes` alone). The project then gets:
+
+| File                 | What it holds                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.env`               | `TRACING_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`, `OTEL_SERVICE_NAME` set to the project's name, and `JAEGER_UI_PORT=16686`. |
+| `docker-compose.yml` | A `jaeger` service ([Jaeger](https://www.jaegertracing.io) 2) that takes OTLP on port 4318 and that Graphoria waits on.                                 |
+
+Each request becomes a trace, from the HTTP handler down to the statements the database ran, and with `--cron` each tick becomes one too. Open `http://localhost:16686` (set `JAEGER_UI_PORT` in `.env` to move it) and pick the service named after the project. In Docker Compose the server posts its spans to the `jaeger` service, while `bun run dev` reaches it on `localhost:4318`, so the printed host-run steps start it too: without it, the server logs `span export failed` and drops the spans. Jaeger keeps the traces in memory, so a restart empties it. See [Tracing](./OBSERVABILITY.md#tracing) for sampling and what each span records.
+
+### Add a computed column with `--virtual-columns`
+
+Tick `Computed column` in the extras list, or pass `--virtual-columns` (`--no-virtual-columns` answers no, and so does `--yes` alone). The project then gets:
+
+| File           | What it holds                                                                                              |
+| -------------- | ---------------------------------------------------------------------------------------------------------- |
+| `graphoria.ts` | A `schema` block on the `main` database that gives `books` an `age` column with `virtualColumnExpression`. |
+
+`age` is the years since a book was published. The database works it out from `published_year` on every read, so it is selected like any column, `{ public_authors { name public_books { title age } } }`, and never stored. The expression is SQL in the engine's own dialect: `EXTRACT(YEAR FROM CURRENT_DATE)::int - published_year` on PostgreSQL, `YEAR(CURDATE()) - published_year` on MySQL, `YEAR(GETDATE()) - published_year` on SQL Server and `CAST(strftime('%Y', 'now') AS INTEGER) - published_year` on SQLite. A role granted every column of the books, as both roles are with `--auth`, reads it too. See [Virtual Columns](./VIRTUAL_COLUMNS.md).
 
 The rest of this guide sets a project up by hand, against a database you already run.
 
