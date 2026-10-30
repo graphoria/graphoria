@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from "bun";
-import type { AnalysisResult, SelectionAnalysis, VariableDefinition } from "../analyzeQuery/types";
+import type { AnalysisResult, SelectionAnalysis } from "../analyzeQuery/types";
 import type { GetSchemaReturn } from "../configuration/getSchemas";
 import type { createQueryEventEmitter } from "../utils/event-emitter";
 import type { SessionContext } from "../utils/sessionVariables";
@@ -29,8 +29,6 @@ export interface SubscriptionContext {
   analysis: AnalysisResult;
   /** The first field being subscribed to */
   field: SelectionAnalysis;
-  /** Variable definitions from the query */
-  variableDefinitions: VariableDefinition[];
   /** Resolved variable values (after object flattening and $session.* replacement) */
   variables: Record<string, unknown>;
   /** Schema and entity information for the current role */

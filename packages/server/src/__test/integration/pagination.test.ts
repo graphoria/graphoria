@@ -158,6 +158,10 @@ describe.skipIf(!integrationEnabled)("integration pagination", () => {
               query: `query { ${tagsField} { id } }`,
               rest: { path: "/all-tags", method: "GET" },
             },
+            filtered_tags: {
+              query: `query { ${tagsField}(where: { name: { like: "filler-1%" } }, limit: 2, orderBy: [{ id: ASC }]) { id } }`,
+              rest: { path: "/filtered-tags", method: "GET" },
+            },
           },
         } as never,
       });
@@ -171,6 +175,19 @@ describe.skipIf(!integrationEnabled)("integration pagination", () => {
 
     afterAll(async () => {
       await started?.stop();
+    });
+
+    // A filter hoists its literal into a bound parameter, so this is the
+    // operator path with a variable in play: one statement, one definition, and
+    // the limit still comes from the operator's own text.
+    it("filters and pages an operation's own query", async () => {
+      const response = await started.context.rest("/filtered-tags");
+      const body = (await response.json()) as { data: Record<string, { id: number }[]> };
+
+      expect(body.data[tagsField]!.map((row) => row.id)).toEqual([
+        FILLER_FIRST_ID + 1,
+        FILLER_FIRST_ID + 10,
+      ]);
     });
 
     it("serves every row from an operation query that declares no limit", async () => {

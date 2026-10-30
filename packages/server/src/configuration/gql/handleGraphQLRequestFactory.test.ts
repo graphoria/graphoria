@@ -27,6 +27,7 @@ let analyzeQueryModule: any;
 const sdl = `
   type Query {
     users(limit: Int): [User!]!
+    other_users(limit: Int): [User!]!
     auth_me: AuthMe
     remote_query_field: String
     ask(prompt: String!): AskResult!
@@ -71,6 +72,7 @@ const introspection = introspectionFromSchema(schema);
 
 const sourceMap: Record<string, EntitySource> = {
   users: EntitySource.TABLE,
+  other_users: EntitySource.TABLE,
   auth_me: EntitySource.AUTH,
   remote_query_field: EntitySource.REMOTE_SCHEMA,
   ask: EntitySource.AI,
@@ -481,6 +483,73 @@ describe("handleGraphQLRequestFactory — query cache", () => {
   it("hasErrors still throws a syntax error for an unparseable query", () => {
     const factory = factoryFn(buildEntities());
     expect(() => factory.hasErrors("query {")).toThrow("Syntax Error");
+  });
+});
+
+describe("handleGraphQLRequestFactory — statement variables", () => {
+  // Two roots on two databases, each paginated with its own variable. The
+  // request numbers its variables once, so a statement handed the whole list
+  // carries a parameter it never references — which PostgreSQL refuses to type.
+  const twoDatabaseEntities = () => {
+    const entities = buildEntities();
+    entities.queriesMap = {
+      users: {
+        db: { name: "default", type: "sqlite" },
+        dottedQuotedName: '"users"',
+        columns: [],
+      },
+      other_users: {
+        db: { name: "other", type: "sqlite" },
+        dottedQuotedName: '"other_users"',
+        columns: [],
+      },
+    };
+    entities.columnSqlName = (_table: string, name: string) => name;
+    entities.isVirtualColumn = () => undefined;
+    entities.getForeignKeysBetweenTables = () => ({ relationships: [], relationshipsReversed: [] });
+    return entities;
+  };
+
+  it("hands each database's statement only its own variables", async () => {
+    const seen: Array<{ db: string; query: string; definitions: string[] }> = [];
+    const original = databaseAdapters.sqlite.executeJson;
+    databaseAdapters.sqlite.executeJson = (async (
+      query: string,
+      db: { name: string },
+      definitions: { name: string }[],
+    ) => {
+      seen.push({
+        db: db.name,
+        query,
+        definitions: definitions.map((definition) => definition.name),
+      });
+      return [];
+    }) as typeof databaseAdapters.sqlite.executeJson;
+
+    try {
+      const factory = factoryFn(twoDatabaseEntities());
+      await factory.handler(
+        "query Q($primaryPageSize: Int, $otherPageSize: Int) { " +
+          "users(limit: $primaryPageSize) { id } other_users(limit: $otherPageSize) { id } }",
+        { primaryPageSize: 1, otherPageSize: 2 },
+        fakeReq,
+        undefined,
+      );
+
+      expect(seen).toHaveLength(2);
+      expect(seen[0]).toMatchObject({
+        db: "default",
+        definitions: ["primaryPageSize"],
+        query: expect.stringContaining("LIMIT $1"),
+      });
+      expect(seen[1]).toMatchObject({
+        db: "other",
+        definitions: ["otherPageSize"],
+        query: expect.stringContaining("LIMIT $1"),
+      });
+    } finally {
+      databaseAdapters.sqlite.executeJson = original;
+    }
   });
 });
 

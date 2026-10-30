@@ -633,11 +633,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             })();
 
             const data = await Promise.all<object>(
-              sqlQueries.map(([db, query]) =>
+              sqlQueries.map(({ db, query, variablesDefinition }) =>
                 executeQueryJSON(
                   query,
                   db,
-                  resolved.variables,
+                  variablesDefinition,
                   resolved.allVariables as Record<string, string | number | boolean | null>,
                   options?.timeoutMs,
                   {
@@ -660,7 +660,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             return {
               ...(env.queryOnResponse
                 ? {
-                    sqlQueries: sqlQueries.map(([db, query]) => ({
+                    sqlQueries: sqlQueries.map(({ db, query }) => ({
                       db: db.name,
                       query,
                     })),

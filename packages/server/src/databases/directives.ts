@@ -3,6 +3,8 @@ import type { VariableDefinition } from "../analyzeQuery/types";
 
 import { isString } from "es-toolkit/compat";
 
+import { mappingDbTypeCharVar } from "./core/placeholders";
+
 // Directive handler type
 export type DirectiveHandler = (
   querySelector: string,
@@ -99,13 +101,6 @@ export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
   abs: (querySelector) => `ABS(${querySelector})`,
   multiply: (querySelector, directive) => `(${querySelector} * ${directive.arguments!["by"]})`,
   divide: (querySelector, directive) => `(${querySelector} / ${directive.arguments!["by"]})`,
-};
-
-const mappingDbTypeCharVar: Record<DatabaseType, string> = {
-  pg: "$",
-  mysql: "$",
-  mssql: "@",
-  sqlite: "$",
 };
 
 /**
