@@ -15,6 +15,7 @@ export type InitArgs = {
   dataTools?: boolean;
   frontend?: boolean;
   cron?: boolean;
+  rateLimit?: boolean;
   install: boolean;
 };
 
@@ -53,6 +54,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       "data-tools": { type: "boolean" },
       frontend: { type: "boolean" },
       cron: { type: "boolean" },
+      "rate-limit": { type: "boolean" },
       install: { type: "boolean", default: true },
     },
     allowNegative: true,
@@ -82,6 +84,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values["data-tools"] !== undefined && { dataTools: values["data-tools"] }),
     ...(values.frontend !== undefined && { frontend: values.frontend }),
     ...(values.cron !== undefined && { cron: values.cron }),
+    ...(values["rate-limit"] !== undefined && { rateLimit: values["rate-limit"] }),
     install: values.install,
   };
 };

@@ -37,7 +37,16 @@ const DATABASE_LABELS: Record<DatabaseType, string> = {
   sqlite: "SQLite",
 };
 
-type Extra = "rabbitmq" | "ai" | "mcp" | "auth" | "redis" | "dataTools" | "frontend" | "cron";
+type Extra =
+  | "rabbitmq"
+  | "ai"
+  | "mcp"
+  | "auth"
+  | "redis"
+  | "dataTools"
+  | "frontend"
+  | "cron"
+  | "rateLimit";
 
 const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
   value,
@@ -172,6 +181,9 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     ...(args.cron === undefined
       ? [extraChoice("cron", "Cron job", "logs the book count every minute")]
       : []),
+    ...(args.rateLimit === undefined
+      ? [extraChoice("rateLimit", "Rate limits", "requests a minute per caller")]
+      : []),
   ];
   const extras =
     extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
@@ -190,6 +202,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     dataTools: args.dataTools ?? chosen.has("dataTools"),
     frontend: args.frontend ?? chosen.has("frontend"),
     cron: args.cron ?? chosen.has("cron"),
+    rateLimit: args.rateLimit ?? chosen.has("rateLimit"),
   };
 };
 
@@ -233,6 +246,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.dataTools ? ["--data-tools"] : []),
     ...(answers.frontend ? ["--frontend"] : []),
     ...(answers.cron ? ["--cron"] : []),
+    ...(answers.rateLimit ? ["--rate-limit"] : []),
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
@@ -382,8 +396,8 @@ export const nextSteps = (
       ? [
           "",
           answers.auth
-            ? `${paint.name("Redis")} caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits once you turn them on. With ${paint.code("bun run dev")}, start it first: a token the server cannot check there reads as no token.`
-            : `${paint.name("Redis")} caches GET /rest/books behind each process's own copy (caches in graphoria.ts). AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on.`,
+            ? `${paint.name("Redis")} caches GET /rest/books, for a reader or an editor, behind each process's own copy (caches in graphoria.ts). AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits${answers.rateLimit ? "" : " once you turn them on"}. With ${paint.code("bun run dev")}, start it first: a token the server cannot check there reads as no token.`
+            : `${paint.name("Redis")} caches GET /rest/books behind each process's own copy (caches in graphoria.ts). ${answers.rateLimit ? "RATE_LIMIT_STORE in .env points the rate limits at it, and AUTH_STORE the auth token store once you turn auth on." : "AUTH_STORE and RATE_LIMIT_STORE in .env point the auth token store and the rate limits at it once you turn them on."}`,
         ]
       : []),
     ...(answers.dataTools
@@ -408,6 +422,12 @@ export const nextSteps = (
           `The ${paint.name("cron job")} booksReport (cron in graphoria.ts) logs the number of books${answers.auth ? " and of drafts" : ""} every minute; in Docker, read it with ${paint.code("docker compose logs -f graphoria")}.`,
         ]
       : []),
+    ...(answers.rateLimit
+      ? [
+          "",
+          `${paint.name("Rate limits")}: an anonymous caller gets 60 requests a minute per address (${answers.auth || answers.frontend ? "rateLimit in graphoria.ts" : "RATE_LIMIT_ANONYMOUS_MAX in .env"}), any other caller 600, the admin secret included (RATE_LIMIT_MAX in .env); past that, 429 with Retry-After. ${answers.redis ? "Redis holds the counts, shared by every process." : "Each process counts on its own."}`,
+        ]
+      : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
@@ -418,7 +438,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--no-install]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);

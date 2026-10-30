@@ -30,6 +30,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   dataTools: false,
   frontend: false,
   cron: false,
+  rateLimit: false,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
@@ -209,6 +210,20 @@ describe("renderProject .env", () => {
 
     expect(lines).toContain("DBGATE_PORT=9000");
     expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
+  });
+
+  it("caps every caller, and the anonymous ones only without their grant in graphoria.ts", () => {
+    const lines = renderWith({ rateLimit: true })[".env"]!.split("\n");
+
+    expect(lines).toContain("RATE_LIMIT_MAX=600");
+    expect(lines).toContain("RATE_LIMIT_ANONYMOUS_MAX=60");
+    for (const patch of [{ auth: true }, { frontend: true }]) {
+      const granted = renderWith({ rateLimit: true, ...patch })[".env"]!.split("\n");
+
+      expect(granted).toContain("RATE_LIMIT_MAX=600");
+      expect(granted.some((line) => line.startsWith("RATE_LIMIT_ANONYMOUS_MAX"))).toBe(false);
+    }
+    expect(render("pg")[".env"]).not.toContain("RATE_LIMIT_MAX");
   });
 
   it("adds every feature's settings together without overlap", () => {
@@ -760,7 +775,8 @@ describe("renderProject graphoria.ts", () => {
     { ai: true, mcp: true },
     { redis: true },
     { cron: true },
-    { rabbitmq: true, ai: true, mcp: true, redis: true, cron: true },
+    { rateLimit: true },
+    { rabbitmq: true, ai: true, mcp: true, redis: true, cron: true, rateLimit: true },
   ])("still parses with %j", async (patch) => {
     setEnv();
     setRabbitEnv();
@@ -852,6 +868,15 @@ describe("renderProject with --auth", () => {
     expect(auth.autoCreateTables).toBe(true);
     expect(auth.schema).toBe(database === "sqlite" ? "main" : "auth");
     expect(Object.keys(auth.permissions)).toEqual(["anonymous", "reader", "editor"]);
+  });
+
+  it("caps the tier without a token at 60 requests a minute with --rate-limit", async () => {
+    const { auth } = await parse("pg", { rateLimit: true });
+
+    expect(auth.permissions.anonymous!.rateLimit).toEqual({ max: 60 });
+    expect(auth.permissions.reader!.rateLimit).toBeUndefined();
+    expect(auth.permissions.editor!.rateLimit).toBeUndefined();
+    expect((await parse("pg")).auth.permissions.anonymous!.rateLimit).toBeUndefined();
   });
 
   it.each(ENGINES)("grants the three %s tiers", async (database) => {
@@ -1422,8 +1447,18 @@ describe("renderProject with the frontend", () => {
       },
     );
 
-    it.each([{}, { redis: true }])("grants nothing without the frontend for %j", async (patch) => {
-      expect((await parse(false, "pg", patch)).auth.permissions).toEqual({});
+    it.each([{}, { redis: true }, { rateLimit: true }])(
+      "grants nothing without the frontend for %j",
+      async (patch) => {
+        expect((await parse(false, "pg", patch)).auth.permissions).toEqual({});
+      },
+    );
+
+    it("caps the anonymous grant at 60 requests a minute with --rate-limit", async () => {
+      expect(
+        (await parse(true, "pg", { rateLimit: true })).auth.permissions.anonymous,
+      ).toMatchObject({ rateLimit: { max: 60 } });
+      expect((await parse(true, "pg")).auth.permissions.anonymous!.rateLimit).toBeUndefined();
     });
 
     it("says what else the grant opens to anyone", () => {
@@ -1814,6 +1849,7 @@ describe("renderProject types the add-book operation", () => {
       ai: true,
       mcp: true,
       cron: true,
+      rateLimit: true,
     };
     for (const database of ENGINES) {
       await write(database, renderWith(everything, database));

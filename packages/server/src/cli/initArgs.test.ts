@@ -80,6 +80,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("cron");
   });
 
+  it("answers the rate-limit question with --rate-limit or --no-rate-limit", () => {
+    expect(parseInitArgs(["--rate-limit"]).rateLimit).toBe(true);
+    expect(parseInitArgs(["--no-rate-limit"]).rateLimit).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("rateLimit");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

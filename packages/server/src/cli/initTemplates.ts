@@ -13,6 +13,7 @@ export type InitAnswers = {
   dataTools: boolean;
   frontend: boolean;
   cron: boolean;
+  rateLimit: boolean;
 };
 
 export type ProjectValues = InitAnswers & {
@@ -210,6 +211,11 @@ const SQLITE_CONNECTION = `      connection: { filename: env("DB_FILE") },
       },
 `;
 
+const anonymousRateLimitComment = (indent: string) =>
+  `${indent}// 60 requests a minute per address. Every other caller, the admin
+${indent}// secret included, gets RATE_LIMIT_MAX from .env.
+`;
+
 const anonymousGrant = (values: ProjectValues) => {
   const schema = seedSchema(values);
   const operations = [...(values.redis ? ['"books"'] : []), '"addBook"'];
@@ -224,7 +230,7 @@ ${values.ai ? "  // Anyone can also ask the AI agent, which calls your LLM provi
       anonymous: {
         tables: ["${schema}_authors", "${schema}_books"],
 ${values.rabbitmq ? '        queues: ["events"],\n' : ""}        operations: [${operations.join(", ")}],
-${values.ai ? "        ai: true,\n" : ""}      },
+${values.ai ? "        ai: true,\n" : ""}${values.rateLimit ? `${anonymousRateLimitComment("        ")}        rateLimit: { max: 60 },\n` : ""}      },
     },
   },
 `;
@@ -242,7 +248,7 @@ const authConfig = (values: ProjectValues) => {
 ${values.database === "sqlite" ? '    // SQLite has no auth schema to create: the user table lives in the database file.\n    schema: "main",\n' : ""}    // The first boot, or seed-auth, creates the auth user table.
     autoCreateTables: true,
     permissions: {
-      anonymous: { tables: ["${schema}_authors"] },
+${values.rateLimit ? anonymousRateLimitComment("      ") : ""}      anonymous: { tables: ["${schema}_authors"]${values.rateLimit ? ", rateLimit: { max: 60 }" : ""} },
       reader: {
         tables: {
           ${schema}_authors: "ALL",
@@ -711,6 +717,11 @@ RATE_LIMIT_STORE=redis
 `
     : "";
 
+// The anonymous ceiling sits on the anonymous role in graphoria.ts when the
+// project grants one there.
+const rateLimitEnv = ({ rateLimit, auth, frontend }: ProjectValues) =>
+  rateLimit ? `RATE_LIMIT_MAX=600\n${auth || frontend ? "" : "RATE_LIMIT_ANONYMOUS_MAX=60\n"}` : "";
+
 const dataToolsEnv = (values: ProjectValues) =>
   values.dataTools
     ? `DBGATE_PORT=${DBGATE_PORT}
@@ -725,7 +736,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -739,7 +750,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules

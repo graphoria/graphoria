@@ -75,6 +75,7 @@ describe("collectAnswers", () => {
     expect(answers.dataTools).toBe(false);
     expect(answers.frontend).toBe(false);
     expect(answers.cron).toBe(false);
+    expect(answers.rateLimit).toBe(false);
     expect(io.fallbacks).toEqual(["app", answers.dbPassword, "5432"]);
     expect(io.selected).toEqual(["Database engine"]);
     expect(io.multi).toEqual(["Select extras"]);
@@ -108,6 +109,7 @@ describe("collectAnswers", () => {
       dataTools: false,
       frontend: false,
       cron: false,
+      rateLimit: false,
     });
   });
 
@@ -200,7 +202,7 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7]] });
+    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8]] });
     const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({
@@ -210,6 +212,7 @@ describe("collectAnswers", () => {
       auth: true,
       frontend: true,
       cron: true,
+      rateLimit: true,
     });
   });
 
@@ -226,6 +229,7 @@ describe("collectAnswers", () => {
       dataTools: false,
       frontend: false,
       cron: false,
+      rateLimit: false,
     });
     expect(io.said).toEqual([]);
   });
@@ -243,6 +247,7 @@ describe("collectAnswers", () => {
       "Data tools",
       "React frontend",
       "Cron job",
+      "Rate limits",
     ]);
   });
 
@@ -259,6 +264,7 @@ describe("collectAnswers", () => {
         dataTools: false,
         frontend: false,
         cron: false,
+        rateLimit: false,
       },
       io.io,
     );
@@ -333,6 +339,17 @@ describe("collectAnswers", () => {
     expect(io.multiOptions[0]).not.toContain("Cron job");
   });
 
+  it.each([true, false])(
+    "skips the rate-limit extra when --rate-limit is %p",
+    async (rateLimit) => {
+      const io = prompter();
+      const answers = await collectAnswers({ ...ARGS, rateLimit }, io.io);
+
+      expect(answers.rateLimit).toBe(rateLimit);
+      expect(io.multiOptions[0]).not.toContain("Rate limits");
+    },
+  );
+
   it("asks neither a password nor a port for SQLite, which has no server", async () => {
     const io = prompter([]);
     const answers = await collectAnswers({ ...ARGS, database: "sqlite" }, io.io);
@@ -350,6 +367,7 @@ describe("collectAnswers", () => {
       dataTools: false,
       frontend: false,
       cron: false,
+      rateLimit: false,
     });
     expect(io.fallbacks).toEqual(["app"]);
   });
@@ -503,6 +521,7 @@ const ANSWERS: InitAnswers = {
   dataTools: false,
   frontend: false,
   cron: false,
+  rateLimit: false,
 };
 
 describe("recreateCommand", () => {
@@ -519,11 +538,12 @@ describe("recreateCommand", () => {
           dataTools: true,
           frontend: true,
           cron: true,
+          rateLimit: true,
         },
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit",
     );
   });
 
@@ -666,6 +686,43 @@ describe("nextSteps", () => {
     expect(nextSteps(ANSWERS, true)).not.toContain("booksReport");
   });
 
+  it.each([
+    {
+      what: "graphoria.ts with auth",
+      answers: { ...ANSWERS, rateLimit: true, auth: true },
+      anonymous: "rateLimit in graphoria.ts",
+    },
+    {
+      what: "graphoria.ts with the frontend's grant",
+      answers: { ...ANSWERS, rateLimit: true, frontend: true },
+      anonymous: "rateLimit in graphoria.ts",
+    },
+    {
+      what: ".env without an anonymous grant",
+      answers: { ...ANSWERS, rateLimit: true },
+      anonymous: "RATE_LIMIT_ANONYMOUS_MAX in .env",
+    },
+  ])("says what the rate limits allow, the anonymous one from $what", ({ answers, anonymous }) => {
+    const limits = `Rate limits: an anonymous caller gets 60 requests a minute per address (${anonymous}), any other caller 600, the admin secret included (RATE_LIMIT_MAX in .env); past that, 429 with Retry-After.`;
+
+    expect(nextSteps(answers, true, USERS)).toContain(`${limits} Each process counts on its own.`);
+    expect(nextSteps({ ...answers, redis: true }, true, USERS)).toContain(
+      `${limits} Redis holds the counts, shared by every process.`,
+    );
+    expect(nextSteps({ ...answers, rateLimit: false }, true, USERS)).not.toContain("Rate limits");
+  });
+
+  it("says the rate limits are on in the Redis paragraph", () => {
+    expect(
+      nextSteps({ ...ANSWERS, redis: true, rateLimit: true, auth: true }, true, USERS),
+    ).toContain(
+      "AUTH_STORE in .env points the auth token store at it, and RATE_LIMIT_STORE the rate limits. With",
+    );
+    expect(nextSteps({ ...ANSWERS, redis: true, rateLimit: true }, true)).toContain(
+      "RATE_LIMIT_STORE in .env points the rate limits at it, and AUTH_STORE the auth token store once you turn auth on.",
+    );
+  });
+
   it("starts the broker and Redis too for a host run", () => {
     const both = { ...ANSWERS, rabbitmq: true, redis: true };
 
@@ -723,6 +780,7 @@ describe("nextSteps", () => {
         dataTools: true,
         frontend: true,
         cron: true,
+        rateLimit: true,
       },
       installed: true,
     },
@@ -791,6 +849,7 @@ describe("nextSteps", () => {
         redis: true,
         dataTools: true,
         cron: true,
+        rateLimit: true,
       },
       true,
       USERS,
@@ -806,6 +865,7 @@ describe("nextSteps", () => {
       "dbgate",
       "Redis Commander",
       "cron job",
+      "Rate limits",
     ]) {
       expect(steps).toContain(`\x1b[1m${name}\x1b[22m`);
     }
