@@ -456,6 +456,7 @@ describe("cli init", () => {
       "--no-redis",
       "--no-data-tools",
       "--no-frontend",
+      "--no-cron",
       "--no-install",
     ]);
     cwds.push(cwd);

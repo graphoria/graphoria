@@ -74,6 +74,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("dataTools");
   });
 
+  it("answers the cron question with --cron or --no-cron", () => {
+    expect(parseInitArgs(["--cron"]).cron).toBe(true);
+    expect(parseInitArgs(["--no-cron"]).cron).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("cron");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

@@ -74,6 +74,7 @@ describe("collectAnswers", () => {
     expect(answers.redis).toBe(false);
     expect(answers.dataTools).toBe(false);
     expect(answers.frontend).toBe(false);
+    expect(answers.cron).toBe(false);
     expect(io.fallbacks).toEqual(["app", answers.dbPassword, "5432"]);
     expect(io.selected).toEqual(["Database engine"]);
     expect(io.multi).toEqual(["Select extras"]);
@@ -106,6 +107,7 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      cron: false,
     });
   });
 
@@ -198,7 +200,7 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 3, 6]] });
+    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7]] });
     const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({
@@ -207,6 +209,7 @@ describe("collectAnswers", () => {
       mcp: true,
       auth: true,
       frontend: true,
+      cron: true,
     });
   });
 
@@ -222,6 +225,7 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      cron: false,
     });
     expect(io.said).toEqual([]);
   });
@@ -238,6 +242,7 @@ describe("collectAnswers", () => {
       "Redis",
       "Data tools",
       "React frontend",
+      "Cron job",
     ]);
   });
 
@@ -253,6 +258,7 @@ describe("collectAnswers", () => {
         redis: false,
         dataTools: false,
         frontend: false,
+        cron: false,
       },
       io.io,
     );
@@ -319,6 +325,14 @@ describe("collectAnswers", () => {
     expect(io.multiOptions[0]).not.toContain("React frontend");
   });
 
+  it.each([true, false])("skips the cron extra when --cron is %p", async (cron) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, cron }, io.io);
+
+    expect(answers.cron).toBe(cron);
+    expect(io.multiOptions[0]).not.toContain("Cron job");
+  });
+
   it("asks neither a password nor a port for SQLite, which has no server", async () => {
     const io = prompter([]);
     const answers = await collectAnswers({ ...ARGS, database: "sqlite" }, io.io);
@@ -335,6 +349,7 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      cron: false,
     });
     expect(io.fallbacks).toEqual(["app"]);
   });
@@ -487,6 +502,7 @@ const ANSWERS: InitAnswers = {
   redis: false,
   dataTools: false,
   frontend: false,
+  cron: false,
 };
 
 describe("recreateCommand", () => {
@@ -502,11 +518,12 @@ describe("recreateCommand", () => {
           redis: true,
           dataTools: true,
           frontend: true,
+          cron: true,
         },
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron",
     );
   });
 
@@ -639,6 +656,16 @@ describe("nextSteps", () => {
     expect(nextSteps({ ...answers, mcp: false }, true, USERS)).not.toContain("/mcp");
   });
 
+  it("says what the cron job logs, and where to read it in Docker", () => {
+    expect(nextSteps({ ...ANSWERS, cron: true }, true)).toContain(
+      "The cron job booksReport (cron in graphoria.ts) logs the number of books every minute; in Docker, read it with docker compose logs -f graphoria.",
+    );
+    expect(nextSteps({ ...ANSWERS, cron: true, auth: true }, true, USERS)).toContain(
+      "logs the number of books and of drafts every minute",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("booksReport");
+  });
+
   it("starts the broker and Redis too for a host run", () => {
     const both = { ...ANSWERS, rabbitmq: true, redis: true };
 
@@ -695,6 +722,7 @@ describe("nextSteps", () => {
         redis: true,
         dataTools: true,
         frontend: true,
+        cron: true,
       },
       installed: true,
     },
@@ -746,9 +774,24 @@ describe("nextSteps", () => {
     expect(steps).toContain("With \x1b[36mbun run dev\x1b[39m, start it first");
   });
 
+  it("colors the command the cron paragraph names", () => {
+    expect(nextSteps({ ...ANSWERS, cron: true }, true, USERS, COLOR_PAINT)).toContain(
+      "read it with \x1b[36mdocker compose logs -f graphoria\x1b[39m.",
+    );
+  });
+
   it("bolds the name that opens each extra's paragraph, and colors the demo passwords yellow", () => {
     const steps = nextSteps(
-      { ...ANSWERS, rabbitmq: true, ai: true, mcp: true, auth: true, redis: true, dataTools: true },
+      {
+        ...ANSWERS,
+        rabbitmq: true,
+        ai: true,
+        mcp: true,
+        auth: true,
+        redis: true,
+        dataTools: true,
+        cron: true,
+      },
       true,
       USERS,
       COLOR_PAINT,
@@ -762,6 +805,7 @@ describe("nextSteps", () => {
       "Redis",
       "dbgate",
       "Redis Commander",
+      "cron job",
     ]) {
       expect(steps).toContain(`\x1b[1m${name}\x1b[22m`);
     }

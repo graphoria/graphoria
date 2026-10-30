@@ -14,6 +14,7 @@ export type InitArgs = {
   redis?: boolean;
   dataTools?: boolean;
   frontend?: boolean;
+  cron?: boolean;
   install: boolean;
 };
 
@@ -51,6 +52,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       redis: { type: "boolean" },
       "data-tools": { type: "boolean" },
       frontend: { type: "boolean" },
+      cron: { type: "boolean" },
       install: { type: "boolean", default: true },
     },
     allowNegative: true,
@@ -79,6 +81,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values.redis !== undefined && { redis: values.redis }),
     ...(values["data-tools"] !== undefined && { dataTools: values["data-tools"] }),
     ...(values.frontend !== undefined && { frontend: values.frontend }),
+    ...(values.cron !== undefined && { cron: values.cron }),
     install: values.install,
   };
 };

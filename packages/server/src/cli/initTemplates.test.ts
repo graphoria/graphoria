@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -29,6 +29,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   redis: false,
   dataTools: false,
   frontend: false,
+  cron: false,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
@@ -683,6 +684,63 @@ describe("renderProject graphoria.ts", () => {
     expect(storesInUse(configuration, undefined, undefined)).toEqual(["redis"]);
   });
 
+  it("schedules the books report every minute with --cron", async () => {
+    setEnv();
+    const { cron } = ConfigurationZod.parse((await load("pg", { cron: true }))({}));
+
+    expect(cron).toHaveLength(1);
+    expect(cron[0]).toMatchObject({
+      name: "booksReport",
+      pattern: "* * * * *",
+      protect: true,
+      query: "query { public_books { id } }",
+    });
+    expect(ConfigurationZod.parse((await load("pg"))({})).cron).toEqual([]);
+  });
+
+  it.each([
+    {
+      what: "books",
+      patch: { cron: true },
+      data: { public_books: [{ id: 1 }, { id: 2 }] },
+      line: ["[booksReport] books:", 2],
+    },
+    {
+      what: "books and drafts with --auth",
+      patch: { cron: true, auth: true },
+      data: { public_books: [{ status: "published" }, { status: "draft" }, { status: "draft" }] },
+      line: ["[booksReport] books:", 3, "drafts:", 2],
+    },
+  ])("logs the number of $what from the report's answer", async ({ patch, data, line }) => {
+    setEnv();
+    const [job] = ConfigurationZod.parse((await load("pg", patch))({})).cron;
+    const log = spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await job!.onTick!({} as never, {} as never, { data });
+      expect(log).toHaveBeenCalledWith(...line);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("selects each book's status for the report with --auth", async () => {
+    setEnv();
+    const [job] = ConfigurationZod.parse((await load("pg", { cron: true, auth: true }))({})).cron;
+
+    expect(job!.query).toBe("query { public_books { status } }");
+  });
+
+  it("fails the tick with the query's errors when it answered no data", async () => {
+    setEnv();
+    const [job] = ConfigurationZod.parse((await load("pg", { cron: true }))({})).cron;
+    const errors = [{ message: "connection refused" }];
+
+    expect(() => job!.onTick!({} as never, {} as never, { data: null, errors })).toThrow(
+      'booksReport: [{"message":"connection refused"}]',
+    );
+  });
+
   it.each(SERVER_ENGINES)("adds the add-book operation to the %s scaffold", async (database) => {
     setEnv();
     const configuration = ConfigurationZod.parse((await load(database))({}));
@@ -701,7 +759,8 @@ describe("renderProject graphoria.ts", () => {
     { rabbitmq: true, ai: true },
     { ai: true, mcp: true },
     { redis: true },
-    { rabbitmq: true, ai: true, mcp: true, redis: true },
+    { cron: true },
+    { rabbitmq: true, ai: true, mcp: true, redis: true, cron: true },
   ])("still parses with %j", async (patch) => {
     setEnv();
     setRabbitEnv();
@@ -1748,7 +1807,14 @@ describe("renderProject types the add-book operation", () => {
         files.push(`${project}/${name}`);
       }
     };
-    const everything = { frontend: true, rabbitmq: true, redis: true, ai: true, mcp: true };
+    const everything = {
+      frontend: true,
+      rabbitmq: true,
+      redis: true,
+      ai: true,
+      mcp: true,
+      cron: true,
+    };
     for (const database of ENGINES) {
       await write(database, renderWith(everything, database));
       await write(`${database}-plain`, renderWith({}, database));

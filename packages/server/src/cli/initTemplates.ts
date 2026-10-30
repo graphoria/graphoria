@@ -12,6 +12,7 @@ export type InitAnswers = {
   redis: boolean;
   dataTools: boolean;
   frontend: boolean;
+  cron: boolean;
 };
 
 export type ProjectValues = InitAnswers & {
@@ -558,6 +559,37 @@ const CACHES_CONFIG = `  // A cached operation answers from this process first, 
   },
 `;
 
+// Only with --auth do the books carry a status, so only then are drafts counted.
+const cronLog = (books: string, auth: boolean) =>
+  auth
+    ? `        const drafts = data.${books}.filter((book) => book.status === "draft").length;
+        console.log("[booksReport] books:", data.${books}.length, "drafts:", drafts);
+`
+    : `        console.log("[booksReport] books:", data.${books}.length);
+`;
+
+const cronConfig = (values: ProjectValues) => {
+  const books = `${seedSchema(values)}_books`;
+  const fields = values.auth ? "status: string" : "id: number";
+  return `  // Every minute the server runs the query as the superadmin and hands the
+  // answer to onTick, which logs it to the server's output.
+  cron: [
+    {
+      name: "booksReport",
+      pattern: "* * * * *",
+      // A tick still running when the next one is due makes that one skip.
+      protect: true,
+      query: "query { ${books} { ${values.auth ? "status" : "id"} } }",
+      onTick: (_options, _context, response) => {
+        const data = response?.data as { ${books}: { ${fields} }[] } | null | undefined;
+        // A failed query answers no data: throw, and the job logs the errors.
+        if (!data) throw new Error(\`booksReport: \${JSON.stringify(response?.errors)}\`);
+${cronLog(books, values.auth)}      },
+    },
+  ],
+`;
+};
+
 const repositoryEntry = ({
   auth,
 }: ProjectValues) => `      // The typed data access in repository.ts, which ${auth ? "addBook and publishBook call" : "addBook calls"}.
@@ -603,7 +635,7 @@ export default (() => ({
       enabled: true,
 ${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}    },
   ],
-${values.rabbitmq ? queueConfig(values) : ""}${values.ai || values.mcp ? aiConfig(values) : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
+${values.rabbitmq ? queueConfig(values) : ""}${values.ai || values.mcp ? aiConfig(values) : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.cron ? cronConfig(values) : ""}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;
 
 const INDEX = `import { createBunServer } from "@graphoria/server";

@@ -19,7 +19,7 @@ mkdir my-api && cd my-api
 bunx graphoria init
 ```
 
-`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, the MCP server, login with two roles, Redis, data inspection tools and a React frontend. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
+`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, the MCP server, login with two roles, Redis, data inspection tools, a React frontend and a cron job. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
 
 | File                                          | What it holds                                                                                                                                                  |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,7 +64,7 @@ Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the 
 
 Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, `main_` on SQLite, and the database name on MySQL (`app_authors` with the default name).
 
-`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--mcp` the MCP server, `--auth` adds login with two roles (below), `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time. In a terminal, the steps it prints are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
+`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--mcp` the MCP server, `--auth` adds login with two roles (below), `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), `--cron` adds a job that logs the book count every minute (below), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time. In a terminal, the steps it prints are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
 
 ### Add a React frontend with `--frontend`
 
@@ -181,6 +181,16 @@ bunx graphoria seed-auth --user editor --password <printed> --role editor --conf
 Log in with the `auth_login` mutation in GraphiQL, or `POST /rest/auth/login` with `{ "username": …, "password": … }`, and send the `access_token` it answers as `Authorization: Bearer <access_token>`. An operation a role is not granted answers `404` on its REST route, and that role's schema has no field for it. `publishBook` answers `null` for an id no book has.
 
 With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token. `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor, and to `events_onBookPublished` for both roles, refetching the list on either.
+
+### Schedule a job with `--cron`
+
+Tick `Cron job` in the extras list, or pass `--cron` (`--no-cron` answers no, and so does `--yes` alone). The project then gets:
+
+| File           | What it holds                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------ |
+| `graphoria.ts` | A `cron` entry, `booksReport`, which queries the books every minute and logs how many there are. |
+
+Every minute the server runs the job's `query` as the superadmin and hands the answer to its `onTick`, which logs `[booksReport] books: 6` to the server's output: the terminal running `bun run dev`, or `docker compose logs -f graphoria` in Docker. With `--auth`, the query selects each book's `status` and the line counts the drafts too. `protect: true` makes a tick that falls due while the previous one still runs skip, and a query that fails throws, so the job logs its errors. Every server process runs the job; see [Cron Jobs](./CRON.md) for the schedule syntax, time zones and running a job once across processes.
 
 The rest of this guide sets a project up by hand, against a database you already run.
 

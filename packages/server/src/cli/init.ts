@@ -37,7 +37,7 @@ const DATABASE_LABELS: Record<DatabaseType, string> = {
   sqlite: "SQLite",
 };
 
-type Extra = "rabbitmq" | "ai" | "mcp" | "auth" | "redis" | "dataTools" | "frontend";
+type Extra = "rabbitmq" | "ai" | "mcp" | "auth" | "redis" | "dataTools" | "frontend" | "cron";
 
 const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
   value,
@@ -169,6 +169,9 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     ...(args.frontend === undefined
       ? [extraChoice("frontend", "React frontend", "app at localhost:3000")]
       : []),
+    ...(args.cron === undefined
+      ? [extraChoice("cron", "Cron job", "logs the book count every minute")]
+      : []),
   ];
   const extras =
     extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
@@ -186,6 +189,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     redis: args.redis ?? chosen.has("redis"),
     dataTools: args.dataTools ?? chosen.has("dataTools"),
     frontend: args.frontend ?? chosen.has("frontend"),
+    cron: args.cron ?? chosen.has("cron"),
   };
 };
 
@@ -228,6 +232,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.redis ? ["--redis"] : []),
     ...(answers.dataTools ? ["--data-tools"] : []),
     ...(answers.frontend ? ["--frontend"] : []),
+    ...(answers.cron ? ["--cron"] : []),
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
@@ -397,6 +402,12 @@ export const nextSteps = (
           "web/graphql-env.d.ts, which types the app's queries. Commit it.",
         ]
       : []),
+    ...(answers.cron
+      ? [
+          "",
+          `The ${paint.name("cron job")} booksReport (cron in graphoria.ts) logs the number of books${answers.auth ? " and of drafts" : ""} every minute; in Docker, read it with ${paint.code("docker compose logs -f graphoria")}.`,
+        ]
+      : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
@@ -407,7 +418,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--no-install]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);
