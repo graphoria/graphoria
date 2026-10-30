@@ -14,6 +14,7 @@ export type InitAnswers = {
   frontend: boolean;
   cron: boolean;
   rateLimit: boolean;
+  metrics: boolean;
 };
 
 export type ProjectValues = InitAnswers & {
@@ -21,6 +22,7 @@ export type ProjectValues = InitAnswers & {
   adminSecret: string;
   jwtSecret: string;
   rabbitmqPassword: string;
+  metricsSecret: string;
 };
 
 export type Versions = { graphoria: string; bun: string };
@@ -722,6 +724,9 @@ RATE_LIMIT_STORE=redis
 const rateLimitEnv = ({ rateLimit, auth, frontend }: ProjectValues) =>
   rateLimit ? `RATE_LIMIT_MAX=600\n${auth || frontend ? "" : "RATE_LIMIT_ANONYMOUS_MAX=60\n"}` : "";
 
+const metricsEnv = (values: ProjectValues) =>
+  values.metrics ? `METRICS_ENABLED=true\nMETRICS_SECRET=${values.metricsSecret}\n` : "";
+
 const dataToolsEnv = (values: ProjectValues) =>
   values.dataTools
     ? `DBGATE_PORT=${DBGATE_PORT}
@@ -736,7 +741,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -750,7 +755,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules

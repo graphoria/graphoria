@@ -86,6 +86,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("rateLimit");
   });
 
+  it("answers the metrics question with --metrics or --no-metrics", () => {
+    expect(parseInitArgs(["--metrics"]).metrics).toBe(true);
+    expect(parseInitArgs(["--no-metrics"]).metrics).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("metrics");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

@@ -31,9 +31,11 @@ const values = (database: DatabaseType): ProjectValues => ({
   frontend: false,
   cron: false,
   rateLimit: false,
+  metrics: false,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
+  metricsSecret: "metrics-secret-value",
 });
 
 const versions = { graphoria: "0.6.0", bun: "1.4.2" };
@@ -225,6 +227,17 @@ describe("renderProject .env", () => {
     }
     expect(render("pg")[".env"]).not.toContain("RATE_LIMIT_MAX");
   });
+
+  it.each(["pg", "sqlite"] as const)(
+    "mounts /metrics behind a secret of its own for %s",
+    (database) => {
+      const lines = renderWith({ metrics: true }, database)[".env"]!.split("\n");
+
+      expect(lines).toContain("METRICS_ENABLED=true");
+      expect(lines).toContain("METRICS_SECRET=metrics-secret-value");
+      expect(render(database)[".env"]).not.toContain("METRICS_");
+    },
+  );
 
   it("adds every feature's settings together without overlap", () => {
     const lines = renderWith({

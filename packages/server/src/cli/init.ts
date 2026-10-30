@@ -46,7 +46,8 @@ type Extra =
   | "dataTools"
   | "frontend"
   | "cron"
-  | "rateLimit";
+  | "rateLimit"
+  | "metrics";
 
 const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
   value,
@@ -184,6 +185,9 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     ...(args.rateLimit === undefined
       ? [extraChoice("rateLimit", "Rate limits", "requests a minute per caller")]
       : []),
+    ...(args.metrics === undefined
+      ? [extraChoice("metrics", "Metrics", "Prometheus /metrics behind its own secret")]
+      : []),
   ];
   const extras =
     extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
@@ -203,6 +207,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     frontend: args.frontend ?? chosen.has("frontend"),
     cron: args.cron ?? chosen.has("cron"),
     rateLimit: args.rateLimit ?? chosen.has("rateLimit"),
+    metrics: args.metrics ?? chosen.has("metrics"),
   };
 };
 
@@ -247,6 +252,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.frontend ? ["--frontend"] : []),
     ...(answers.cron ? ["--cron"] : []),
     ...(answers.rateLimit ? ["--rate-limit"] : []),
+    ...(answers.metrics ? ["--metrics"] : []),
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
@@ -428,6 +434,12 @@ export const nextSteps = (
           `${paint.name("Rate limits")}: an anonymous caller gets 60 requests a minute per address (${answers.auth || answers.frontend ? "rateLimit in graphoria.ts" : "RATE_LIMIT_ANONYMOUS_MAX in .env"}), any other caller 600, the admin secret included (RATE_LIMIT_MAX in .env); past that, 429 with Retry-After. ${answers.redis ? "Redis holds the counts, shared by every process." : "Each process counts on its own."}`,
         ]
       : []),
+    ...(answers.metrics
+      ? [
+          "",
+          `${paint.name("Metrics")}: ${link(3000, "/metrics")} answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.`,
+        ]
+      : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
@@ -438,7 +450,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--metrics] [--no-install]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);
@@ -517,6 +529,7 @@ export const initCommand = async (argv: string[]): Promise<never> => {
       adminSecret: generateSecret(),
       jwtSecret: generateSecret(),
       rabbitmqPassword: generatePassword(),
+      metricsSecret: generateSecret(),
     },
     { graphoria: version, bun: Bun.version },
   );

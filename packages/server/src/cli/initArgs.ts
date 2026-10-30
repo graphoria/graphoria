@@ -16,6 +16,7 @@ export type InitArgs = {
   frontend?: boolean;
   cron?: boolean;
   rateLimit?: boolean;
+  metrics?: boolean;
   install: boolean;
 };
 
@@ -55,6 +56,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       frontend: { type: "boolean" },
       cron: { type: "boolean" },
       "rate-limit": { type: "boolean" },
+      metrics: { type: "boolean" },
       install: { type: "boolean", default: true },
     },
     allowNegative: true,
@@ -85,6 +87,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values.frontend !== undefined && { frontend: values.frontend }),
     ...(values.cron !== undefined && { cron: values.cron }),
     ...(values["rate-limit"] !== undefined && { rateLimit: values["rate-limit"] }),
+    ...(values.metrics !== undefined && { metrics: values.metrics }),
     install: values.install,
   };
 };

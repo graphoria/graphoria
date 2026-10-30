@@ -76,6 +76,7 @@ describe("collectAnswers", () => {
     expect(answers.frontend).toBe(false);
     expect(answers.cron).toBe(false);
     expect(answers.rateLimit).toBe(false);
+    expect(answers.metrics).toBe(false);
     expect(io.fallbacks).toEqual(["app", answers.dbPassword, "5432"]);
     expect(io.selected).toEqual(["Database engine"]);
     expect(io.multi).toEqual(["Select extras"]);
@@ -110,6 +111,7 @@ describe("collectAnswers", () => {
       frontend: false,
       cron: false,
       rateLimit: false,
+      metrics: false,
     });
   });
 
@@ -202,7 +204,7 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8]] });
+    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9]] });
     const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({
@@ -213,6 +215,7 @@ describe("collectAnswers", () => {
       frontend: true,
       cron: true,
       rateLimit: true,
+      metrics: true,
     });
   });
 
@@ -230,6 +233,7 @@ describe("collectAnswers", () => {
       frontend: false,
       cron: false,
       rateLimit: false,
+      metrics: false,
     });
     expect(io.said).toEqual([]);
   });
@@ -248,6 +252,7 @@ describe("collectAnswers", () => {
       "React frontend",
       "Cron job",
       "Rate limits",
+      "Metrics",
     ]);
   });
 
@@ -265,6 +270,7 @@ describe("collectAnswers", () => {
         frontend: false,
         cron: false,
         rateLimit: false,
+        metrics: false,
       },
       io.io,
     );
@@ -350,6 +356,14 @@ describe("collectAnswers", () => {
     },
   );
 
+  it.each([true, false])("skips the metrics extra when --metrics is %p", async (metrics) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, metrics }, io.io);
+
+    expect(answers.metrics).toBe(metrics);
+    expect(io.multiOptions[0]).not.toContain("Metrics");
+  });
+
   it("asks neither a password nor a port for SQLite, which has no server", async () => {
     const io = prompter([]);
     const answers = await collectAnswers({ ...ARGS, database: "sqlite" }, io.io);
@@ -368,6 +382,7 @@ describe("collectAnswers", () => {
       frontend: false,
       cron: false,
       rateLimit: false,
+      metrics: false,
     });
     expect(io.fallbacks).toEqual(["app"]);
   });
@@ -522,6 +537,7 @@ const ANSWERS: InitAnswers = {
   frontend: false,
   cron: false,
   rateLimit: false,
+  metrics: false,
 };
 
 describe("recreateCommand", () => {
@@ -539,11 +555,12 @@ describe("recreateCommand", () => {
           frontend: true,
           cron: true,
           rateLimit: true,
+          metrics: true,
         },
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit --metrics",
     );
   });
 
@@ -712,6 +729,13 @@ describe("nextSteps", () => {
     expect(nextSteps({ ...answers, rateLimit: false }, true, USERS)).not.toContain("Rate limits");
   });
 
+  it("points Prometheus at /metrics with its own secret", () => {
+    expect(nextSteps({ ...ANSWERS, metrics: true }, true)).toContain(
+      "Metrics: http://localhost:3000/metrics answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("/metrics");
+  });
+
   it("says the rate limits are on in the Redis paragraph", () => {
     expect(
       nextSteps({ ...ANSWERS, redis: true, rateLimit: true, auth: true }, true, USERS),
@@ -781,6 +805,7 @@ describe("nextSteps", () => {
         frontend: true,
         cron: true,
         rateLimit: true,
+        metrics: true,
       },
       installed: true,
     },
@@ -850,6 +875,7 @@ describe("nextSteps", () => {
         dataTools: true,
         cron: true,
         rateLimit: true,
+        metrics: true,
       },
       true,
       USERS,
@@ -866,6 +892,7 @@ describe("nextSteps", () => {
       "Redis Commander",
       "cron job",
       "Rate limits",
+      "Metrics",
     ]) {
       expect(steps).toContain(`\x1b[1m${name}\x1b[22m`);
     }
