@@ -472,6 +472,7 @@ describe("cli init", () => {
       "--no-rate-limit",
       "--no-metrics",
       "--no-tracing",
+      "--no-virtual-columns",
       "--no-install",
     ]);
     cwds.push(cwd);

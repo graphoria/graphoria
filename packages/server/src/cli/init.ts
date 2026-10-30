@@ -49,7 +49,8 @@ type Extra =
   | "cron"
   | "rateLimit"
   | "metrics"
-  | "tracing";
+  | "tracing"
+  | "virtualColumns";
 
 const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
   value,
@@ -193,6 +194,9 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     ...(args.tracing === undefined
       ? [extraChoice("tracing", "Tracing", "each request's spans in Jaeger")]
       : []),
+    ...(args.virtualColumns === undefined
+      ? [extraChoice("virtualColumns", "Computed column", "books.age, worked out in SQL")]
+      : []),
   ];
   const extras =
     extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
@@ -214,6 +218,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     rateLimit: args.rateLimit ?? chosen.has("rateLimit"),
     metrics: args.metrics ?? chosen.has("metrics"),
     tracing: args.tracing ?? chosen.has("tracing"),
+    virtualColumns: args.virtualColumns ?? chosen.has("virtualColumns"),
   };
 };
 
@@ -238,9 +243,11 @@ export const portWarning = (
   return `Port ${port} is in use on this host, so Docker Compose cannot publish the ${describe.service} on it. Set ${describe.envVar} in .env to a free port${suggestion} before \`docker compose up\`.`;
 };
 
-export const sampleQuery = (answers: Pick<InitAnswers, "database" | "dbName">): string => {
+export const sampleQuery = (
+  answers: Pick<InitAnswers, "database" | "dbName" | "virtualColumns">,
+): string => {
   const schema = seedSchema(answers);
-  return `{ ${schema}_authors { name ${schema}_books { title } } }`;
+  return `{ ${schema}_authors { name ${schema}_books { title${answers.virtualColumns ? " age" : ""} } } }`;
 };
 
 export const recreateCommand = (answers: InitAnswers, installed: boolean): string =>
@@ -260,6 +267,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.rateLimit ? ["--rate-limit"] : []),
     ...(answers.metrics ? ["--metrics"] : []),
     ...(answers.tracing ? ["--tracing"] : []),
+    ...(answers.virtualColumns ? ["--virtual-columns"] : []),
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
@@ -454,6 +462,12 @@ export const nextSteps = (
           `${paint.name("Jaeger")} shows a trace for each request, down to the SQL it ran, at ${link(JAEGER_UI_PORT)}: pick the service named OTEL_SERVICE_NAME in .env.`,
         ]
       : []),
+    ...(answers.virtualColumns
+      ? [
+          "",
+          `${paint.name("Computed column")}: each book's age, the years since it was published, is worked out by the database on every read (schema in graphoria.ts) and never stored.`,
+        ]
+      : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
@@ -464,7 +478,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--metrics] [--tracing] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);

@@ -98,6 +98,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("tracing");
   });
 
+  it("answers the computed-column question with --virtual-columns or --no-virtual-columns", () => {
+    expect(parseInitArgs(["--virtual-columns"]).virtualColumns).toBe(true);
+    expect(parseInitArgs(["--no-virtual-columns"]).virtualColumns).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("virtualColumns");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

@@ -78,6 +78,7 @@ describe("collectAnswers", () => {
     expect(answers.rateLimit).toBe(false);
     expect(answers.metrics).toBe(false);
     expect(answers.tracing).toBe(false);
+    expect(answers.virtualColumns).toBe(false);
     expect(io.fallbacks).toEqual(["app", answers.dbPassword, "5432"]);
     expect(io.selected).toEqual(["Database engine"]);
     expect(io.multi).toEqual(["Select extras"]);
@@ -114,6 +115,7 @@ describe("collectAnswers", () => {
       rateLimit: false,
       metrics: false,
       tracing: false,
+      virtualColumns: false,
     });
   });
 
@@ -206,7 +208,7 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9, 10]] });
+    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9, 10, 11]] });
     const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({
@@ -219,6 +221,7 @@ describe("collectAnswers", () => {
       rateLimit: true,
       metrics: true,
       tracing: true,
+      virtualColumns: true,
     });
   });
 
@@ -238,6 +241,7 @@ describe("collectAnswers", () => {
       rateLimit: false,
       metrics: false,
       tracing: false,
+      virtualColumns: false,
     });
     expect(io.said).toEqual([]);
   });
@@ -258,6 +262,7 @@ describe("collectAnswers", () => {
       "Rate limits",
       "Metrics",
       "Tracing",
+      "Computed column",
     ]);
   });
 
@@ -277,6 +282,7 @@ describe("collectAnswers", () => {
         rateLimit: false,
         metrics: false,
         tracing: false,
+        virtualColumns: false,
       },
       io.io,
     );
@@ -378,6 +384,17 @@ describe("collectAnswers", () => {
     expect(io.multiOptions[0]).not.toContain("Tracing");
   });
 
+  it.each([true, false])(
+    "skips the computed-column extra when --virtual-columns is %p",
+    async (virtualColumns) => {
+      const io = prompter();
+      const answers = await collectAnswers({ ...ARGS, virtualColumns }, io.io);
+
+      expect(answers.virtualColumns).toBe(virtualColumns);
+      expect(io.multiOptions[0]).not.toContain("Computed column");
+    },
+  );
+
   it("asks neither a password nor a port for SQLite, which has no server", async () => {
     const io = prompter([]);
     const answers = await collectAnswers({ ...ARGS, database: "sqlite" }, io.io);
@@ -398,6 +415,7 @@ describe("collectAnswers", () => {
       rateLimit: false,
       metrics: false,
       tracing: false,
+      virtualColumns: false,
     });
     expect(io.fallbacks).toEqual(["app"]);
   });
@@ -534,7 +552,13 @@ describe("sampleQuery", () => {
     ["mssql", "{ dbo_authors { name dbo_books { title } } }"],
     ["sqlite", "{ main_authors { name main_books { title } } }"],
   ] as const)("uses the %s schema's field names", (database, query) => {
-    expect(sampleQuery({ database, dbName: "shop" })).toBe(query);
+    expect(sampleQuery({ database, dbName: "shop", virtualColumns: false })).toBe(query);
+  });
+
+  it("selects each book's computed age with --virtual-columns", () => {
+    expect(sampleQuery({ database: "pg", dbName: "shop", virtualColumns: true })).toBe(
+      "{ public_authors { name public_books { title age } } }",
+    );
   });
 });
 
@@ -554,6 +578,7 @@ const ANSWERS: InitAnswers = {
   rateLimit: false,
   metrics: false,
   tracing: false,
+  virtualColumns: false,
 };
 
 describe("recreateCommand", () => {
@@ -573,11 +598,12 @@ describe("recreateCommand", () => {
           rateLimit: true,
           metrics: true,
           tracing: true,
+          virtualColumns: true,
         },
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit --metrics --tracing",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit --metrics --tracing --virtual-columns",
     );
   });
 
@@ -769,6 +795,16 @@ describe("nextSteps", () => {
     expect(nextSteps(ANSWERS, true)).not.toContain("jaeger");
   });
 
+  it("says where the computed age comes from, and selects it in the sample query", () => {
+    const steps = nextSteps({ ...ANSWERS, virtualColumns: true }, true);
+
+    expect(steps).toContain(
+      "Computed column: each book's age, the years since it was published, is worked out by the database on every read (schema in graphoria.ts) and never stored.",
+    );
+    expect(steps).toContain("Try: { public_authors { name public_books { title age } } }");
+    expect(nextSteps(ANSWERS, true)).not.toContain("age }");
+  });
+
   it("says the rate limits are on in the Redis paragraph", () => {
     expect(
       nextSteps({ ...ANSWERS, redis: true, rateLimit: true, auth: true }, true, USERS),
@@ -840,6 +876,7 @@ describe("nextSteps", () => {
         rateLimit: true,
         metrics: true,
         tracing: true,
+        virtualColumns: true,
       },
       installed: true,
     },
@@ -911,6 +948,7 @@ describe("nextSteps", () => {
         rateLimit: true,
         metrics: true,
         tracing: true,
+        virtualColumns: true,
       },
       true,
       USERS,
@@ -929,6 +967,7 @@ describe("nextSteps", () => {
       "Rate limits",
       "Metrics",
       "Jaeger",
+      "Computed column",
     ]) {
       expect(steps).toContain(`\x1b[1m${name}\x1b[22m`);
     }

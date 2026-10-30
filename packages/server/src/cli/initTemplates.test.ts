@@ -33,6 +33,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   rateLimit: false,
   metrics: false,
   tracing: false,
+  virtualColumns: false,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
@@ -600,6 +601,7 @@ describe("renderProject graphoria.ts", () => {
       "RABBITMQ_PASSWORD",
       "RABBITMQ_VHOST",
       "REDIS_URL",
+      "DB_FILE",
     ]) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
@@ -791,6 +793,33 @@ describe("renderProject graphoria.ts", () => {
     }
   });
 
+  it.each([
+    ["pg", "public_books", "EXTRACT(YEAR FROM CURRENT_DATE)::int - published_year"],
+    ["mysql", "shop_books", "YEAR(CURDATE()) - published_year"],
+    ["mssql", "dbo_books", "YEAR(GETDATE()) - published_year"],
+    ["sqlite", "main_books", "CAST(strftime('%Y', 'now') AS INTEGER) - published_year"],
+  ] as const)(
+    "computes each %s book's age in the database with --virtual-columns",
+    async (database, table, expression) => {
+      setEnv();
+      process.env.DB_FILE = "unused.db";
+      const tables = async (patch: Partial<ProjectValues>) =>
+        ConfigurationZod.parse((await load(database, patch))({})).databases![0]!.schema?.database;
+
+      expect((await tables({ virtualColumns: true }))![table]!.columns).toEqual([
+        {
+          name: "age",
+          dataType: "int",
+          isNullable: false,
+          description: null,
+          virtual: true,
+          expression,
+        },
+      ]);
+      expect(await tables({})).toBeUndefined();
+    },
+  );
+
   it("selects each book's status for the report with --auth", async () => {
     setEnv();
     const [job] = ConfigurationZod.parse((await load("pg", { cron: true, auth: true }))({})).cron;
@@ -828,7 +857,16 @@ describe("renderProject graphoria.ts", () => {
     { redis: true },
     { cron: true },
     { rateLimit: true },
-    { rabbitmq: true, ai: true, mcp: true, redis: true, cron: true, rateLimit: true },
+    { virtualColumns: true },
+    {
+      rabbitmq: true,
+      ai: true,
+      mcp: true,
+      redis: true,
+      cron: true,
+      rateLimit: true,
+      virtualColumns: true,
+    },
   ])("still parses with %j", async (patch) => {
     setEnv();
     setRabbitEnv();
@@ -1902,6 +1940,7 @@ describe("renderProject types the add-book operation", () => {
       mcp: true,
       cron: true,
       rateLimit: true,
+      virtualColumns: true,
     };
     for (const database of ENGINES) {
       await write(database, renderWith(everything, database));

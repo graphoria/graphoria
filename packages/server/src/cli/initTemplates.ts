@@ -16,6 +16,7 @@ export type InitAnswers = {
   rateLimit: boolean;
   metrics: boolean;
   tracing: boolean;
+  virtualColumns: boolean;
 };
 
 export type ProjectValues = InitAnswers & {
@@ -602,6 +603,35 @@ ${cronLog(books, values.auth)}      },
 `;
 };
 
+// Per engine, the SQL for a book's age: this year minus its published_year.
+// Postgres's EXTRACT answers a numeric, cast back to the column's int.
+const AGE_EXPRESSIONS: Record<DatabaseType, string> = {
+  pg: "EXTRACT(YEAR FROM CURRENT_DATE)::int - published_year",
+  mysql: "YEAR(CURDATE()) - published_year",
+  mssql: "YEAR(GETDATE()) - published_year",
+  sqlite: "CAST(strftime('%Y', 'now') AS INTEGER) - published_year",
+};
+
+const schemaEntry = (
+  values: ProjectValues,
+) => `      // A book's age, in years since it was published: the database works it
+      // out on every read, so it is selected like a column and never stored.
+      schema: {
+        database: {
+          ${seedSchema(values)}_books: {
+            columns: [
+              virtualColumnExpression(
+                "age",
+                "int",
+                false,
+                ${JSON.stringify(AGE_EXPRESSIONS[values.database])},
+              ),
+            ],
+          },
+        },
+      },
+`;
+
 const repositoryEntry = ({
   auth,
 }: ProjectValues) => `      // The typed data access in repository.ts, which ${auth ? "addBook and publishBook call" : "addBook calls"}.
@@ -615,7 +645,7 @@ const publishBookInput = z.object({ id: z.number().int() });
 
 const graphoriaConfig = (
   values: ProjectValues,
-) => `import { operation, z } from "@graphoria/server/config";
+) => `import { operation, ${values.virtualColumns ? "virtualColumnExpression, " : ""}z } from "@graphoria/server/config";
 import type { ConfigurationFn } from "@graphoria/server/config";
 
 import { createRepository, type Repository } from "./repository";
@@ -645,7 +675,7 @@ export default (() => ({
       name: "main",
       type: "${values.database}",
       enabled: true,
-${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}    },
+${values.database === "sqlite" ? SQLITE_CONNECTION : SERVER_CONNECTION}${values.database === "mysql" ? MYSQL_CONNECTION_OPTIONS : ""}${repositoryEntry(values)}${values.virtualColumns ? schemaEntry(values) : ""}    },
   ],
 ${values.rabbitmq ? queueConfig(values) : ""}${values.ai || values.mcp ? aiConfig(values) : ""}${values.redis ? CACHES_CONFIG : ""}${operationsConfig(values)}${values.cron ? cronConfig(values) : ""}${values.auth ? authConfig(values) : values.frontend ? anonymousGrant(values) : ""}})) satisfies ConfigurationFn;
 `;

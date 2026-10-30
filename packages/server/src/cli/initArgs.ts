@@ -18,6 +18,7 @@ export type InitArgs = {
   rateLimit?: boolean;
   metrics?: boolean;
   tracing?: boolean;
+  virtualColumns?: boolean;
   install: boolean;
 };
 
@@ -59,6 +60,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       "rate-limit": { type: "boolean" },
       metrics: { type: "boolean" },
       tracing: { type: "boolean" },
+      "virtual-columns": { type: "boolean" },
       install: { type: "boolean", default: true },
     },
     allowNegative: true,
@@ -91,6 +93,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values["rate-limit"] !== undefined && { rateLimit: values["rate-limit"] }),
     ...(values.metrics !== undefined && { metrics: values.metrics }),
     ...(values.tracing !== undefined && { tracing: values.tracing }),
+    ...(values["virtual-columns"] !== undefined && { virtualColumns: values["virtual-columns"] }),
     install: values.install,
   };
 };
