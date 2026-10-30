@@ -15,6 +15,7 @@ export type InitAnswers = {
   cron: boolean;
   rateLimit: boolean;
   metrics: boolean;
+  tracing: boolean;
 };
 
 export type ProjectValues = InitAnswers & {
@@ -66,6 +67,9 @@ export const DBGATE_PORT = 9000;
 
 // Redis Commander's own default port.
 export const REDIS_COMMANDER_PORT = 8081;
+
+// Jaeger's own UI port.
+export const JAEGER_UI_PORT = 16686;
 
 export const PROJECT_FILES = [
   "package.json",
@@ -727,6 +731,15 @@ const rateLimitEnv = ({ rateLimit, auth, frontend }: ProjectValues) =>
 const metricsEnv = (values: ProjectValues) =>
   values.metrics ? `METRICS_ENABLED=true\nMETRICS_SECRET=${values.metricsSecret}\n` : "";
 
+const tracingEnv = (values: ProjectValues) =>
+  values.tracing
+    ? `TRACING_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=${values.name}
+JAEGER_UI_PORT=${JAEGER_UI_PORT}
+`
+    : "";
+
 const dataToolsEnv = (values: ProjectValues) =>
   values.dataTools
     ? `DBGATE_PORT=${DBGATE_PORT}
@@ -741,7 +754,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -755,7 +768,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -987,6 +1000,25 @@ const REDIS_COMMANDER_SERVICE = `  redis-commander:
         condition: service_healthy
 `;
 
+// The healthcheck asks Jaeger's health extension, through the image's busybox wget.
+const JAEGER_SERVICE = `  jaeger:
+    # Keeps the traces in memory: a restart empties it.
+    image: jaegertracing/jaeger:2.22.0
+    ports:
+      - "\${JAEGER_UI_PORT}:16686"
+      # OTLP over HTTP, where Graphoria posts its spans.
+      - "4318:4318"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:13133/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+`;
+
+// Graphoria's environment and depends_on entries for the jaeger service.
+const JAEGER_ENDPOINT = `\n      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318`;
+const JAEGER_DEPENDENCY = `\n      jaeger:\n        condition: service_healthy`;
+
 const initComment = (frontend: boolean) =>
   frontend
     ? "# Keep it: until index.ts reaches handleSignals, Bun as PID 1 ignores SIGTERM."
@@ -999,6 +1031,7 @@ const sqliteCompose = ({
   redis,
   dataTools,
   frontend,
+  tracing,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -1006,7 +1039,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     ${initComment(frontend)}
     init: true
@@ -1014,11 +1047,11 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
     env_file: .env
     environment:
       # On the volume, not in the image: the file outlives a rebuild.
-      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
+      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
     ports:
       - "3000:3000"
     volumes:
-      - db-data:/app/data${rabbitmq || redis ? `\n    depends_on:${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}` : ""}
+      - db-data:/app/data${rabbitmq || redis || tracing ? `\n    depends_on:${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}${tracing ? JAEGER_DEPENDENCY : ""}` : ""}
 
 volumes:
   db-data:
@@ -1026,7 +1059,7 @@ ${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTo
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database, rabbitmq, redis, dataTools, frontend } = values;
+  const { name, database, rabbitmq, redis, dataTools, frontend, tracing } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -1042,7 +1075,7 @@ const dockerCompose = (values: ProjectValues) => {
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${DB_SERVICES[database]}
-${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     ${initComment(frontend)}
     init: true
@@ -1051,12 +1084,12 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
     environment:
       # Inside Compose the database is the \`db\` service on its own port.
       DB_HOST: db
-      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}
+      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
     ports:
       - "3000:3000"
     # Start once the database is ready. Boot would otherwise retry it for up to 60 s.
     depends_on:
-${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}
+${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}${tracing ? JAEGER_DEPENDENCY : ""}
 
 volumes:
   db-data:

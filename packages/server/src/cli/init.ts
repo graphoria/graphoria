@@ -14,6 +14,7 @@ import {
   DBGATE_PORT,
   ENGINES,
   FRONTEND_FILES,
+  JAEGER_UI_PORT,
   PROJECT_FILES,
   RABBITMQ_MANAGEMENT_PORT,
   RABBITMQ_PORT,
@@ -47,7 +48,8 @@ type Extra =
   | "frontend"
   | "cron"
   | "rateLimit"
-  | "metrics";
+  | "metrics"
+  | "tracing";
 
 const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
   value,
@@ -188,6 +190,9 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     ...(args.metrics === undefined
       ? [extraChoice("metrics", "Metrics", "Prometheus /metrics behind its own secret")]
       : []),
+    ...(args.tracing === undefined
+      ? [extraChoice("tracing", "Tracing", "each request's spans in Jaeger")]
+      : []),
   ];
   const extras =
     extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
@@ -208,6 +213,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     cron: args.cron ?? chosen.has("cron"),
     rateLimit: args.rateLimit ?? chosen.has("rateLimit"),
     metrics: args.metrics ?? chosen.has("metrics"),
+    tracing: args.tracing ?? chosen.has("tracing"),
   };
 };
 
@@ -253,6 +259,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.cron ? ["--cron"] : []),
     ...(answers.rateLimit ? ["--rate-limit"] : []),
     ...(answers.metrics ? ["--metrics"] : []),
+    ...(answers.tracing ? ["--tracing"] : []),
     ...(installed ? [] : ["--no-install"]),
   ].join(" ");
 
@@ -315,6 +322,7 @@ export const nextSteps = (
   const services = [
     ...(answers.rabbitmq ? ["rabbitmq"] : []),
     ...(answers.redis ? ["redis"] : []),
+    ...(answers.tracing ? ["jaeger"] : []),
   ].join(" ");
 
   const run =
@@ -440,6 +448,12 @@ export const nextSteps = (
           `${paint.name("Metrics")}: ${link(3000, "/metrics")} answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.`,
         ]
       : []),
+    ...(answers.tracing
+      ? [
+          "",
+          `${paint.name("Jaeger")} shows a trace for each request, down to the SQL it ran, at ${link(JAEGER_UI_PORT)}: pick the service named OTEL_SERVICE_NAME in .env.`,
+        ]
+      : []),
     "",
     "The admin secret is ADMIN_SECRET in .env; send it in the x-admin-secret header.",
     `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
@@ -450,7 +464,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--metrics] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--metrics] [--tracing] [--no-install]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);
@@ -512,6 +526,9 @@ export const initCommand = async (argv: string[]): Promise<never> => {
           service: "Redis Commander",
           envVar: "REDIS_COMMANDER_PORT",
         })
+      : undefined,
+    answers.tracing
+      ? portWarning(JAEGER_UI_PORT, { service: "Jaeger UI", envVar: "JAEGER_UI_PORT" })
       : undefined,
   ];
   const stderrPaint = paintFor(process.stderr);

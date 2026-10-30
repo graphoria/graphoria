@@ -17,6 +17,7 @@ export type InitArgs = {
   cron?: boolean;
   rateLimit?: boolean;
   metrics?: boolean;
+  tracing?: boolean;
   install: boolean;
 };
 
@@ -57,6 +58,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       cron: { type: "boolean" },
       "rate-limit": { type: "boolean" },
       metrics: { type: "boolean" },
+      tracing: { type: "boolean" },
       install: { type: "boolean", default: true },
     },
     allowNegative: true,
@@ -88,6 +90,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values.cron !== undefined && { cron: values.cron }),
     ...(values["rate-limit"] !== undefined && { rateLimit: values["rate-limit"] }),
     ...(values.metrics !== undefined && { metrics: values.metrics }),
+    ...(values.tracing !== undefined && { tracing: values.tracing }),
     install: values.install,
   };
 };

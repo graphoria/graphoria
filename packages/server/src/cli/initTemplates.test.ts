@@ -32,6 +32,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   cron: false,
   rateLimit: false,
   metrics: false,
+  tracing: false,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
@@ -239,6 +240,20 @@ describe("renderProject .env", () => {
     },
   );
 
+  it.each(["pg", "sqlite"] as const)(
+    "sends the traces to Jaeger on localhost, named after the project, for %s",
+    (database) => {
+      const lines = renderWith({ tracing: true }, database)[".env"]!.split("\n");
+
+      expect(lines).toContain("TRACING_ENABLED=true");
+      expect(lines).toContain("OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318");
+      expect(lines).toContain("OTEL_SERVICE_NAME=my-api");
+      expect(lines).toContain("JAEGER_UI_PORT=16686");
+      expect(render(database)[".env"]).not.toContain("TRACING_");
+      expect(render(database)[".env"]).not.toContain("JAEGER_");
+    },
+  );
+
   it("adds every feature's settings together without overlap", () => {
     const lines = renderWith({
       rabbitmq: true,
@@ -279,6 +294,7 @@ describe("renderProject docker-compose.yml", () => {
       redis?: Service;
       dbgate?: Service;
       "redis-commander"?: Service;
+      jaeger?: Service;
     };
     volumes: Record<string, unknown>;
   };
@@ -402,6 +418,29 @@ describe("renderProject docker-compose.yml", () => {
     },
   );
 
+  it.each(["pg", "sqlite"] as const)(
+    "runs Jaeger and points Graphoria's traces at it (%s)",
+    (database) => {
+      const { services, volumes } = compose(database, { tracing: true });
+
+      expect(services.jaeger!.image).toBe("jaegertracing/jaeger:2.22.0");
+      expect(services.jaeger!.ports).toEqual(["${JAEGER_UI_PORT}:16686", "4318:4318"]);
+      expect(services.jaeger!.healthcheck?.test).toBeDefined();
+      expect(services.graphoria!.environment).toMatchObject({
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318",
+      });
+      expect(services.graphoria!.depends_on).toMatchObject({
+        jaeger: { condition: "service_healthy" },
+      });
+      expect(Object.keys(volumes)).toEqual(["db-data"]);
+    },
+  );
+
+  it("leaves Jaeger out by default", () => {
+    expect(compose("pg").services.jaeger).toBeUndefined();
+    expect(compose("sqlite").services.graphoria.depends_on).toBeUndefined();
+  });
+
   it("leaves Redis out by default", () => {
     expect(compose("pg").services.redis).toBeUndefined();
   });
@@ -489,7 +528,7 @@ describe("renderProject docker-compose.yml", () => {
   );
 
   it.each(ENGINES)("sets each %s service apart with a blank line", (database) => {
-    for (const patch of [{}, { rabbitmq: true, redis: true, dataTools: true }]) {
+    for (const patch of [{}, { rabbitmq: true, redis: true, dataTools: true, tracing: true }]) {
       // A service's last, indented line followed straight by the next service.
       expect(renderWith(patch, database)["docker-compose.yml"]).not.toMatch(
         /\n {4}.*\n {2}[a-z-]+:\n/,

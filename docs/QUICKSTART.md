@@ -19,7 +19,7 @@ mkdir my-api && cd my-api
 bunx graphoria init
 ```
 
-`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, the MCP server, login with two roles, Redis, data inspection tools, a React frontend, a cron job, rate limits and metrics. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
+`init` asks for the database engine (PostgreSQL, MySQL, SQL Server or SQLite), the database name, its password, the port it gets on your machine (SQLite asks for neither) and which extras to add — RabbitMQ, the AI agent, the MCP server, login with two roles, Redis, data inspection tools, a React frontend, a cron job, rate limits, metrics and tracing. Pick the engine with the arrow keys, tick extras with space and confirm with Enter; press Enter alone to take the default on a text prompt. Answers come only from the terminal or from flags, never from a pipe: without a terminal, `init` stops at the first question no flag answers, and `--yes` takes the defaults for those. It then writes the project and runs `bun install`:
 
 | File                                          | What it holds                                                                                                                                                  |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -47,7 +47,7 @@ bun run dev
 
 With `--database sqlite` there is no database server: the database is the file `app.db` (named after the database name) next to `graphoria.ts`, and the first boot creates it and seeds it from `seed.sql`. `bun run dev` is all it takes, and `docker compose up -d --build` runs Graphoria alone, with the file on a volume. See [SQLite](./CONFIGURATION.md#sqlite) for what the engine cannot do.
 
-With `--rabbitmq` or `--redis` (below), a run on your machine needs those containers too, so the steps `init` prints add them to `docker compose up -d --wait`.
+With `--rabbitmq`, `--redis` or `--tracing` (below), a run on your machine needs those containers too, so the steps `init` prints add them to `docker compose up -d --wait`.
 
 Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the `ADMIN_SECRET` from `.env`, and query the seed:
 
@@ -64,7 +64,7 @@ Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the 
 
 Field names start with the schema: `public_` on PostgreSQL, `dbo_` on SQL Server, `main_` on SQLite, and the database name on MySQL (`app_authors` with the default name).
 
-`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--mcp` the MCP server, `--auth` adds login with two roles (below), `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), `--cron` adds a job that logs the book count every minute (below), `--rate-limit` caps the requests each caller makes a minute (below), `--metrics` mounts a Prometheus endpoint (below), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time. In a terminal, the steps it prints are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
+`--yes` takes every default without asking, `--database pg|mysql|mssql|sqlite` picks the engine, `--db-name <name>` and `--db-port <port>` answer the database name and port questions, `--rabbitmq` adds a RabbitMQ broker and a queue demo, `--ai` enables the AI agent, `--mcp` the MCP server, `--auth` adds login with two roles (below), `--redis` adds Redis for the cache, the auth token store and the rate limits, `--data-tools` adds UIs to browse the data ([dbgate](https://dbgate.org) for the database, and Redis Commander when `--redis` is on too), `--cron` adds a job that logs the book count every minute (below), `--rate-limit` caps the requests each caller makes a minute (below), `--metrics` mounts a Prometheus endpoint (below), `--tracing` sends a trace of each request to Jaeger (below), and `--no-install` skips `bun install` (run it before `docker compose up`: the Dockerfile installs from `bun.lock`). `init` writes nothing when a file it would create already exists. `bunx @graphoria/server init` is the same command. When it finishes it prints the same invocation with every answer as a flag, so the same project can be scaffolded again without the questions — the secrets are regenerated each time. In a terminal, the steps it prints are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
 
 ### Add a React frontend with `--frontend`
 
@@ -212,6 +212,17 @@ Tick `Metrics` in the extras list, or pass `--metrics` (`--no-metrics` answers n
 | `.env` | `METRICS_ENABLED=true` and a random `METRICS_SECRET`. |
 
 `GET /metrics` then answers a [Prometheus](https://prometheus.io) scrape that carries `METRICS_SECRET` in the `x-admin-secret` header with the server's series: HTTP requests, GraphQL operations, rejections and cron runs, counted and timed. The secret opens `/metrics` and nothing else, so it is the one to hand Prometheus; the admin secret works too, but logs a `warn` on each scrape. `/metrics` is not rate limited. See [Metrics](./OBSERVABILITY.md#metrics) for the series and a scrape configuration.
+
+### Trace requests with `--tracing`
+
+Tick `Tracing` in the extras list, or pass `--tracing` (`--no-tracing` answers no, and so does `--yes` alone). The project then gets:
+
+| File                 | What it holds                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.env`               | `TRACING_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`, `OTEL_SERVICE_NAME` set to the project's name, and `JAEGER_UI_PORT=16686`. |
+| `docker-compose.yml` | A `jaeger` service ([Jaeger](https://www.jaegertracing.io) 2) that takes OTLP on port 4318 and that Graphoria waits on.                                 |
+
+Each request becomes a trace, from the HTTP handler down to the statements the database ran, and with `--cron` each tick becomes one too. Open `http://localhost:16686` (set `JAEGER_UI_PORT` in `.env` to move it) and pick the service named after the project. In Docker Compose the server posts its spans to the `jaeger` service, while `bun run dev` reaches it on `localhost:4318`, so the printed host-run steps start it too: without it, the server logs `span export failed` and drops the spans. Jaeger keeps the traces in memory, so a restart empties it. See [Tracing](./OBSERVABILITY.md#tracing) for sampling and what each span records.
 
 The rest of this guide sets a project up by hand, against a database you already run.
 

@@ -92,6 +92,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("metrics");
   });
 
+  it("answers the tracing question with --tracing or --no-tracing", () => {
+    expect(parseInitArgs(["--tracing"]).tracing).toBe(true);
+    expect(parseInitArgs(["--no-tracing"]).tracing).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("tracing");
+  });
+
   it("rejects an unknown engine", () => {
     expect(() => parseInitArgs(["--database", "oracle"])).toThrow(
       "--database must be one of pg, mysql, mssql, sqlite",

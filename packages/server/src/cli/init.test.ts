@@ -77,6 +77,7 @@ describe("collectAnswers", () => {
     expect(answers.cron).toBe(false);
     expect(answers.rateLimit).toBe(false);
     expect(answers.metrics).toBe(false);
+    expect(answers.tracing).toBe(false);
     expect(io.fallbacks).toEqual(["app", answers.dbPassword, "5432"]);
     expect(io.selected).toEqual(["Database engine"]);
     expect(io.multi).toEqual(["Select extras"]);
@@ -112,6 +113,7 @@ describe("collectAnswers", () => {
       cron: false,
       rateLimit: false,
       metrics: false,
+      tracing: false,
     });
   });
 
@@ -204,7 +206,7 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9]] });
+    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9, 10]] });
     const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({
@@ -216,6 +218,7 @@ describe("collectAnswers", () => {
       cron: true,
       rateLimit: true,
       metrics: true,
+      tracing: true,
     });
   });
 
@@ -234,6 +237,7 @@ describe("collectAnswers", () => {
       cron: false,
       rateLimit: false,
       metrics: false,
+      tracing: false,
     });
     expect(io.said).toEqual([]);
   });
@@ -253,6 +257,7 @@ describe("collectAnswers", () => {
       "Cron job",
       "Rate limits",
       "Metrics",
+      "Tracing",
     ]);
   });
 
@@ -271,6 +276,7 @@ describe("collectAnswers", () => {
         cron: false,
         rateLimit: false,
         metrics: false,
+        tracing: false,
       },
       io.io,
     );
@@ -364,6 +370,14 @@ describe("collectAnswers", () => {
     expect(io.multiOptions[0]).not.toContain("Metrics");
   });
 
+  it.each([true, false])("skips the tracing extra when --tracing is %p", async (tracing) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, tracing }, io.io);
+
+    expect(answers.tracing).toBe(tracing);
+    expect(io.multiOptions[0]).not.toContain("Tracing");
+  });
+
   it("asks neither a password nor a port for SQLite, which has no server", async () => {
     const io = prompter([]);
     const answers = await collectAnswers({ ...ARGS, database: "sqlite" }, io.io);
@@ -383,6 +397,7 @@ describe("collectAnswers", () => {
       cron: false,
       rateLimit: false,
       metrics: false,
+      tracing: false,
     });
     expect(io.fallbacks).toEqual(["app"]);
   });
@@ -538,6 +553,7 @@ const ANSWERS: InitAnswers = {
   cron: false,
   rateLimit: false,
   metrics: false,
+  tracing: false,
 };
 
 describe("recreateCommand", () => {
@@ -556,11 +572,12 @@ describe("recreateCommand", () => {
           cron: true,
           rateLimit: true,
           metrics: true,
+          tracing: true,
         },
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit --metrics",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit --metrics --tracing",
     );
   });
 
@@ -736,6 +753,22 @@ describe("nextSteps", () => {
     expect(nextSteps(ANSWERS, true)).not.toContain("/metrics");
   });
 
+  it("opens Jaeger's UI, and starts Jaeger for a host run", () => {
+    const steps = nextSteps({ ...ANSWERS, tracing: true }, true);
+
+    expect(steps).toContain(
+      "Jaeger shows a trace for each request, down to the SQL it ran, at http://localhost:16686: pick the service named OTEL_SERVICE_NAME in .env.",
+    );
+    expect(steps).toContain("  docker compose up -d --wait db jaeger\n  bun run dev\n");
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, tracing: true }, true)).toContain(
+      "seeds it:\n  docker compose up -d --wait jaeger\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, redis: true, tracing: true }, true)).toContain(
+      "  docker compose up -d --wait db redis jaeger\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("jaeger");
+  });
+
   it("says the rate limits are on in the Redis paragraph", () => {
     expect(
       nextSteps({ ...ANSWERS, redis: true, rateLimit: true, auth: true }, true, USERS),
@@ -806,6 +839,7 @@ describe("nextSteps", () => {
         cron: true,
         rateLimit: true,
         metrics: true,
+        tracing: true,
       },
       installed: true,
     },
@@ -876,6 +910,7 @@ describe("nextSteps", () => {
         cron: true,
         rateLimit: true,
         metrics: true,
+        tracing: true,
       },
       true,
       USERS,
@@ -893,6 +928,7 @@ describe("nextSteps", () => {
       "cron job",
       "Rate limits",
       "Metrics",
+      "Jaeger",
     ]) {
       expect(steps).toContain(`\x1b[1m${name}\x1b[22m`);
     }
