@@ -127,13 +127,17 @@ Prometheus `METRICS_SECRET`.
 ```yaml
 scrape_configs:
   - job_name: graphoria
+    honor_labels: true
     static_configs:
       - targets: ["graphoria:3000"]
-    authorization: # Prometheus sends this as `Authorization`, so use a header instead:
     http_headers:
       x-admin-secret:
         values: ["<METRICS_SECRET>"]
 ```
+
+`honor_labels: true` keeps the `job` label the cron series carry. Without it, Prometheus moves that
+label to `exported_job` and sets `job` to the scrape job's name, so a query by `job` no longer tells
+the cron jobs apart.
 
 Unlike every other credentialled route, `/metrics` is not rate limited: a scrape interval is fixed,
 and counting it against a caller ceiling would drop samples.
