@@ -74,6 +74,10 @@ export const REDIS_COMMANDER_PORT = 8081;
 // Jaeger's own UI port.
 export const JAEGER_UI_PORT = 16686;
 
+// The host port Jaeger takes OTLP on. No variable moves it: .env's
+// OTEL_EXPORTER_OTLP_ENDPOINT names it.
+export const JAEGER_OTLP_PORT = 4318;
+
 // The host port Grafana is published on; it listens on 3000 inside its own
 // container, which Graphoria already took on the host.
 export const GRAFANA_PORT = 3001;
@@ -778,14 +782,14 @@ const metricsEnv = (values: ProjectValues) =>
 const tracingEnv = (values: ProjectValues) =>
   values.tracing
     ? `TRACING_ENABLED=true
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:${JAEGER_OTLP_PORT}
 OTEL_SERVICE_NAME=${values.name}
 JAEGER_UI_PORT=${JAEGER_UI_PORT}
 `
     : "";
 
-const grafanaEnv = ({ metrics }: ProjectValues) =>
-  metrics ? `GRAFANA_PORT=${GRAFANA_PORT}\n` : "";
+const grafanaEnv = ({ metrics, tracing }: ProjectValues) =>
+  metrics || tracing ? `GRAFANA_PORT=${GRAFANA_PORT}\n` : "";
 
 const dataToolsEnv = (values: ProjectValues) =>
   values.dataTools
@@ -1050,11 +1054,16 @@ const REDIS_COMMANDER_SERVICE = `  redis-commander:
 // The healthcheck asks Jaeger's health extension, through the image's busybox wget.
 const JAEGER_SERVICE = `  jaeger:
     # Keeps the traces in memory: a restart empties it.
-    image: jaegertracing/jaeger:2.22.0
+    # Grafana's Jaeger datasource searches through the v1 API that 2.21 removed: stay on 2.20.
+    image: jaegertracing/jaeger:2.20.0
+    # On this machine alone: the UI shows every trace, SQL included, without a login.
     ports:
-      - "\${JAEGER_UI_PORT}:16686"
+      - "127.0.0.1:\${JAEGER_UI_PORT}:16686"
       # OTLP over HTTP, where Graphoria posts its spans.
-      - "4318:4318"
+      - "127.0.0.1:${JAEGER_OTLP_PORT}:4318"
+    # The image declares /tmp a volume, which \`docker compose down\` would leave behind.
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:13133/status"]
       interval: 5s
@@ -1080,8 +1089,9 @@ const PROMETHEUS_SERVICE = `  prometheus:
       - metrics_secret
 `;
 
-// It listens on 3000 inside its container, published on GRAFANA_PORT.
-const GRAFANA_SERVICE = `  grafana:
+// It listens on 3000 inside its container, published on GRAFANA_PORT. Only
+// --metrics has a dashboard to mount and to open on; the datasources serve either.
+const GRAFANA_SERVICE = (metrics: boolean) => `  grafana:
     image: grafana/grafana:13.2.5
     # On this machine alone: every visitor is an editor, without a login.
     ports:
@@ -1092,12 +1102,9 @@ const GRAFANA_SERVICE = `  grafana:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       # Without it, the API still takes the image's admin/admin.
-      GF_AUTH_BASIC_ENABLED: "false"
-      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/graphoria.json
+      GF_AUTH_BASIC_ENABLED: "false"${metrics ? `\n      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/graphoria.json` : ""}
     volumes:
-      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
-      - ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
-      - ./grafana/graphoria.json:/etc/grafana/dashboards/graphoria.json:ro
+      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro${metrics ? `\n      - ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro\n      - ./grafana/graphoria.json:/etc/grafana/dashboards/graphoria.json:ro` : ""}
 `;
 
 const METRICS_SECRET_BLOCK = `
@@ -1128,7 +1135,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${metrics ? `${PROMETHEUS_SERVICE}\n` : ""}${metrics ? `${GRAFANA_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${metrics ? `${PROMETHEUS_SERVICE}\n` : ""}${metrics || tracing ? `${GRAFANA_SERVICE(metrics)}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     ${initComment(frontend)}
     init: true
@@ -1164,7 +1171,7 @@ const dockerCompose = (values: ProjectValues) => {
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${DB_SERVICES[database]}
-${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${metrics ? `${PROMETHEUS_SERVICE}\n` : ""}${metrics ? `${GRAFANA_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${metrics ? `${PROMETHEUS_SERVICE}\n` : ""}${metrics || tracing ? `${GRAFANA_SERVICE(metrics)}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     ${initComment(frontend)}
     init: true
@@ -1204,16 +1211,25 @@ scrape_configs:
         files: ["/run/secrets/metrics_secret"]
 `;
 
-const GRAFANA_DATASOURCES = `apiVersion: 1
-
-datasources:
-  - name: Prometheus
+const PROMETHEUS_DATASOURCE = `  - name: Prometheus
     type: prometheus
     # The dashboard's panels read Prometheus by this uid.
     uid: prometheus
     url: http://prometheus:9090
     isDefault: true
 `;
+
+// Grafana takes one default datasource: Jaeger is it unless Prometheus is.
+const JAEGER_DATASOURCE = (isDefault: boolean) => `  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    url: http://jaeger:16686
+${isDefault ? "    isDefault: true\n" : ""}`;
+
+const grafanaDatasources = ({ metrics, tracing }: ProjectValues) => `apiVersion: 1
+
+datasources:
+${metrics ? PROMETHEUS_DATASOURCE : ""}${tracing ? JAEGER_DATASOURCE(!metrics) : ""}`;
 
 const GRAFANA_DASHBOARD_PROVIDER = `apiVersion: 1
 
@@ -2015,5 +2031,7 @@ export const renderProject = (
     "grafana/dashboards.yml": GRAFANA_DASHBOARD_PROVIDER,
     "grafana/graphoria.json": GRAFANA_DASHBOARD,
   }),
-  ...(values.metrics && { "grafana/datasources.yml": GRAFANA_DATASOURCES }),
+  ...((values.metrics || values.tracing) && {
+    "grafana/datasources.yml": grafanaDatasources(values),
+  }),
 });

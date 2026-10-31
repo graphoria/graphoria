@@ -112,6 +112,18 @@ describe("renderProject paths", () => {
     );
   });
 
+  it.each(ENGINES)("adds only Grafana's datasources with --tracing for %s", (database) => {
+    expect(Object.keys(renderWith({ tracing: true }, database)).sort()).toEqual(
+      [...PATHS, "grafana/datasources.yml"].sort(),
+    );
+  });
+
+  it.each(ENGINES)("adds no file for --tracing beside --metrics for %s", (database) => {
+    expect(Object.keys(renderWith({ metrics: true, tracing: true }, database)).sort()).toEqual(
+      [...PATHS, ...METRICS_PATHS].sort(),
+    );
+  });
+
   it("lists those in METRICS_FILES and GRAFANA_FILES", () => {
     expect(Array.from<string>([...METRICS_FILES, ...GRAFANA_FILES]).sort()).toEqual(METRICS_PATHS);
   });
@@ -267,11 +279,19 @@ describe("renderProject .env", () => {
   );
 
   it.each(["pg", "sqlite"] as const)(
-    "publishes Grafana's port with --metrics for %s",
+    "publishes Grafana's port once with --metrics, --tracing or both for %s",
     (database) => {
-      expect(renderWith({ metrics: true }, database)[".env"]!.split("\n")).toContain(
-        "GRAFANA_PORT=3001",
-      );
+      for (const patch of [
+        { metrics: true },
+        { tracing: true },
+        { metrics: true, tracing: true },
+      ]) {
+        const lines = renderWith(patch, database)[".env"]!.split("\n");
+
+        expect(lines.filter((line) => line.startsWith("GRAFANA_PORT"))).toEqual([
+          "GRAFANA_PORT=3001",
+        ]);
+      }
       expect(render(database)[".env"]).not.toContain("GRAFANA_PORT");
     },
   );
@@ -297,6 +317,7 @@ describe("renderProject .env", () => {
       redis: true,
       dataTools: true,
       metrics: true,
+      tracing: true,
     })[".env"]!.split("\n");
 
     expect(lines).toContain("DB_HOST=localhost");
@@ -306,6 +327,8 @@ describe("renderProject .env", () => {
     expect(lines).toContain("AUTH_STORE=redis");
     expect(lines).toContain("RATE_LIMIT_STORE=redis");
     expect(lines).toContain("METRICS_ENABLED=true");
+    expect(lines).toContain("TRACING_ENABLED=true");
+    expect(lines).toContain("JAEGER_UI_PORT=16686");
     expect(lines).toContain("GRAFANA_PORT=3001");
     expect(lines).toContain("DBGATE_PORT=9000");
     expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
@@ -467,8 +490,12 @@ describe("renderProject docker-compose.yml", () => {
     (database) => {
       const { services, volumes } = compose(database, { tracing: true });
 
-      expect(services.jaeger!.image).toBe("jaegertracing/jaeger:2.22.0");
-      expect(services.jaeger!.ports).toEqual(["${JAEGER_UI_PORT}:16686", "4318:4318"]);
+      expect(services.jaeger!.image).toBe("jaegertracing/jaeger:2.20.0");
+      expect(services.jaeger!.ports).toEqual([
+        "127.0.0.1:${JAEGER_UI_PORT}:16686",
+        "127.0.0.1:4318:4318",
+      ]);
+      expect(services.jaeger!.tmpfs).toEqual(["/tmp"]);
       expect(services.jaeger!.healthcheck?.test).toBeDefined();
       expect(services.graphoria!.environment).toMatchObject({
         OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318",
@@ -522,6 +549,51 @@ describe("renderProject docker-compose.yml", () => {
       }
       expect(services.graphoria).toEqual(compose(database).services.graphoria);
       expect(Object.keys(volumes)).toEqual(["db-data"]);
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)(
+    "runs Grafana on localhost, without Prometheus or the secret, with --tracing alone (%s)",
+    (database) => {
+      const { services, volumes, secrets } = compose(database, { tracing: true });
+
+      expect(services.grafana!.image).toBe("grafana/grafana:13.2.5");
+      expect(services.grafana!.ports).toEqual(["127.0.0.1:${GRAFANA_PORT}:3000"]);
+      expect(services.grafana!.environment).toEqual({
+        GF_AUTH_ANONYMOUS_ENABLED: "true",
+        GF_AUTH_ANONYMOUS_ORG_ROLE: "Editor",
+        GF_AUTH_DISABLE_LOGIN_FORM: "true",
+        GF_AUTH_BASIC_ENABLED: "false",
+      });
+      expect(services.grafana!.volumes).toEqual([
+        "./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro",
+      ]);
+      expect(services.grafana!.secrets).toBeUndefined();
+      expect(services.grafana!.healthcheck).toBeUndefined();
+      expect(services.grafana!.depends_on).toBeUndefined();
+
+      expect(services.prometheus).toBeUndefined();
+      expect(secrets).toBeUndefined();
+      expect(services.graphoria!.depends_on).not.toHaveProperty("grafana");
+      expect(Object.keys(volumes)).toEqual(["db-data"]);
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)(
+    "runs a single Grafana, with the dashboard, for --metrics and --tracing together (%s)",
+    (database) => {
+      const both = compose(database, { metrics: true, tracing: true });
+      const metrics = compose(database, { metrics: true });
+
+      expect(both.services.grafana).toEqual(metrics.services.grafana);
+      expect(both.services.prometheus).toEqual(metrics.services.prometheus);
+      expect(both.secrets).toEqual(metrics.secrets);
+      expect(both.services.jaeger).toEqual(compose(database, { tracing: true }).services.jaeger);
+      expect(
+        renderWith({ metrics: true, tracing: true }, database)["docker-compose.yml"]!.match(
+          /^ {2}grafana:$/gm,
+        ),
+      ).toHaveLength(1);
     },
   );
 
@@ -641,6 +713,7 @@ describe("renderProject docker-compose.yml", () => {
   it.each(ENGINES)("sets each %s service apart with a blank line", (database) => {
     for (const patch of [
       {},
+      { tracing: true },
       { rabbitmq: true, redis: true, dataTools: true, tracing: true, metrics: true },
     ]) {
       // A service's last, indented line followed straight by the next service.
@@ -1950,6 +2023,42 @@ describe("renderProject with --metrics", () => {
     expect(
       Object.keys(files).filter((path) => files[path]!.includes("metrics-secret-value")),
     ).toEqual([".env"]);
+  });
+});
+
+describe("renderProject with --tracing", () => {
+  const datasources = (patch: Partial<ProjectValues>) =>
+    Bun.YAML.parse(renderWith(patch)["grafana/datasources.yml"]!);
+
+  it("gives Grafana Jaeger as its default datasource", () => {
+    expect(datasources({ tracing: true })).toEqual({
+      apiVersion: 1,
+      datasources: [
+        {
+          name: "Jaeger",
+          type: "jaeger",
+          uid: "jaeger",
+          url: "http://jaeger:16686",
+          isDefault: true,
+        },
+      ],
+    });
+  });
+
+  it("keeps Prometheus the default datasource beside Jaeger with --metrics", () => {
+    expect(datasources({ metrics: true, tracing: true })).toEqual({
+      apiVersion: 1,
+      datasources: [
+        {
+          name: "Prometheus",
+          type: "prometheus",
+          uid: "prometheus",
+          url: "http://prometheus:9090",
+          isDefault: true,
+        },
+        { name: "Jaeger", type: "jaeger", uid: "jaeger", url: "http://jaeger:16686" },
+      ],
+    });
   });
 });
 

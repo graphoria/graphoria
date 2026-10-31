@@ -440,6 +440,42 @@ describe("cli init", () => {
     expect(await readFile(join(cwd, "grafana", "graphoria.json"), "utf8")).toBe("mine");
   });
 
+  it("writes nothing when the datasources file it would create exists, with --tracing", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await mkdir(join(cwd, "grafana"));
+    await writeFile(join(cwd, "grafana", "datasources.yml"), "mine");
+    const result = Bun.spawnSync(
+      ["bun", join(import.meta.dir, "cli.ts"), "init", "--yes", "--tracing", "--no-install"],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("grafana/datasources.yml");
+    expect((await readdir(cwd, { recursive: true })).sort()).toEqual([
+      "grafana",
+      "grafana/datasources.yml",
+    ]);
+    expect(await readFile(join(cwd, "grafana", "datasources.yml"), "utf8")).toBe("mine");
+  });
+
+  it("leaves the metrics files alone with --tracing alone", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await mkdir(join(cwd, "grafana"));
+    await writeFile(join(cwd, "prometheus.yml"), "mine");
+    await writeFile(join(cwd, "grafana", "graphoria.json"), "mine");
+    const result = Bun.spawnSync(
+      ["bun", join(import.meta.dir, "cli.ts"), "init", "--yes", "--tracing", "--no-install"],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(await readFile(join(cwd, "prometheus.yml"), "utf8")).toBe("mine");
+    expect(await readFile(join(cwd, "grafana", "graphoria.json"), "utf8")).toBe("mine");
+    expect(await readdir(join(cwd, "grafana"))).toContain("datasources.yml");
+  });
+
   it("writes nothing when the repository it would create exists", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
     cwds.push(cwd);
@@ -627,16 +663,18 @@ describe("cli init", () => {
     expect(output).toContain(`\x1b[33mPort ${holder.port} is in use on this host`);
   }, 30_000);
 
-  it("warns when Grafana's port is taken, with --metrics", async () => {
-    // Taken either way: held here while it is free, and by something else when the listen throws.
-    const holder = (() => {
-      try {
-        return Bun.listen({ hostname: "0.0.0.0", port: 3001, socket: { data() {} } });
-      } catch {
-        return undefined;
-      }
-    })();
-    const { cwd, result } = await init(["--yes", "--metrics", "--no-install"]).finally(() =>
+  // Taken either way: held here while it is free, and by something else when the listen throws.
+  const hold = (port: number) => {
+    try {
+      return Bun.listen({ hostname: "0.0.0.0", port, socket: { data() {} } });
+    } catch {
+      return undefined;
+    }
+  };
+
+  it.each(["--metrics", "--tracing"])("warns when Grafana's port is taken (%s)", async (flag) => {
+    const holder = hold(3001);
+    const { cwd, result } = await init(["--yes", flag, "--no-install"]).finally(() =>
       holder?.stop(true),
     );
     cwds.push(cwd);
@@ -644,6 +682,19 @@ describe("cli init", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr.toString()).toContain(
       "Port 3001 is in use on this host, so Docker Compose cannot publish the Grafana on it. Set GRAFANA_PORT in .env to a free port",
+    );
+  });
+
+  it("warns when the port Jaeger takes OTLP on is taken", async () => {
+    const holder = hold(4318);
+    const { cwd, result } = await init(["--yes", "--tracing", "--no-install"]).finally(() =>
+      holder?.stop(true),
+    );
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toContain(
+      "Port 4318 is in use on this host, so Docker Compose cannot publish the Jaeger OTLP receiver on it. No .env variable moves it",
     );
   });
 
