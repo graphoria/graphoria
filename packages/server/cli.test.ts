@@ -421,6 +421,25 @@ describe("cli init", () => {
     expect(await readFile(join(cwd, "web", "App.tsx"), "utf8")).toBe("mine");
   });
 
+  it("writes nothing when a metrics file it would create exists", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await mkdir(join(cwd, "grafana"));
+    await writeFile(join(cwd, "grafana", "graphoria.json"), "mine");
+    const result = Bun.spawnSync(
+      ["bun", join(import.meta.dir, "cli.ts"), "init", "--yes", "--metrics", "--no-install"],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("grafana/graphoria.json");
+    expect((await readdir(cwd, { recursive: true })).sort()).toEqual([
+      "grafana",
+      "grafana/graphoria.json",
+    ]);
+    expect(await readFile(join(cwd, "grafana", "graphoria.json"), "utf8")).toBe("mine");
+  });
+
   it("writes nothing when the repository it would create exists", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
     cwds.push(cwd);
@@ -607,6 +626,26 @@ describe("cli init", () => {
 
     expect(output).toContain(`\x1b[33mPort ${holder.port} is in use on this host`);
   }, 30_000);
+
+  it("warns when Grafana's port is taken, with --metrics", async () => {
+    // Taken either way: held here while it is free, and by something else when the listen throws.
+    const holder = (() => {
+      try {
+        return Bun.listen({ hostname: "0.0.0.0", port: 3001, socket: { data() {} } });
+      } catch {
+        return undefined;
+      }
+    })();
+    const { cwd, result } = await init(["--yes", "--metrics", "--no-install"]).finally(() =>
+      holder?.stop(true),
+    );
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toContain(
+      "Port 3001 is in use on this host, so Docker Compose cannot publish the Grafana on it. Set GRAFANA_PORT in .env to a free port",
+    );
+  });
 
   it("colors the guide through a pipe under FORCE_COLOR", async () => {
     const { cwd, result } = await init(["--yes", "--no-install"], undefined, { FORCE_COLOR: "1" });

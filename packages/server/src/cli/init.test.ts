@@ -779,6 +779,23 @@ describe("nextSteps", () => {
     expect(nextSteps(ANSWERS, true)).not.toContain("/metrics");
   });
 
+  it("opens Grafana on the dashboard, right after the metrics endpoint", () => {
+    expect(nextSteps({ ...ANSWERS, metrics: true }, true)).toContain(
+      "a secret that opens nothing else.\nGrafana opens on the Graphoria dashboard at http://localhost:3001 in the Docker run: Prometheus scrapes the graphoria service, not a host run.\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("Grafana");
+  });
+
+  it("starts neither Prometheus nor Grafana for a host run", () => {
+    expect(nextSteps({ ...ANSWERS, metrics: true }, true)).toContain(
+      "  docker compose up -d --wait db\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, metrics: true }, true)).toContain(
+      "seeds it:\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, metrics: true }, true)).not.toContain("prometheus");
+  });
+
   it("opens Jaeger's UI, and starts Jaeger for a host run", () => {
     const steps = nextSteps({ ...ANSWERS, tracing: true }, true);
 
@@ -966,6 +983,7 @@ describe("nextSteps", () => {
       "cron job",
       "Rate limits",
       "Metrics",
+      "Grafana",
       "Jaeger",
       "Computed column",
     ]) {

@@ -8,7 +8,15 @@ import type { DatabaseType } from "../config";
 import { genResolverName } from "../databases/transformers/genResolverName";
 import { storesInUse } from "../singletons/cache";
 import { ConfigurationZod } from "../types/zod/configuration";
-import { FRONTEND_FILES, PROJECT_FILES, renderProject, type ProjectValues } from "./initTemplates";
+import { GRAFANA_DASHBOARD } from "./grafanaDashboard";
+import {
+  FRONTEND_FILES,
+  GRAFANA_FILES,
+  METRICS_FILES,
+  PROJECT_FILES,
+  renderProject,
+  type ProjectValues,
+} from "./initTemplates";
 
 const STARTER = join(import.meta.dir, "../../../../examples/docker-compose-starter");
 const PLAYGROUNDS = join(import.meta.dir, "../../../playgrounds/package.json");
@@ -82,6 +90,13 @@ const PATHS = [
   "tsconfig.json",
 ];
 
+const METRICS_PATHS = [
+  "grafana/dashboards.yml",
+  "grafana/datasources.yml",
+  "grafana/graphoria.json",
+  "prometheus.yml",
+];
+
 describe("renderProject paths", () => {
   it.each(ENGINES)("renders the same eleven files for %s", (database) => {
     expect(Object.keys(render(database)).sort()).toEqual(PATHS);
@@ -89,6 +104,16 @@ describe("renderProject paths", () => {
 
   it("lists those files in PROJECT_FILES", () => {
     expect(Array.from<string>(PROJECT_FILES).sort()).toEqual(PATHS);
+  });
+
+  it.each(ENGINES)("adds Prometheus's and Grafana's files with --metrics for %s", (database) => {
+    expect(Object.keys(renderWith({ metrics: true }, database)).sort()).toEqual(
+      [...PATHS, ...METRICS_PATHS].sort(),
+    );
+  });
+
+  it("lists those in METRICS_FILES and GRAFANA_FILES", () => {
+    expect(Array.from<string>([...METRICS_FILES, ...GRAFANA_FILES]).sort()).toEqual(METRICS_PATHS);
   });
 });
 
@@ -242,6 +267,16 @@ describe("renderProject .env", () => {
   );
 
   it.each(["pg", "sqlite"] as const)(
+    "publishes Grafana's port with --metrics for %s",
+    (database) => {
+      expect(renderWith({ metrics: true }, database)[".env"]!.split("\n")).toContain(
+        "GRAFANA_PORT=3001",
+      );
+      expect(render(database)[".env"]).not.toContain("GRAFANA_PORT");
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)(
     "sends the traces to Jaeger on localhost, named after the project, for %s",
     (database) => {
       const lines = renderWith({ tracing: true }, database)[".env"]!.split("\n");
@@ -261,6 +296,7 @@ describe("renderProject .env", () => {
       ai: true,
       redis: true,
       dataTools: true,
+      metrics: true,
     })[".env"]!.split("\n");
 
     expect(lines).toContain("DB_HOST=localhost");
@@ -269,6 +305,8 @@ describe("renderProject .env", () => {
     expect(lines).toContain("REDIS_URL=redis://localhost:6379");
     expect(lines).toContain("AUTH_STORE=redis");
     expect(lines).toContain("RATE_LIMIT_STORE=redis");
+    expect(lines).toContain("METRICS_ENABLED=true");
+    expect(lines).toContain("GRAFANA_PORT=3001");
     expect(lines).toContain("DBGATE_PORT=9000");
     expect(lines).toContain("REDIS_COMMANDER_PORT=8081");
   });
@@ -285,6 +323,8 @@ describe("renderProject docker-compose.yml", () => {
     volumes?: string[];
     healthcheck?: { test: unknown };
     depends_on?: Record<string, { condition: string }>;
+    secrets?: string[];
+    tmpfs?: string[];
   };
   type Compose = {
     services: {
@@ -296,8 +336,11 @@ describe("renderProject docker-compose.yml", () => {
       dbgate?: Service;
       "redis-commander"?: Service;
       jaeger?: Service;
+      prometheus?: Service;
+      grafana?: Service;
     };
     volumes: Record<string, unknown>;
+    secrets?: Record<string, { environment: string }>;
   };
   const compose = (database: DatabaseType, patch: Partial<ProjectValues> = {}) =>
     Bun.YAML.parse(renderWith(patch, database)["docker-compose.yml"]!) as Compose;
@@ -442,6 +485,73 @@ describe("renderProject docker-compose.yml", () => {
     expect(compose("sqlite").services.graphoria.depends_on).toBeUndefined();
   });
 
+  it.each(["pg", "sqlite"] as const)(
+    "runs Prometheus with the metrics secret and Grafana on localhost (%s)",
+    (database) => {
+      const { services, volumes, secrets } = compose(database, { metrics: true });
+
+      expect(services.prometheus!.image).toBe("prom/prometheus:v3.15.1");
+      expect(services.prometheus!.ports).toBeUndefined();
+      expect(services.prometheus!.volumes).toEqual([
+        "./prometheus.yml:/etc/prometheus/prometheus.yml:ro",
+      ]);
+      expect(services.prometheus!.tmpfs).toEqual(["/prometheus:uid=65534,gid=65534"]);
+      expect(services.prometheus!.secrets).toEqual(["metrics_secret"]);
+      expect(secrets).toEqual({ metrics_secret: { environment: "METRICS_SECRET" } });
+
+      expect(services.grafana!.image).toBe("grafana/grafana:13.2.5");
+      expect(services.grafana!.ports).toEqual(["127.0.0.1:${GRAFANA_PORT}:3000"]);
+      expect(services.grafana!.environment).toEqual({
+        GF_AUTH_ANONYMOUS_ENABLED: "true",
+        GF_AUTH_ANONYMOUS_ORG_ROLE: "Editor",
+        GF_AUTH_DISABLE_LOGIN_FORM: "true",
+        GF_AUTH_BASIC_ENABLED: "false",
+        GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/etc/grafana/dashboards/graphoria.json",
+      });
+      expect(services.grafana!.volumes).toEqual([
+        "./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro",
+        "./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro",
+        "./grafana/graphoria.json:/etc/grafana/dashboards/graphoria.json:ro",
+      ]);
+      expect(services.grafana!.secrets).toBeUndefined();
+
+      // Nothing waits on either, and Graphoria reads its metrics settings from .env as before.
+      for (const service of [services.prometheus!, services.grafana!]) {
+        expect(service.healthcheck).toBeUndefined();
+        expect(service.depends_on).toBeUndefined();
+      }
+      expect(services.graphoria).toEqual(compose(database).services.graphoria);
+      expect(Object.keys(volumes)).toEqual(["db-data"]);
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)(
+    "leaves Prometheus, Grafana and the secret out by default (%s)",
+    (database) => {
+      const { services, secrets } = compose(database);
+
+      expect(services.prometheus).toBeUndefined();
+      expect(services.grafana).toBeUndefined();
+      expect(secrets).toBeUndefined();
+    },
+  );
+
+  it.each(["pg", "sqlite"] as const)(
+    "grants the metrics secret to Prometheus alone, whatever else runs (%s)",
+    (database) => {
+      const { services } = compose(database, {
+        metrics: true,
+        tracing: true,
+        rabbitmq: true,
+        redis: true,
+        dataTools: true,
+      });
+      const granted = Object.entries(services).filter(([, service]) => service?.secrets);
+
+      expect(granted.map(([name]) => name)).toEqual(["prometheus"]);
+    },
+  );
+
   it("leaves Redis out by default", () => {
     expect(compose("pg").services.redis).toBeUndefined();
   });
@@ -529,7 +639,10 @@ describe("renderProject docker-compose.yml", () => {
   );
 
   it.each(ENGINES)("sets each %s service apart with a blank line", (database) => {
-    for (const patch of [{}, { rabbitmq: true, redis: true, dataTools: true, tracing: true }]) {
+    for (const patch of [
+      {},
+      { rabbitmq: true, redis: true, dataTools: true, tracing: true, metrics: true },
+    ]) {
       // A service's last, indented line followed straight by the next service.
       expect(renderWith(patch, database)["docker-compose.yml"]).not.toMatch(
         /\n {4}.*\n {2}[a-z-]+:\n/,
@@ -1788,6 +1901,55 @@ describe("renderProject with --auth --frontend", () => {
     expect(JSON.parse(files["tsconfig.json"]!).compilerOptions.plugins[0].schema).toBe(
       "./.graphoria/schemas/schema_anonymous.graphql",
     );
+  });
+});
+
+describe("renderProject with --metrics", () => {
+  const files = renderWith({ metrics: true });
+
+  it("scrapes the graphoria service every 15 s, with the secret Compose mounts", () => {
+    expect(Bun.YAML.parse(files["prometheus.yml"]!)).toEqual({
+      global: { scrape_interval: "15s" },
+      scrape_configs: [
+        {
+          job_name: "graphoria",
+          honor_labels: true,
+          static_configs: [{ targets: ["graphoria:3000"] }],
+          http_headers: { "x-admin-secret": { files: ["/run/secrets/metrics_secret"] } },
+        },
+      ],
+    });
+  });
+
+  it("gives Grafana Prometheus as its default datasource", () => {
+    expect(Bun.YAML.parse(files["grafana/datasources.yml"]!)).toEqual({
+      apiVersion: 1,
+      datasources: [
+        {
+          name: "Prometheus",
+          type: "prometheus",
+          uid: "prometheus",
+          url: "http://prometheus:9090",
+          isDefault: true,
+        },
+      ],
+    });
+  });
+
+  it("provisions the dashboard from the directory it is mounted in", () => {
+    expect(Bun.YAML.parse(files["grafana/dashboards.yml"]!)).toEqual({
+      apiVersion: 1,
+      providers: [
+        { name: "graphoria", type: "file", options: { path: "/etc/grafana/dashboards" } },
+      ],
+    });
+    expect(files["grafana/graphoria.json"]).toBe(GRAFANA_DASHBOARD);
+  });
+
+  it("writes the metrics secret to .env alone", () => {
+    expect(
+      Object.keys(files).filter((path) => files[path]!.includes("metrics-secret-value")),
+    ).toEqual([".env"]);
   });
 });
 

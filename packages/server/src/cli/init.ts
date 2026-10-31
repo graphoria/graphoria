@@ -14,7 +14,10 @@ import {
   DBGATE_PORT,
   ENGINES,
   FRONTEND_FILES,
+  GRAFANA_FILES,
+  GRAFANA_PORT,
   JAEGER_UI_PORT,
+  METRICS_FILES,
   PROJECT_FILES,
   RABBITMQ_MANAGEMENT_PORT,
   RABBITMQ_PORT,
@@ -189,7 +192,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
       ? [extraChoice("rateLimit", "Rate limits", "requests a minute per caller")]
       : []),
     ...(args.metrics === undefined
-      ? [extraChoice("metrics", "Metrics", "Prometheus /metrics behind its own secret")]
+      ? [extraChoice("metrics", "Metrics", "Prometheus and a Grafana dashboard")]
       : []),
     ...(args.tracing === undefined
       ? [extraChoice("tracing", "Tracing", "each request's spans in Jaeger")]
@@ -454,6 +457,7 @@ export const nextSteps = (
       ? [
           "",
           `${paint.name("Metrics")}: ${link(3000, "/metrics")} answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.`,
+          `${paint.name("Grafana")} opens on the Graphoria dashboard at ${link(GRAFANA_PORT)} in the Docker run: Prometheus scrapes the graphoria service, not a host run.`,
         ]
       : []),
     ...(answers.tracing
@@ -519,6 +523,7 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   const io = args.yes ? NO_PROMPT_IO : interactive() ? TERMINAL_IO : NO_TERMINAL_IO;
   const answers = await collectAnswers(args, io);
   if (answers.frontend) refuseExisting(FRONTEND_FILES);
+  if (answers.metrics) refuseExisting([...METRICS_FILES, ...GRAFANA_FILES]);
   const warnings = [
     answers.database === "sqlite"
       ? undefined
@@ -543,6 +548,9 @@ export const initCommand = async (argv: string[]): Promise<never> => {
       : undefined,
     answers.tracing
       ? portWarning(JAEGER_UI_PORT, { service: "Jaeger UI", envVar: "JAEGER_UI_PORT" })
+      : undefined,
+    answers.metrics
+      ? portWarning(GRAFANA_PORT, { service: "Grafana", envVar: "GRAFANA_PORT" })
       : undefined,
   ];
   const stderrPaint = paintFor(process.stderr);

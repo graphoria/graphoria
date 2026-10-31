@@ -1,5 +1,7 @@
 import type { DatabaseType } from "../config";
 
+import { GRAFANA_DASHBOARD } from "./grafanaDashboard";
+
 export type InitAnswers = {
   database: DatabaseType;
   dbName: string;
@@ -72,6 +74,10 @@ export const REDIS_COMMANDER_PORT = 8081;
 // Jaeger's own UI port.
 export const JAEGER_UI_PORT = 16686;
 
+// The host port Grafana is published on; it listens on 3000 inside its own
+// container, which Graphoria already took on the host.
+export const GRAFANA_PORT = 3001;
+
 export const PROJECT_FILES = [
   "package.json",
   "tsconfig.json",
@@ -94,6 +100,14 @@ export const FRONTEND_FILES = [
   "web/graphql.ts",
   "web/styles.css",
 ] as const;
+
+export const METRICS_FILES = [
+  "prometheus.yml",
+  "grafana/dashboards.yml",
+  "grafana/graphoria.json",
+] as const;
+
+export const GRAFANA_FILES = ["grafana/datasources.yml"] as const;
 
 // The seed's schema, which prefixes its field names under the default
 // `{schema}_{name}` field naming; a MySQL schema is its database.
@@ -770,6 +784,9 @@ JAEGER_UI_PORT=${JAEGER_UI_PORT}
 `
     : "";
 
+const grafanaEnv = ({ metrics }: ProjectValues) =>
+  metrics ? `GRAFANA_PORT=${GRAFANA_PORT}\n` : "";
+
 const dataToolsEnv = (values: ProjectValues) =>
   values.dataTools
     ? `DBGATE_PORT=${DBGATE_PORT}
@@ -784,7 +801,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -798,7 +815,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -1049,6 +1066,47 @@ const JAEGER_SERVICE = `  jaeger:
 const JAEGER_ENDPOINT = `\n      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318`;
 const JAEGER_DEPENDENCY = `\n      jaeger:\n        condition: service_healthy`;
 
+const PROMETHEUS_SERVICE = `  prometheus:
+    # Only Grafana queries it, so it publishes no port.
+    # Keeps the samples in memory: a restart empties it.
+    image: prom/prometheus:v3.15.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    # Prometheus runs as nobody (65534), and a tmpfs is root's unless given an owner.
+    tmpfs:
+      - /prometheus:uid=65534,gid=65534
+    # At /run/secrets/metrics_secret, where prometheus.yml reads it.
+    secrets:
+      - metrics_secret
+`;
+
+// It listens on 3000 inside its container, published on GRAFANA_PORT.
+const GRAFANA_SERVICE = `  grafana:
+    image: grafana/grafana:13.2.5
+    # On this machine alone: every visitor is an editor, without a login.
+    ports:
+      - "127.0.0.1:\${GRAFANA_PORT}:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      # The lowest role that opens Explore.
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # Without it, the API still takes the image's admin/admin.
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/graphoria.json
+    volumes:
+      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./grafana/graphoria.json:/etc/grafana/dashboards/graphoria.json:ro
+`;
+
+const METRICS_SECRET_BLOCK = `
+secrets:
+  # METRICS_SECRET from .env, granted to the prometheus service alone.
+  metrics_secret:
+    environment: METRICS_SECRET
+`;
+
 const initComment = (frontend: boolean) =>
   frontend
     ? "# Keep it: until index.ts reaches handleSignals, Bun as PID 1 ignores SIGTERM."
@@ -1062,6 +1120,7 @@ const sqliteCompose = ({
   dataTools,
   frontend,
   tracing,
+  metrics,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
@@ -1069,7 +1128,7 @@ const sqliteCompose = ({
 # Then open http://localhost:3000/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
-${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${metrics ? `${PROMETHEUS_SERVICE}\n` : ""}${metrics ? `${GRAFANA_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     ${initComment(frontend)}
     init: true
@@ -1085,11 +1144,11 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
 
 volumes:
   db-data:
-${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}${metrics ? METRICS_SECRET_BLOCK : ""}`;
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database, rabbitmq, redis, dataTools, frontend, tracing } = values;
+  const { name, database, rabbitmq, redis, dataTools, frontend, tracing, metrics } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -1105,7 +1164,7 @@ const dockerCompose = (values: ProjectValues) => {
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${DB_SERVICES[database]}
-${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
+${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${metrics ? `${PROMETHEUS_SERVICE}\n` : ""}${metrics ? `${GRAFANA_SERVICE}\n` : ""}${dataTools ? `${DBGATE_SERVICE(database)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
     build: .
     ${initComment(frontend)}
     init: true
@@ -1123,8 +1182,48 @@ ${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy
 
 volumes:
   db-data:
-${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}`;
+${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTools ? "  dbgate-data:\n" : ""}${metrics ? METRICS_SECRET_BLOCK : ""}`;
 };
+
+const PROMETHEUS_YML = `# Scrapes /metrics on the graphoria service of docker-compose.yml. A server run
+# on the host (\`bun run dev\`) is not scraped.
+global:
+  # Grafana's rate panels assume 15 s; at Prometheus's default minute they stay empty.
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: graphoria
+    # The cron series carry a job label of their own, which Prometheus would
+    # otherwise move to exported_job to make room for this job's name.
+    honor_labels: true
+    static_configs:
+      - targets: ["graphoria:3000"]
+    # METRICS_SECRET from .env, which Compose mounts as the metrics_secret secret.
+    http_headers:
+      x-admin-secret:
+        files: ["/run/secrets/metrics_secret"]
+`;
+
+const GRAFANA_DATASOURCES = `apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # The dashboard's panels read Prometheus by this uid.
+    uid: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+`;
+
+const GRAFANA_DASHBOARD_PROVIDER = `apiVersion: 1
+
+providers:
+  - name: graphoria
+    type: file
+    options:
+      # Where docker-compose.yml mounts graphoria.json.
+      path: /etc/grafana/dashboards
+`;
 
 // The seed books. With --auth each row carries its status; the drafts come last,
 // so the published books keep the ids they have without --auth.
@@ -1911,4 +2010,10 @@ export const renderProject = (
   "docker-compose.yml": dockerCompose(values),
   "seed.sql": SEEDS[values.database](values),
   ...(values.frontend && frontendFiles(values)),
+  ...(values.metrics && {
+    "prometheus.yml": PROMETHEUS_YML,
+    "grafana/dashboards.yml": GRAFANA_DASHBOARD_PROVIDER,
+    "grafana/graphoria.json": GRAFANA_DASHBOARD,
+  }),
+  ...(values.metrics && { "grafana/datasources.yml": GRAFANA_DATASOURCES }),
 });
