@@ -51,13 +51,17 @@ jobs:
         run: |
           base='${{ inputs.base-ref }}'
           if [ -z "$base" ]; then
-            base=$(git rev-list -1 --before='24 hours ago' origin/main)
+            # --first-parent keeps the walk on main's own commits: a plain walk
+            # also reaches merged branches, and can pick a PR's own commit.
+            base=$(git rev-list -1 --first-parent --before='24 hours ago' origin/main)
           fi
           if [ -z "$base" ]; then
             echo "no commit on main older than 24 hours to compare against" >&2
             exit 1
           fi
-          echo "sha=$(git rev-parse "$base")" >> "$GITHUB_OUTPUT"
+          # ^{commit}: an annotated tag otherwise resolves to the tag object,
+          # whose id never equals github.sha in the Compare step.
+          echo "sha=$(git rev-parse "$base^{commit}")" >> "$GITHUB_OUTPUT"
 
       # A worktree rather than a second checkout: the history is already here,
       # and both trees then share one object store.
@@ -81,8 +85,16 @@ jobs:
           bun run --filter @graphoria/server build:playgrounds
           cd base && bun run --filter @graphoria/server build:playgrounds
 
+      # Only the engine under test, and Redis for `cached-repeat`. The rest of
+      # the test compose is not idle: the RabbitMQ and Kafka healthchecks start
+      # an Erlang VM and a JVM every 5 seconds, bursts of several cores that
+      # land in a scenario's timing window at random and fail the gate on
+      # unchanged code.
       - name: Start backing services
-        run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 180
+        run: |
+          service=$ENGINE
+          if [ "$ENGINE" = pg ]; then service=postgres; fi
+          docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 180 "$service" redis
 
       # Base runs first because it seeds the 100k-row dataset, which leaves the
       # page cache warm for head. The 20 warmup iterations absorb that.
@@ -96,7 +108,11 @@ jobs:
       - name: Benchmark the head commit
         run: bun run bench -- --engine=$ENGINE --no-seed --out=${{ github.workspace }}/bench-head
 
+      # Nothing to compare when the base resolves to the head itself, as it
+      # does when nothing has merged to main in the last 24 hours: a commit
+      # measured against itself can only flag noise. The reports still upload.
       - name: Compare
+        if: steps.base.outputs.sha != github.sha
         run: |
           bun run bench:compare -- \
             --baseline=base/packages/server/bench/results/$ENGINE.json \

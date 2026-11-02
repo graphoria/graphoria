@@ -7,8 +7,7 @@ export type BenchEngine = Exclude<DatabaseType, "sqlite">;
 
 /**
  * The benchmark runs against its own database on the same containers as the
- * integration suite, so `docker compose -f docker-compose.test.yml up` is the
- * only setup either needs. That keeps the 100k-row table out of an integration
+ * integration suite. That keeps the 100k-row table out of an integration
  * server's introspection on PostgreSQL and SQL Server — but not on MySQL, whose
  * databases are its schemas and are all introspected. See README.md.
  */
