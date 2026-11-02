@@ -51,13 +51,17 @@ jobs:
         run: |
           base='${{ inputs.base-ref }}'
           if [ -z "$base" ]; then
-            base=$(git rev-list -1 --before='24 hours ago' origin/main)
+            # --first-parent keeps the walk on main's own commits: a plain walk
+            # also reaches merged branches, and can pick a PR's own commit.
+            base=$(git rev-list -1 --first-parent --before='24 hours ago' origin/main)
           fi
           if [ -z "$base" ]; then
             echo "no commit on main older than 24 hours to compare against" >&2
             exit 1
           fi
-          echo "sha=$(git rev-parse "$base")" >> "$GITHUB_OUTPUT"
+          # ^{commit}: an annotated tag otherwise resolves to the tag object,
+          # whose id never equals github.sha in the Compare step.
+          echo "sha=$(git rev-parse "$base^{commit}")" >> "$GITHUB_OUTPUT"
 
       # A worktree rather than a second checkout: the history is already here,
       # and both trees then share one object store.
