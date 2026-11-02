@@ -7,10 +7,14 @@ A second, in-process script times the REST cache alone; see
 
 ## Running
 
-The benchmark uses the same containers as the integration suite:
+The benchmark needs two of the integration suite's containers: the engine under
+test and Redis, which serves `cached-repeat`. Start only those; for MySQL or
+SQL Server, name `mysql` or `mssql` instead of `postgres`. The rest of the
+stack is not idle: the RabbitMQ and Kafka healthchecks launch an Erlang VM and
+a JVM every 5 seconds, bursts of several cores that skew the timings.
 
 ```bash
-bun run test:integration:up      # postgres, mysql, sql server, redis
+docker compose -f docker-compose.test.yml up -d --wait postgres redis
 bun run bench                    # PostgreSQL, 200 iterations, seeds first
 ```
 
@@ -71,7 +75,8 @@ database. Scenarios:
 | `reference-parse`     | one `JSON.parse` of the large payload, to read deltas against     |
 
 `--store=redis` runs the Redis suite instead. It needs the test stack's Redis
-(`bun run test:integration:up`), or the one `REDIS_URL` names:
+(`docker compose -f docker-compose.test.yml up -d --wait redis`), or the one
+`REDIS_URL` names:
 
 | Scenario            | What it measures                                                       |
 | ------------------- | ---------------------------------------------------------------------- |
