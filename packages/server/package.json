@@ -78,6 +78,7 @@
     "prebuild": "bun run build:playgrounds",
     "predev": "bun run prebuild",
     "prestart": "bun run prebuild",
+    "prebench": "bun run prebuild",
     "prepublishOnly": "bun run build"
   },
   "dependencies": {
