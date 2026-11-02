@@ -18,7 +18,7 @@ import { summarize } from "./stats";
  * `<out>.md`.
  *
  *   bun run packages/server/bench/cacheSerialize.ts --out=<path prefix>
- *   … --store=redis                       needs the docker-compose.test.yml stack
+ *   … --store=redis                       needs the docker-compose.test.yml Redis
  *   … --iterations=20000 --warmup=20000   the defaults
  */
 

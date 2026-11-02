@@ -11,7 +11,9 @@ The benchmark needs two of the integration suite's containers: the engine under
 test and Redis, which serves `cached-repeat`. Start only those; for MySQL or
 SQL Server, name `mysql` or `mssql` instead of `postgres`. The rest of the
 stack is not idle: the RabbitMQ and Kafka healthchecks launch an Erlang VM and
-a JVM every 5 seconds, bursts of several cores that skew the timings.
+a JVM every 5 seconds, bursts of several cores that skew the timings. If the
+whole stack is already up for the integration suite, stop those two first with
+`docker compose -f docker-compose.test.yml stop rabbitmq kafka`.
 
 ```bash
 docker compose -f docker-compose.test.yml up -d --wait postgres redis
