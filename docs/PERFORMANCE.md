@@ -128,7 +128,9 @@ Treat these as an order of magnitude and a relative ranking, not as a target.
 
 The `Benchmark` workflow runs nightly and on manual dispatch. It benches main as
 of 24 hours ago and the current head **on the same runner**, then compares the
-two.
+two. After a day with no merges they are the same commit, and the comparison is
+skipped: a commit measured against itself can only report noise. The reports
+are still uploaded.
 
 It compares two runs rather than a run against the table above deliberately.
 That table is developer-machine data; a shared cloud runner is different

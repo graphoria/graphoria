@@ -104,7 +104,11 @@ jobs:
       - name: Benchmark the head commit
         run: bun run bench -- --engine=$ENGINE --no-seed --out=${{ github.workspace }}/bench-head
 
+      # Nothing to compare when the base resolves to the head itself, as it
+      # does when nothing has merged to main in the last 24 hours: a commit
+      # measured against itself can only flag noise. The reports still upload.
       - name: Compare
+        if: steps.base.outputs.sha != github.sha
         run: |
           bun run bench:compare -- \
             --baseline=base/packages/server/bench/results/$ENGINE.json \
