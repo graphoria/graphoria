@@ -23,7 +23,7 @@
     "build": "bun run build:server && bun run --filter '!@graphoria/playgrounds' --filter '!@graphoria/server' build",
     "build:server": "bun run --filter @graphoria/server build",
     "build:react": "bun run --filter @graphoria/react build",
-    "bench": "bun run packages/server/bench/run.ts",
+    "bench": "bun run --filter @graphoria/server build:playgrounds && bun run packages/server/bench/run.ts",
     "bench:compare": "bun run packages/server/bench/gate.ts",
     "lint": "oxlint",
     "format": "oxfmt",
