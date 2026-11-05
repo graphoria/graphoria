@@ -5,9 +5,10 @@ Graphoria feature across **three databases at once** — PostgreSQL, MySQL and S
 Server, each holding the same schema and all merged into one API. Two tenants —
 _Acme_ and _Globex_ — share that schema; row-level RBAC keeps them apart.
 
-**Ready to go.** Clone, `docker compose up`, `bun run index.ts` — you're live with
-a full GraphQL + REST API backed by your own database in minutes. Every feature
-below is exercised by this single runnable project.
+**Ready to go.** Clone, start the services, `bun install`, create `.env`, seed
+the users and `bun run index.ts` (sections 1–4) — you're live with a full
+GraphQL + REST API backed by your own database in minutes. Every feature below
+is exercised by this single runnable project.
 
 This folder is a runnable, documented example:
 

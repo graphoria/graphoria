@@ -185,7 +185,7 @@ bun add @graphoria/server
 
 ## Try it now
 
-The [`examples/taskly/`](./examples/taskly) folder is a **complete, ready-to-run demo** — a multi-tenant task tracker with auth, RBAC, queues, cron, subscriptions, operations, and a React frontend. Clone the repo, `docker compose up`, `bun run index.ts`, and you're live in minutes. Every feature in this README is wired up and documented there.
+The [`examples/taskly/`](./examples/taskly) folder is a **complete, ready-to-run demo** — a multi-tenant task tracker with auth, RBAC, queues, cron, subscriptions, operations, and a React frontend. Clone the repo, start the services, `bun install`, create `.env`, seed the users and `bun run index.ts` (its README has each step), and you're live in minutes. Every feature in this README is wired up and documented there.
 
 ## Quick Start
 
