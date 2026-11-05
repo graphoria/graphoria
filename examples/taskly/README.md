@@ -118,16 +118,15 @@ bun install
 ```
 
 `seed-auth` validates the same `.env` as the server, so create it before
-seeding, next to [`index.ts`](./index.ts):
+seeding, from [`.env.example`](./.env.example):
 
 ```bash
-ADMIN_SECRET=dev-admin-change-me
-JWT_SECRET=dev-secret-change-me
-CONFIGURATION=./graphoria.ts
-AUTH_STORE=redis            # or `memory`, which loses revocations on restart
-REDIS_URL=redis://localhost:6379
-LLM_PROVIDER=ollama          # AI agent default; or set OPENAI_API_KEY / ANTHROPIC_API_KEY
+cp .env.example .env
 ```
+
+The AI agent asks a local Ollama by default. To switch, set `LLM_PROVIDER` in
+`.env` together with that provider's key; a key alone leaves it on Ollama. See
+[Choosing an LLM provider](../../docs/AI.md#choosing-an-llm-provider).
 
 Then create the users:
 
