@@ -1,6 +1,6 @@
 {
   "name": "@graphoria/server",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Auto-generated GraphQL and REST APIs from database schema - Connect your database to modern APIs instantly",
   "keywords": [
     "auto-generated",
@@ -102,8 +102,8 @@
     "@types/mssql": "12.3.0"
   },
   "peerDependencies": {
-    "@graphoria/ai": "0.7.0",
-    "@graphoria/queues": "0.7.0",
+    "@graphoria/ai": "0.7.1",
+    "@graphoria/queues": "0.7.1",
     "typescript": "^6.0.0"
   },
   "peerDependenciesMeta": {
