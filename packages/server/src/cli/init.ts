@@ -14,7 +14,11 @@ import {
   DBGATE_PORT,
   ENGINES,
   FRONTEND_FILES,
+  GRAFANA_FILES,
+  GRAFANA_PORT,
+  JAEGER_OTLP_PORT,
   JAEGER_UI_PORT,
+  METRICS_FILES,
   PROJECT_FILES,
   RABBITMQ_MANAGEMENT_PORT,
   RABBITMQ_PORT,
@@ -189,10 +193,10 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
       ? [extraChoice("rateLimit", "Rate limits", "requests a minute per caller")]
       : []),
     ...(args.metrics === undefined
-      ? [extraChoice("metrics", "Metrics", "Prometheus /metrics behind its own secret")]
+      ? [extraChoice("metrics", "Metrics", "Prometheus and a Grafana dashboard")]
       : []),
     ...(args.tracing === undefined
-      ? [extraChoice("tracing", "Tracing", "each request's spans in Jaeger")]
+      ? [extraChoice("tracing", "Tracing", "spans per request in Jaeger and Grafana")]
       : []),
     ...(args.virtualColumns === undefined
       ? [extraChoice("virtualColumns", "Computed column", "books.age, worked out in SQL")]
@@ -233,14 +237,17 @@ export const isPortFree = (port: number): boolean => {
 
 export const portWarning = (
   port: number,
-  describe: { service: string; envVar: string },
+  describe: { service: string; envVar?: string },
   isFree: (port: number) => boolean = isPortFree,
 ): string | undefined => {
   if (isFree(port)) return undefined;
+  const taken = `Port ${port} is in use on this host, so Docker Compose cannot publish the ${describe.service} on it.`;
+  if (describe.envVar === undefined)
+    return `${taken} No .env variable moves it, so free it before \`docker compose up\`.`;
   let free = port + 1;
   while (free <= 65535 && !isFree(free)) free++;
   const suggestion = free <= 65535 ? ` such as ${free}` : "";
-  return `Port ${port} is in use on this host, so Docker Compose cannot publish the ${describe.service} on it. Set ${describe.envVar} in .env to a free port${suggestion} before \`docker compose up\`.`;
+  return `${taken} Set ${describe.envVar} in .env to a free port${suggestion} before \`docker compose up\`.`;
 };
 
 export const sampleQuery = (
@@ -326,11 +333,11 @@ export const nextSteps = (
     : `  then open ${link(3000, "/graphiql")}`;
 
   // Besides the database, what graphoria.ts connects to: a host run starts
-  // their containers too.
+  // their containers too, and Grafana, which shows the traces Jaeger keeps.
   const services = [
     ...(answers.rabbitmq ? ["rabbitmq"] : []),
     ...(answers.redis ? ["redis"] : []),
-    ...(answers.tracing ? ["jaeger"] : []),
+    ...(answers.tracing ? ["jaeger", "grafana"] : []),
   ].join(" ");
 
   const run =
@@ -364,6 +371,10 @@ export const nextSteps = (
             : []),
           command("bun run dev"),
         ];
+
+  const grafana = answers.metrics
+    ? `${paint.name("Grafana")} opens on the Graphoria dashboard at ${link(GRAFANA_PORT)} in the Docker run: Prometheus scrapes the graphoria service, not a host run${answers.tracing ? "; the traces are under Explore → Jaeger" : ""}.`
+    : `${paint.name("Grafana")} shows the traces at ${link(GRAFANA_PORT)}, under Explore → Jaeger.`;
 
   return [
     ...run,
@@ -462,6 +473,7 @@ export const nextSteps = (
           `${paint.name("Jaeger")} shows a trace for each request, down to the SQL it ran, at ${link(JAEGER_UI_PORT)}: pick the service named OTEL_SERVICE_NAME in .env.`,
         ]
       : []),
+    ...(answers.metrics || answers.tracing ? [grafana] : []),
     ...(answers.virtualColumns
       ? [
           "",
@@ -519,6 +531,8 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   const io = args.yes ? NO_PROMPT_IO : interactive() ? TERMINAL_IO : NO_TERMINAL_IO;
   const answers = await collectAnswers(args, io);
   if (answers.frontend) refuseExisting(FRONTEND_FILES);
+  if (answers.metrics || answers.tracing)
+    refuseExisting([...(answers.metrics ? METRICS_FILES : []), ...GRAFANA_FILES]);
   const warnings = [
     answers.database === "sqlite"
       ? undefined
@@ -543,6 +557,12 @@ export const initCommand = async (argv: string[]): Promise<never> => {
       : undefined,
     answers.tracing
       ? portWarning(JAEGER_UI_PORT, { service: "Jaeger UI", envVar: "JAEGER_UI_PORT" })
+      : undefined,
+    answers.tracing
+      ? portWarning(JAEGER_OTLP_PORT, { service: "Jaeger OTLP receiver" })
+      : undefined,
+    answers.metrics || answers.tracing
+      ? portWarning(GRAFANA_PORT, { service: "Grafana", envVar: "GRAFANA_PORT" })
       : undefined,
   ];
   const stderrPaint = paintFor(process.stderr);

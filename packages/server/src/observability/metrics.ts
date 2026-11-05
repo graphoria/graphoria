@@ -5,7 +5,7 @@ type MetricDefinition = {
   labelNames: readonly string[];
 };
 
-const METRICS = {
+export const METRICS = {
   graphoria_graphql_operations_total: {
     type: "counter",
     help: "GraphQL operations executed, by outcome.",

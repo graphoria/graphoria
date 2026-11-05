@@ -533,6 +533,12 @@ describe("portWarning", () => {
     expect(warning).toContain("RabbitMQ");
     expect(warning).toContain("RABBITMQ_PORT");
   });
+
+  it("says to free a port that no .env variable moves", () => {
+    expect(portWarning(4318, { service: "Jaeger OTLP receiver" }, () => false)).toBe(
+      "Port 4318 is in use on this host, so Docker Compose cannot publish the Jaeger OTLP receiver on it. No .env variable moves it, so free it before `docker compose up`.",
+    );
+  });
 });
 
 describe("isPortFree", () => {
@@ -779,20 +785,62 @@ describe("nextSteps", () => {
     expect(nextSteps(ANSWERS, true)).not.toContain("/metrics");
   });
 
-  it("opens Jaeger's UI, and starts Jaeger for a host run", () => {
+  it("opens Grafana on the dashboard, right after the metrics endpoint", () => {
+    expect(nextSteps({ ...ANSWERS, metrics: true }, true)).toContain(
+      "a secret that opens nothing else.\nGrafana opens on the Graphoria dashboard at http://localhost:3001 in the Docker run: Prometheus scrapes the graphoria service, not a host run.\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("Grafana");
+  });
+
+  it("starts neither Prometheus nor Grafana for a host run", () => {
+    expect(nextSteps({ ...ANSWERS, metrics: true }, true)).toContain(
+      "  docker compose up -d --wait db\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, metrics: true }, true)).toContain(
+      "seeds it:\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, metrics: true }, true)).not.toContain("prometheus");
+  });
+
+  it("puts the Grafana line below Jaeger's with --tracing alone", () => {
+    const steps = nextSteps({ ...ANSWERS, tracing: true }, true);
+
+    expect(steps).toContain(
+      "pick the service named OTEL_SERVICE_NAME in .env.\nGrafana shows the traces at http://localhost:3001, under Explore → Jaeger.\n",
+    );
+    expect(steps).not.toContain("Prometheus");
+  });
+
+  it("puts the Grafana line, traces included, below Jaeger's with --metrics and --tracing", () => {
+    const steps = nextSteps({ ...ANSWERS, metrics: true, tracing: true }, true);
+
+    expect(steps).toContain(
+      "a secret that opens nothing else.\n\nJaeger shows a trace for each request, down to the SQL it ran, at http://localhost:16686: pick the service named OTEL_SERVICE_NAME in .env.\nGrafana opens on the Graphoria dashboard at http://localhost:3001 in the Docker run: Prometheus scrapes the graphoria service, not a host run; the traces are under Explore → Jaeger.\n",
+    );
+    expect(steps.split("\n").filter((line) => line.startsWith("Grafana"))).toHaveLength(1);
+  });
+
+  it("opens Jaeger's UI, and starts Jaeger and Grafana for a host run", () => {
     const steps = nextSteps({ ...ANSWERS, tracing: true }, true);
 
     expect(steps).toContain(
       "Jaeger shows a trace for each request, down to the SQL it ran, at http://localhost:16686: pick the service named OTEL_SERVICE_NAME in .env.",
     );
-    expect(steps).toContain("  docker compose up -d --wait db jaeger\n  bun run dev\n");
+    expect(steps).toContain("  docker compose up -d --wait db jaeger grafana\n  bun run dev\n");
     expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, tracing: true }, true)).toContain(
-      "seeds it:\n  docker compose up -d --wait jaeger\n  bun run dev\n",
+      "seeds it:\n  docker compose up -d --wait jaeger grafana\n  bun run dev\n",
     );
     expect(nextSteps({ ...ANSWERS, redis: true, tracing: true }, true)).toContain(
-      "  docker compose up -d --wait db redis jaeger\n",
+      "  docker compose up -d --wait db redis jaeger grafana\n",
     );
     expect(nextSteps(ANSWERS, true)).not.toContain("jaeger");
+  });
+
+  it("starts Grafana but never Prometheus for a host run with --metrics and --tracing", () => {
+    const steps = nextSteps({ ...ANSWERS, metrics: true, tracing: true }, true);
+
+    expect(steps).toContain("  docker compose up -d --wait db jaeger grafana\n  bun run dev\n");
+    expect(steps).not.toContain("prometheus");
   });
 
   it("says where the computed age comes from, and selects it in the sample query", () => {
@@ -966,6 +1014,7 @@ describe("nextSteps", () => {
       "cron job",
       "Rate limits",
       "Metrics",
+      "Grafana",
       "Jaeger",
       "Computed column",
     ]) {
