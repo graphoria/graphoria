@@ -110,8 +110,15 @@ Users live in Graphoria's auto-created `auth."user"` table — **not** in a
 in `claims`, hoisted into filters as `$session.<key>`. The task/project/comment
 rows reference these usernames.
 
-`seed-auth` validates the same `.env` as the server, so create it first, next to
-[`index.ts`](./index.ts):
+Install Taskly's dependencies first. The folder has its own `package.json` and
+`bun.lock`, outside the repo's workspace:
+
+```bash
+bun install
+```
+
+`seed-auth` validates the same `.env` as the server, so create it before
+seeding, next to [`index.ts`](./index.ts):
 
 ```bash
 ADMIN_SECRET=dev-admin-change-me
@@ -144,7 +151,6 @@ bunx graphoria seed-auth --config ./graphoria.ts --user max   --password 'taskly
 ## 4. Run it
 
 ```bash
-bun add @graphoria/server   # if this folder isn't already inside the workspace
 bun run index.ts
 ```
 
