@@ -112,13 +112,13 @@ rows reference these usernames.
 
 ```bash
 # Acme (org 1)
-bunx graphoria seed-auth --config ./graphoria.ts --user alice --password 's3cret' --role admin   --claims '{"org_id":1,"full_name":"Alice Adams"}'
-bunx graphoria seed-auth --config ./graphoria.ts --user molly --password 's3cret' --role manager --claims '{"org_id":1,"full_name":"Molly Ng"}'
-bunx graphoria seed-auth --config ./graphoria.ts --user evan  --password 's3cret' --role member  --claims '{"org_id":1,"full_name":"Evan Lee"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user alice --password 'taskly-demo' --role admin   --claims '{"org_id":1,"full_name":"Alice Adams"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user molly --password 'taskly-demo' --role manager --claims '{"org_id":1,"full_name":"Molly Ng"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user evan  --password 'taskly-demo' --role member  --claims '{"org_id":1,"full_name":"Evan Lee"}'
 
 # Globex (org 2)
-bunx graphoria seed-auth --config ./graphoria.ts --user gina  --password 's3cret' --role admin   --claims '{"org_id":2,"full_name":"Gina Park"}'
-bunx graphoria seed-auth --config ./graphoria.ts --user max   --password 's3cret' --role member  --claims '{"org_id":2,"full_name":"Max Roy"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user gina  --password 'taskly-demo' --role admin   --claims '{"org_id":2,"full_name":"Gina Park"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user max   --password 'taskly-demo' --role member  --claims '{"org_id":2,"full_name":"Max Roy"}'
 ```
 
 `--role` must match a key under `auth.permissions`: `member`, `manager`, or
@@ -150,7 +150,7 @@ Get a token to use in the examples below:
 
 ```bash
 curl -s localhost:3000/graphql -H 'content-type: application/json' \
-  -d '{"query":"mutation{auth_login(username:\"evan\",password:\"s3cret\"){access_token role}}"}'
+  -d '{"query":"mutation{auth_login(username:\"evan\",password:\"taskly-demo\"){access_token role}}"}'
 # export TOKEN=<access_token>
 ```
 
