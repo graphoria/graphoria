@@ -110,6 +110,20 @@ Users live in Graphoria's auto-created `auth."user"` table — **not** in a
 in `claims`, hoisted into filters as `$session.<key>`. The task/project/comment
 rows reference these usernames.
 
+`seed-auth` validates the same `.env` as the server, so create it first, next to
+[`index.ts`](./index.ts):
+
+```bash
+ADMIN_SECRET=dev-admin-change-me
+JWT_SECRET=dev-secret-change-me
+CONFIGURATION=./graphoria.ts
+AUTH_STORE=redis            # or `memory`, which loses revocations on restart
+REDIS_URL=redis://localhost:6379
+LLM_PROVIDER=ollama          # AI agent default; or set OPENAI_API_KEY / ANTHROPIC_API_KEY
+```
+
+Then create the users:
+
 ```bash
 # Acme (org 1)
 bunx graphoria seed-auth --config ./graphoria.ts --user alice --password 'taskly-demo' --role admin   --claims '{"org_id":1,"full_name":"Alice Adams"}'
@@ -128,18 +142,6 @@ bunx graphoria seed-auth --config ./graphoria.ts --user max   --password 'taskly
 ---
 
 ## 4. Run it
-
-Create `.env` next to [`index.ts`](./index.ts):
-
-```bash
-ADMIN_SECRET=dev-admin-change-me
-JWT_SECRET=dev-secret-change-me
-AUTH_STORE=redis            # or `memory`, which loses revocations on restart
-REDIS_URL=redis://localhost:6379
-LLM_PROVIDER=ollama          # AI agent default; or set OPENAI_API_KEY / ANTHROPIC_API_KEY
-```
-
-Then:
 
 ```bash
 bun add @graphoria/server   # if this folder isn't already inside the workspace
