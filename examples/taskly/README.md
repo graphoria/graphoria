@@ -312,7 +312,7 @@ over-run guard).
 `ai.mcp.enabled` adds the `POST /mcp` Model Context Protocol endpoint. → `ai`.
 
 ```bash
-curl -X POST localhost:3000/rest/ai -H "x-admin-secret: $ADMIN_SECRET" \
+curl -X POST localhost:3000/rest/ai -H "x-admin-secret: my_admin_secret" \
   -H "content-type: application/json" -d '{"prompt":"how many overdue tasks does Acme have?"}'
 ```
 
