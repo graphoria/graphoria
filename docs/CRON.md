@@ -87,9 +87,18 @@ Day-of-month and day-of-week combine with **OR** by default: `0 20 1 * MON` fire
 
 These nicknames are also accepted: `@yearly` / `@annually`, `@monthly`, `@weekly`, `@daily` / `@midnight`, `@hourly`. `@reboot` is recognised but rejected — it needs system-startup detection that a long-lived server process cannot provide.
 
-If you set `timezone`, the cron expression is interpreted in that zone and DST is handled automatically. Jobs that land in a DST gap are skipped; jobs in a DST overlap run once. Without `timezone`, the server's local timezone is used — which is rarely what you want in production. Always set `timezone` explicitly when the schedule is human-meaningful.
+If you set `timezone`, the cron expression is interpreted in that zone and DST is handled automatically. A job due inside a DST gap (spring forward) runs at the first valid time after it, so `0 30 2 * * *` runs at 03:00 that day. In a DST overlap (fall back), a job with one value each for second, minute and hour runs once, at the first pass; any other pattern, such as `*/30 * * * *` or `0 30 1,2 * * *`, runs on both passes of the repeated hour. Without `timezone`, the server's local timezone is used — which is rarely what you want in production. Always set `timezone` explicitly when the schedule is human-meaningful.
 
 A pattern the parser rejects does not stop the server: Graphoria logs `failed to schedule job` at error level, skips that job, and schedules the rest. Watch the boot logs after changing a pattern — a typo costs you the job, silently as far as the rest of the process is concerned.
+
+### Upgrade note: scheduling changes in croner 11
+
+Graphoria moved from croner 10 to croner 11 in the first release after `v0.7.0`. Four things change when a job fires. None of them is logged, so check the jobs that rely on them:
+
+- **A run due exactly at `startAt` fires.** `0 0 * * *` with `startAt: "2099-01-01T00:00:00"` first runs at midnight on 1 January; croner 10 skipped to 2 January. Jobs with `interval` set already behaved this way.
+- **A job due in a DST gap runs when the clock lands.** `0 30 2 * * *` in `America/New_York` runs at 03:00 on the spring-forward day; croner 10 ran it at 03:30.
+- **A stepped or listed pattern runs on both passes of a DST overlap.** `*/30 * * * *` keeps firing through the repeated hour at fall back; croner 10 skipped the second pass, leaving a 90-minute gap. A job with one value each for second, minute and hour still runs once.
+- **`previousRun` in `TickContext` is when the previous tick started.** croner 10 reported when it finished.
 
 ### Upgrade note: pattern changes in croner 10
 
@@ -107,7 +116,7 @@ Everything else is additive — the year field, `W`, `+`, and the nicknames abov
 | `paused`      | `boolean` | Default `false`. Skip a job's first run cycles without removing it.                                                                        |
 | `maxRuns`     | `number`  | Stop after N executions. Useful for one-shot migrations.                                                                                   |
 | `interval`    | `number`  | Minimum seconds between triggers. Use this to throttle a too-aggressive cron.                                                              |
-| `startAt`     | `string`  | ISO datetime; the job only fires after this point.                                                                                         |
+| `startAt`     | `string`  | ISO datetime; the job fires from this point on, including a run due exactly at it.                                                         |
 | `stopAt`      | `string`  | ISO datetime; the job stops firing after this point.                                                                                       |
 | `protect`     | `boolean` | When `true`, a tick is skipped if the previous tick is still running. Use this for any job whose work might exceed the schedule interval.  |
 | `catchErrors` | `boolean` | Default `true`. When `true`, exceptions are logged and don't crash the server. Set `false` only if you want unhandled errors to bubble up. |
