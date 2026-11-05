@@ -178,6 +178,83 @@ describe("croner 10 pattern semantics", () => {
   });
 });
 
+describe("croner 11 scheduling semantics", () => {
+  it("fires a run due exactly at startAt", async () => {
+    // croner 10 excluded startAt itself and first ran at the following match.
+    const cron = await start([
+      {
+        name: "inclusive_start",
+        pattern: "0 0 * * *",
+        startAt: "2099-01-01T00:00:00",
+        catchErrors: true,
+        paused: true,
+      } as CronJob,
+    ]);
+
+    expect(cron.getNextRun("inclusive_start")).toEqual(new Date(2099, 0, 1));
+  });
+
+  it("runs a job due in a DST gap when the clock lands", async () => {
+    // New York skips 02:00-03:00 on 8 March 2099; croner 10 ran this at 03:30.
+    const cron = await start([
+      {
+        name: "dst_gap",
+        pattern: "0 30 2 * * *",
+        timezone: "America/New_York",
+        startAt: "2099-03-07T12:00:00",
+        catchErrors: true,
+        paused: true,
+      } as CronJob,
+    ]);
+
+    expect(cron.getNextRun("dst_gap")?.toISOString()).toBe("2099-03-08T07:00:00.000Z");
+  });
+
+  it("runs a stepped pattern on both passes of a DST overlap", async () => {
+    // New York repeats 01:00-02:00 on 1 November 2099; croner 10 skipped the second pass.
+    const cron = await start([
+      {
+        name: "dst_overlap",
+        pattern: "*/30 * * * *",
+        timezone: "America/New_York",
+        startAt: "2099-11-01T00:45:00",
+        catchErrors: true,
+        paused: true,
+      } as CronJob,
+    ]);
+
+    const runs = cron.getNextRuns("dst_overlap", 5);
+    const gaps = runs.slice(1).map((run, i) => run.getTime() - runs[i]!.getTime());
+
+    expect(gaps).toEqual(Array(4).fill(30 * 60 * 1000));
+  });
+
+  it("reports when the previous tick started, not when it finished", async () => {
+    const starts: number[] = [];
+    const ticks: TickContext[] = [];
+
+    await start([
+      {
+        name: "previous_run",
+        pattern: "* * * * * *",
+        maxRuns: 2,
+        catchErrors: true,
+        paused: false,
+        onTick: async (_options, context) => {
+          starts.push(Date.now());
+          ticks.push(context);
+          await Bun.sleep(300);
+        },
+      } as CronJob,
+    ]);
+
+    await waitFor(() => ticks.length === 2);
+
+    // croner 10 reported the finish, 300 ms after the start.
+    expect(Math.abs(ticks[1]!.previousRun!.getTime() - starts[0]!)).toBeLessThan(100);
+  });
+});
+
 describe("startCronJobs — metrics", () => {
   let registry: ReturnType<typeof createRegistry>;
 
