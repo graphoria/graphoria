@@ -78,8 +78,14 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       };
     },
 
-    [EntitySource.AUTH]: (field, variables, _queryAnalysis, req, session) =>
-      handleAuthMutation(field, variables, auth, req, session),
+    [EntitySource.AUTH]: (field, variables, queryAnalysis, req, session) =>
+      handleAuthMutation(
+        withResolvedSelections(field, queryAnalysis, variables),
+        variables,
+        auth,
+        req,
+        session,
+      ),
 
     [EntitySource.OPERATION]: async (field, variables) => {
       const operation = entities.operations[field.name];
@@ -275,6 +281,19 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       });
     return walk(selections);
   };
+
+  // The auth handlers narrow the payload they build to the field's selections,
+  // so those come with fragments expanded and the fields a directive skips gone.
+  const withResolvedSelections = (
+    field: SelectionAnalysis,
+    queryAnalysis: AnalysisResult,
+    variables: Record<string, unknown>,
+  ): SelectionAnalysis => ({
+    ...field,
+    selections: resolveFragments(field.selections, queryAnalysis.fragments, (selection) =>
+      filterBasedOnDirective(selection, queryAnalysis.operations[0]?.variables ?? [], variables),
+    ),
+  });
 
   // Keyed by an analysis's meta document, so per role and query text, and gone
   // with the analysis. Only an operation that declares no variables answers
@@ -531,7 +550,13 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             // Handle auth queries (e.g. auth_me)
             let authData: Record<string, unknown> = {};
             for (const field of authFields) {
-              Object.assign(authData, handleAuthMeQuery(field, session));
+              Object.assign(
+                authData,
+                handleAuthMeQuery(
+                  withResolvedSelections(field, queryAnalysis, resolved.allVariables),
+                  session,
+                ),
+              );
             }
 
             // Handle remote schema queries in parallel

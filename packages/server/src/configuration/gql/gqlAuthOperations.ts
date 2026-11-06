@@ -7,7 +7,14 @@ import { resolveVariableRef } from "../../analyzeQuery/resolveVariables";
 import { checkUserCredentials } from "../../databases";
 import { actorFromSession, audit } from "../../logging/audit";
 import { getTokenService } from "../../singletons/authentication";
-import { typenamesOf } from "../../utils/selection";
+import { filterResultBySelection } from "../../utils/selection";
+
+// filterResultBySelection hands an empty selection the whole object, not the
+// nothing it asks for.
+const bySelection = (
+  payload: Record<string, unknown>,
+  selections: SelectionAnalysis[] | undefined,
+): unknown => (selections?.length ? filterResultBySelection(payload, selections) : {});
 
 // Handle auth mutations: auth_login / auth_refresh / auth_logout
 export const handleAuthMutation = async (
@@ -75,12 +82,10 @@ export const handleAuthMutation = async (
 
     return {
       data: {
-        [field.alias || field.name]: {
-          access_token: data.access_token,
-          expires_in: data.expires_in,
-          role: result.role,
-          ...typenamesOf(field.selections),
-        },
+        [field.alias || field.name]: bySelection(
+          { access_token: data.access_token, expires_in: data.expires_in, role: result.role },
+          field.selections,
+        ),
       },
     };
   }
@@ -109,12 +114,10 @@ export const handleAuthMutation = async (
 
       return {
         data: {
-          [field.alias || field.name]: {
-            access_token: result.access_token,
-            expires_in: result.expires_in,
-            role: result.role,
-            ...typenamesOf(field.selections),
-          },
+          [field.alias || field.name]: bySelection(
+            { access_token: result.access_token, expires_in: result.expires_in, role: result.role },
+            field.selections,
+          ),
         },
       };
     }
@@ -164,16 +167,17 @@ export const handleAuthMutation = async (
   return { data: {} };
 };
 
-// Handle the auth_me query — returns { [alias]: { username, role } | null }
+// Handle the auth_me query — returns { [alias]: the selected user fields | null }
 export const handleAuthMeQuery = (
   field: SelectionAnalysis,
   session?: SessionContext,
 ): Record<string, unknown> => {
   if (field.name === "auth_me") {
     const alias = field.alias || field.name;
+    // No auth user table has an id column: a user is keyed by username.
     return {
       [alias]: session?.sub
-        ? { username: session.sub, role: session.role, ...typenamesOf(field.selections) }
+        ? bySelection({ id: null, username: session.sub, role: session.role }, field.selections)
         : null,
     };
   }
