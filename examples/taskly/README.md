@@ -5,9 +5,10 @@ Graphoria feature across **three databases at once** — PostgreSQL, MySQL and S
 Server, each holding the same schema and all merged into one API. Two tenants —
 _Acme_ and _Globex_ — share that schema; row-level RBAC keeps them apart.
 
-**Ready to go.** Clone, `docker compose up`, `bun run index.ts` — you're live with
-a full GraphQL + REST API backed by your own database in minutes. Every feature
-below is exercised by this single runnable project.
+**Ready to go.** Clone, start the services, `bun install`, create `.env`, seed
+the users and `bun run index.ts` (sections 1–4) — you're live with a full
+GraphQL + REST API backed by your own database in minutes. Every feature below
+is exercised by this single runnable project.
 
 This folder is a runnable, documented example:
 
@@ -110,15 +111,35 @@ Users live in Graphoria's auto-created `auth."user"` table — **not** in a
 in `claims`, hoisted into filters as `$session.<key>`. The task/project/comment
 rows reference these usernames.
 
+Install Taskly's dependencies first. The folder has its own `package.json` and
+`bun.lock`, outside the repo's workspace:
+
+```bash
+bun install
+```
+
+`seed-auth` validates the same `.env` as the server, so create it before
+seeding, from [`.env.example`](./.env.example):
+
+```bash
+cp .env.example .env
+```
+
+The AI agent asks a local Ollama by default. To switch, set `LLM_PROVIDER` in
+`.env` together with that provider's key; a key alone leaves it on Ollama. See
+[Choosing an LLM provider](../../docs/AI.md#choosing-an-llm-provider).
+
+Then create the users:
+
 ```bash
 # Acme (org 1)
-bunx graphoria seed-auth --config ./graphoria.ts --user alice --password 's3cret' --role admin   --claims '{"org_id":1,"full_name":"Alice Adams"}'
-bunx graphoria seed-auth --config ./graphoria.ts --user molly --password 's3cret' --role manager --claims '{"org_id":1,"full_name":"Molly Ng"}'
-bunx graphoria seed-auth --config ./graphoria.ts --user evan  --password 's3cret' --role member  --claims '{"org_id":1,"full_name":"Evan Lee"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user alice --password 'taskly-demo' --role admin   --claims '{"org_id":1,"full_name":"Alice Adams"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user molly --password 'taskly-demo' --role manager --claims '{"org_id":1,"full_name":"Molly Ng"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user evan  --password 'taskly-demo' --role member  --claims '{"org_id":1,"full_name":"Evan Lee"}'
 
 # Globex (org 2)
-bunx graphoria seed-auth --config ./graphoria.ts --user gina  --password 's3cret' --role admin   --claims '{"org_id":2,"full_name":"Gina Park"}'
-bunx graphoria seed-auth --config ./graphoria.ts --user max   --password 's3cret' --role member  --claims '{"org_id":2,"full_name":"Max Roy"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user gina  --password 'taskly-demo' --role admin   --claims '{"org_id":2,"full_name":"Gina Park"}'
+bunx graphoria seed-auth --config ./graphoria.ts --user max   --password 'taskly-demo' --role member  --claims '{"org_id":2,"full_name":"Max Roy"}'
 ```
 
 `--role` must match a key under `auth.permissions`: `member`, `manager`, or
@@ -129,20 +150,7 @@ bunx graphoria seed-auth --config ./graphoria.ts --user max   --password 's3cret
 
 ## 4. Run it
 
-Create `.env` next to [`index.ts`](./index.ts):
-
 ```bash
-ADMIN_SECRET=dev-admin-change-me
-JWT_SECRET=dev-secret-change-me
-AUTH_STORE=redis            # or `memory`, which loses revocations on restart
-REDIS_URL=redis://localhost:6379
-LLM_PROVIDER=ollama          # AI agent default; or set OPENAI_API_KEY / ANTHROPIC_API_KEY
-```
-
-Then:
-
-```bash
-bun add @graphoria/server   # if this folder isn't already inside the workspace
 bun run index.ts
 ```
 
@@ -150,7 +158,7 @@ Get a token to use in the examples below:
 
 ```bash
 curl -s localhost:3000/graphql -H 'content-type: application/json' \
-  -d '{"query":"mutation{auth_login(username:\"evan\",password:\"s3cret\"){access_token role}}"}'
+  -d '{"query":"mutation{auth_login(username:\"evan\",password:\"taskly-demo\"){access_token role}}"}'
 # export TOKEN=<access_token>
 ```
 
@@ -305,7 +313,7 @@ over-run guard).
 `ai.mcp.enabled` adds the `POST /mcp` Model Context Protocol endpoint. → `ai`.
 
 ```bash
-curl -X POST localhost:3000/rest/ai -H "x-admin-secret: $ADMIN_SECRET" \
+curl -X POST localhost:3000/rest/ai -H "x-admin-secret: my_admin_secret" \
   -H "content-type: application/json" -d '{"prompt":"how many overdue tasks does Acme have?"}'
 ```
 

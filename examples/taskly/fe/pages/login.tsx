@@ -104,7 +104,7 @@ export function LoginPage() {
         {/* Demo credentials, seeded via `bunx graphoria seed-auth`. */}
         <p className="text-center text-xs text-gray-500 mt-6">
           Demo login: <span className="text-gray-400">evan</span> /{" "}
-          <span className="text-gray-400">s3cret</span>
+          <span className="text-gray-400">taskly-demo</span>
         </p>
       </div>
     </div>
