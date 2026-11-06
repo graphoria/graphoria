@@ -154,7 +154,7 @@ Setting the `AUTH_STRATEGY` env var to `jwt`, `paseto_local`, or `paseto_public`
 
 ## The built-in operations
 
-When `auth.enabled` is `true`, Graphoria registers three GraphQL mutations and equivalent REST endpoints. They live alongside whatever you define in your `operations` block.
+When `auth.enabled` is `true`, Graphoria registers three GraphQL mutations, the `auth_me` query and equivalent REST endpoints. They live alongside whatever you define in your `operations` block.
 
 ### `auth_login`
 
@@ -162,29 +162,27 @@ When `auth.enabled` is `true`, Graphoria registers three GraphQL mutations and e
 mutation Login($username: String!, $password: String!) {
   auth_login(username: $username, password: $password) {
     access_token
-    refresh_token
     expires_in
     role
   }
 }
 ```
 
-Returns `401` for unknown usernames, inactive users, or wrong passwords. The error message is intentionally generic ("Invalid username or password") so it cannot be used as a username oracle. `expires_in` is the access-token lifetime in seconds.
+Returns `401` for unknown usernames, inactive users, or wrong passwords. The error message is intentionally generic ("Invalid username or password") so it cannot be used as a username oracle. `expires_in` is the access-token lifetime in seconds. The refresh token is not in the response: it is set as the `httpOnly` `refresh_token` cookie.
 
 ### `auth_refresh`
 
 ```graphql
-mutation Refresh($refresh_token: String!) {
-  auth_refresh(refresh_token: $refresh_token) {
+mutation Refresh {
+  auth_refresh {
     access_token
-    refresh_token
     expires_in
     role
   }
 }
 ```
 
-Validates the refresh token, marks its JTI as used in the token store, and issues a brand-new pair. Reusing a refresh token throws `"Token reuse detected"` — surface this in your client as a forced logout, since it usually means either an honest race or a stolen token.
+Validates the refresh token in the `refresh_token` cookie, marks its JTI as used in the token store, and issues a brand-new pair, setting the new refresh token as the cookie. Reusing a refresh token throws `"Token reuse detected"` — surface this in your client as a forced logout, since it usually means either an honest race or a stolen token.
 
 A password reset, a deactivation, a deletion or a role/claims change made from the [console](./CONSOLE.md) revokes every refresh token issued up to that second for that user, so `auth_refresh` answers `"Token revoked"` for each of them; access tokens are unaffected until they expire.
 
@@ -193,6 +191,19 @@ A password reset, a deactivation, a deletion or a role/claims change made from t
 Hard logout. Revokes the JTI of the access token used to make the request (read from the `Authorization` header) and the JTI of the refresh token cookie if present, then deletes the cookie. Any subsequent `verifyTokenAndGetSession` call for those JTIs returns the `anonymous` session, and any `auth_refresh` call for the revoked refresh token throws `"Token revoked"`. Revocation is recorded in the same token-store record as the per-JTI replay protection, so it inherits the original token's TTL — there are no orphan keys.
 
 Tampered or expired refresh cookies are handled gracefully: the verify step swallows the error and the cookie is still cleared.
+
+### `auth_me`
+
+```graphql
+query Me {
+  auth_me {
+    username
+    role
+  }
+}
+```
+
+Answers the caller's session: the token's subject as `username`, and its role. A request without a token answers `anonymous` and the anonymous role. `id` is always `null`, since the user table has no id column. `GET /rest/auth/me` answers the same `username` and `role`.
 
 ## Sending tokens to the server
 
@@ -257,6 +268,7 @@ Standard claims (`sub`, `role`, `iat`, `exp`, `jti`) are always available. Anyth
 
 - **A Redis token store** fails closed: if Redis is unreachable, refresh attempts fail — the design choice favors security over availability. So does the revocation check on every access token, which serves the caller as `anonymous` until Redis answers again. A command that finds the connection down first waits up to a second for it, so a restart or a failover that reconnects within that second fails no request. The client reconnects on its own once Redis is back, however long the outage, and [`/health/ready`](./OBSERVABILITY.md#health-endpoints) reports Redis down meanwhile.
 - **Argon2id** parameters are inherited from Bun's defaults (`m=65536, t=2, p=1`). To tune them, hash passwords explicitly with `Bun.password.hash(plain, { algorithm: "argon2id", memoryCost, timeCost })` before inserting.
+- **An inline fragment inside an auth field needs a type condition.** `... @include(if: $full) { role }` answers without `role`; write `... on AuthToken { … }` (`... on AuthUser` under `auth_me`), or put the directive on the field.
 - **Token clock skew** is not currently configurable — the verifier rejects tokens whose `exp` is in the past or whose `nbf` is in the future, with no grace period.
 - **Audit log.** Every `auth_login` (success and failure, by username) and every `auth_logout` that revoked a token writes one record; passwords and tokens never appear in it. See [Audit log](../README.md#audit-log).
 - **Multi-tenant deployments** can store the tenant ID in `claims.tenant_id` and reference it as `$session.claims.tenant_id` in every filter; the JWT/PASETO payload carries it on every request, so there's no extra DB round-trip.
