@@ -672,3 +672,22 @@ describe("Meta fields", () => {
     expect(typename).not.toHaveProperty("isRequired");
   });
 });
+
+describe("Inline fragments", () => {
+  const selectionsOf = (query: string) =>
+    analyzeQuery(query, StoreMSSQL).operations[0]!.fields[0]!.selections;
+
+  it("analyzes one without a type condition as one on the type it sits in", () => {
+    const untyped = selectionsOf("{ dbo_products { ... @include(if: true) { __typename name } } }");
+
+    expect(untyped).toEqual(
+      selectionsOf(
+        "{ dbo_products { ... on dbo_products @include(if: true) { __typename name } } }",
+      ),
+    );
+    expect(untyped![0]!.selections!.map((selection) => selection.name)).toEqual([
+      "__typename",
+      "name",
+    ]);
+  });
+});

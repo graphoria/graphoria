@@ -406,6 +406,21 @@ describe("handleGraphQLRequestFactory.handler — auth payloads", () => {
     });
   });
 
+  it.each([
+    [true, { username: "alice", role: "user" }],
+    [false, { username: "alice" }],
+  ])(
+    "answers an inline fragment without a type condition that $full = %p includes",
+    async (full, auth_me) => {
+      expect(
+        await me(
+          "query Q($full: Boolean!) { auth_me { username ... @include(if: $full) { role } } }",
+          { full },
+        ),
+      ).toEqual({ data: { auth_me } });
+    },
+  );
+
   it.each(["@skip(if: true)", "@include(if: false)"])(
     "leaves out an auth_me subfield under %s",
     async (directive) => {
@@ -1225,6 +1240,22 @@ describe("handleGraphQLRequestFactory — audit", () => {
       );
 
       expect(result).toEqual({ data: { ask: { queries: ["{ users { id } }"] } } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("answers the subfields an inline fragment without a type condition selects", async () => {
+    const { spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        '{ ask(prompt: "how many?") { ... { answer } } }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({ data: { ask: { answer: "forty-two" } } });
     } finally {
       spy.mockRestore();
     }
