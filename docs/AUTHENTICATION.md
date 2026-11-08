@@ -2,7 +2,7 @@
 
 > **See also:** [Permissions & Access Control](./PERMISSIONS.md) | [Configuration](./CONFIGURATION.md)
 
-Graphoria ships with a complete authentication stack: a user table that lives in your database, password hashing with [argon2id](https://en.wikipedia.org/wiki/Argon2), token issuance and verification (JWT or PASETO), refresh-token rotation backed by the [token store](#token-store), and three built-in operations (`auth_login`, `auth_refresh`, `auth_logout`) that you can call from any client.
+Graphoria ships with a complete authentication stack: a user table that lives in your database, password hashing with [argon2id](https://en.wikipedia.org/wiki/Argon2), token issuance and verification (JWT or PASETO), refresh-token rotation backed by the [token store](#token-store), and four built-in operations (`auth_login`, `auth_refresh`, `auth_logout`, `auth_me`) that you can call from any client.
 
 This guide covers each piece in the order you'll meet it.
 
@@ -203,7 +203,7 @@ query Me {
 }
 ```
 
-Answers the caller's session: the token's subject as `username`, and its role. A request without a token answers `anonymous` and the anonymous role. `id` is always `null`, since the user table has no id column. `GET /rest/auth/me` answers the same `username` and `role`.
+Answers the caller's session: the token's subject as `username`, and its role. A request without a valid token answers `anonymous` and the anonymous role. `id` is always `null`, since the user table has no id column. `GET /rest/auth/me` answers the same `username` and `role`.
 
 ## Sending tokens to the server
 

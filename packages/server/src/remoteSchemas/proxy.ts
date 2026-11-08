@@ -3,7 +3,8 @@ import type { RemoteSchemaResolved } from "./types";
 
 import { formatTraceparent, startSpan } from "../observability/tracing";
 
-// The analysis names an inline fragment after its type condition.
+// The analysis names an inline fragment after its type condition, or without
+// one after the type it sits in.
 const INLINE_FRAGMENT = "... on ";
 
 /**
