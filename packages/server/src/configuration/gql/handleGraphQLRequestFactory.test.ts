@@ -42,6 +42,7 @@ const sdl = `
     queue_publish(data: String): String
     auth_login(username: String!, password: String!): LoginResult
     auth_refresh: LoginResult
+    auth_logout: Boolean
     remote_mutation_field: String
   }
   type User {
@@ -82,6 +83,7 @@ const sourceMap: Record<string, EntitySource> = {
   queue_publish: EntitySource.QUEUE_PUBLISHER,
   auth_login: EntitySource.AUTH,
   auth_refresh: EntitySource.AUTH,
+  auth_logout: EntitySource.AUTH,
   remote_mutation_field: EntitySource.REMOTE_SCHEMA,
 };
 
@@ -439,6 +441,12 @@ describe("handleGraphQLRequestFactory.handler — auth payloads", () => {
     ).toEqual({ data: { auth_me: { username: "alice" } } });
   });
 
+  it("applies a variable's default to an auth_me subfield", async () => {
+    expect(
+      await me("query Q($s: Boolean = false) { auth_me { username @skip(if: $s) role } }"),
+    ).toEqual({ data: { auth_me: { username: "alice", role: "user" } } });
+  });
+
   it("answers an empty object when every subfield of auth_me is skipped", async () => {
     expect(await me("{ auth_me { username @skip(if: true) } }")).toEqual({
       data: { auth_me: {} },
@@ -470,18 +478,51 @@ describe("handleGraphQLRequestFactory.handler — auth payloads", () => {
 
     afterAll(() => setTokenService(previousTokens));
 
-    it("answers the auth_refresh subfields a fragment selects, a skipped one left out", async () => {
-      const { refresh_token } = await tokens.createTokenPair({ sub: "alice", role: "user" });
-      const req = { cookies: new CookieMap({ refresh_token }) } as unknown as BunRequest;
+    const mutate = (query: string, variables: Record<string, unknown>, req: BunRequest) =>
+      factoryFn(buildEntities(), { enabled: true } as Auth).handler(
+        query,
+        variables,
+        req,
+        undefined,
+      );
 
+    const refreshing = async () => {
+      const { refresh_token } = await tokens.createTokenPair({ sub: "alice", role: "user" });
+      return { cookies: new CookieMap({ refresh_token }) } as unknown as BunRequest;
+    };
+
+    it("answers the auth_refresh subfields a fragment selects, a skipped one left out", async () => {
       expect(
-        await factoryFn(buildEntities(), { enabled: true } as Auth).handler(
+        await mutate(
           "mutation { auth_refresh { ...T access_token @skip(if: true) } } fragment T on LoginResult { ttl: expires_in }",
           {},
-          req,
-          undefined,
+          await refreshing(),
         ),
       ).toEqual({ data: { auth_refresh: { ttl: 300 } } });
+    });
+
+    it.each([
+      ["value", "mutation Q($s: Boolean!)", { s: false }],
+      ["default", "mutation Q($s: Boolean = false)", {}],
+    ])(
+      "keeps an auth_refresh subfield a variable's %s does not skip",
+      async (_source, operation, variables) => {
+        expect(
+          await mutate(
+            `${operation} { auth_refresh { ttl: expires_in @skip(if: $s) } }`,
+            variables,
+            await refreshing(),
+          ),
+        ).toEqual({ data: { auth_refresh: { ttl: 300 } } });
+      },
+    );
+
+    it("answers auth_logout, which has no selection", async () => {
+      expect(
+        await mutate("mutation { auth_logout }", {}, {
+          cookies: new CookieMap(),
+        } as unknown as BunRequest),
+      ).toEqual({ data: { auth_logout: true } });
     });
   });
 });
