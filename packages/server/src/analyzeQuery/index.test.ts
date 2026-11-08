@@ -691,3 +691,17 @@ describe("Inline fragments", () => {
     ]);
   });
 });
+
+describe("Named fragments", () => {
+  it.each(["id", "__typename", "... { id }"])(
+    "analyzes a fragment selecting %s on a type the schema lacks to no fields",
+    (selection) => {
+      const { fragments } = analyzeQuery(
+        `{ dbo_products { name } } fragment F on hidden { ${selection} }`,
+        StoreMSSQL,
+      );
+
+      expect(fragments).toEqual([{ name: "F", typeCondition: "hidden", fields: [] }]);
+    },
+  );
+});
