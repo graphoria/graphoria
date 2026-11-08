@@ -126,6 +126,8 @@ describe("websocketHandlerFactory subscribe to a queue", () => {
       events_root: Order
       events_vars: Order
       events_empty: Order
+      events_named_a: Order
+      events_named_b: Order
     }
     type Order { message: String id: ID }
   `);
@@ -148,10 +150,15 @@ describe("websocketHandlerFactory subscribe to a queue", () => {
     const { socket, ws } = fakeSocket();
     await handler.message!(ws, JSON.stringify({ type: "connection_init", payload: {} }));
 
-    const subscribe = (id: string, query: string, variables?: Record<string, unknown>) =>
+    const subscribe = (
+      id: string,
+      query: string,
+      variables?: Record<string, unknown>,
+      operationName?: string,
+    ) =>
       handler.message!(
         ws,
-        JSON.stringify({ id, type: "subscribe", payload: { query, variables } }),
+        JSON.stringify({ id, type: "subscribe", payload: { query, variables, operationName } }),
       );
 
     return { socket, subscribe };
@@ -196,6 +203,31 @@ describe("websocketHandlerFactory subscribe to a queue", () => {
     queryEventEmitter.sendDataUpdate("events_empty", { data: MESSAGE });
 
     expect(payloads(socket)).toEqual([{ data: { events_empty: {} } }]);
+  });
+
+  it("subscribes to the operation operationName names", async () => {
+    const { socket, subscribe } = await start();
+
+    await subscribe(
+      "1",
+      "subscription A { events_named_a { id } } subscription B { events_named_b { id } }",
+      undefined,
+      "B",
+    );
+    queryEventEmitter.sendDataUpdate("events_named_a", { data: MESSAGE });
+    queryEventEmitter.sendDataUpdate("events_named_b", { data: MESSAGE });
+
+    expect(payloads(socket)).toEqual([{ data: { events_named_b: { id: "1" } } }]);
+  });
+
+  it("answers an error for an operationName the document does not hold", async () => {
+    const { socket, subscribe } = await start();
+
+    await subscribe("1", "subscription A { events_named_a { id } }", undefined, "C");
+
+    expect(sent(socket).filter((message) => message.type !== "connection_ack")).toEqual([
+      { id: "1", type: "error", payload: [{ message: 'Unknown operation named "C".' }] },
+    ]);
   });
 
   it("gives clients whose variables select different fields their own group", async () => {

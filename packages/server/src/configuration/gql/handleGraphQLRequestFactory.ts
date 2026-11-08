@@ -27,7 +27,7 @@ import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule, isDepthLimitError } from "../../analyzeQuery/depthLimit";
 import { CONTROL_FLOW_DIRECTIVES } from "../../analyzeQuery/directiveUtils";
 import { introspectionLimitRule } from "../../analyzeQuery/introspectionLimit";
-import { resolveOperationSelections } from "../../analyzeQuery/resolveSelections";
+import { resolveOperationSelections, selectOperation } from "../../analyzeQuery/resolveSelections";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
 import { proxyRemoteField } from "../../remoteSchemas/proxy";
@@ -195,10 +195,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     validationErrors?: readonly GraphQLError[];
     analysis?: AnalysisResult;
     /**
-     * SQL memoized for one resolved-variable layout. The fingerprint is the
-     * ordered definition names: object-variable flattening and session-claim
-     * binding mint static_N definitions per request, so different layouts emit
-     * different placeholder numbering and need their own SQL text.
+     * SQL memoized for one operation and resolved-variable layout. The
+     * fingerprint is its name and the ordered definition names: object-variable
+     * flattening and session-claim binding mint static_N definitions per
+     * request, so different layouts emit different placeholder numbering and
+     * need their own SQL text.
      */
     sqlMemo?: { fingerprint: string; queries: ReturnType<typeof generateSQL> };
   }
@@ -401,7 +402,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       // Server, QUERY_TIMEOUT_MS on MySQL, which has no pool-level route — so
       // an ordinary caller query is bounded without the factory resolving
       // anything.
-      options?: { enforcePageLimits?: boolean; timeoutMs?: number },
+      options?: { enforcePageLimits?: boolean; timeoutMs?: number; operationName?: string },
       // oxlint-disable-next-line typescript/no-explicit-any
     ): Promise<{ data: any }> => {
       const log = logFor(session?.role);
@@ -425,7 +426,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
         return { data: {} };
       }
 
-      const operation = queryAnalysis.operations[0];
+      const operation = selectOperation(queryAnalysis.operations, options?.operationName);
+      // What follows reads the document's first operation.
+      if (operation !== queryAnalysis.operations[0]) {
+        queryAnalysis = { ...queryAnalysis, operations: [operation] };
+      }
       // An anonymous operation is named by its root fields, exactly as the slow
       // query log names one: the document itself would carry inline literals,
       // which are caller data.
@@ -588,9 +593,10 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
               // timeout hint, both of which change the text.
               const enforcePageLimits = options?.enforcePageLimits ?? true;
               const memoizable = enforcePageLimits && !hasControlFlowDirectives(queryAnalysis);
-              const fingerprint = resolved.variables
-                .map((variable) => variable.name)
-                .join("\u0000");
+              const fingerprint = [
+                operation.name ?? "",
+                ...resolved.variables.map((variable) => variable.name),
+              ].join("\u0000");
               const memo = entry?.sqlMemo;
 
               if (memoizable && memo !== undefined && memo.fingerprint === fingerprint) {

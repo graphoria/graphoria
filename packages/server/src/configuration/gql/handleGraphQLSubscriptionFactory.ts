@@ -5,7 +5,7 @@ import type { SubscriptionContext } from "../../subscriptions";
 import type { SessionContext } from "../../utils/sessionVariables";
 
 import { analyzeQuery } from "../../analyzeQuery";
-import { resolveOperationSelections } from "../../analyzeQuery/resolveSelections";
+import { resolveOperationSelections, selectOperation } from "../../analyzeQuery/resolveSelections";
 import { resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { getTokenService } from "../../singletons/authentication";
 import { createSubscriptionStrategyRegistry, getStrategyForSource } from "../../subscriptions";
@@ -146,13 +146,34 @@ const handleGraphQLSubscriptionFactory = (
         // Analyze the query
         const analysis = analyzeQuery(query, schemaEntity);
 
-        const operation = resolveOperationSelections(
-          analysis.operations[0],
-          analysis.fragments,
-          variables ?? {},
-          schemaEntity,
-        );
-        const field = operation.fields[0];
+        // Resolve the selections, then the variables: flatten object-type vars
+        // and replace $session.* references
+        let operation;
+        let resolved;
+        try {
+          operation = resolveOperationSelections(
+            selectOperation(analysis.operations, operationName),
+            analysis.fragments,
+            variables ?? {},
+            schemaEntity,
+          );
+          resolved = resolveVariables(operation, variables || {}, session);
+        } catch (error) {
+          ws.send(
+            JSON.stringify({
+              id,
+              type: "error",
+              payload: [
+                {
+                  message: error instanceof Error ? error.message : "Variable resolution failed",
+                },
+              ],
+            }),
+          );
+          return;
+        }
+
+        const field = resolved.fields[0];
 
         // Get the appropriate strategy based on field source
         const strategy = getStrategyForSource(strategyRegistry, field?.source);
@@ -165,25 +186,6 @@ const handleGraphQLSubscriptionFactory = (
               payload: [
                 {
                   message: `Unsupported subscription source: ${field?.source}`,
-                },
-              ],
-            }),
-          );
-          return;
-        }
-
-        // Resolve variables: flatten object-type vars and replace $session.* references
-        let resolved;
-        try {
-          resolved = resolveVariables(operation, variables || {}, session);
-        } catch (error) {
-          ws.send(
-            JSON.stringify({
-              id,
-              type: "error",
-              payload: [
-                {
-                  message: error instanceof Error ? error.message : "Variable resolution failed",
                 },
               ],
             }),

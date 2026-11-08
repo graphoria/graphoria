@@ -687,6 +687,45 @@ describe("handleGraphQLRequestFactory.handler — root selections", () => {
   });
 });
 
+describe("handleGraphQLRequestFactory.handler — operationName", () => {
+  const session = { sub: "alice", role: "user" };
+  const DOCUMENT = "query A { auth_me { username } } query B { auth_me { role } }";
+  const run = (query: string, operationName?: string) =>
+    factoryFn(buildEntities()).handler(query, {}, fakeReq, session, { operationName });
+
+  it("runs the operation it names", async () => {
+    expect(await run(DOCUMENT, "B")).toEqual({ data: { auth_me: { role: "user" } } });
+  });
+
+  it("runs the first operation when none is named", async () => {
+    expect(await run(DOCUMENT)).toEqual({ data: { auth_me: { username: "alice" } } });
+  });
+
+  it("refuses a name the document does not hold", () => {
+    expect(run(DOCUMENT, "C")).rejects.toThrow('Unknown operation named "C".');
+  });
+
+  it("reads the named operation's variables and fragments", async () => {
+    expect(
+      await factoryFn(buildEntities()).handler(
+        `query A { auth_me { role } }
+         query B($s: Boolean!) { auth_me { ...U role @skip(if: $s) } }
+         fragment U on AuthMe { username }`,
+        { s: true },
+        fakeReq,
+        session,
+        { operationName: "B" },
+      ),
+    ).toEqual({ data: { auth_me: { username: "alice" } } });
+  });
+
+  it("does not run a mutation it does not name", async () => {
+    expect(
+      await run('query A { auth_me { role } } mutation B { queue_publish(data: "x") }', "A"),
+    ).toEqual({ data: { auth_me: { role: "user" } } });
+  });
+});
+
 describe("handleGraphQLRequestFactory.handler — operation results", () => {
   const THING = { id: 7, name: "lamp", owner: { id: 1, email: "ana@acme.test" } };
 
@@ -1193,6 +1232,24 @@ describe("handleGraphQLRequestFactory — SQL memoization", () => {
 
       expect(seen).toHaveLength(2);
       expect(seen[1]).toContain('"users_renamed"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not serve one named operation another's SQL", async () => {
+    const entities = tableEntities();
+    entities.queriesMap.other_users = { ...entities.queriesMap.users, dottedQuotedName: '"other"' };
+    const factory = factoryFn(entities);
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      const query = "query A { users { id } } query B { other_users { id } }";
+      await factory.handler(query, {}, fakeReq, undefined, { operationName: "A" });
+      await factory.handler(query, {}, fakeReq, undefined, { operationName: "B" });
+
+      expect(seen).toHaveLength(2);
+      expect(seen[0]).toContain('"users"');
+      expect(seen[1]).toContain('"other"');
     } finally {
       restore();
     }

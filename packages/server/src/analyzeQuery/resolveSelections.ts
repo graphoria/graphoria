@@ -87,6 +87,18 @@ const needsResolution = (selections: SelectionAnalysis[]): boolean =>
       (selection.selections !== undefined && needsResolution(selection.selections)),
   );
 
+/** The operation a request names, or the document's first when it names none. */
+export const selectOperation = (
+  operations: OperationAnalysis[],
+  name: unknown,
+): OperationAnalysis => {
+  if (typeof name !== "string" || name === "") return operations[0]!;
+
+  const named = operations.find((operation) => operation.name === name);
+  if (!named) throw new Error(`Unknown operation named "${name}".`);
+  return named;
+};
+
 // An analysis is cached per query text, and most documents hold nothing to
 // resolve: they should not pay for a walk on every request.
 const verdicts = new WeakMap<OperationAnalysis, boolean>();
