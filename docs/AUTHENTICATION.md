@@ -2,7 +2,7 @@
 
 > **See also:** [Permissions & Access Control](./PERMISSIONS.md) | [Configuration](./CONFIGURATION.md)
 
-Graphoria ships with a complete authentication stack: a user table that lives in your database, password hashing with [argon2id](https://en.wikipedia.org/wiki/Argon2), token issuance and verification (JWT or PASETO), refresh-token rotation backed by the [token store](#token-store), and three built-in operations (`auth_login`, `auth_refresh`, `auth_logout`) that you can call from any client.
+Graphoria ships with a complete authentication stack: a user table that lives in your database, password hashing with [argon2id](https://en.wikipedia.org/wiki/Argon2), token issuance and verification (JWT or PASETO), refresh-token rotation backed by the [token store](#token-store), and four built-in operations (`auth_login`, `auth_refresh`, `auth_logout`, `auth_me`) that you can call from any client.
 
 This guide covers each piece in the order you'll meet it.
 
@@ -154,7 +154,7 @@ Setting the `AUTH_STRATEGY` env var to `jwt`, `paseto_local`, or `paseto_public`
 
 ## The built-in operations
 
-When `auth.enabled` is `true`, Graphoria registers three GraphQL mutations and equivalent REST endpoints. They live alongside whatever you define in your `operations` block.
+When `auth.enabled` is `true`, Graphoria registers three GraphQL mutations, the `auth_me` query and equivalent REST endpoints. They live alongside whatever you define in your `operations` block.
 
 ### `auth_login`
 
@@ -162,29 +162,27 @@ When `auth.enabled` is `true`, Graphoria registers three GraphQL mutations and e
 mutation Login($username: String!, $password: String!) {
   auth_login(username: $username, password: $password) {
     access_token
-    refresh_token
     expires_in
     role
   }
 }
 ```
 
-Returns `401` for unknown usernames, inactive users, or wrong passwords. The error message is intentionally generic ("Invalid username or password") so it cannot be used as a username oracle. `expires_in` is the access-token lifetime in seconds.
+Returns `401` for unknown usernames, inactive users, or wrong passwords. The error message is intentionally generic ("Invalid username or password") so it cannot be used as a username oracle. `expires_in` is the access-token lifetime in seconds. The refresh token is not in the response: it is set as the `httpOnly` `refresh_token` cookie.
 
 ### `auth_refresh`
 
 ```graphql
-mutation Refresh($refresh_token: String!) {
-  auth_refresh(refresh_token: $refresh_token) {
+mutation Refresh {
+  auth_refresh {
     access_token
-    refresh_token
     expires_in
     role
   }
 }
 ```
 
-Validates the refresh token, marks its JTI as used in the token store, and issues a brand-new pair. Reusing a refresh token throws `"Token reuse detected"` — surface this in your client as a forced logout, since it usually means either an honest race or a stolen token.
+Validates the refresh token in the `refresh_token` cookie, marks its JTI as used in the token store, and issues a brand-new pair, setting the new refresh token as the cookie. Reusing a refresh token throws `"Token reuse detected"` — surface this in your client as a forced logout, since it usually means either an honest race or a stolen token.
 
 A password reset, a deactivation, a deletion or a role/claims change made from the [console](./CONSOLE.md) revokes every refresh token issued up to that second for that user, so `auth_refresh` answers `"Token revoked"` for each of them; access tokens are unaffected until they expire.
 
@@ -193,6 +191,19 @@ A password reset, a deactivation, a deletion or a role/claims change made from t
 Hard logout. Revokes the JTI of the access token used to make the request (read from the `Authorization` header) and the JTI of the refresh token cookie if present, then deletes the cookie. Any subsequent `verifyTokenAndGetSession` call for those JTIs returns the `anonymous` session, and any `auth_refresh` call for the revoked refresh token throws `"Token revoked"`. Revocation is recorded in the same token-store record as the per-JTI replay protection, so it inherits the original token's TTL — there are no orphan keys.
 
 Tampered or expired refresh cookies are handled gracefully: the verify step swallows the error and the cookie is still cleared.
+
+### `auth_me`
+
+```graphql
+query Me {
+  auth_me {
+    username
+    role
+  }
+}
+```
+
+Answers the caller's session: the token's subject as `username`, and its role. A request without a valid token answers `anonymous` and the anonymous role. `id` is always `null`, since the user table has no id column. `GET /rest/auth/me` answers the same `username` and `role`.
 
 ## Sending tokens to the server
 

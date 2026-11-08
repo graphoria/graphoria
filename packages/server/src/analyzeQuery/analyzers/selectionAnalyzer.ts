@@ -113,12 +113,13 @@ export const analyzeSelections = (
             }),
         };
       } else if (selection.kind === "InlineFragment") {
-        const typeCondition =
-          selection.typeCondition &&
-          (entities.schema.getType(selection.typeCondition.name.value) as GraphQLObjectType);
+        // Without a type condition, a fragment is on the type it sits in.
+        const typeCondition = selection.typeCondition
+          ? (entities.schema.getType(selection.typeCondition.name.value) as GraphQLObjectType)
+          : parentType;
 
         return {
-          name: `... on ${selection.typeCondition?.name.value}`,
+          name: `... on ${selection.typeCondition?.name.value ?? parentType.name}`,
           ...(selection.directives &&
             selection.directives.length > 0 && {
               directives: analyzeDirectives(selection.directives, generatedVariables),

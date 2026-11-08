@@ -8,19 +8,23 @@ export const analyzeFragment = (
   entities: EntitiesWithSchema,
   generatedVariables: VariableDefinition[],
 ): FragmentAnalysis => {
-  const typeCondition = entities.schema.getType(
-    fragmentDef.typeCondition.name.value,
-  ) as GraphQLObjectType;
+  const typeCondition = entities.schema.getType(fragmentDef.typeCondition.name.value) as
+    | GraphQLObjectType
+    | undefined;
 
   return {
     name: fragmentDef.name.value,
     typeCondition: fragmentDef.typeCondition.name.value,
-    fields: analyzeSelections(
-      fragmentDef.selectionSet.selections,
-      typeCondition,
-      entities,
-      [],
-      generatedVariables,
-    ),
+    // A REST operation is analyzed under every role, and a role whose schema
+    // lacks this type never runs it: its route answers 401.
+    fields: typeCondition
+      ? analyzeSelections(
+          fragmentDef.selectionSet.selections,
+          typeCondition,
+          entities,
+          [],
+          generatedVariables,
+        )
+      : [],
   };
 };

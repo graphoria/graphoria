@@ -1,3 +1,4 @@
+import { CookieMap } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { buildSchema, introspectionFromSchema } from "graphql";
 
@@ -5,6 +6,7 @@ import type { BunRequest } from "bun";
 
 import { databaseAdapters } from "../../databases/core/function-mapping";
 import type { AnalysisResult } from "../../analyzeQuery/types";
+import type { TokenService } from "../../authentication/types";
 import type { AuditEvent } from "../../logging/audit";
 import type { Auth } from "../../types/configuration";
 
@@ -39,6 +41,8 @@ const sdl = `
   type Mutation {
     queue_publish(data: String): String
     auth_login(username: String!, password: String!): LoginResult
+    auth_refresh: LoginResult
+    auth_logout: Boolean
     remote_mutation_field: String
   }
   type User {
@@ -78,6 +82,8 @@ const sourceMap: Record<string, EntitySource> = {
   ask: EntitySource.AI,
   queue_publish: EntitySource.QUEUE_PUBLISHER,
   auth_login: EntitySource.AUTH,
+  auth_refresh: EntitySource.AUTH,
+  auth_logout: EntitySource.AUTH,
   remote_mutation_field: EntitySource.REMOTE_SCHEMA,
 };
 
@@ -290,7 +296,13 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
           name: null,
           operation: "query",
           variables: [],
-          fields: [{ name: "auth_me", source: EntitySource.AUTH }],
+          fields: [
+            {
+              name: "auth_me",
+              source: EntitySource.AUTH,
+              selections: [{ name: "username" }, { name: "role" }],
+            },
+          ],
         },
       ],
       fragments: [],
@@ -329,7 +341,14 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
           name: null,
           operation: "query",
           variables: [],
-          fields: [{ name: "auth_me", alias: "me", source: EntitySource.AUTH }],
+          fields: [
+            {
+              name: "auth_me",
+              alias: "me",
+              source: EntitySource.AUTH,
+              selections: [{ name: "username" }, { name: "role" }],
+            },
+          ],
         },
       ],
       fragments: [],
@@ -354,7 +373,13 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
           name: null,
           operation: "query",
           variables: [],
-          fields: [{ name: "auth_me", source: EntitySource.AUTH }],
+          fields: [
+            {
+              name: "auth_me",
+              source: EntitySource.AUTH,
+              selections: [{ name: "username" }, { name: "role" }],
+            },
+          ],
         },
       ],
       fragments: [],
@@ -364,6 +389,141 @@ describe("handleGraphQLRequestFactory.handler — short-circuits", () => {
       role: "user",
     });
     expect(result.data).toEqual({ auth_me: { username: "x", role: "user" } });
+  });
+});
+
+describe("handleGraphQLRequestFactory.handler — auth payloads", () => {
+  const me = (query: string, variables: Record<string, unknown> = {}) =>
+    factoryFn(buildEntities()).handler(query, variables, fakeReq, { sub: "alice", role: "user" });
+
+  it("answers the auth_me subfields a fragment selects", async () => {
+    expect(await me("query { auth_me { ...U } } fragment U on AuthMe { username }")).toEqual({
+      data: { auth_me: { username: "alice" } },
+    });
+  });
+
+  it("answers the auth_me subfields an inline fragment selects, __typename included", async () => {
+    expect(await me("{ auth_me { ... on AuthMe { __typename role } } }")).toEqual({
+      data: { auth_me: { __typename: "AuthMe", role: "user" } },
+    });
+  });
+
+  it.each([
+    [true, { username: "alice", role: "user" }],
+    [false, { username: "alice" }],
+  ])(
+    "answers an inline fragment without a type condition that $full = %p includes",
+    async (full, auth_me) => {
+      expect(
+        await me(
+          "query Q($full: Boolean!) { auth_me { username ... @include(if: $full) { role } } }",
+          { full },
+        ),
+      ).toEqual({ data: { auth_me } });
+    },
+  );
+
+  it.each(["@skip(if: true)", "@include(if: false)"])(
+    "leaves out an auth_me subfield under %s",
+    async (directive) => {
+      expect(await me(`{ auth_me { username role ${directive} } }`)).toEqual({
+        data: { auth_me: { username: "alice" } },
+      });
+    },
+  );
+
+  it("applies the caller's variables to a spread on auth_me", async () => {
+    expect(
+      await me(
+        "query Q($s: Boolean!) { auth_me { username ...U @skip(if: $s) } } fragment U on AuthMe { role }",
+        { s: true },
+      ),
+    ).toEqual({ data: { auth_me: { username: "alice" } } });
+  });
+
+  it("applies a variable's default to an auth_me subfield", async () => {
+    expect(
+      await me("query Q($s: Boolean = false) { auth_me { username @skip(if: $s) role } }"),
+    ).toEqual({ data: { auth_me: { username: "alice", role: "user" } } });
+  });
+
+  it("answers an empty object when every subfield of auth_me is skipped", async () => {
+    expect(await me("{ auth_me { username @skip(if: true) } }")).toEqual({
+      data: { auth_me: {} },
+    });
+  });
+
+  describe("of a mutation", () => {
+    let tokens: TokenService;
+    let previousTokens: TokenService;
+    // oxlint-disable-next-line typescript/no-explicit-any
+    let setTokenService: any;
+
+    beforeAll(async () => {
+      const { createJWTService } = await import("../../authentication/jwt");
+      const { env } = await import("../../singletons/env");
+      const authentication = await import("../../singletons/authentication");
+      setTokenService = authentication.setTokenService;
+      previousTokens = authentication.getTokenService();
+      tokens = createJWTService({
+        ...env,
+        jwt: {
+          secrets: ["handle-graphql-request-factory-test"],
+          expiresIn: "5m",
+          rtExpiresIn: "7d",
+        },
+      });
+      setTokenService(tokens);
+    });
+
+    afterAll(() => setTokenService(previousTokens));
+
+    const mutate = (query: string, variables: Record<string, unknown>, req: BunRequest) =>
+      factoryFn(buildEntities(), { enabled: true } as Auth).handler(
+        query,
+        variables,
+        req,
+        undefined,
+      );
+
+    const refreshing = async () => {
+      const { refresh_token } = await tokens.createTokenPair({ sub: "alice", role: "user" });
+      return { cookies: new CookieMap({ refresh_token }) } as unknown as BunRequest;
+    };
+
+    it("answers the auth_refresh subfields a fragment selects, a skipped one left out", async () => {
+      expect(
+        await mutate(
+          "mutation { auth_refresh { ...T access_token @skip(if: true) } } fragment T on LoginResult { ttl: expires_in }",
+          {},
+          await refreshing(),
+        ),
+      ).toEqual({ data: { auth_refresh: { ttl: 300 } } });
+    });
+
+    it.each([
+      ["value", "mutation Q($s: Boolean!)", { s: false }],
+      ["default", "mutation Q($s: Boolean = false)", {}],
+    ])(
+      "keeps an auth_refresh subfield a variable's %s does not skip",
+      async (_source, operation, variables) => {
+        expect(
+          await mutate(
+            `${operation} { auth_refresh { ttl: expires_in @skip(if: $s) } }`,
+            variables,
+            await refreshing(),
+          ),
+        ).toEqual({ data: { auth_refresh: { ttl: 300 } } });
+      },
+    );
+
+    it("answers auth_logout, which has no selection", async () => {
+      expect(
+        await mutate("mutation { auth_logout }", {}, {
+          cookies: new CookieMap(),
+        } as unknown as BunRequest),
+      ).toEqual({ data: { auth_logout: true } });
+    });
   });
 });
 
@@ -1121,6 +1281,22 @@ describe("handleGraphQLRequestFactory — audit", () => {
       );
 
       expect(result).toEqual({ data: { ask: { queries: ["{ users { id } }"] } } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("answers the subfields an inline fragment without a type condition selects", async () => {
+    const { spy } = asking();
+    try {
+      const result = await factoryFn(buildEntities()).handler(
+        '{ ask(prompt: "how many?") { ... { answer } } }',
+        {},
+        fakeReq,
+        { sub: "ana@acme.test", role: "user" },
+      );
+
+      expect(result).toEqual({ data: { ask: { answer: "forty-two" } } });
     } finally {
       spy.mockRestore();
     }

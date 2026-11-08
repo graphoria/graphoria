@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { SelectionAnalysis } from "../analyzeQuery/types";
 
-import { filterResultBySelection, typenamesOf } from "./selection";
+import { filterResultBySelection } from "./selection";
 
 const f = (name: string, selections?: SelectionAnalysis[], alias?: string): SelectionAnalysis => ({
   name,
@@ -131,18 +131,5 @@ describe("filterResultBySelection", () => {
         __typename: "Thing",
       });
     });
-  });
-});
-
-describe("typenamesOf", () => {
-  it("maps each __typename's response key to its type", () => {
-    expect(typenamesOf([typename("Thing"), typename("Thing", "kind"), f("id")])).toEqual({
-      __typename: "Thing",
-      kind: "Thing",
-    });
-  });
-
-  it("is empty without a selection", () => {
-    expect(typenamesOf(undefined)).toEqual({});
   });
 });
