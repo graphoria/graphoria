@@ -119,6 +119,8 @@ export const handleAuthMutation = async (
         },
       };
     }
+
+    throw new Error("Refresh token is required");
   }
 
   if (field.name === "auth_logout") {
