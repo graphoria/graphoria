@@ -3,47 +3,28 @@ import type { RemoteSchemaResolved } from "./types";
 
 import { formatTraceparent, startSpan } from "../observability/tracing";
 
-// The analysis names an inline fragment after its type condition, or without
-// one after the type it sits in.
-const INLINE_FRAGMENT = "... on ";
-
 /**
  * Build the sub-query string for a remote field by stripping the prefix from
  * the field name and type references.
  */
-const buildRemoteSubQuery = (
-  field: SelectionAnalysis,
-  originalFieldName: string,
-  prefixMap: RemoteSchemaResolved["prefixMap"],
-): string => {
+const buildRemoteSubQuery = (field: SelectionAnalysis, originalFieldName: string): string => {
   const args = buildArgumentsString(field.arguments);
   const selections = field.selections?.length
-    ? ` { ${buildSelectionsString(field.selections, prefixMap)} }`
+    ? ` { ${buildSelectionsString(field.selections)} }`
     : "";
 
   return `${originalFieldName}${args}${selections}`;
 };
 
 /**
- * Recursively build a selections string, un-prefixing any type references in inline fragments.
+ * Recursively build a selections string.
  */
-const buildSelectionsString = (
-  selections: SelectionAnalysis[],
-  prefixMap: RemoteSchemaResolved["prefixMap"],
-): string =>
+const buildSelectionsString = (selections: SelectionAnalysis[]): string =>
   selections
     .map((sel) => {
       const subSelections = sel.selections?.length
-        ? ` { ${buildSelectionsString(sel.selections, prefixMap)} }`
+        ? ` { ${buildSelectionsString(sel.selections)} }`
         : "";
-
-      if (sel.name.startsWith(INLINE_FRAGMENT)) {
-        const typeName = sel.name.slice(INLINE_FRAGMENT.length);
-        const original = Object.hasOwn(prefixMap.toOriginal, typeName)
-          ? prefixMap.toOriginal[typeName]
-          : typeName;
-        return `${INLINE_FRAGMENT}${original}${subSelections}`;
-      }
 
       const aliasPrefix = sel.alias ? `${sel.alias}: ` : "";
       return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments)}${subSelections}`;
@@ -126,10 +107,7 @@ const prefixTypenames = (
     const key = selection.alias || selection.name;
     const selected = object[key];
 
-    if (selection.name.startsWith(INLINE_FRAGMENT)) {
-      // Its fields sit on the object the fragment is spread in.
-      prefixTypenames(object, selection.selections, toPrefixed);
-    } else if (selection.name === "__typename") {
+    if (selection.name === "__typename") {
       if (typeof selected === "string" && Object.hasOwn(toPrefixed, selected)) {
         object[key] = toPrefixed[selected];
       }
@@ -150,7 +128,7 @@ export const proxyRemoteField = async (
   operationType: "query" | "mutation",
   clientRequest?: Request,
 ): Promise<unknown> => {
-  const subQuery = buildRemoteSubQuery(field, originalFieldName, remoteSchema.prefixMap);
+  const subQuery = buildRemoteSubQuery(field, originalFieldName);
 
   const fullQuery = `${operationType} { ${subQuery} }`;
 

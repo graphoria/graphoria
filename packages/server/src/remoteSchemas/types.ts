@@ -15,11 +15,9 @@ export type RemoteSchemaField = {
 };
 
 /**
- * Mapping from prefixed type name to original type name
+ * Mapping from original type name to prefixed type name
  */
 export type PrefixMap = {
-  /** Map prefixed name → original name */
-  toOriginal: Record<string, string>;
   /** Map original name → prefixed name */
   toPrefixed: Record<string, string>;
 };

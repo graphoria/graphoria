@@ -32,6 +32,7 @@ const sdl = `
     other_users(limit: Int): [User!]!
     auth_me: AuthMe
     remote_query_field: String
+    remote_users(limit: Int): [User!]!
     ask(prompt: String!): AskResult!
   }
   type AskResult {
@@ -89,6 +90,7 @@ const sourceMap: Record<string, EntitySource> = {
   other_users: EntitySource.TABLE,
   auth_me: EntitySource.AUTH,
   remote_query_field: EntitySource.REMOTE_SCHEMA,
+  remote_users: EntitySource.REMOTE_SCHEMA,
   ask: EntitySource.AI,
   queue_publish: EntitySource.QUEUE_PUBLISHER,
   auth_login: EntitySource.AUTH,
@@ -763,6 +765,90 @@ describe("handleGraphQLRequestFactory.handler — operation results", () => {
         "mutation { make_thing { id } ...M } fragment M on Mutation { make_thing { name } }",
       ),
     ).toEqual({ data: { make_thing: { id: 7, name: "lamp" } }, calls: 1 });
+  });
+});
+
+describe("handleGraphQLRequestFactory.handler — remote fields", () => {
+  const remoteSchema = {
+    config: { name: "test", url: "http://localhost:4000/graphql", timeout: 5000 },
+    prefixMap: { toPrefixed: { RemoteUser: "User" } },
+  };
+
+  const send = async (
+    query: string,
+    variables: Record<string, unknown> = {},
+    answer: unknown = { users: [{ id: "1" }] },
+  ) => {
+    const entities = buildEntities();
+    entities.remoteQueriesMap.remote_users = { remoteSchema, originalFieldName: "users" };
+    const sent: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(init.body as string).query);
+      return new Response(JSON.stringify({ data: answer }), { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const result = await factoryFn(entities).handler(query, variables, fakeReq, undefined);
+      return { result, sent };
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  };
+
+  it.each([
+    [
+      "a subfield a directive skips",
+      "{ remote_users { id name @skip(if: true) } }",
+      "query { users { id } }",
+    ],
+    [
+      "a named fragment",
+      "{ remote_users { ...F } } fragment F on User { id }",
+      "query { users { id } }",
+    ],
+    ["an inline fragment", "{ remote_users { ... on User { id } } }", "query { users { id } }"],
+    [
+      "an untyped inline fragment a directive excludes",
+      "{ remote_users { id ... @include(if: false) { name } } }",
+      "query { users { id } }",
+    ],
+    [
+      "a fragment under a nested field",
+      "{ remote_users { posts { ...P } } } fragment P on Post { title }",
+      "query { users { posts { title } } }",
+    ],
+    [
+      "a field also selected in a fragment",
+      "{ remote_users { id ...F } } fragment F on User { id name }",
+      "query { users { id name } }",
+    ],
+  ])("sends plain selections for %s", async (_case, query, upstream) => {
+    expect((await send(query)).sent).toEqual([upstream]);
+  });
+
+  it("keeps a subfield its variable does not skip", async () => {
+    const { sent } = await send(
+      "query Q($s: Boolean!) { remote_users { id name @skip(if: $s) } }",
+      { s: false },
+    );
+
+    expect(sent).toEqual(["query { users { id name } }"]);
+  });
+
+  it("renames a __typename reached through a fragment", async () => {
+    const { result } = await send(
+      "{ remote_users { ...F } } fragment F on User { kind: __typename }",
+      {},
+      { users: [{ kind: "RemoteUser" }] },
+    );
+
+    expect(result).toEqual({ data: { remote_users: [{ kind: "User" }] } });
+  });
+
+  it("calls no remote for a field in a fragment a directive excludes", async () => {
+    const { sent } = await send("{ ... @skip(if: true) { remote_users { id } } }");
+
+    expect(sent).toEqual([]);
   });
 });
 
