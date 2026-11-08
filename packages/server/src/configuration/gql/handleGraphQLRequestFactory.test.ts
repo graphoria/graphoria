@@ -44,6 +44,16 @@ const sdl = `
     auth_refresh: LoginResult
     auth_logout: Boolean
     remote_mutation_field: String
+    make_thing: Thing
+  }
+  type Thing {
+    id: ID!
+    name: String
+    owner: ThingOwner
+  }
+  type ThingOwner {
+    id: ID!
+    email: String
   }
   type User {
     id: ID!
@@ -85,6 +95,7 @@ const sourceMap: Record<string, EntitySource> = {
   auth_refresh: EntitySource.AUTH,
   auth_logout: EntitySource.AUTH,
   remote_mutation_field: EntitySource.REMOTE_SCHEMA,
+  make_thing: EntitySource.OPERATION,
 };
 
 const buildEntities = ({
@@ -668,6 +679,90 @@ describe("handleGraphQLRequestFactory.handler — root selections", () => {
         ),
       ).rejects.toThrow("Query too complex: fragments expand to more than 50000 selections");
     });
+  });
+});
+
+describe("handleGraphQLRequestFactory.handler — operation results", () => {
+  const THING = { id: 7, name: "lamp", owner: { id: 1, email: "ana@acme.test" } };
+
+  const run = async (
+    query: string,
+    variables: Record<string, unknown> = {},
+    thing: unknown = THING,
+  ) => {
+    const entities = buildEntities();
+    let calls = 0;
+    entities.operations.make_thing = {
+      handler: async () => {
+        calls++;
+        return thing;
+      },
+    };
+    const result = await factoryFn(entities).handler(query, variables, fakeReq, undefined);
+    return { ...result, calls };
+  };
+
+  it("answers the fields a named fragment selects", async () => {
+    expect(await run("mutation { make_thing { ...M } } fragment M on Thing { id }")).toEqual({
+      data: { make_thing: { id: 7 } },
+      calls: 1,
+    });
+  });
+
+  it("answers the fields a fragment selects under a nested field", async () => {
+    expect(
+      (
+        await run(
+          "mutation { make_thing { id owner { ...O } } } fragment O on ThingOwner { mail: email }",
+        )
+      ).data,
+    ).toEqual({ make_thing: { id: 7, owner: { mail: "ana@acme.test" } } });
+  });
+
+  it("expands one fragment under every field that spreads it", async () => {
+    expect(
+      (
+        await run(
+          "mutation { a: make_thing { ...M } b: make_thing { ...M } } fragment M on Thing { name }",
+        )
+      ).data,
+    ).toEqual({ a: { name: "lamp" }, b: { name: "lamp" } });
+  });
+
+  it.each([
+    [true, { id: 7 }],
+    [false, { id: 7, name: "lamp" }],
+  ])("reads $s = %p for a subfield's directive", async (s, make_thing) => {
+    expect(
+      (await run("mutation M($s: Boolean!) { make_thing { id name @skip(if: $s) } }", { s })).data,
+    ).toEqual({ make_thing });
+  });
+
+  it("leaves out a nested subfield a directive excludes", async () => {
+    expect(
+      (await run("mutation { make_thing { owner { id email @include(if: false) } } }")).data,
+    ).toEqual({ make_thing: { owner: { id: 1 } } });
+  });
+
+  it("answers an empty object when every subfield is excluded", async () => {
+    expect(await run("mutation { make_thing { id @skip(if: true) } }")).toEqual({
+      data: { make_thing: {} },
+      calls: 1,
+    });
+  });
+
+  it("answers an empty object per item of a list when every subfield is excluded", async () => {
+    expect(
+      (await run("mutation { make_thing { id @skip(if: true) } }", {}, [THING, THING])).data,
+    ).toEqual({ make_thing: [{}, {}] });
+  });
+
+  it("runs the handler once for a field selected twice across a fragment", async () => {
+    expect(
+      await run(
+        "mutation { make_thing { id } ...M } fragment M on Mutation { make_thing { name } }",
+      ),
+    ).toEqual({ data: { make_thing: { id: 7, name: "lamp" } }, calls: 1 });
   });
 });
 

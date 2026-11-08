@@ -9,12 +9,10 @@ import { actorFromSession, audit } from "../../logging/audit";
 import { getTokenService } from "../../singletons/authentication";
 import { filterResultBySelection } from "../../utils/selection";
 
-// filterResultBySelection hands an empty selection the whole object, not the
-// nothing it asks for.
 const bySelection = (
   payload: Record<string, unknown>,
   selections: SelectionAnalysis[] | undefined,
-): unknown => (selections?.length ? filterResultBySelection(payload, selections) : {});
+): unknown => filterResultBySelection(payload, selections ?? []);
 
 // Handle auth mutations: auth_login / auth_refresh / auth_logout
 export const handleAuthMutation = async (

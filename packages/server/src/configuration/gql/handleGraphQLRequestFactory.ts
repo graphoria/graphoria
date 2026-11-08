@@ -541,10 +541,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 prompt,
               });
               const agentAnswer = await getAgent()(prompt, { role: asAgentRole(), session, req });
-              // An empty selection hands back the whole object, not the nothing it asks for.
-              aiData[alias] = field.selections?.length
-                ? filterResultBySelection(agentAnswer, field.selections)
-                : {};
+              aiData[alias] = filterResultBySelection(agentAnswer, field.selections ?? []);
             }
 
             // Skip SQL generation if there are no table fields

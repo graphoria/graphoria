@@ -5,6 +5,7 @@ import type { SubscriptionContext } from "../../subscriptions";
 import type { SessionContext } from "../../utils/sessionVariables";
 
 import { analyzeQuery } from "../../analyzeQuery";
+import { resolveOperationSelections } from "../../analyzeQuery/resolveSelections";
 import { resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { getTokenService } from "../../singletons/authentication";
 import { createSubscriptionStrategyRegistry, getStrategyForSource } from "../../subscriptions";
@@ -145,7 +146,12 @@ const handleGraphQLSubscriptionFactory = (
         // Analyze the query
         const analysis = analyzeQuery(query, schemaEntity);
 
-        const operation = analysis.operations[0];
+        const operation = resolveOperationSelections(
+          analysis.operations[0],
+          analysis.fragments,
+          variables ?? {},
+          schemaEntity,
+        );
         const field = operation.fields[0];
 
         // Get the appropriate strategy based on field source

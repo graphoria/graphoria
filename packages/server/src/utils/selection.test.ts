@@ -26,11 +26,16 @@ describe("filterResultBySelection", () => {
       });
     });
 
-    it("returns data unchanged when fields is empty", () => {
-      expect(filterResultBySelection({ a: 1, b: 2 }, [])).toEqual({
-        a: 1,
-        b: 2,
-      });
+    it("answers an empty object when fields is empty", () => {
+      expect(filterResultBySelection({ a: 1, b: 2 }, [])).toEqual({});
+    });
+
+    it("answers an empty object per item when fields is empty", () => {
+      expect(filterResultBySelection([{ a: 1 }, { a: 2 }], [])).toEqual([{}, {}]);
+    });
+
+    it("answers an empty object for a nested field whose selection is empty", () => {
+      expect(filterResultBySelection({ a: 1, b: { c: 2 } }, [f("b", [])])).toEqual({ b: {} });
     });
 
     it("returns primitives unchanged", () => {

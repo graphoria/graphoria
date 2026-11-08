@@ -6,7 +6,7 @@ export const filterResultBySelection = (
   data: unknown,
   fields: SelectionAnalysis[] | undefined,
 ): unknown => {
-  if (!fields || fields.length === 0) return data;
+  if (!fields) return data;
 
   if (Array.isArray(data)) {
     return data.map((item) => filterResultBySelection(item, fields));
@@ -22,13 +22,10 @@ export const filterResultBySelection = (
       if (isTypename(field)) {
         result[alias] = field.typeName;
       } else if (key in (data as Record<string, unknown>)) {
-        const value = (data as Record<string, unknown>)[key];
-
-        if (field.selections && field.selections.length > 0) {
-          result[alias] = filterResultBySelection(value, field.selections);
-        } else {
-          result[alias] = value;
-        }
+        result[alias] = filterResultBySelection(
+          (data as Record<string, unknown>)[key],
+          field.selections,
+        );
       }
     }
 
