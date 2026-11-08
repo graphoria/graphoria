@@ -319,6 +319,88 @@ describe("generateOpenAPI", () => {
     ).toEqual({});
   });
 
+  describe("a query's fragments", () => {
+    const productOf = (query: string) => specFor(query).dbo_products.items;
+
+    it.each([
+      ["a named fragment", "...P"],
+      ["an inline fragment", "... on dbo_products { name }"],
+      ["an untyped inline fragment", "... { name }"],
+    ])("describes the fields %s selects", (_case, selection) => {
+      const { properties } = productOf(
+        `query { dbo_products { ${selection} } } ${
+          selection === "...P" ? "fragment P on dbo_products { name }" : ""
+        }`,
+      );
+
+      expect(Object.keys(properties)).toEqual(["name"]);
+    });
+
+    it("describes a field selected in and out of a fragment once", () => {
+      const { properties } = productOf(
+        "query { dbo_products { name ...P } } fragment P on dbo_products { name product_id }",
+      );
+
+      expect(Object.keys(properties)).toEqual(["name", "product_id"]);
+    });
+
+    it("describes the fields of a root-level fragment", () => {
+      const data = dataSchemaFor("query { ...R } fragment R on Query { dbo_products { name } }");
+
+      expect(Object.keys(data.properties)).toEqual(["dbo_products"]);
+      expect(Object.keys(data.properties.dbo_products.items.properties)).toEqual(["name"]);
+    });
+
+    it("describes a root-level fragment's __typename as a meta field", () => {
+      const data = dataSchemaFor(
+        "query { ...R } fragment R on Query { __typename dbo_products { name } }",
+      );
+
+      expect(Object.keys(data.properties).sort()).toEqual(["__typename", "dbo_products"]);
+      expect(data.properties.__typename.type).toBe("string");
+    });
+
+    it("requires a field a plain fragment selects", () => {
+      expect(
+        productOf("query { dbo_products { ...P } } fragment P on dbo_products { name }").required,
+      ).toEqual(["name"]);
+    });
+
+    it.each([
+      ["named", "...P @include(if: $x)", "fragment P on dbo_products { name }"],
+      ["inline", "... @include(if: $x) { name }", ""],
+      [
+        "nested inside a conditional one",
+        "...P @skip(if: $x)",
+        "fragment P on dbo_products { ... { name } }",
+      ],
+    ])(
+      "does not require a field under a %s fragment a directive can exclude",
+      (_case, spread, rest) => {
+        const product = productOf(`query Q($x: Boolean!) { dbo_products { ${spread} } } ${rest}`);
+
+        expect(Object.keys(product.properties)).toEqual(["name"]);
+        expect(product.required).toEqual([]);
+      },
+    );
+
+    it("requires a field also selected outside the conditional fragment", () => {
+      expect(
+        productOf("query Q($x: Boolean!) { dbo_products { name ... @skip(if: $x) { name } } }")
+          .required,
+      ).toEqual(["name"]);
+    });
+
+    it("leaves a query that fails validation unexpanded", () => {
+      expect(() =>
+        specFor(`
+          query { dbo_products { ...A } }
+          fragment A on dbo_products { dbo_product_categories { dbo_products { ...A } } }
+        `),
+      ).not.toThrow();
+    });
+  });
+
   // A handler's REST answer is the JSON of what it returns, while a query's
   // sits inside `data`: /openapi.json used to wrap both.
   it("describes a handler's answer without the data envelope a query's has", () => {
