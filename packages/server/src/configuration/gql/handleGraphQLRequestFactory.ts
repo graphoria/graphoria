@@ -13,7 +13,7 @@ import { LRUCache } from "lru-cache";
 import type { BunRequest } from "bun";
 import type { DocumentNode, GraphQLError } from "graphql";
 import type { RoleEntities } from "../../ai/adapter";
-import type { AnalysisResult, FragmentAnalysis, SelectionAnalysis } from "../../analyzeQuery/types";
+import type { AnalysisResult, SelectionAnalysis } from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
@@ -21,10 +21,11 @@ import type { SessionContext } from "../../utils/sessionVariables";
 import { analyzeQuery } from "../../analyzeQuery";
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule, isDepthLimitError } from "../../analyzeQuery/depthLimit";
+import { CONTROL_FLOW_DIRECTIVES } from "../../analyzeQuery/directiveUtils";
 import { introspectionLimitRule } from "../../analyzeQuery/introspectionLimit";
+import { resolveOperationSelections } from "../../analyzeQuery/resolveSelections";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
-import { filterBasedOnDirective } from "../../databases/common";
 import { proxyRemoteField } from "../../remoteSchemas/proxy";
 import { getAgent } from "../../singletons/ai";
 import { actorFromSession, audit } from "../../logging/audit";
@@ -78,14 +79,8 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       };
     },
 
-    [EntitySource.AUTH]: (field, variables, queryAnalysis, req, session) =>
-      handleAuthMutation(
-        withResolvedSelections(field, queryAnalysis, variables),
-        variables,
-        auth,
-        req,
-        session,
-      ),
+    [EntitySource.AUTH]: (field, variables, _queryAnalysis, req, session) =>
+      handleAuthMutation(field, variables, auth, req, session),
 
     [EntitySource.OPERATION]: async (field, variables) => {
       const operation = entities.operations[field.name];
@@ -240,7 +235,6 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
 
   // These directives resolve against request values, so their verdicts change
   // the emitted SQL per request; documents carrying them are never memoized.
-  const CONTROL_FLOW_DIRECTIVES = new Set(["skip", "include", "when"]);
   const hasControlFlowDirectives = (analysis: AnalysisResult): boolean => {
     const selectionsHave = (fields: SelectionAnalysis[]): boolean =>
       fields.some(
@@ -249,51 +243,12 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             true ||
           (field.selections !== undefined && selectionsHave(field.selections)),
       );
-    return analysis.operations.some(
-      (operation) => operation.fields !== undefined && selectionsHave(operation.fields),
+    return (
+      analysis.operations.some(
+        (operation) => operation.fields !== undefined && selectionsHave(operation.fields),
+      ) || analysis.fragments.some((fragment) => selectionsHave(fragment.fields))
     );
   };
-
-  // The analyzer leaves a fragment unresolved in `selections`: a spread is a
-  // `...Name` entry, an inline fragment a `... on Type` entry holding its own
-  // selections, and a directive on either sits on that entry. A fragment expands
-  // once, at the first spread `keep` lets through: fragments that each spread
-  // the next one twice would otherwise cost 2^n.
-  const resolveFragments = (
-    selections: SelectionAnalysis[] | undefined,
-    fragments: FragmentAnalysis[],
-    keep: (selection: SelectionAnalysis) => boolean,
-  ): SelectionAnalysis[] => {
-    const visited = new Set<string>();
-    const fieldsByName = new Map(fragments.map((fragment) => [fragment.name, fragment.fields]));
-    const walk = (entries: SelectionAnalysis[] | undefined): SelectionAnalysis[] =>
-      (entries ?? []).filter(keep).flatMap((selection) => {
-        if (selection.name.startsWith("... on ")) {
-          return walk(selection.selections);
-        }
-        if (selection.name.startsWith("...")) {
-          const name = selection.name.slice(3);
-          if (visited.has(name)) return [];
-          visited.add(name);
-          return walk(fieldsByName.get(name));
-        }
-        return [selection];
-      });
-    return walk(selections);
-  };
-
-  // The auth handlers narrow the payload they build to the field's selections,
-  // so those come with fragments expanded and the fields a directive skips gone.
-  const withResolvedSelections = (
-    field: SelectionAnalysis,
-    queryAnalysis: AnalysisResult,
-    variables: Record<string, unknown>,
-  ): SelectionAnalysis => ({
-    ...field,
-    selections: resolveFragments(field.selections, queryAnalysis.fragments, (selection) =>
-      filterBasedOnDirective(selection, queryAnalysis.operations[0]?.variables ?? [], variables),
-    ),
-  });
 
   // Keyed by an analysis's meta document, so per role and query text, and gone
   // with the analysis. Only an operation that declares no variables answers
@@ -492,7 +447,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
 
           // Single pass: validate, flatten object vars, resolve field args + session vars
           // Returns an immutable ResolvedOperation — original operation is not mutated
-          const resolved = resolveVariables(operation, variables, session);
+          const resolved = resolveVariables(
+            resolveOperationSelections(operation, queryAnalysis.fragments, variables, entities),
+            variables,
+            session,
+          );
 
           const metaData = operation.meta ? await answerMetaFields(operation.meta, variables) : {};
 
@@ -528,18 +487,13 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                   }
                 : {};
 
-            // A skipped `ask` runs no agent, as a skipped table field selects nothing.
-            const runningAsks = aiFields.filter((field) =>
-              filterBasedOnDirective(field, operation.variables ?? [], callerValues),
-            );
-
             // Each `ask` runs a whole agent loop, while the rate limiter counts
             // the request once.
-            if (runningAsks.length > 1) {
+            if (aiFields.length > 1) {
               throw new Error("Only one `ask` is allowed per request");
             }
 
-            const asks = runningAsks.map((field) => {
+            const asks = aiFields.map((field) => {
               const prompt = resolveVariableRef(callerValues, field.arguments?.prompt);
               if (typeof prompt !== "string" || prompt.length === 0) {
                 throw new Error("`prompt` (string) is required");
@@ -550,13 +504,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             // Handle auth queries (e.g. auth_me)
             let authData: Record<string, unknown> = {};
             for (const field of authFields) {
-              Object.assign(
-                authData,
-                handleAuthMeQuery(
-                  withResolvedSelections(field, queryAnalysis, resolved.allVariables),
-                  session,
-                ),
-              );
+              Object.assign(authData, handleAuthMeQuery(field, session));
             }
 
             // Handle remote schema queries in parallel
@@ -593,15 +541,10 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 prompt,
               });
               const agentAnswer = await getAgent()(prompt, { role: asAgentRole(), session, req });
-              const selections = resolveFragments(
-                field.selections,
-                queryAnalysis.fragments,
-                (selection) =>
-                  filterBasedOnDirective(selection, operation.variables ?? [], callerValues),
-              );
               // An empty selection hands back the whole object, not the nothing it asks for.
-              aiData[alias] =
-                selections.length > 0 ? filterResultBySelection(agentAnswer, selections) : {};
+              aiData[alias] = field.selections?.length
+                ? filterResultBySelection(agentAnswer, field.selections)
+                : {};
             }
 
             // Skip SQL generation if there are no table fields

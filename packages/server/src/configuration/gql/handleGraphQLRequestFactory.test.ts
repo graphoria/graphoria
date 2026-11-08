@@ -527,6 +527,150 @@ describe("handleGraphQLRequestFactory.handler — auth payloads", () => {
   });
 });
 
+describe("handleGraphQLRequestFactory.handler — root selections", () => {
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let setQueueManager: any;
+
+  beforeAll(async () => {
+    ({ setQueueManager } = await import("../../singletons/queues"));
+  });
+
+  const session = { sub: "alice", role: "user" };
+  const run = (query: string, variables: Record<string, unknown> = {}) =>
+    factoryFn(buildEntities()).handler(query, variables, fakeReq, session);
+
+  const publish = async (query: string, variables: Record<string, unknown> = {}) => {
+    const sent: string[] = [];
+    setQueueManager({
+      publisherMap: () => ({ queue_publish_resolver: { name: "queue_publish_resolver" } }),
+      sendMessage: async (_publisher: string, data: string) => {
+        sent.push(data);
+        return true;
+      },
+      connections: () => [],
+    });
+    try {
+      return { result: await run(query, variables), sent };
+    } finally {
+      setQueueManager(undefined);
+    }
+  };
+
+  describe("@skip and @include", () => {
+    it.each(["@skip(if: true)", "@include(if: false)"])(
+      "leaves out a root auth field under %s",
+      async (directive) => {
+        expect(await run(`{ auth_me ${directive} { username } x: auth_me { role } }`)).toEqual({
+          data: { x: { role: "user" } },
+        });
+      },
+    );
+
+    it("calls no remote for a root field it skips", async () => {
+      // A proxied call would read the stub's missing config and throw.
+      expect(await run("{ remote_query_field @skip(if: true) }")).toEqual({ data: {} });
+    });
+
+    it("publishes nothing for a skipped mutation field", async () => {
+      expect(await publish('mutation { queue_publish(data: "x") @skip(if: true) }')).toEqual({
+        result: { data: {} },
+        sent: [],
+      });
+    });
+
+    it.each([
+      [true, []],
+      [false, ["x"]],
+    ])("reads $s = %p for a mutation field", async (s, sent) => {
+      const outcome = await publish(
+        'mutation M($s: Boolean!) { queue_publish(data: "x") @skip(if: $s) }',
+        { s },
+      );
+
+      expect(outcome.sent).toEqual(sent);
+    });
+
+    it("runs the mutation fields left after a skip, in order", async () => {
+      const outcome = await publish(
+        'mutation { a: queue_publish(data: "1") b: queue_publish(data: "2") @skip(if: true) c: queue_publish(data: "3") }',
+      );
+
+      expect(outcome).toEqual({
+        result: { data: { a: true, c: true } },
+        sent: ["1", "3"],
+      });
+    });
+
+    it("does not log in for a skipped auth_login", async () => {
+      // A login with no database behind it would throw.
+      expect(
+        await factoryFn(buildEntities(), { enabled: true } as Auth).handler(
+          'mutation { auth_login(username: "a", password: "b") @skip(if: true) { access_token } }',
+          {},
+          fakeReq,
+          undefined,
+        ),
+      ).toEqual({ data: {} });
+    });
+  });
+
+  describe("fragments", () => {
+    it.each([
+      ["without a type condition", "{ ... { auth_me { username } } }"],
+      ["on the root type", "{ ... on Query { auth_me { username } } }"],
+      ["named", "{ ...F } fragment F on Query { auth_me { username } }"],
+      [
+        "nested",
+        "{ ...F } fragment F on Query { ... { ...G } } fragment G on Query { auth_me { username } }",
+      ],
+    ])("answers a root field in a fragment %s", async (_kind, query) => {
+      expect(await run(query)).toEqual({ data: { auth_me: { username: "alice" } } });
+    });
+
+    it("leaves out a root fragment a directive excludes", async () => {
+      expect(await run("{ ... @skip(if: true) { auth_me { username } } }")).toEqual({ data: {} });
+    });
+
+    it("merges a root field selected in and out of a fragment", async () => {
+      expect(
+        await run("{ auth_me { username } ...F } fragment F on Query { auth_me { role } }"),
+      ).toEqual({ data: { auth_me: { username: "alice", role: "user" } } });
+    });
+
+    it("runs a mutation field in a root fragment", async () => {
+      expect(
+        await publish('mutation { ...M } fragment M on Mutation { queue_publish(data: "x") }'),
+      ).toEqual({ result: { data: { queue_publish: true } }, sent: ["x"] });
+    });
+
+    it("answers meta fields in a root fragment", async () => {
+      expect(
+        await run(
+          '{ ...F ... on Query { t: __type(name: "User") { name } } } fragment F on Query { __typename auth_me { role } }',
+        ),
+      ).toEqual({ data: { __typename: "Query", t: { name: "User" }, auth_me: { role: "user" } } });
+    });
+
+    it("rejects fragments that fan out past the bound", () => {
+      const levels = Array.from(
+        { length: 24 },
+        (_, level) =>
+          `fragment F${level} on Comment { a: replies { ...F${level + 1} } b: replies { ...F${level + 1} } }`,
+      );
+
+      expect(
+        run(
+          [
+            "{ users { posts { comments { ...F0 } } } }",
+            ...levels,
+            "fragment F24 on Comment { id }",
+          ].join("\n"),
+        ),
+      ).rejects.toThrow("Query too complex: fragments expand to more than 50000 selections");
+    });
+  });
+});
+
 describe("handleGraphQLRequestFactory.handler — meta fields", () => {
   it("answers a root __typename with the root type's name", async () => {
     const factory = factoryFn(buildEntities());
@@ -779,6 +923,55 @@ describe("handleGraphQLRequestFactory — SQL memoization", () => {
 
       expect(seen).toHaveLength(2);
       expect(seen[1]).toContain('"users_renamed"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("rebuilds SQL when a directive inside a fragment can change the selection", async () => {
+    const factory = factoryFn(tableEntities());
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      const query =
+        "query Q($skip: Boolean!) { users { ...F } } fragment F on User { id @skip(if: $skip) name }";
+      await factory.handler(query, { skip: false }, fakeReq, undefined);
+      await factory.handler(query, { skip: true }, fakeReq, undefined);
+
+      expect(seen).toHaveLength(2);
+      expect(seen[0]).toContain('"id"');
+      expect(seen[1]).not.toContain('"id"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("selects a table field a root fragment holds", async () => {
+    const factory = factoryFn(tableEntities());
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      await factory.handler(
+        "{ ...F } fragment F on Query { users { name } }",
+        {},
+        fakeReq,
+        undefined,
+      );
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toContain('"users"');
+      expect(seen[0]).toContain('"name"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("runs no SQL for a table field a directive excludes", async () => {
+    const factory = factoryFn(tableEntities());
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      expect(
+        await factory.handler("{ users @skip(if: true) { id } }", {}, fakeReq, undefined),
+      ).toEqual({ data: {} });
+      expect(seen).toEqual([]);
     } finally {
       restore();
     }
