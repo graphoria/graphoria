@@ -8,6 +8,7 @@ import type {
   VariableDefinition,
 } from "./types";
 
+import { EntitySource } from "../types/resolver";
 import { hasSessionVariables, replaceSessionVariables } from "../utils/sessionVariables";
 
 const PRIMITIVE_GRAPHQL_TYPES = new Set(["Int", "Float", "String", "Boolean", "ID"]);
@@ -364,6 +365,9 @@ export const resolveFieldArguments = (
   sink?: VariableSink,
 ): SelectionAnalysis[] => {
   return fields.map((field) => {
+    // Sent upstream as text, not bound into SQL: its `$name`s stay for the proxy.
+    if (field.source === EntitySource.REMOTE_SCHEMA) return field;
+
     let newArguments = field.arguments;
 
     if (field.arguments) {

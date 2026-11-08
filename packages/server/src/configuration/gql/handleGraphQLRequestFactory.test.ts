@@ -32,8 +32,11 @@ const sdl = `
     other_users(limit: Int): [User!]!
     auth_me: AuthMe
     remote_query_field: String
-    remote_users(limit: Int): [User!]!
+    remote_users(limit: Int, where: RemoteFilter): [User!]!
     ask(prompt: String!): AskResult!
+  }
+  input RemoteFilter {
+    name: String
   }
   type AskResult {
     answer: String!
@@ -44,7 +47,7 @@ const sdl = `
     auth_login(username: String!, password: String!): LoginResult
     auth_refresh: LoginResult
     auth_logout: Boolean
-    remote_mutation_field: String
+    remote_mutation_field(value: String): String
     make_thing: Thing
   }
   type Thing {
@@ -59,7 +62,7 @@ const sdl = `
   type User {
     id: ID!
     name: String!
-    posts: [Post!]!
+    posts(first: Int): [Post!]!
   }
   type Post {
     id: ID!
@@ -781,19 +784,105 @@ describe("handleGraphQLRequestFactory.handler — remote fields", () => {
   ) => {
     const entities = buildEntities();
     entities.remoteQueriesMap.remote_users = { remoteSchema, originalFieldName: "users" };
+    entities.remoteMutationsMap.remote_mutation_field = {
+      remoteSchema,
+      originalFieldName: "originalM",
+    };
     const sent: string[] = [];
+    const bodies: Record<string, unknown>[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
-      sent.push(JSON.parse(init.body as string).query);
+      const body = JSON.parse(init.body as string);
+      bodies.push(body);
+      sent.push(body.query);
       return new Response(JSON.stringify({ data: answer }), { status: 200 });
     }) as unknown as typeof fetch;
     try {
       const result = await factoryFn(entities).handler(query, variables, fakeReq, undefined);
-      return { result, sent };
+      return { result, sent, bodies };
     } finally {
       globalThis.fetch = originalFetch;
     }
   };
+
+  describe("arguments", () => {
+    it("sends a variable's value", async () => {
+      const { sent } = await send("query Q($l: Int!) { remote_users(limit: $l) { id } }", { l: 5 });
+
+      expect(sent).toEqual(["query { users(limit: 5) { id } }"]);
+    });
+
+    it("sends a variable's declared default", async () => {
+      const { sent } = await send("query Q($l: Int = 3) { remote_users(limit: $l) { id } }");
+
+      expect(sent).toEqual(["query { users(limit: 3) { id } }"]);
+    });
+
+    it("sends a variable on a nested field", async () => {
+      const { sent } = await send(
+        "query Q($n: Int!) { remote_users { posts(first: $n) { id } } }",
+        { n: 2 },
+      );
+
+      expect(sent).toEqual(["query { users { posts(first: 2) { id } } }"]);
+    });
+
+    it("sends an object variable whole", async () => {
+      const { sent } = await send("query Q($w: RemoteFilter) { remote_users(where: $w) { id } }", {
+        w: { name: "a" },
+      });
+
+      expect(sent).toEqual(['query { users(where: {name: "a"}) { id } }']);
+    });
+
+    it("sends a variable nested in a literal object", async () => {
+      const { sent } = await send(
+        "query Q($n: String) { remote_users(where: { name: $n }) { id } }",
+        { n: "a" },
+      );
+
+      expect(sent).toEqual(['query { users(where: {name: "a"}) { id } }']);
+    });
+
+    it("sends a literal where as it was written", async () => {
+      const { sent } = await send('{ remote_users(where: { name: "a" }) { id } }');
+
+      expect(sent).toEqual(['query { users(where: {name: "a"}) { id } }']);
+    });
+
+    it("leaves a string that names no variable alone", async () => {
+      const { sent } = await send('{ remote_users(where: { name: "$5" }) { id } }');
+
+      expect(sent).toEqual(['query { users(where: {name: "$5"}) { id } }']);
+    });
+
+    it("does not read a variable's value as another reference", async () => {
+      const { sent } = await send(
+        "query Q($n: String, $o: String) { remote_users(where: { name: $n }) { id } }",
+        { n: "$o", o: "secret" },
+      );
+
+      expect(sent).toEqual(['query { users(where: {name: "$o"}) { id } }']);
+    });
+
+    it("sends a variable on a mutation", async () => {
+      const { sent } = await send(
+        "mutation M($v: String) { remote_mutation_field(value: $v) }",
+        { v: "x" },
+        { originalM: "ok" },
+      );
+
+      expect(sent).toEqual(['mutation { originalM(value: "x") }']);
+    });
+
+    it("sends no variables map: the query declares none", async () => {
+      const { bodies } = await send("query Q($l: Int!) { remote_users(limit: $l) { id } }", {
+        l: 5,
+      });
+
+      expect(bodies).toEqual([{ query: "query { users(limit: 5) { id } }" }]);
+    });
+  });
 
   it.each([
     [

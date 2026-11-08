@@ -3,14 +3,19 @@ import type { RemoteSchemaResolved } from "./types";
 
 import { formatTraceparent, startSpan } from "../observability/tracing";
 
+type CallerValues = Record<string, unknown>;
+
 /**
- * Build the sub-query string for a remote field by stripping the prefix from
- * the field name and type references.
+ * Build the sub-query string for a remote field, under its name on the remote.
  */
-const buildRemoteSubQuery = (field: SelectionAnalysis, originalFieldName: string): string => {
-  const args = buildArgumentsString(field.arguments);
+const buildRemoteSubQuery = (
+  field: SelectionAnalysis,
+  originalFieldName: string,
+  variables: CallerValues,
+): string => {
+  const args = buildArgumentsString(field.arguments, variables);
   const selections = field.selections?.length
-    ? ` { ${buildSelectionsString(field.selections)} }`
+    ? ` { ${buildSelectionsString(field.selections, variables)} }`
     : "";
 
   return `${originalFieldName}${args}${selections}`;
@@ -19,40 +24,52 @@ const buildRemoteSubQuery = (field: SelectionAnalysis, originalFieldName: string
 /**
  * Recursively build a selections string.
  */
-const buildSelectionsString = (selections: SelectionAnalysis[]): string =>
+const buildSelectionsString = (selections: SelectionAnalysis[], variables: CallerValues): string =>
   selections
     .map((sel) => {
       const subSelections = sel.selections?.length
-        ? ` { ${buildSelectionsString(sel.selections)} }`
+        ? ` { ${buildSelectionsString(sel.selections, variables)} }`
         : "";
 
       const aliasPrefix = sel.alias ? `${sel.alias}: ` : "";
-      return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments)}${subSelections}`;
+      return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments, variables)}${subSelections}`;
     })
     .join(" ");
 
 /**
  * Serialize arguments back to GraphQL argument syntax.
  */
-const buildArgumentsString = (args: Record<string, unknown> | undefined): string => {
+const buildArgumentsString = (
+  args: Record<string, unknown> | undefined,
+  variables: CallerValues,
+): string => {
   if (!args || Object.keys(args).length === 0) return "";
 
-  const parts = Object.entries(args).map(([key, value]) => `${key}: ${serializeValue(value)}`);
+  const parts = Object.entries(args).map(
+    ([key, value]) => `${key}: ${serializeValue(value, variables)}`,
+  );
 
   return `(${parts.join(", ")})`;
 };
 
 /**
- * Serialize a value to GraphQL literal syntax.
+ * Serialize a value to GraphQL literal syntax. The analysis records a variable
+ * as its `$name`; what a variable holds is data, so it is not looked up again.
  */
-const serializeValue = (value: unknown): string => {
+const serializeValue = (value: unknown, variables: CallerValues): string => {
   if (value === null || value === undefined) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "string") {
+    return value.startsWith("$") && Object.hasOwn(variables, value.slice(1))
+      ? serializeValue(variables[value.slice(1)], {})
+      : JSON.stringify(value);
+  }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return `[${value.map(serializeValue).join(", ")}]`;
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => serializeValue(item, variables)).join(", ")}]`;
+  }
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>).map(
-      ([k, v]) => `${k}: ${serializeValue(v)}`,
+      ([k, v]) => `${k}: ${serializeValue(v, variables)}`,
     );
     return `{${entries.join(", ")}}`;
   }
@@ -119,16 +136,18 @@ const prefixTypenames = (
 
 /**
  * Execute a proxied GraphQL query/mutation against a remote schema endpoint.
+ * `variables` are the caller's own, written into the query as values: what the
+ * server binds for SQL (role-filter constants, `$session` claims) stays here.
  */
 export const proxyRemoteField = async (
   field: SelectionAnalysis,
   remoteSchema: RemoteSchemaResolved,
   originalFieldName: string,
-  variables: Record<string, unknown>,
+  variables: CallerValues,
   operationType: "query" | "mutation",
   clientRequest?: Request,
 ): Promise<unknown> => {
-  const subQuery = buildRemoteSubQuery(field, originalFieldName);
+  const subQuery = buildRemoteSubQuery(field, originalFieldName, variables);
 
   const fullQuery = `${operationType} { ${subQuery} }`;
 
@@ -151,10 +170,7 @@ export const proxyRemoteField = async (
     const response = await fetch(remoteSchema.config.url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        query: fullQuery,
-        variables,
-      }),
+      body: JSON.stringify({ query: fullQuery }),
       signal: controller.signal,
     });
     span?.setAttribute("http.response.status_code", response.status);

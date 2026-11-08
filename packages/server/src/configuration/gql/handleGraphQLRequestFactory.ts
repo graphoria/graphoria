@@ -13,7 +13,11 @@ import { LRUCache } from "lru-cache";
 import type { BunRequest } from "bun";
 import type { DocumentNode, GraphQLError } from "graphql";
 import type { RoleEntities } from "../../ai/adapter";
-import type { AnalysisResult, SelectionAnalysis } from "../../analyzeQuery/types";
+import type {
+  AnalysisResult,
+  OperationAnalysis,
+  SelectionAnalysis,
+} from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
@@ -49,8 +53,9 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
         field: SelectionAnalysis,
         variables: Record<string, unknown>,
         queryAnalysis: AnalysisResult,
-        req?: BunRequest,
-        session?: SessionContext,
+        req: BunRequest | undefined,
+        session: SessionContext | undefined,
+        callerValues: Record<string, unknown>,
       ) => Promise<{ data: object }>
     >
   > = {
@@ -150,7 +155,14 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       };
     },
 
-    [EntitySource.REMOTE_SCHEMA]: async (field, variables, _queryAnalysis, req) => {
+    [EntitySource.REMOTE_SCHEMA]: async (
+      field,
+      _variables,
+      _queryAnalysis,
+      req,
+      _session,
+      callerValues,
+    ) => {
       const entry = entities.remoteMutationsMap[field.name];
 
       if (!entry) {
@@ -161,7 +173,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
         field,
         entry.remoteSchema,
         entry.originalFieldName,
-        variables,
+        callerValues,
         "mutation",
         req,
       );
@@ -249,6 +261,19 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       ) || analysis.fragments.some((fragment) => selectionsHave(fragment.fields))
     );
   };
+
+  // What the caller sent, with the defaults it declared. Not
+  // `resolved.allVariables`: that also holds what the server binds (role-filter
+  // constants, `$session` claims), which a prompt or a remote argument naming
+  // `$static_N` would hand over.
+  const callerValuesOf = (operation: OperationAnalysis, variables: Record<string, unknown>) => ({
+    ...Object.fromEntries(
+      (operation.variables ?? [])
+        .filter((variable) => variable.defaultValue !== undefined)
+        .map((variable) => [variable.name, variable.defaultValue]),
+    ),
+    ...variables,
+  });
 
   // Keyed by an analysis's meta document, so per role and query text, and gone
   // with the analysis. Only an operation that declares no variables answers
@@ -472,19 +497,10 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             );
 
             // Every `ask` is settled before any field runs, so a refused prompt costs
-            // no remote call. Not from `resolved.allVariables`: it also holds what the
-            // server binds (role-filter constants, `$session` claims), which a prompt
-            // naming `$static_N` would hand to the LLM and the audit record.
+            // no remote call.
             const callerValues =
-              aiFields.length > 0
-                ? {
-                    ...Object.fromEntries(
-                      (operation.variables ?? [])
-                        .filter((variable) => variable.defaultValue !== undefined)
-                        .map((variable) => [variable.name, variable.defaultValue]),
-                    ),
-                    ...variables,
-                  }
+              aiFields.length > 0 || remoteFields.length > 0
+                ? callerValuesOf(operation, variables)
                 : {};
 
             // Each `ask` runs a whole agent loop, while the rate limiter counts
@@ -520,7 +536,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                     field,
                     entry.remoteSchema,
                     entry.originalFieldName,
-                    resolved.allVariables,
+                    callerValues,
                     "query",
                     req,
                   );
@@ -641,6 +657,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
           } else if (operation.operation === "mutation") {
             // Route mutation to the appropriate handler based on field source
             let results: Record<string, object> = {};
+            const callerValues = callerValuesOf(operation, variables);
 
             for await (const field of resolved.fields) {
               const source = field.source;
@@ -652,6 +669,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                   queryAnalysis,
                   req,
                   session,
+                  callerValues,
                 );
 
                 results = {
