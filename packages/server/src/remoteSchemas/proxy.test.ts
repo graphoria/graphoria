@@ -339,6 +339,56 @@ describe("Remote Schema Proxy", () => {
   });
 });
 
+describe("Remote Schema Proxy — what it writes upstream", () => {
+  const originalFetch = globalThis.fetch;
+
+  const upstream = (data: Record<string, unknown>) => {
+    const fetchMock = mock((_url: string, _init: RequestInit) =>
+      Promise.resolve(new Response(JSON.stringify({ data }), { status: 200 })),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    return {
+      fetchMock,
+      sent: () =>
+        (JSON.parse(fetchMock.mock.calls[0]![1].body as string) as { query: string }).query,
+    };
+  };
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("asks a field left with no selection for __typename, and answers it empty", async () => {
+    const { sent } = upstream({ users: [{ __typename: "User" }, { __typename: "User" }] });
+
+    const result = await proxyRemoteField(
+      { name: "test_users", selections: [] },
+      createMockRemoteSchema(),
+      "users",
+      {},
+      "query",
+    );
+
+    expect(sent()).toBe("query { users { __typename } }");
+    expect(result).toEqual([{}, {}]);
+  });
+
+  it("does the same for a nested field", async () => {
+    const { sent } = upstream({ user: { id: "1", profile: { __typename: "Profile" } } });
+
+    const result = await proxyRemoteField(
+      { name: "test_user", selections: [{ name: "id" }, { name: "profile", selections: [] }] },
+      createMockRemoteSchema(),
+      "user",
+      {},
+      "query",
+    );
+
+    expect(sent()).toBe("query { user { id profile { __typename } } }");
+    expect(result).toEqual({ id: "1", profile: {} });
+  });
+});
+
 describe("Remote Schema Proxy — tracing", () => {
   let sink: ReturnType<typeof installSpanSink>;
 

@@ -14,11 +14,20 @@ const buildRemoteSubQuery = (
   variables: CallerValues,
 ): string => {
   const args = buildArgumentsString(field.arguments, variables);
-  const selections = field.selections?.length
-    ? ` { ${buildSelectionsString(field.selections, variables)} }`
-    : "";
 
-  return `${originalFieldName}${args}${selections}`;
+  return `${originalFieldName}${args}${buildSelectionSet(field.selections, variables)}`;
+};
+
+/**
+ * A selection set, or nothing for a scalar. A field whose every subfield a
+ * directive excluded still needs one upstream, so it asks for `__typename`.
+ */
+const buildSelectionSet = (
+  selections: SelectionAnalysis[] | undefined,
+  variables: CallerValues,
+): string => {
+  if (!selections) return "";
+  return ` { ${selections.length > 0 ? buildSelectionsString(selections, variables) : "__typename"} }`;
 };
 
 /**
@@ -27,12 +36,8 @@ const buildRemoteSubQuery = (
 const buildSelectionsString = (selections: SelectionAnalysis[], variables: CallerValues): string =>
   selections
     .map((sel) => {
-      const subSelections = sel.selections?.length
-        ? ` { ${buildSelectionsString(sel.selections, variables)} }`
-        : "";
-
       const aliasPrefix = sel.alias ? `${sel.alias}: ` : "";
-      return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments, variables)}${subSelections}`;
+      return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments, variables)}${buildSelectionSet(sel.selections, variables)}`;
     })
     .join(" ");
 
@@ -105,14 +110,15 @@ const buildHeaders = (
 /**
  * The remote answers `__typename` with its own type names, which the merged
  * schema serves prefixed. Walks the result along the selection, aliases
- * included, renaming in place.
+ * included, renaming in place. A `__typename` the proxy added to an empty
+ * selection set is removed: the caller selected nothing there.
  */
 const prefixTypenames = (
   value: unknown,
   selections: SelectionAnalysis[] | undefined,
   toPrefixed: RemoteSchemaResolved["prefixMap"]["toPrefixed"],
 ): void => {
-  if (!selections?.length || value === null || typeof value !== "object") return;
+  if (!selections || value === null || typeof value !== "object") return;
 
   if (Array.isArray(value)) {
     for (const item of value) prefixTypenames(item, selections, toPrefixed);
@@ -120,6 +126,8 @@ const prefixTypenames = (
   }
 
   const object = value as Record<string, unknown>;
+  if (selections.length === 0) delete object["__typename"];
+
   for (const selection of selections) {
     const key = selection.alias || selection.name;
     const selected = object[key];
