@@ -1,8 +1,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import { buildSchema } from "graphql";
 
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { AnalyzedConfiguration } from "../../configuration";
 import type { AuditEvent } from "../../logging/audit";
+
+import { EntitySource } from "../../types/resolver";
 
 // `singletons/env` parses process.env at module load. Set required vars before
 // any transitive import touches it.
@@ -21,11 +24,14 @@ let anonymousRole: string;
 let adminSecret: string;
 // oxlint-disable-next-line typescript/no-explicit-any
 let setAuditLog: any;
+// oxlint-disable-next-line typescript/no-explicit-any
+let queryEventEmitter: any;
 
 const HEADER = "x-admin-secret";
 
 beforeAll(async () => {
-  ({ websocketHandlerFactory } = await import("./handleGraphQLSubscriptionFactory"));
+  ({ websocketHandlerFactory, queryEventEmitter } =
+    await import("./handleGraphQLSubscriptionFactory"));
   ({ setAuditLog } = await import("../../logging/audit"));
   const { env } = await import("../../singletons/env");
   anonymousRole = env.anonymousRole;
@@ -108,6 +114,133 @@ describe("websocketHandlerFactory message", () => {
 
     expect(socket.close).toHaveBeenCalledWith(4500, "Internal server error");
     expect(socket.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("websocketHandlerFactory subscribe to a queue", () => {
+  const schema = buildSchema(`
+    type Query { x: Int }
+    type Subscription {
+      events_spread: Order
+      events_inline: Order
+      events_root: Order
+      events_vars: Order
+      events_empty: Order
+      events_named_a: Order
+      events_named_b: Order
+    }
+    type Order { message: String id: ID }
+  `);
+  const MESSAGE = { message: "m1", id: "1" };
+
+  const start = async () => {
+    const { handler } = websocketHandlerFactory(
+      {
+        [anonymousRole]: {
+          schema,
+          queriesMap: {},
+          getResolverSource: () => EntitySource.QUEUE_SUBSCRIBER,
+          handlers: {
+            gql: { hasErrors: () => ({ hasErrors: false, validationErrors: [] }) },
+          },
+        },
+      } as unknown as AnalyzedConfiguration["roles"],
+      HEADER,
+    );
+    const { socket, ws } = fakeSocket();
+    await handler.message!(ws, JSON.stringify({ type: "connection_init", payload: {} }));
+
+    const subscribe = (
+      id: string,
+      query: string,
+      variables?: Record<string, unknown>,
+      operationName?: string,
+    ) =>
+      handler.message!(
+        ws,
+        JSON.stringify({ id, type: "subscribe", payload: { query, variables, operationName } }),
+      );
+
+    return { socket, subscribe };
+  };
+
+  const payloads = (socket: ReturnType<typeof fakeSocket>["socket"]) =>
+    sent(socket)
+      .filter((message) => message.type !== "connection_ack")
+      .map((message) => message.payload);
+
+  it("answers the fields a fragment selects", async () => {
+    const { socket, subscribe } = await start();
+
+    await subscribe("1", "subscription { events_spread { ...O } } fragment O on Order { message }");
+    queryEventEmitter.sendDataUpdate("events_spread", { data: MESSAGE });
+
+    expect(payloads(socket)).toEqual([{ data: { events_spread: { message: "m1" } } }]);
+  });
+
+  it("leaves out what an inline fragment's directive excludes", async () => {
+    const { socket, subscribe } = await start();
+
+    await subscribe("1", "subscription { events_inline { id ... @skip(if: true) { message } } }");
+    queryEventEmitter.sendDataUpdate("events_inline", { data: MESSAGE });
+
+    expect(payloads(socket)).toEqual([{ data: { events_inline: { id: "1" } } }]);
+  });
+
+  it("subscribes to a field in a root-level fragment", async () => {
+    const { socket, subscribe } = await start();
+
+    await subscribe("1", "subscription { ...S } fragment S on Subscription { events_root { id } }");
+    queryEventEmitter.sendDataUpdate("events_root", { data: MESSAGE });
+
+    expect(payloads(socket)).toEqual([{ data: { events_root: { id: "1" } } }]);
+  });
+
+  it("answers an empty object when every subfield is excluded", async () => {
+    const { socket, subscribe } = await start();
+
+    await subscribe("1", "subscription { events_empty { id @skip(if: true) } }");
+    queryEventEmitter.sendDataUpdate("events_empty", { data: MESSAGE });
+
+    expect(payloads(socket)).toEqual([{ data: { events_empty: {} } }]);
+  });
+
+  it("subscribes to the operation operationName names", async () => {
+    const { socket, subscribe } = await start();
+
+    await subscribe(
+      "1",
+      "subscription A { events_named_a { id } } subscription B { events_named_b { id } }",
+      undefined,
+      "B",
+    );
+    queryEventEmitter.sendDataUpdate("events_named_a", { data: MESSAGE });
+    queryEventEmitter.sendDataUpdate("events_named_b", { data: MESSAGE });
+
+    expect(payloads(socket)).toEqual([{ data: { events_named_b: { id: "1" } } }]);
+  });
+
+  it("answers an error for an operationName the document does not hold", async () => {
+    const { socket, subscribe } = await start();
+
+    await subscribe("1", "subscription A { events_named_a { id } }", undefined, "C");
+
+    expect(sent(socket).filter((message) => message.type !== "connection_ack")).toEqual([
+      { id: "1", type: "error", payload: [{ message: 'Unknown operation named "C".' }] },
+    ]);
+  });
+
+  it("gives clients whose variables select different fields their own group", async () => {
+    const skips = await start();
+    const keeps = await start();
+    const query = "subscription S($s: Boolean!) { events_vars { message id @skip(if: $s) } }";
+
+    await skips.subscribe("1", query, { s: true });
+    await keeps.subscribe("2", query, { s: false });
+    queryEventEmitter.sendDataUpdate("events_vars", { data: MESSAGE });
+
+    expect(payloads(skips.socket)).toEqual([{ data: { events_vars: { message: "m1" } } }]);
+    expect(payloads(keeps.socket)).toEqual([{ data: { events_vars: MESSAGE } }]);
   });
 });
 

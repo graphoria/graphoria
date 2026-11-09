@@ -196,4 +196,18 @@ describe("handleAuthMutation — the payload", () => {
       ),
     ).toEqual({ data: { auth_refresh: { ttl: 300 } } });
   });
+
+  it.each([
+    ["no request", undefined],
+    ["a request with no cookie jar", fakeReq],
+  ])("refuses auth_refresh with %s", async (_case, req) => {
+    await expect(
+      handleAuthMutation(
+        { name: "auth_refresh", selections: [{ name: "access_token" }] },
+        {},
+        auth,
+        req,
+      ),
+    ).rejects.toThrow("Refresh token is required");
+  });
 });

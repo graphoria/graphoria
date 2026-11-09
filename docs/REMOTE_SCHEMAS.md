@@ -60,7 +60,7 @@ type payments_User {
 }
 ```
 
-Root `Query` and `Mutation` fields get the same treatment. A remote query named `getUser` becomes `payments_getUser` in the unified schema. Inputs, enums, unions, and interfaces are all prefixed; the bidirectional `PrefixMap` Graphoria builds at startup means the proxy can reverse the rename when it forwards the sub-query, so the remote service still receives the names _it_ knows.
+Root `Query` and `Mutation` fields get the same treatment. A remote query named `getUser` becomes `payments_getUser` in the unified schema. Inputs, enums, unions, and interfaces are all prefixed. The remote service still receives the names _it_ knows: the proxy forwards a root field under its original name, and the sub-query names no types.
 
 This keeps every cross-service collision impossible by construction. You can stitch in two payment processors that both define `type Customer` without a single hand-written rename.
 
@@ -82,6 +82,8 @@ query {
 ```
 
 When this query lands on `/graphql`, Graphoria routes the `payments_*` portions of the selection to the `payments` remote, strips the prefix from each type/field name, and sends a sub-query to `https://payments.internal/graphql`. Aliases in the original query are preserved, so the response shape matches what the client requested without further translation. The one value translated back is `__typename`: the remote answers with its own type names, and Graphoria prefixes them again, so the client reads `payments_Customer`, the type the unified schema serves.
+
+The sub-query is plain: fragments are expanded and `@skip` / `@include` applied before it is built, and a variable's value is written into it as a literal, so the remote never receives a `variables` map. A field whose every subfield is excluded asks the remote only for `__typename`, which the client does not receive: it reads `{}`.
 
 Headers behave like this:
 

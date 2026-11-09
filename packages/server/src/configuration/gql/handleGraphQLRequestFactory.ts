@@ -13,7 +13,11 @@ import { LRUCache } from "lru-cache";
 import type { BunRequest } from "bun";
 import type { DocumentNode, GraphQLError } from "graphql";
 import type { RoleEntities } from "../../ai/adapter";
-import type { AnalysisResult, FragmentAnalysis, SelectionAnalysis } from "../../analyzeQuery/types";
+import type {
+  AnalysisResult,
+  OperationAnalysis,
+  SelectionAnalysis,
+} from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
@@ -21,10 +25,12 @@ import type { SessionContext } from "../../utils/sessionVariables";
 import { analyzeQuery } from "../../analyzeQuery";
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule, isDepthLimitError } from "../../analyzeQuery/depthLimit";
+import { CONTROL_FLOW_DIRECTIVES } from "../../analyzeQuery/directiveUtils";
 import { introspectionLimitRule } from "../../analyzeQuery/introspectionLimit";
+import { reservedVariableNamesRule } from "../../analyzeQuery/reservedVariables";
+import { resolveOperationSelections, selectOperation } from "../../analyzeQuery/resolveSelections";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
-import { filterBasedOnDirective } from "../../databases/common";
 import { proxyRemoteField } from "../../remoteSchemas/proxy";
 import { getAgent } from "../../singletons/ai";
 import { actorFromSession, audit } from "../../logging/audit";
@@ -48,8 +54,9 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
         field: SelectionAnalysis,
         variables: Record<string, unknown>,
         queryAnalysis: AnalysisResult,
-        req?: BunRequest,
-        session?: SessionContext,
+        req: BunRequest | undefined,
+        session: SessionContext | undefined,
+        callerValues: Record<string, unknown>,
       ) => Promise<{ data: object }>
     >
   > = {
@@ -78,14 +85,8 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       };
     },
 
-    [EntitySource.AUTH]: (field, variables, queryAnalysis, req, session) =>
-      handleAuthMutation(
-        withResolvedSelections(field, queryAnalysis, variables),
-        variables,
-        auth,
-        req,
-        session,
-      ),
+    [EntitySource.AUTH]: (field, variables, _queryAnalysis, req, session) =>
+      handleAuthMutation(field, variables, auth, req, session),
 
     [EntitySource.OPERATION]: async (field, variables) => {
       const operation = entities.operations[field.name];
@@ -155,7 +156,14 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       };
     },
 
-    [EntitySource.REMOTE_SCHEMA]: async (field, variables, _queryAnalysis, req) => {
+    [EntitySource.REMOTE_SCHEMA]: async (
+      field,
+      _variables,
+      _queryAnalysis,
+      req,
+      _session,
+      callerValues,
+    ) => {
       const entry = entities.remoteMutationsMap[field.name];
 
       if (!entry) {
@@ -166,7 +174,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
         field,
         entry.remoteSchema,
         entry.originalFieldName,
-        variables,
+        callerValues,
         "mutation",
         req,
       );
@@ -188,10 +196,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     validationErrors?: readonly GraphQLError[];
     analysis?: AnalysisResult;
     /**
-     * SQL memoized for one resolved-variable layout. The fingerprint is the
-     * ordered definition names: object-variable flattening and session-claim
-     * binding mint static_N definitions per request, so different layouts emit
-     * different placeholder numbering and need their own SQL text.
+     * SQL memoized for one operation and resolved-variable layout. The
+     * fingerprint is its name and the ordered definition names: object-variable
+     * flattening and session-claim binding mint static_N definitions per
+     * request, so different layouts emit different placeholder numbering and
+     * need their own SQL text.
      */
     sqlMemo?: { fingerprint: string; queries: ReturnType<typeof generateSQL> };
   }
@@ -223,6 +232,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       (rule) => rule !== OverlappingFieldsCanBeMergedRule && rule !== MaxIntrospectionDepthRule,
     ),
     introspectionLimitRule,
+    reservedVariableNamesRule,
   ];
 
   // undefined = unparseable query (never cached)
@@ -240,7 +250,6 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
 
   // These directives resolve against request values, so their verdicts change
   // the emitted SQL per request; documents carrying them are never memoized.
-  const CONTROL_FLOW_DIRECTIVES = new Set(["skip", "include", "when"]);
   const hasControlFlowDirectives = (analysis: AnalysisResult): boolean => {
     const selectionsHave = (fields: SelectionAnalysis[]): boolean =>
       fields.some(
@@ -249,50 +258,24 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             true ||
           (field.selections !== undefined && selectionsHave(field.selections)),
       );
-    return analysis.operations.some(
-      (operation) => operation.fields !== undefined && selectionsHave(operation.fields),
+    return (
+      analysis.operations.some(
+        (operation) => operation.fields !== undefined && selectionsHave(operation.fields),
+      ) || analysis.fragments.some((fragment) => selectionsHave(fragment.fields))
     );
   };
 
-  // The analyzer leaves a fragment unresolved in `selections`: a spread is a
-  // `...Name` entry, an inline fragment a `... on Type` entry holding its own
-  // selections, and a directive on either sits on that entry. A fragment expands
-  // once, at the first spread `keep` lets through: fragments that each spread
-  // the next one twice would otherwise cost 2^n.
-  const resolveFragments = (
-    selections: SelectionAnalysis[] | undefined,
-    fragments: FragmentAnalysis[],
-    keep: (selection: SelectionAnalysis) => boolean,
-  ): SelectionAnalysis[] => {
-    const visited = new Set<string>();
-    const fieldsByName = new Map(fragments.map((fragment) => [fragment.name, fragment.fields]));
-    const walk = (entries: SelectionAnalysis[] | undefined): SelectionAnalysis[] =>
-      (entries ?? []).filter(keep).flatMap((selection) => {
-        if (selection.name.startsWith("... on ")) {
-          return walk(selection.selections);
-        }
-        if (selection.name.startsWith("...")) {
-          const name = selection.name.slice(3);
-          if (visited.has(name)) return [];
-          visited.add(name);
-          return walk(fieldsByName.get(name));
-        }
-        return [selection];
-      });
-    return walk(selections);
-  };
-
-  // The auth handlers narrow the payload they build to the field's selections,
-  // so those come with fragments expanded and the fields a directive skips gone.
-  const withResolvedSelections = (
-    field: SelectionAnalysis,
-    queryAnalysis: AnalysisResult,
-    variables: Record<string, unknown>,
-  ): SelectionAnalysis => ({
-    ...field,
-    selections: resolveFragments(field.selections, queryAnalysis.fragments, (selection) =>
-      filterBasedOnDirective(selection, queryAnalysis.operations[0]?.variables ?? [], variables),
+  // What the caller sent, with the defaults it declared. Not
+  // `resolved.allVariables`: that also holds what the server binds (role-filter
+  // constants, `$session` claims), which a prompt or a remote argument naming
+  // `$static_N` would hand over.
+  const callerValuesOf = (operation: OperationAnalysis, variables: Record<string, unknown>) => ({
+    ...Object.fromEntries(
+      (operation.variables ?? [])
+        .filter((variable) => variable.defaultValue !== undefined)
+        .map((variable) => [variable.name, variable.defaultValue]),
     ),
+    ...variables,
   });
 
   // Keyed by an analysis's meta document, so per role and query text, and gone
@@ -421,7 +404,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       // Server, QUERY_TIMEOUT_MS on MySQL, which has no pool-level route — so
       // an ordinary caller query is bounded without the factory resolving
       // anything.
-      options?: { enforcePageLimits?: boolean; timeoutMs?: number },
+      options?: { enforcePageLimits?: boolean; timeoutMs?: number; operationName?: string },
       // oxlint-disable-next-line typescript/no-explicit-any
     ): Promise<{ data: any }> => {
       const log = logFor(session?.role);
@@ -445,7 +428,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
         return { data: {} };
       }
 
-      const operation = queryAnalysis.operations[0];
+      const operation = selectOperation(queryAnalysis.operations, options?.operationName);
+      // What follows reads the document's first operation.
+      if (operation !== queryAnalysis.operations[0]) {
+        queryAnalysis = { ...queryAnalysis, operations: [operation] };
+      }
       // An anonymous operation is named by its root fields, exactly as the slow
       // query log names one: the document itself would carry inline literals,
       // which are caller data.
@@ -492,7 +479,11 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
 
           // Single pass: validate, flatten object vars, resolve field args + session vars
           // Returns an immutable ResolvedOperation — original operation is not mutated
-          const resolved = resolveVariables(operation, variables, session);
+          const resolved = resolveVariables(
+            resolveOperationSelections(operation, queryAnalysis.fragments, variables, entities),
+            variables,
+            session,
+          );
 
           const metaData = operation.meta ? await answerMetaFields(operation.meta, variables) : {};
 
@@ -513,33 +504,19 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             );
 
             // Every `ask` is settled before any field runs, so a refused prompt costs
-            // no remote call. Not from `resolved.allVariables`: it also holds what the
-            // server binds (role-filter constants, `$session` claims), which a prompt
-            // naming `$static_N` would hand to the LLM and the audit record.
+            // no remote call.
             const callerValues =
-              aiFields.length > 0
-                ? {
-                    ...Object.fromEntries(
-                      (operation.variables ?? [])
-                        .filter((variable) => variable.defaultValue !== undefined)
-                        .map((variable) => [variable.name, variable.defaultValue]),
-                    ),
-                    ...variables,
-                  }
+              aiFields.length > 0 || remoteFields.length > 0
+                ? callerValuesOf(operation, variables)
                 : {};
-
-            // A skipped `ask` runs no agent, as a skipped table field selects nothing.
-            const runningAsks = aiFields.filter((field) =>
-              filterBasedOnDirective(field, operation.variables ?? [], callerValues),
-            );
 
             // Each `ask` runs a whole agent loop, while the rate limiter counts
             // the request once.
-            if (runningAsks.length > 1) {
+            if (aiFields.length > 1) {
               throw new Error("Only one `ask` is allowed per request");
             }
 
-            const asks = runningAsks.map((field) => {
+            const asks = aiFields.map((field) => {
               const prompt = resolveVariableRef(callerValues, field.arguments?.prompt);
               if (typeof prompt !== "string" || prompt.length === 0) {
                 throw new Error("`prompt` (string) is required");
@@ -550,13 +527,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             // Handle auth queries (e.g. auth_me)
             let authData: Record<string, unknown> = {};
             for (const field of authFields) {
-              Object.assign(
-                authData,
-                handleAuthMeQuery(
-                  withResolvedSelections(field, queryAnalysis, resolved.allVariables),
-                  session,
-                ),
-              );
+              Object.assign(authData, handleAuthMeQuery(field, session));
             }
 
             // Handle remote schema queries in parallel
@@ -572,7 +543,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                     field,
                     entry.remoteSchema,
                     entry.originalFieldName,
-                    resolved.allVariables,
+                    callerValues,
                     "query",
                     req,
                   );
@@ -593,15 +564,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 prompt,
               });
               const agentAnswer = await getAgent()(prompt, { role: asAgentRole(), session, req });
-              const selections = resolveFragments(
-                field.selections,
-                queryAnalysis.fragments,
-                (selection) =>
-                  filterBasedOnDirective(selection, operation.variables ?? [], callerValues),
-              );
-              // An empty selection hands back the whole object, not the nothing it asks for.
-              aiData[alias] =
-                selections.length > 0 ? filterResultBySelection(agentAnswer, selections) : {};
+              aiData[alias] = filterResultBySelection(agentAnswer, field.selections ?? []);
             }
 
             // Skip SQL generation if there are no table fields
@@ -632,9 +595,10 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
               // timeout hint, both of which change the text.
               const enforcePageLimits = options?.enforcePageLimits ?? true;
               const memoizable = enforcePageLimits && !hasControlFlowDirectives(queryAnalysis);
-              const fingerprint = resolved.variables
-                .map((variable) => variable.name)
-                .join("\u0000");
+              const fingerprint = [
+                operation.name ?? "",
+                ...resolved.variables.map((variable) => variable.name),
+              ].join("\u0000");
               const memo = entry?.sqlMemo;
 
               if (memoizable && memo !== undefined && memo.fingerprint === fingerprint) {
@@ -701,6 +665,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
           } else if (operation.operation === "mutation") {
             // Route mutation to the appropriate handler based on field source
             let results: Record<string, object> = {};
+            const callerValues = callerValuesOf(operation, variables);
 
             for await (const field of resolved.fields) {
               const source = field.source;
@@ -712,6 +677,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                   queryAnalysis,
                   req,
                   session,
+                  callerValues,
                 );
 
                 results = {

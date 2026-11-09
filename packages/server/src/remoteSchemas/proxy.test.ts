@@ -21,7 +21,6 @@ const createMockRemoteSchema = (
   queryFields: [],
   mutationFields: [],
   prefixMap: {
-    toOriginal: { test_User: "User" },
     toPrefixed: { User: "test_User" },
   },
   ...overrides,
@@ -193,7 +192,6 @@ describe("Remote Schema Proxy", () => {
         },
         createMockRemoteSchema({
           prefixMap: {
-            toOriginal: { test_User: "User", test_Post: "Post" },
             toPrefixed: { User: "test_User", Post: "test_Post" },
           },
         }),
@@ -221,51 +219,6 @@ describe("Remote Schema Proxy", () => {
       ).mock.calls[0];
       expect(JSON.parse(options.body as string).query).toBe(
         "query { users { __typename kind: __typename profile { __typename } posts { __typename id } } }",
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("forwards an inline fragment's type condition under the remote's own name", async () => {
-    const fetchMock = mock(() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ data: { users: [{ __typename: "User", id: "1" }] } }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
-    ) as unknown as typeof fetch;
-
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      const result = await proxyRemoteField(
-        {
-          name: "test_users",
-          isArray: true,
-          selections: [
-            { name: "... on test_User", selections: [{ name: "__typename" }, { name: "id" }] },
-          ],
-        },
-        createMockRemoteSchema(),
-        "users",
-        {},
-        "query",
-      );
-
-      expect(result).toEqual([{ __typename: "test_User", id: "1" }]);
-
-      const [, options] = (
-        fetchMock as unknown as {
-          mock: {
-            calls: [string, RequestInit & { headers: Record<string, string> }][];
-          };
-        }
-      ).mock.calls[0];
-      expect(JSON.parse(options.body as string).query).toBe(
-        "query { users { ... on User { __typename id } } }",
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -383,6 +336,85 @@ describe("Remote Schema Proxy", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("Remote Schema Proxy — what it writes upstream", () => {
+  const originalFetch = globalThis.fetch;
+
+  const upstream = (data: Record<string, unknown>) => {
+    const fetchMock = mock((_url: string, _init: RequestInit) =>
+      Promise.resolve(new Response(JSON.stringify({ data }), { status: 200 })),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    return {
+      fetchMock,
+      sent: () =>
+        (JSON.parse(fetchMock.mock.calls[0]![1].body as string) as { query: string }).query,
+    };
+  };
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("asks a field left with no selection for __typename, and answers it empty", async () => {
+    const { sent } = upstream({ users: [{ __typename: "User" }, { __typename: "User" }] });
+
+    const result = await proxyRemoteField(
+      { name: "test_users", selections: [] },
+      createMockRemoteSchema(),
+      "users",
+      {},
+      "query",
+    );
+
+    expect(sent()).toBe("query { users { __typename } }");
+    expect(result).toEqual([{}, {}]);
+  });
+
+  it("does the same for a nested field", async () => {
+    const { sent } = upstream({ user: { id: "1", profile: { __typename: "Profile" } } });
+
+    const result = await proxyRemoteField(
+      { name: "test_user", selections: [{ name: "id" }, { name: "profile", selections: [] }] },
+      createMockRemoteSchema(),
+      "user",
+      {},
+      "query",
+    );
+
+    expect(sent()).toBe("query { user { id profile { __typename } } }");
+    expect(result).toEqual({ id: "1", profile: {} });
+  });
+
+  it("writes an input object's keys", async () => {
+    const { sent } = upstream({ doA: { id: "1" } });
+
+    await proxyRemoteField(
+      { name: "test_doA", arguments: { input: "$f" }, selections: [{ name: "id" }] },
+      createMockRemoteSchema(),
+      "doA",
+      { f: { a: 1, _b2: "x" } },
+      "mutation",
+    );
+
+    expect(sent()).toBe('mutation { doA(input: {a: 1, _b2: "x"}) { id } }');
+  });
+
+  it("sends nothing when an input object's key is not a GraphQL name", async () => {
+    const { fetchMock } = upstream({});
+
+    await expect(
+      proxyRemoteField(
+        { name: "test_doA", arguments: { input: "$f" }, selections: [{ name: "id" }] },
+        createMockRemoteSchema(),
+        "doA",
+        { f: { "a: 1}) { id } dropAll zz: doA(input: {name": "x" } },
+        "mutation",
+      ),
+    ).rejects.toThrow("Names must");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

@@ -37,7 +37,7 @@ const DIRECTIVE_ARG_SPEC: Record<string, Record<string, DirectiveArgSpec>> = {
 };
 
 // Control-flow directives — exempt from spec validation, keep raw extraction
-const CONTROL_FLOW_DIRECTIVES = new Set(["skip", "include", "when"]);
+export const CONTROL_FLOW_DIRECTIVES = new Set(["skip", "include", "when"]);
 
 export const analyzeDirectives = (
   directives: readonly DirectiveNode[],

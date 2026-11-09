@@ -1,77 +1,83 @@
+import { assertName } from "graphql";
+
 import type { SelectionAnalysis } from "../analyzeQuery/types";
 import type { RemoteSchemaResolved } from "./types";
 
 import { formatTraceparent, startSpan } from "../observability/tracing";
 
-// The analysis names an inline fragment after its type condition, or without
-// one after the type it sits in.
-const INLINE_FRAGMENT = "... on ";
+type CallerValues = Record<string, unknown>;
 
 /**
- * Build the sub-query string for a remote field by stripping the prefix from
- * the field name and type references.
+ * Build the sub-query string for a remote field, under its name on the remote.
  */
 const buildRemoteSubQuery = (
   field: SelectionAnalysis,
   originalFieldName: string,
-  prefixMap: RemoteSchemaResolved["prefixMap"],
+  variables: CallerValues,
 ): string => {
-  const args = buildArgumentsString(field.arguments);
-  const selections = field.selections?.length
-    ? ` { ${buildSelectionsString(field.selections, prefixMap)} }`
-    : "";
+  const args = buildArgumentsString(field.arguments, variables);
 
-  return `${originalFieldName}${args}${selections}`;
+  return `${originalFieldName}${args}${buildSelectionSet(field.selections, variables)}`;
 };
 
 /**
- * Recursively build a selections string, un-prefixing any type references in inline fragments.
+ * A selection set, or nothing for a scalar. A field whose every subfield a
+ * directive excluded still needs one upstream, so it asks for `__typename`.
  */
-const buildSelectionsString = (
-  selections: SelectionAnalysis[],
-  prefixMap: RemoteSchemaResolved["prefixMap"],
-): string =>
+const buildSelectionSet = (
+  selections: SelectionAnalysis[] | undefined,
+  variables: CallerValues,
+): string => {
+  if (!selections) return "";
+  return ` { ${selections.length > 0 ? buildSelectionsString(selections, variables) : "__typename"} }`;
+};
+
+/**
+ * Recursively build a selections string.
+ */
+const buildSelectionsString = (selections: SelectionAnalysis[], variables: CallerValues): string =>
   selections
     .map((sel) => {
-      const subSelections = sel.selections?.length
-        ? ` { ${buildSelectionsString(sel.selections, prefixMap)} }`
-        : "";
-
-      if (sel.name.startsWith(INLINE_FRAGMENT)) {
-        const typeName = sel.name.slice(INLINE_FRAGMENT.length);
-        const original = Object.hasOwn(prefixMap.toOriginal, typeName)
-          ? prefixMap.toOriginal[typeName]
-          : typeName;
-        return `${INLINE_FRAGMENT}${original}${subSelections}`;
-      }
-
       const aliasPrefix = sel.alias ? `${sel.alias}: ` : "";
-      return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments)}${subSelections}`;
+      return `${aliasPrefix}${sel.name}${buildArgumentsString(sel.arguments, variables)}${buildSelectionSet(sel.selections, variables)}`;
     })
     .join(" ");
 
 /**
  * Serialize arguments back to GraphQL argument syntax.
  */
-const buildArgumentsString = (args: Record<string, unknown> | undefined): string => {
+const buildArgumentsString = (
+  args: Record<string, unknown> | undefined,
+  variables: CallerValues,
+): string => {
   if (!args || Object.keys(args).length === 0) return "";
 
-  const parts = Object.entries(args).map(([key, value]) => `${key}: ${serializeValue(value)}`);
+  const parts = Object.entries(args).map(
+    ([key, value]) => `${key}: ${serializeValue(value, variables)}`,
+  );
 
   return `(${parts.join(", ")})`;
 };
 
 /**
- * Serialize a value to GraphQL literal syntax.
+ * Serialize a value to GraphQL literal syntax. The analysis records a variable
+ * as its `$name`; what a variable holds is data, so it is not looked up again.
  */
-const serializeValue = (value: unknown): string => {
+const serializeValue = (value: unknown, variables: CallerValues): string => {
   if (value === null || value === undefined) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "string") {
+    return value.startsWith("$") && Object.hasOwn(variables, value.slice(1))
+      ? serializeValue(variables[value.slice(1)], {})
+      : JSON.stringify(value);
+  }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return `[${value.map(serializeValue).join(", ")}]`;
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => serializeValue(item, variables)).join(", ")}]`;
+  }
   if (typeof value === "object") {
+    // A key comes from the caller's variables too, and is written unquoted.
     const entries = Object.entries(value as Record<string, unknown>).map(
-      ([k, v]) => `${k}: ${serializeValue(v)}`,
+      ([k, v]) => `${assertName(k)}: ${serializeValue(v, variables)}`,
     );
     return `{${entries.join(", ")}}`;
   }
@@ -107,14 +113,15 @@ const buildHeaders = (
 /**
  * The remote answers `__typename` with its own type names, which the merged
  * schema serves prefixed. Walks the result along the selection, aliases
- * included, renaming in place.
+ * included, renaming in place. A `__typename` the proxy added to an empty
+ * selection set is removed: the caller selected nothing there.
  */
 const prefixTypenames = (
   value: unknown,
   selections: SelectionAnalysis[] | undefined,
   toPrefixed: RemoteSchemaResolved["prefixMap"]["toPrefixed"],
 ): void => {
-  if (!selections?.length || value === null || typeof value !== "object") return;
+  if (!selections || value === null || typeof value !== "object") return;
 
   if (Array.isArray(value)) {
     for (const item of value) prefixTypenames(item, selections, toPrefixed);
@@ -122,14 +129,13 @@ const prefixTypenames = (
   }
 
   const object = value as Record<string, unknown>;
+  if (selections.length === 0) delete object["__typename"];
+
   for (const selection of selections) {
     const key = selection.alias || selection.name;
     const selected = object[key];
 
-    if (selection.name.startsWith(INLINE_FRAGMENT)) {
-      // Its fields sit on the object the fragment is spread in.
-      prefixTypenames(object, selection.selections, toPrefixed);
-    } else if (selection.name === "__typename") {
+    if (selection.name === "__typename") {
       if (typeof selected === "string" && Object.hasOwn(toPrefixed, selected)) {
         object[key] = toPrefixed[selected];
       }
@@ -141,16 +147,18 @@ const prefixTypenames = (
 
 /**
  * Execute a proxied GraphQL query/mutation against a remote schema endpoint.
+ * `variables` are the caller's own, written into the query as values: what the
+ * server binds for SQL (role-filter constants, `$session` claims) stays here.
  */
 export const proxyRemoteField = async (
   field: SelectionAnalysis,
   remoteSchema: RemoteSchemaResolved,
   originalFieldName: string,
-  variables: Record<string, unknown>,
+  variables: CallerValues,
   operationType: "query" | "mutation",
   clientRequest?: Request,
 ): Promise<unknown> => {
-  const subQuery = buildRemoteSubQuery(field, originalFieldName, remoteSchema.prefixMap);
+  const subQuery = buildRemoteSubQuery(field, originalFieldName, variables);
 
   const fullQuery = `${operationType} { ${subQuery} }`;
 
@@ -173,10 +181,7 @@ export const proxyRemoteField = async (
     const response = await fetch(remoteSchema.config.url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        query: fullQuery,
-        variables,
-      }),
+      body: JSON.stringify({ query: fullQuery }),
       signal: controller.signal,
     });
     span?.setAttribute("http.response.status_code", response.status);

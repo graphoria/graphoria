@@ -48,6 +48,14 @@ export function analyzeQuery(query: string, entities: EntitiesWithSchema): Analy
     return result;
   }
 
+  // A fragment's literals become `static_N` definitions, and an operation lists
+  // the ones that exist when it is analyzed.
+  ast.definitions.forEach((def) => {
+    if (def.kind === "FragmentDefinition") {
+      result.fragments.push(analyzeFragment(def, entities, generatedVariables));
+    }
+  });
+
   ast.definitions.forEach((def) => {
     if (def.kind === "OperationDefinition") {
       const operationAnalysis = analyzeOperation(def, entities, generatedVariables);
@@ -59,10 +67,6 @@ export function analyzeQuery(query: string, entities: EntitiesWithSchema): Analy
         if (meta) operationAnalysis.meta = meta;
         result.operations.push(operationAnalysis);
       }
-    } else if (def.kind === "FragmentDefinition") {
-      const fragmentAnalysis = analyzeFragment(def, entities, generatedVariables);
-
-      result.fragments.push(fragmentAnalysis);
     }
   });
 

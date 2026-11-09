@@ -8,7 +8,9 @@ import type {
   VariableDefinition,
 } from "./types";
 
+import { EntitySource } from "../types/resolver";
 import { hasSessionVariables, replaceSessionVariables } from "../utils/sessionVariables";
+import { isHoistedName } from "./valueExtractors";
 
 const PRIMITIVE_GRAPHQL_TYPES = new Set(["Int", "Float", "String", "Boolean", "ID"]);
 
@@ -364,6 +366,9 @@ export const resolveFieldArguments = (
   sink?: VariableSink,
 ): SelectionAnalysis[] => {
   return fields.map((field) => {
+    // Sent upstream as text, not bound into SQL: its `$name`s stay for the proxy.
+    if (field.source === EntitySource.REMOTE_SCHEMA) return field;
+
     let newArguments = field.arguments;
 
     if (field.arguments) {
@@ -443,7 +448,8 @@ export const buildFinalVariables = (
     ...newStaticVariables,
   ];
 
-  // Merge: defaults → runtime → generated static values
+  // Merge: defaults → runtime → generated static values. A hoisted literal is
+  // the document's, and what the limits priced: a request cannot replace it.
   const allVariables = {
     ...variables.reduce<Record<string, unknown>>((acc, variable) => {
       if (variable.defaultValue !== undefined) {
@@ -451,7 +457,7 @@ export const buildFinalVariables = (
       }
       return acc;
     }, {}),
-    ...runtimeVars,
+    ...Object.fromEntries(Object.entries(runtimeVars).filter(([name]) => !isHoistedName(name))),
     ...resolvedRuntimeValues,
   };
 

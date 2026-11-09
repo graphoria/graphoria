@@ -21,6 +21,8 @@ import type { SelectionAnalysis } from "../../analyzeQuery/types";
 import type { GetSchemaReturn } from "../../configuration/getSchemas";
 import type { Env } from "../../types/env";
 
+import { META_FIELDS } from "../../analyzeQuery/metaFields";
+import { resolveSelections } from "../../analyzeQuery/resolveSelections";
 import { getFieldType, unwrapType } from "../../analyzeQuery/typeUtils";
 import { convertFromZod, errors } from "./openApiErrors";
 
@@ -304,13 +306,20 @@ export const generateOpenAPI = ({
           ? convertFromZod(value.output)
           : (() => {
               const operation = value.queryStructure!.operations[0];
-              const fields = operation.fields;
+              // A query that fails validation, which may spread fragments in a
+              // cycle, answers 401 and no data.
+              const fields = value.hasError
+                ? operation.fields
+                : resolveSelections(
+                    operation.fields,
+                    value.queryStructure!.fragments,
+                    () => true,
+                    operation.variables,
+                  ).filter((field) => !META_FIELDS.has(field.name));
               const rootType =
                 (operation.operation === "mutation"
                   ? role.schema.getMutationType()
                   : role.schema.getQueryType()) ?? undefined;
-              // A query that fails validation, which may spread fragments in a
-              // cycle, answers 401 and no data.
               const meta =
                 operation.meta && !value.hasError
                   ? rootMetaPropertiesOf(operation.meta, rootType)
