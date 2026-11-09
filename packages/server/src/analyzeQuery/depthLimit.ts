@@ -4,16 +4,40 @@ import type { ASTNode, ASTVisitor, FragmentDefinitionNode, ValidationContext } f
 
 import { collectFragments } from "./fragments";
 
+type DepthWalk = {
+  fragments: Map<string, FragmentDefinitionNode>;
+  maxDepth: number;
+  /** A fragment's depth below its spread, measured once however often it is spread. */
+  fragmentDepths: Map<string, number>;
+};
+
+function depthOfFragment(name: string, walk: DepthWalk, onPath: Set<string>): number {
+  const known = walk.fragmentDepths.get(name);
+  if (known !== undefined) return known;
+
+  // A fragment already on the path is a cycle, which validation also rejects.
+  if (onPath.has(name)) return 0;
+
+  const fragment = walk.fragments.get(name);
+  if (!fragment) return 0;
+
+  onPath.add(name);
+  const depth = computeDepth(fragment, 0, walk, onPath);
+  onPath.delete(name);
+
+  walk.fragmentDepths.set(name, depth);
+  return depth;
+}
+
 /**
  * Compute the depth of a selection set, resolving fragment spreads.
  * Introspection fields (__schema, __type, __typename) are excluded.
  */
 function computeDepth(
   node: { selectionSet?: { selections: readonly ASTNode[] } },
-  fragments: Map<string, FragmentDefinitionNode>,
   depthSoFar: number,
-  maxDepth: number,
-  visited: Set<string>,
+  walk: DepthWalk,
+  onPath: Set<string>,
 ): number {
   if (!node.selectionSet) return depthSoFar;
 
@@ -25,37 +49,28 @@ function computeDepth(
         // Skip introspection meta-fields
         if (selection.name.value.startsWith("__")) continue;
 
-        const fieldDepth = computeDepth(selection, fragments, depthSoFar + 1, maxDepth, visited);
+        const fieldDepth = computeDepth(selection, depthSoFar + 1, walk, onPath);
 
         if (fieldDepth > max) max = fieldDepth;
 
         // Early exit if already over the limit
-        if (max > maxDepth) return max;
+        if (max > walk.maxDepth) return max;
         break;
       }
 
       case Kind.FRAGMENT_SPREAD: {
-        const name = selection.name.value;
-
-        // Guard against circular fragments
-        if (visited.has(name)) continue;
-        visited.add(name);
-
-        const fragment = fragments.get(name);
-        if (!fragment) continue;
-
-        const fragmentDepth = computeDepth(fragment, fragments, depthSoFar, maxDepth, visited);
+        const fragmentDepth = depthSoFar + depthOfFragment(selection.name.value, walk, onPath);
 
         if (fragmentDepth > max) max = fragmentDepth;
-        if (max > maxDepth) return max;
+        if (max > walk.maxDepth) return max;
         break;
       }
 
       case Kind.INLINE_FRAGMENT: {
-        const inlineDepth = computeDepth(selection, fragments, depthSoFar, maxDepth, visited);
+        const inlineDepth = computeDepth(selection, depthSoFar, walk, onPath);
 
         if (inlineDepth > max) max = inlineDepth;
-        if (max > maxDepth) return max;
+        if (max > walk.maxDepth) return max;
         break;
       }
     }
@@ -92,12 +107,12 @@ export const depthLimitRule =
   (context: ValidationContext): ASTVisitor => {
     return {
       Document(node) {
-        const fragments = collectFragments(node);
+        const walk = { fragments: collectFragments(node), maxDepth, fragmentDepths: new Map() };
 
         for (const def of node.definitions) {
           if (def.kind !== Kind.OPERATION_DEFINITION) continue;
 
-          const depth = computeDepth(def, fragments, 0, maxDepth, new Set<string>());
+          const depth = computeDepth(def, 0, walk, new Set<string>());
 
           if (depth > maxDepth) {
             const operationName = def.name?.value ?? "anonymous";
