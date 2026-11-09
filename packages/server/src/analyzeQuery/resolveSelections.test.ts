@@ -150,6 +150,74 @@ describe("resolveSelections", () => {
     expect(resolved).toEqual([{ name: "a", arguments: { limit: 2 } }]);
   });
 
+  it("does not hand one field's selections to another under the same response key", () => {
+    const resolved = resolveSelections(
+      [
+        { name: "stats", alias: "x", selections: [field("salary")] },
+        inline([{ name: "accounts", alias: "x", selections: [field("name")] }]),
+      ],
+      [],
+      keepAll,
+    );
+
+    expect(resolved).toEqual([{ name: "accounts", alias: "x", selections: [field("name")] }]);
+  });
+
+  it("does not merge the selections of occurrences whose arguments differ", () => {
+    const resolved = resolveSelections(
+      [
+        { name: "a", arguments: { limit: 1 }, selections: [field("x", [field("deep")])] },
+        inline([{ name: "a", arguments: { limit: 100 }, selections: [field("y")] }]),
+      ],
+      [],
+      keepAll,
+    );
+
+    expect(resolved).toEqual([{ name: "a", arguments: { limit: 100 }, selections: [field("y")] }]);
+  });
+
+  it("merges occurrences whose literals were hoisted to different variables", () => {
+    const literal = (name: string) => ({ name, type: "Int", required: false, defaultValue: 5 });
+    const resolved = resolveSelections(
+      [
+        {
+          name: "a",
+          arguments: { limit: "$static_0", where: { b: 1, c: 2 } },
+          selections: [field("x")],
+        },
+        inline([
+          {
+            name: "a",
+            arguments: { where: { c: 2, b: 1 }, limit: "$static_1" },
+            selections: [field("y")],
+          },
+        ]),
+      ],
+      [],
+      keepAll,
+      [literal("static_0"), literal("static_1")],
+    );
+
+    expect(names(resolved[0]!.selections!)).toEqual(["x", "y"]);
+  });
+
+  it("does not take a caller's variable for the literal its default equals", () => {
+    const resolved = resolveSelections(
+      [
+        { name: "a", arguments: { limit: "$n" }, selections: [field("x")] },
+        inline([{ name: "a", arguments: { limit: "$static_0" }, selections: [field("y")] }]),
+      ],
+      [],
+      keepAll,
+      [
+        { name: "n", type: "Int", required: false, defaultValue: 5 },
+        { name: "static_0", type: "Int", required: false, defaultValue: 5 },
+      ],
+    );
+
+    expect(names(resolved[0]!.selections!)).toEqual(["y"]);
+  });
+
   it("keeps a transform directive on the field it sits on", () => {
     const upper = [{ name: "uppercase" }];
     const resolved = resolveSelections([inline([{ name: "a", directives: upper }])], [], keepAll);

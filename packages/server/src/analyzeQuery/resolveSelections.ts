@@ -1,5 +1,10 @@
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
-import type { FragmentAnalysis, OperationAnalysis, SelectionAnalysis } from "./types";
+import type {
+  FragmentAnalysis,
+  OperationAnalysis,
+  SelectionAnalysis,
+  VariableDefinition,
+} from "./types";
 
 import { filterBasedOnDirective } from "../databases/common";
 import { CONTROL_FLOW_DIRECTIVES } from "./directiveUtils";
@@ -17,17 +22,52 @@ const hasControlFlow = (selection: SelectionAnalysis): boolean =>
 /**
  * Turns analyzed selections into the plain fields execution answers, as the
  * spec's CollectFields does: fragments flatten into the set they sit in,
- * entries `keep` rejects are dropped, and a field selected twice becomes one,
- * its selections merged. The last occurrence supplies its arguments: nothing
- * checks that occurrences agree, and the engine's results are last-write-wins.
+ * entries `keep` rejects are dropped, and a field selected twice with the same
+ * arguments becomes one, its selections merged. Nothing checks that a response
+ * key's occurrences agree, and each was validated and priced alone, so one that
+ * is another field or has other arguments is dropped rather than merged: the
+ * last stands, as the engine's results are last-write-wins. `definitions` holds
+ * the values of the literals hoisted from arguments.
  */
 export const resolveSelections = (
   selections: SelectionAnalysis[] | undefined,
   fragments: FragmentAnalysis[],
   keep: (selection: SelectionAnalysis) => boolean,
+  definitions: VariableDefinition[] = [],
 ): SelectionAnalysis[] => {
   const fieldsByName = new Map(fragments.map((fragment) => [fragment.name, fragment.fields]));
   let remaining = fragments.length > 0 ? MAX_EXPANDED_SELECTIONS : Number.POSITIVE_INFINITY;
+
+  const literals = new Map(
+    definitions
+      .filter((definition) => definition.name.startsWith("static_"))
+      .map((definition) => [`$${definition.name}`, definition.defaultValue]),
+  );
+
+  // Each literal is hoisted to a variable of its own, so arguments compare by
+  // what those hold. The order of an object's keys means nothing.
+  const argumentValue = (value: unknown): unknown => {
+    if (typeof value === "string") return literals.has(value) ? literals.get(value) : value;
+    if (Array.isArray(value)) return value.map((item) => argumentValue(item));
+    if (typeof value !== "object" || value === null) return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([key, item]) => [key, argumentValue(item)]),
+    );
+  };
+
+  const identity = (field: SelectionAnalysis): string =>
+    JSON.stringify([field.name, argumentValue(field.arguments)]);
+
+  const occurrencesOf = (
+    last: SelectionAnalysis,
+    group: SelectionAnalysis[],
+  ): SelectionAnalysis[] => {
+    if (group.length === 1) return group;
+    const wanted = identity(last);
+    return group.filter((entry) => identity(entry) === wanted);
+  };
 
   // `conditional`: under a fragment a directive can exclude, so a field that is
   // non-null in the schema can still be missing from the response.
@@ -69,9 +109,10 @@ export const resolveSelections = (
 
     return Array.from(groups.values(), (group) => {
       const last = group[group.length - 1]!;
-      const field = group.some((entry) => entry.isRequired) ? { ...last, isRequired: true } : last;
+      const merged = occurrencesOf(last, group);
+      const field = merged.some((entry) => entry.isRequired) ? { ...last, isRequired: true } : last;
       return field.selections
-        ? { ...field, selections: resolveSet(group.flatMap((entry) => entry.selections ?? [])) }
+        ? { ...field, selections: resolveSet(merged.flatMap((entry) => entry.selections ?? [])) }
         : field;
     });
   };
@@ -125,8 +166,11 @@ export const resolveOperationSelections = (
 
   return {
     ...operation,
-    fields: resolveSelections(operation.fields, fragments, (selection) =>
-      filterBasedOnDirective(selection, definitions, variables),
+    fields: resolveSelections(
+      operation.fields,
+      fragments,
+      (selection) => filterBasedOnDirective(selection, definitions, variables),
+      definitions,
     )
       .filter((field) => !META_FIELDS.has(field.name))
       .map((field) =>

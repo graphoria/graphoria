@@ -25,6 +25,8 @@ beforeAll(async () => {
     "CREATE TABLE owners (id INTEGER PRIMARY KEY, email TEXT NOT NULL);" +
       "CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL, owner TEXT NOT NULL," +
       " owner_id INTEGER NOT NULL REFERENCES owners (id));" +
+      "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL);" +
+      "INSERT INTO notes VALUES (1, 'note');" +
       "INSERT INTO owners VALUES (1, 'ana'), (2, 'bo');" +
       "INSERT INTO tasks VALUES (1, 'alpha', 'ana', 1), (2, 'beta', 'bo', 2), (3, 'gamma', 'ana', 1);",
   );
@@ -61,6 +63,8 @@ beforeAll(async () => {
               main_owners: { columns: "ALL", filter: { email: { eq: "$session.sub" } } },
             },
           },
+          // `title` is withheld on tasks and readable on notes.
+          reader: { tables: { main_tasks: { columns: ["id"] }, main_notes: { columns: "ALL" } } },
         },
       },
     } as never,
@@ -235,5 +239,43 @@ describe("a role's filter", () => {
         `{ main_tasks(${BY_ID}) { id } ...R } fragment R on Query { main_tasks(where: { id: { eq: 2 } }) { title } }`,
       ),
     ).toEqual({ data: { main_tasks: [] } });
+  });
+});
+
+describe("a response key selected by more than one field", () => {
+  const asReader = (query: string) =>
+    engine.execute(query, {}, { role: "reader", session: { sub: "r", role: "reader" } });
+
+  it("withholds the column the control query is denied", async () => {
+    expect(await asReader(`{ main_tasks { title } }`)).toHaveProperty("errors");
+  });
+
+  it.each([
+    [
+      "a directive",
+      `{ x: main_notes { title } x: main_tasks(${BY_ID}, limit: 1) @include(if: true) { id } }`,
+    ],
+    [
+      "a root-level fragment",
+      `{ ...R } fragment R on Query { x: main_notes { title } x: main_tasks(${BY_ID}, limit: 1) { id } }`,
+    ],
+  ])("does not read one field's selection from another, through %s", async (_case, query) => {
+    expect(await asReader(query)).toEqual({ data: { x: [{ id: 1 }] } });
+  });
+
+  it("answers the last occurrence alone when the arguments differ", async () => {
+    expect(
+      await asAna(
+        `{ x: main_owners(limit: 1) { main_tasks { id } } x: main_owners(limit: 2) @include(if: true) { email } }`,
+      ),
+    ).toEqual({ data: { x: [{ email: "ana" }] } });
+  });
+
+  it("merges occurrences with equal literals", async () => {
+    expect(
+      await asAna(
+        `{ main_owners(limit: 1) { id } ...R } fragment R on Query { main_owners(limit: 1) { email } }`,
+      ),
+    ).toEqual({ data: { main_owners: [{ id: 1, email: "ana" }] } });
   });
 });

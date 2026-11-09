@@ -314,6 +314,7 @@ export const generateOpenAPI = ({
                     operation.fields,
                     value.queryStructure!.fragments,
                     () => true,
+                    operation.variables,
                   ).filter((field) => !META_FIELDS.has(field.name));
               const rootType =
                 (operation.operation === "mutation"
