@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { createGraphiQLFetcher, type Fetcher } from "@graphiql/toolkit";
+import { useMemo, useSyncExternalStore } from "react";
+import { createTransport, type Transport } from "@graphiql/toolkit";
 import { createClient } from "graphql-ws";
 import { createAuthFetch, getToken, subscribe } from "./auth";
 
@@ -13,18 +13,12 @@ function deriveWsUrl(httpUrl: string): string {
   return `${wsProtocol}//${window.location.host}${path}`;
 }
 
-function triggerSchemaRefetch(): void {
-  setTimeout(() => {
-    const button = [...document.querySelectorAll("button")].find((el) =>
-      el.getAttribute("aria-label")?.includes("Re-fetch GraphQL schema"),
-    );
-    button?.focus();
-    button?.click();
-  }, 0);
-}
+export function useAuthFetcher(url: string | null): Transport | null {
+  // GraphiQL introspects whenever it gets a new transport, so a new token is what
+  // reloads the schema for the role that just logged in or out.
+  const token = useSyncExternalStore(subscribe, getToken);
 
-export function useAuthFetcher(url: string | null): Fetcher | null {
-  const fetcher = useMemo(() => {
+  return useMemo(() => {
     if (!url) return null;
 
     const wsClient = createClient({
@@ -35,17 +29,13 @@ export function useAuthFetcher(url: string | null): Fetcher | null {
       },
     });
 
-    return createGraphiQLFetcher({
+    return createTransport({
       url,
       fetch: createAuthFetch(),
-      wsClient,
+      subscriptionClient: wsClient,
+      // The endpoint serves POST only (GET is the websocket upgrade), and naming
+      // the method skips the OPTIONS discovery the server has no Allow header for.
+      supportedMethods: ["POST"],
     });
-  }, [url]);
-
-  useEffect(() => {
-    if (!fetcher) return;
-    return subscribe(triggerSchemaRefetch);
-  }, [fetcher]);
-
-  return fetcher;
+  }, [url, token]);
 }

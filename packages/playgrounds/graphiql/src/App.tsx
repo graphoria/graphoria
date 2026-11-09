@@ -1,7 +1,5 @@
 import { GraphiQL } from "graphiql";
-import { explorerPlugin } from "@graphiql/plugin-explorer";
 import "graphiql/style.css";
-import "@graphiql/plugin-explorer/style.css";
 import { useAuthFetcher } from "./useAuthFetcher";
 import TokenBanner from "./TokenBanner";
 
@@ -9,12 +7,10 @@ const url = window.__GRAPHQL_URL__;
 const isConfigured = url && !url.startsWith("{{");
 const initialQuery = new URLSearchParams(window.location.search).get("query") ?? undefined;
 
-const explorer = explorerPlugin();
-
 function App() {
-  const fetcher = useAuthFetcher(isConfigured ? url : null);
+  const transport = useAuthFetcher(isConfigured ? url : null);
 
-  if (!isConfigured || !fetcher) {
+  if (!isConfigured || !transport) {
     return (
       <div className="missing-endpoint">
         <h1>GraphiQL - Missing endpoint</h1>
@@ -29,7 +25,7 @@ function App() {
   return (
     <>
       {/* `initialQuery`, not `defaultQuery`: a saved tab state would otherwise win. */}
-      <GraphiQL fetcher={fetcher} plugins={[explorer]} initialQuery={initialQuery} />
+      <GraphiQL transport={transport} initialQuery={initialQuery} />
       <TokenBanner />
     </>
   );
