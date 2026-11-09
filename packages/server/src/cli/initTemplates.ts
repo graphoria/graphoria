@@ -127,7 +127,7 @@ const FRONTEND_DEPENDENCIES = {
   "gql.tada": "1.11.3",
   react: "19.3.1",
   "react-dom": "19.3.1",
-  tailwindcss: "4.3.3",
+  tailwindcss: "4.3.4",
   urql: "5.0.4",
 };
 
