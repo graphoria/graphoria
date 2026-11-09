@@ -13,6 +13,15 @@ updates:
     # old cap, and Dependabot silently withholds updates once it is reached.
     open-pull-requests-limit: 10
     groups:
+      # A GraphiQL major moves these together: bumped one at a time, each PR
+      # either fails to build or duplicates Monaco in the tree. Listed first
+      # because a dependency joins the first group it matches.
+      graphiql:
+        patterns:
+          - "graphiql"
+          - "@graphiql/*"
+          - "monaco-editor"
+          - "monaco-graphql"
       minor-and-patch:
         update-types:
           - minor
@@ -23,13 +32,13 @@ updates:
           # SDKs separate so each one gets read on its own.
           - "@anthropic-ai/sdk"
     ignore:
-      # monaco-graphql@1.8.0 (latest) declares monaco-editor ">= 0.20.0 < 0.53",
-      # and @graphiql/react pins 0.52.2 as a hard dependency. Bumping past 0.53
-      # breaks the GraphQL language worker and duplicates monaco in the tree.
-      # Revisit when graphiql/monaco-graphql admit >= 0.53.
+      # monaco-graphql@2 declares monaco-editor ">=0.56.0 <0.58.0", and
+      # @graphiql/react depends on the same range. Bumping past 0.58 breaks the
+      # GraphQL language worker and duplicates monaco in the tree.
+      # Revisit when graphiql/monaco-graphql admit >= 0.58.
       - dependency-name: "monaco-editor"
         versions:
-          - ">=0.53.0"
+          - ">=0.58.0"
       # TypeScript 7 has no JavaScript API, which gql.tada's CLI and ts-plugin
       # load, and the published packages declare a typescript ^6 peer. Stay on
       # 6 so type-check runs the compiler consumers actually use.
