@@ -305,3 +305,52 @@ describe("depthLimitRule", () => {
     expect(errors).toHaveLength(1);
   });
 });
+
+describe("depthLimitRule — a fragment spread more than once", () => {
+  const chain = (links: number) =>
+    Array.from(
+      { length: links },
+      (_, i) => `fragment F${i} on User { friends { ${i === links - 1 ? "id" : `...F${i + 1}`} } }`,
+    );
+
+  it("measures it at its deepest spread, not its first", () => {
+    const query = `
+      { a: users { ...F } b: users { friends { friends { ...F } } } }
+      fragment F on User { friends { id } }
+    `;
+
+    // a: users, friends, id = 3. b: users, friends, friends, friends, id = 5.
+    expect(validateWithDepth(query, 5)).toHaveLength(0);
+    expect(validateWithDepth(query, 4)).toHaveLength(1);
+  });
+
+  it("measures a chain whose links were already seen from shallower spreads", () => {
+    const links = 10;
+    const roots = Array.from(
+      { length: links },
+      (_, i) => `a${i}: users { ...F${links - 1 - i} }`,
+    ).join(" ");
+    const query = `{ ${roots} } ${chain(links).join(" ")}`;
+
+    // users, then a friends per link, then id.
+    expect(validateWithDepth(query, links + 2)).toHaveLength(0);
+    expect(validateWithDepth(query, links + 1)).toHaveLength(1);
+  });
+
+  it("walks fragments that fan out once each", () => {
+    const levels = 40;
+    const query = [
+      "{ users { ...F0 } }",
+      ...Array.from(
+        { length: levels },
+        (_, i) =>
+          `fragment F${i} on User { a: friends { ...F${i + 1} } b: friends { ...F${i + 1} } }`,
+      ),
+      `fragment F${levels} on User { id }`,
+    ].join("\n");
+    const started = performance.now();
+
+    expect(validate(schema, parse(query), [depthLimitRule(1_000)])).toHaveLength(0);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});

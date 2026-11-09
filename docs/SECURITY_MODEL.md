@@ -147,8 +147,8 @@ Server instances and SQLite files — not mocks — on a two-tenant fixture wher
 appearing in the other's response is the failure condition. The suites live in
 `packages/server/src/__test/integration/rls/` and run with `bun run test:integration`.
 
-Seventy cases per engine, two hundred and eighty in total. Each is listed against the claim it
-holds.
+Seventy-two cases per engine, two hundred and eighty-eight in total. Each is listed against the
+claim it holds.
 
 ### C1 — A role's row filter reaches every read of the table
 
@@ -169,6 +169,8 @@ aggregate, or a fragment, and each of those is asserted separately.
 | does not leak another tenant's values through min/max                                                                |
 | never returns another tenant's rows through a named fragment                                                         |
 | never returns another tenant's rows through an inline fragment                                                       |
+| never returns another tenant's rows through a root-level fragment                                                    |
+| applies the filter to a relationship reached through a fragment                                                      |
 | applies the filter to every alias of a restricted field                                                              |
 | applies the filter to a field carrying transform directives                                                          |
 | applies the filter to a query using the `@when` directive                                                            |

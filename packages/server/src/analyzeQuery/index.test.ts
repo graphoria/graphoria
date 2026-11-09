@@ -644,6 +644,64 @@ describe("Meta fields", () => {
     expect(prodQuery.operations[0]).not.toHaveProperty("meta");
   });
 
+  it("narrows root fragments to the meta fields they select", () => {
+    const [operation] = analyzeQuery(
+      'query Q { ...F ... on Query { t: __type(name: "x") { name } dbo_products { product_id } } dbo_products { product_id } } fragment F on Query { __typename dbo_products { name } }',
+      StoreMSSQL,
+    ).operations;
+
+    expect(print(operation!.meta!)).toBe(
+      print(
+        parse(
+          'query Q { ...F ... on Query { t: __type(name: "x") { name } } } fragment F on Query { __typename }',
+        ),
+      ),
+    );
+  });
+
+  it("keeps the directives of a root fragment that holds a meta field", () => {
+    const [operation] = analyzeQuery(
+      "query Q($s: Boolean!) { ... @skip(if: $s) { __typename } ...F @include(if: $s) } fragment F on Query { __typename }",
+      StoreMSSQL,
+    ).operations;
+
+    expect(print(operation!.meta!)).toBe(
+      print(
+        parse(
+          "query Q($s: Boolean!) { ... @skip(if: $s) { __typename } ...F @include(if: $s) } fragment F on Query { __typename }",
+        ),
+      ),
+    );
+  });
+
+  it("gives an operation whose root fragments hold no meta field none", () => {
+    const [operation] = analyzeQuery(
+      "{ ...F ... { dbo_products { name } } } fragment F on Query { dbo_products { name } }",
+      StoreMSSQL,
+    ).operations;
+
+    expect(operation).not.toHaveProperty("meta");
+  });
+
+  it("leaves a fragment spread below a meta field whole", () => {
+    const query =
+      "{ __schema { types { ...T } } ...F } fragment F on Query { __typename } fragment T on __Type { name fields { name } }";
+    const [operation] = analyzeQuery(query, StoreMSSQL).operations;
+
+    expect(print(operation!.meta!)).toBe(print(parse(query)));
+  });
+
+  it("ends on root fragments that spread each other", () => {
+    const [operation] = analyzeQuery(
+      "{ ...F } fragment F on Query { __typename ...G } fragment G on Query { ...F }",
+      StoreMSSQL,
+    ).operations;
+
+    expect(print(operation!.meta!)).toBe(
+      print(parse("{ ...F } fragment F on Query { __typename }")),
+    );
+  });
+
   it("keeps a nested __typename, naming the type it is selected on", () => {
     const [operation] = analyzeQuery(
       "{ dbo_products { __typename t: __typename dbo_product_categories { __typename } } }",
@@ -704,4 +762,22 @@ describe("Named fragments", () => {
       expect(fragments).toEqual([{ name: "F", typeCondition: "hidden", fields: [] }]);
     },
   );
+
+  it.each([
+    ["after", "{ ...F } fragment F on Query { dbo_products(limit: 3) { name } }"],
+    ["before", "fragment F on Query { dbo_products(limit: 3) { name } } { ...F }"],
+  ])("lists the literals of a fragment defined %s the operation", (_where, query) => {
+    const {
+      fragments: [fragment],
+      operations: [operation],
+    } = analyzeQuery(query, StoreMSSQL);
+
+    expect(fragment!.fields[0]!.arguments).toEqual({ limit: "$static_0" });
+    expect(operation!.variables).toContainEqual({
+      name: "static_0",
+      type: "Int",
+      required: false,
+      defaultValue: 3,
+    });
+  });
 });

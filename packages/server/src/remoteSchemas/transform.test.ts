@@ -190,7 +190,6 @@ describe("Remote Schema Transform", () => {
     });
 
     expect(result.prefixMap.toPrefixed["User"]).toBe("svc_User");
-    expect(result.prefixMap.toOriginal["svc_User"]).toBe("User");
   });
 
   it("should handle nested types with relationships", () => {

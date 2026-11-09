@@ -1,6 +1,11 @@
 import type { ValueNode } from "graphql";
 import type { VariableDefinition } from "./types";
 
+const HOISTED_NAME = /^static_\d+$/;
+
+/** The name of a hoisted literal, which only this module may give a variable. */
+export const isHoistedName = (name: string): boolean => HOISTED_NAME.test(name);
+
 // Helper function to extract argument values from AST nodes
 // When a static value is found, it creates a virtual variable and returns a variable reference
 export const extractArgumentValue = (

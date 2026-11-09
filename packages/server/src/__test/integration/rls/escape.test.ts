@@ -234,32 +234,46 @@ describe.skipIf(!integrationEnabled)("rls · escape attempts", () => {
 
       // ── Fragments and aliases ─────────────────────────────────────────────
 
-      // Fragment spreads do not currently reach the query builders as
-      // selections — `analyzeFragment` records them but nothing expands them
-      // back into the parent selection set, so `...F` arrives as a column name
-      // and the query errors for every role, `admin` included. That is a
-      // functional gap, not a leak, and it is recorded as a finding rather than
-      // fixed here.
-      //
-      // These two assert the security property that has to hold either way: no
-      // row outside the caller's own ever comes back. They pass today because
-      // the query fails closed, and they keep their meaning once fragments
-      // work.
+      // A fragment's fields are expanded into the selection before arguments
+      // are bound, so each of these reads exactly the caller's rows.
       it("never returns another tenant's rows through a named fragment", async () => {
         const response = await asAna<Record<string, Rows>>(
-          `{ ${tasks} { ...TaskFields } }
+          `{ ${tasks}(orderBy: [{ id: ASC }]) { ...TaskFields } }
            fragment TaskFields on ${tasks} { id user_id }`,
         );
 
-        expect(idsOf(response.data?.[tasks]).filter((id) => !ANA_TASKS.includes(id))).toEqual([]);
+        expect(idsOf(response.data?.[tasks])).toEqual(ANA_TASKS);
       });
 
       it("never returns another tenant's rows through an inline fragment", async () => {
         const response = await asAna<Record<string, Rows>>(
-          `{ ${tasks} { ... on ${tasks} { id user_id } } }`,
+          `{ ${tasks}(orderBy: [{ id: ASC }]) { ... on ${tasks} { id user_id } } }`,
         );
 
-        expect(idsOf(response.data?.[tasks]).filter((id) => !ANA_TASKS.includes(id))).toEqual([]);
+        expect(idsOf(response.data?.[tasks])).toEqual(ANA_TASKS);
+      });
+
+      it("never returns another tenant's rows through a root-level fragment", async () => {
+        const response = await asAna<Record<string, Rows>>(
+          `{ ...RootFields }
+           fragment RootFields on Query { ${tasks}(orderBy: [{ id: ASC }]) { id } }`,
+        );
+
+        expect(idsOf(response.data?.[tasks])).toEqual(ANA_TASKS);
+      });
+
+      it("applies the filter to a relationship reached through a fragment", async () => {
+        const response = await asAna<Record<string, Rows>>(
+          `{ ${projects} { ...ProjectFields } }
+           fragment ProjectFields on ${projects} { ${tasks}(orderBy: [{ id: ASC }]) { id } }`,
+        );
+
+        const ids = (response.data?.[projects] ?? []).flatMap((project) =>
+          idsOf(project[tasks] as Rows),
+        );
+        expect(response.errors).toBeUndefined();
+        expect(ids.filter((id) => !ANA_TASKS.includes(id))).toEqual([]);
+        expect(ids.length).toBeGreaterThan(0);
       });
 
       it("applies the filter to every alias of a restricted field", async () => {

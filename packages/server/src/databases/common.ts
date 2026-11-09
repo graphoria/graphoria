@@ -734,12 +734,10 @@ export const filterBasedOnDirective = (
           throw new Error(`Variable ${variableName} not found`);
         }
 
-        return !(variables[variableName] ?? variableDefinition.defaultValue ?? true);
-      } else if (isBoolean(valueOfSkipDirective)) {
-        return !valueOfSkipDirective;
+        if (variables[variableName] ?? variableDefinition.defaultValue ?? true) return false;
+      } else if (valueOfSkipDirective === true) {
+        return false;
       }
-
-      return true;
     }
 
     const includeDirective = field.directives.find(
@@ -758,12 +756,10 @@ export const filterBasedOnDirective = (
           throw new Error(`Variable ${variableName} not found`);
         }
 
-        return !!(variables[variableName] ?? variableDefinition.defaultValue ?? false);
-      } else if (isBoolean(valueOfIncludeDirective)) {
-        return valueOfIncludeDirective;
+        if (!(variables[variableName] ?? variableDefinition.defaultValue ?? false)) return false;
+      } else if (valueOfIncludeDirective !== true) {
+        return false;
       }
-
-      return false;
     }
 
     const whenDirective = field.directives.find(

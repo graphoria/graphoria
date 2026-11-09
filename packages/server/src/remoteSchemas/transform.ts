@@ -166,14 +166,11 @@ export const transformRemoteSchema = (
 
   // Build prefix map
   const prefixMap: PrefixMap = {
-    toOriginal: {},
     toPrefixed: {},
   };
 
   for (const type of userTypes) {
-    const prefixed = prefixTypeName(type.name, prefix);
-    prefixMap.toOriginal[prefixed] = type.name;
-    prefixMap.toPrefixed[type.name] = prefixed;
+    prefixMap.toPrefixed[type.name] = prefixTypeName(type.name, prefix);
   }
 
   // Generate SDL for all types

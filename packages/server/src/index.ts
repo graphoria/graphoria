@@ -652,7 +652,7 @@ const createGraphQLServer = async (env: Env) => {
             const { gql, session, limit } = await getRoleHandlers(req, server);
             if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
 
-            const { query, variables } = await req.json();
+            const { query, variables, operationName } = await req.json();
 
             if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
 
@@ -666,7 +666,7 @@ const createGraphQLServer = async (env: Env) => {
                 })),
               });
 
-            return new S200(await gql.handler(query, variables, req, session));
+            return new S200(await gql.handler(query, variables, req, session, { operationName }));
           } catch (error) {
             const message = (error as Error)?.message;
 

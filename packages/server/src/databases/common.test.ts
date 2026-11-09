@@ -1286,6 +1286,65 @@ describe("filterBasedOnDirective (@when, @skip, @include)", () => {
       );
       expect(result).toBe(false);
     });
+
+    it("@skip false with @include false → field excluded, whichever comes first", () => {
+      const skip = { name: "skip", arguments: { if: false } };
+      const include = { name: "include", arguments: { if: false } };
+
+      expect(filterBasedOnDirective({ name: "x", directives: [skip, include] }, [], {})).toBe(
+        false,
+      );
+      expect(filterBasedOnDirective({ name: "x", directives: [include, skip] }, [], {})).toBe(
+        false,
+      );
+    });
+
+    it("@skip false with @include true → field included", () => {
+      const result = filterBasedOnDirective(
+        {
+          name: "x",
+          directives: [
+            { name: "skip", arguments: { if: false } },
+            { name: "include", arguments: { if: true } },
+          ],
+        },
+        [],
+        {},
+      );
+      expect(result).toBe(true);
+    });
+
+    it("reads each directive's own variable", () => {
+      const field = {
+        name: "x",
+        directives: [
+          { name: "skip", arguments: { if: "$s" } },
+          { name: "include", arguments: { if: "$i" } },
+        ],
+      };
+      const definitions = [
+        { name: "s", type: "Boolean", required: true },
+        { name: "i", type: "Boolean", required: true },
+      ];
+
+      expect(filterBasedOnDirective(field, definitions, { s: false, i: false })).toBe(false);
+      expect(filterBasedOnDirective(field, definitions, { s: false, i: true })).toBe(true);
+    });
+
+    it("@skip false with a failing @when → field excluded", () => {
+      const result = filterBasedOnDirective(
+        {
+          name: "x",
+          directives: [
+            { name: "skip", arguments: { if: false } },
+            { name: "when", arguments: { and: [false] } },
+          ],
+        },
+        [],
+        {},
+      );
+      expect(result).toBe(false);
+    });
   });
 
   describe("no directives", () => {

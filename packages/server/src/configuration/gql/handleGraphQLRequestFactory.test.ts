@@ -32,7 +32,11 @@ const sdl = `
     other_users(limit: Int): [User!]!
     auth_me: AuthMe
     remote_query_field: String
+    remote_users(limit: Int, where: RemoteFilter): [User!]!
     ask(prompt: String!): AskResult!
+  }
+  input RemoteFilter {
+    name: String
   }
   type AskResult {
     answer: String!
@@ -43,12 +47,22 @@ const sdl = `
     auth_login(username: String!, password: String!): LoginResult
     auth_refresh: LoginResult
     auth_logout: Boolean
-    remote_mutation_field: String
+    remote_mutation_field(value: String): String
+    make_thing: Thing
+  }
+  type Thing {
+    id: ID!
+    name: String
+    owner: ThingOwner
+  }
+  type ThingOwner {
+    id: ID!
+    email: String
   }
   type User {
     id: ID!
     name: String!
-    posts: [Post!]!
+    posts(first: Int): [Post!]!
   }
   type Post {
     id: ID!
@@ -79,12 +93,14 @@ const sourceMap: Record<string, EntitySource> = {
   other_users: EntitySource.TABLE,
   auth_me: EntitySource.AUTH,
   remote_query_field: EntitySource.REMOTE_SCHEMA,
+  remote_users: EntitySource.REMOTE_SCHEMA,
   ask: EntitySource.AI,
   queue_publish: EntitySource.QUEUE_PUBLISHER,
   auth_login: EntitySource.AUTH,
   auth_refresh: EntitySource.AUTH,
   auth_logout: EntitySource.AUTH,
   remote_mutation_field: EntitySource.REMOTE_SCHEMA,
+  make_thing: EntitySource.OPERATION,
 };
 
 const buildEntities = ({
@@ -527,6 +543,443 @@ describe("handleGraphQLRequestFactory.handler — auth payloads", () => {
   });
 });
 
+describe("handleGraphQLRequestFactory.handler — root selections", () => {
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let setQueueManager: any;
+
+  beforeAll(async () => {
+    ({ setQueueManager } = await import("../../singletons/queues"));
+  });
+
+  const session = { sub: "alice", role: "user" };
+  const run = (query: string, variables: Record<string, unknown> = {}) =>
+    factoryFn(buildEntities()).handler(query, variables, fakeReq, session);
+
+  const publish = async (query: string, variables: Record<string, unknown> = {}) => {
+    const sent: string[] = [];
+    setQueueManager({
+      publisherMap: () => ({ queue_publish_resolver: { name: "queue_publish_resolver" } }),
+      sendMessage: async (_publisher: string, data: string) => {
+        sent.push(data);
+        return true;
+      },
+      connections: () => [],
+    });
+    try {
+      return { result: await run(query, variables), sent };
+    } finally {
+      setQueueManager(undefined);
+    }
+  };
+
+  describe("@skip and @include", () => {
+    it.each(["@skip(if: true)", "@include(if: false)"])(
+      "leaves out a root auth field under %s",
+      async (directive) => {
+        expect(await run(`{ auth_me ${directive} { username } x: auth_me { role } }`)).toEqual({
+          data: { x: { role: "user" } },
+        });
+      },
+    );
+
+    it("calls no remote for a root field it skips", async () => {
+      // A proxied call would read the stub's missing config and throw.
+      expect(await run("{ remote_query_field @skip(if: true) }")).toEqual({ data: {} });
+    });
+
+    it("publishes nothing for a skipped mutation field", async () => {
+      expect(await publish('mutation { queue_publish(data: "x") @skip(if: true) }')).toEqual({
+        result: { data: {} },
+        sent: [],
+      });
+    });
+
+    it.each([
+      [true, []],
+      [false, ["x"]],
+    ])("reads $s = %p for a mutation field", async (s, sent) => {
+      const outcome = await publish(
+        'mutation M($s: Boolean!) { queue_publish(data: "x") @skip(if: $s) }',
+        { s },
+      );
+
+      expect(outcome.sent).toEqual(sent);
+    });
+
+    it("runs the mutation fields left after a skip, in order", async () => {
+      const outcome = await publish(
+        'mutation { a: queue_publish(data: "1") b: queue_publish(data: "2") @skip(if: true) c: queue_publish(data: "3") }',
+      );
+
+      expect(outcome).toEqual({
+        result: { data: { a: true, c: true } },
+        sent: ["1", "3"],
+      });
+    });
+
+    it("does not log in for a skipped auth_login", async () => {
+      // A login with no database behind it would throw.
+      expect(
+        await factoryFn(buildEntities(), { enabled: true } as Auth).handler(
+          'mutation { auth_login(username: "a", password: "b") @skip(if: true) { access_token } }',
+          {},
+          fakeReq,
+          undefined,
+        ),
+      ).toEqual({ data: {} });
+    });
+  });
+
+  describe("fragments", () => {
+    it.each([
+      ["without a type condition", "{ ... { auth_me { username } } }"],
+      ["on the root type", "{ ... on Query { auth_me { username } } }"],
+      ["named", "{ ...F } fragment F on Query { auth_me { username } }"],
+      [
+        "nested",
+        "{ ...F } fragment F on Query { ... { ...G } } fragment G on Query { auth_me { username } }",
+      ],
+    ])("answers a root field in a fragment %s", async (_kind, query) => {
+      expect(await run(query)).toEqual({ data: { auth_me: { username: "alice" } } });
+    });
+
+    it("leaves out a root fragment a directive excludes", async () => {
+      expect(await run("{ ... @skip(if: true) { auth_me { username } } }")).toEqual({ data: {} });
+    });
+
+    it("merges a root field selected in and out of a fragment", async () => {
+      expect(
+        await run("{ auth_me { username } ...F } fragment F on Query { auth_me { role } }"),
+      ).toEqual({ data: { auth_me: { username: "alice", role: "user" } } });
+    });
+
+    it("runs a mutation field in a root fragment", async () => {
+      expect(
+        await publish('mutation { ...M } fragment M on Mutation { queue_publish(data: "x") }'),
+      ).toEqual({ result: { data: { queue_publish: true } }, sent: ["x"] });
+    });
+
+    it("answers meta fields in a root fragment", async () => {
+      expect(
+        await run(
+          '{ ...F ... on Query { t: __type(name: "User") { name } } } fragment F on Query { __typename auth_me { role } }',
+        ),
+      ).toEqual({ data: { __typename: "Query", t: { name: "User" }, auth_me: { role: "user" } } });
+    });
+
+    it("rejects fragments that fan out past the bound", () => {
+      const levels = Array.from(
+        { length: 24 },
+        (_, level) =>
+          `fragment F${level} on Comment { a: replies { ...F${level + 1} } b: replies { ...F${level + 1} } }`,
+      );
+
+      expect(
+        run(
+          [
+            "{ users { posts { comments { ...F0 } } } }",
+            ...levels,
+            "fragment F24 on Comment { id }",
+          ].join("\n"),
+        ),
+      ).rejects.toThrow("Query too complex: fragments expand to more than 50000 selections");
+    });
+  });
+});
+
+describe("handleGraphQLRequestFactory.handler — operationName", () => {
+  const session = { sub: "alice", role: "user" };
+  const DOCUMENT = "query A { auth_me { username } } query B { auth_me { role } }";
+  const run = (query: string, operationName?: string) =>
+    factoryFn(buildEntities()).handler(query, {}, fakeReq, session, { operationName });
+
+  it("runs the operation it names", async () => {
+    expect(await run(DOCUMENT, "B")).toEqual({ data: { auth_me: { role: "user" } } });
+  });
+
+  it("runs the first operation when none is named", async () => {
+    expect(await run(DOCUMENT)).toEqual({ data: { auth_me: { username: "alice" } } });
+  });
+
+  it("refuses a name the document does not hold", () => {
+    expect(run(DOCUMENT, "C")).rejects.toThrow('Unknown operation named "C".');
+  });
+
+  it("reads the named operation's variables and fragments", async () => {
+    expect(
+      await factoryFn(buildEntities()).handler(
+        `query A { auth_me { role } }
+         query B($s: Boolean!) { auth_me { ...U role @skip(if: $s) } }
+         fragment U on AuthMe { username }`,
+        { s: true },
+        fakeReq,
+        session,
+        { operationName: "B" },
+      ),
+    ).toEqual({ data: { auth_me: { username: "alice" } } });
+  });
+
+  it("does not run a mutation it does not name", async () => {
+    expect(
+      await run('query A { auth_me { role } } mutation B { queue_publish(data: "x") }', "A"),
+    ).toEqual({ data: { auth_me: { role: "user" } } });
+  });
+});
+
+describe("handleGraphQLRequestFactory.handler — operation results", () => {
+  const THING = { id: 7, name: "lamp", owner: { id: 1, email: "ana@acme.test" } };
+
+  const run = async (
+    query: string,
+    variables: Record<string, unknown> = {},
+    thing: unknown = THING,
+  ) => {
+    const entities = buildEntities();
+    let calls = 0;
+    entities.operations.make_thing = {
+      handler: async () => {
+        calls++;
+        return thing;
+      },
+    };
+    const result = await factoryFn(entities).handler(query, variables, fakeReq, undefined);
+    return { ...result, calls };
+  };
+
+  it("answers the fields a named fragment selects", async () => {
+    expect(await run("mutation { make_thing { ...M } } fragment M on Thing { id }")).toEqual({
+      data: { make_thing: { id: 7 } },
+      calls: 1,
+    });
+  });
+
+  it("answers the fields a fragment selects under a nested field", async () => {
+    expect(
+      (
+        await run(
+          "mutation { make_thing { id owner { ...O } } } fragment O on ThingOwner { mail: email }",
+        )
+      ).data,
+    ).toEqual({ make_thing: { id: 7, owner: { mail: "ana@acme.test" } } });
+  });
+
+  it("expands one fragment under every field that spreads it", async () => {
+    expect(
+      (
+        await run(
+          "mutation { a: make_thing { ...M } b: make_thing { ...M } } fragment M on Thing { name }",
+        )
+      ).data,
+    ).toEqual({ a: { name: "lamp" }, b: { name: "lamp" } });
+  });
+
+  it.each([
+    [true, { id: 7 }],
+    [false, { id: 7, name: "lamp" }],
+  ])("reads $s = %p for a subfield's directive", async (s, make_thing) => {
+    expect(
+      (await run("mutation M($s: Boolean!) { make_thing { id name @skip(if: $s) } }", { s })).data,
+    ).toEqual({ make_thing });
+  });
+
+  it("leaves out a nested subfield a directive excludes", async () => {
+    expect(
+      (await run("mutation { make_thing { owner { id email @include(if: false) } } }")).data,
+    ).toEqual({ make_thing: { owner: { id: 1 } } });
+  });
+
+  it("answers an empty object when every subfield is excluded", async () => {
+    expect(await run("mutation { make_thing { id @skip(if: true) } }")).toEqual({
+      data: { make_thing: {} },
+      calls: 1,
+    });
+  });
+
+  it("answers an empty object per item of a list when every subfield is excluded", async () => {
+    expect(
+      (await run("mutation { make_thing { id @skip(if: true) } }", {}, [THING, THING])).data,
+    ).toEqual({ make_thing: [{}, {}] });
+  });
+
+  it("runs the handler once for a field selected twice across a fragment", async () => {
+    expect(
+      await run(
+        "mutation { make_thing { id } ...M } fragment M on Mutation { make_thing { name } }",
+      ),
+    ).toEqual({ data: { make_thing: { id: 7, name: "lamp" } }, calls: 1 });
+  });
+});
+
+describe("handleGraphQLRequestFactory.handler — remote fields", () => {
+  const remoteSchema = {
+    config: { name: "test", url: "http://localhost:4000/graphql", timeout: 5000 },
+    prefixMap: { toPrefixed: { RemoteUser: "User" } },
+  };
+
+  const send = async (
+    query: string,
+    variables: Record<string, unknown> = {},
+    answer: unknown = { users: [{ id: "1" }] },
+  ) => {
+    const entities = buildEntities();
+    entities.remoteQueriesMap.remote_users = { remoteSchema, originalFieldName: "users" };
+    entities.remoteMutationsMap.remote_mutation_field = {
+      remoteSchema,
+      originalFieldName: "originalM",
+    };
+    const sent: string[] = [];
+    const bodies: Record<string, unknown>[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      bodies.push(body);
+      sent.push(body.query);
+      return new Response(JSON.stringify({ data: answer }), { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const result = await factoryFn(entities).handler(query, variables, fakeReq, undefined);
+      return { result, sent, bodies };
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  };
+
+  describe("arguments", () => {
+    it("sends a variable's value", async () => {
+      const { sent } = await send("query Q($l: Int!) { remote_users(limit: $l) { id } }", { l: 5 });
+
+      expect(sent).toEqual(["query { users(limit: 5) { id } }"]);
+    });
+
+    it("sends a variable's declared default", async () => {
+      const { sent } = await send("query Q($l: Int = 3) { remote_users(limit: $l) { id } }");
+
+      expect(sent).toEqual(["query { users(limit: 3) { id } }"]);
+    });
+
+    it("sends a variable on a nested field", async () => {
+      const { sent } = await send(
+        "query Q($n: Int!) { remote_users { posts(first: $n) { id } } }",
+        { n: 2 },
+      );
+
+      expect(sent).toEqual(["query { users { posts(first: 2) { id } } }"]);
+    });
+
+    it("sends an object variable whole", async () => {
+      const { sent } = await send("query Q($w: RemoteFilter) { remote_users(where: $w) { id } }", {
+        w: { name: "a" },
+      });
+
+      expect(sent).toEqual(['query { users(where: {name: "a"}) { id } }']);
+    });
+
+    it("sends a variable nested in a literal object", async () => {
+      const { sent } = await send(
+        "query Q($n: String) { remote_users(where: { name: $n }) { id } }",
+        { n: "a" },
+      );
+
+      expect(sent).toEqual(['query { users(where: {name: "a"}) { id } }']);
+    });
+
+    it("sends a literal where as it was written", async () => {
+      const { sent } = await send('{ remote_users(where: { name: "a" }) { id } }');
+
+      expect(sent).toEqual(['query { users(where: {name: "a"}) { id } }']);
+    });
+
+    it("leaves a string that names no variable alone", async () => {
+      const { sent } = await send('{ remote_users(where: { name: "$5" }) { id } }');
+
+      expect(sent).toEqual(['query { users(where: {name: "$5"}) { id } }']);
+    });
+
+    it("does not read a variable's value as another reference", async () => {
+      const { sent } = await send(
+        "query Q($n: String, $o: String) { remote_users(where: { name: $n }) { id } }",
+        { n: "$o", o: "secret" },
+      );
+
+      expect(sent).toEqual(['query { users(where: {name: "$o"}) { id } }']);
+    });
+
+    it("sends a variable on a mutation", async () => {
+      const { sent } = await send(
+        "mutation M($v: String) { remote_mutation_field(value: $v) }",
+        { v: "x" },
+        { originalM: "ok" },
+      );
+
+      expect(sent).toEqual(['mutation { originalM(value: "x") }']);
+    });
+
+    it("sends no variables map: the query declares none", async () => {
+      const { bodies } = await send("query Q($l: Int!) { remote_users(limit: $l) { id } }", {
+        l: 5,
+      });
+
+      expect(bodies).toEqual([{ query: "query { users(limit: 5) { id } }" }]);
+    });
+  });
+
+  it.each([
+    [
+      "a subfield a directive skips",
+      "{ remote_users { id name @skip(if: true) } }",
+      "query { users { id } }",
+    ],
+    [
+      "a named fragment",
+      "{ remote_users { ...F } } fragment F on User { id }",
+      "query { users { id } }",
+    ],
+    ["an inline fragment", "{ remote_users { ... on User { id } } }", "query { users { id } }"],
+    [
+      "an untyped inline fragment a directive excludes",
+      "{ remote_users { id ... @include(if: false) { name } } }",
+      "query { users { id } }",
+    ],
+    [
+      "a fragment under a nested field",
+      "{ remote_users { posts { ...P } } } fragment P on Post { title }",
+      "query { users { posts { title } } }",
+    ],
+    [
+      "a field also selected in a fragment",
+      "{ remote_users { id ...F } } fragment F on User { id name }",
+      "query { users { id name } }",
+    ],
+  ])("sends plain selections for %s", async (_case, query, upstream) => {
+    expect((await send(query)).sent).toEqual([upstream]);
+  });
+
+  it("keeps a subfield its variable does not skip", async () => {
+    const { sent } = await send(
+      "query Q($s: Boolean!) { remote_users { id name @skip(if: $s) } }",
+      { s: false },
+    );
+
+    expect(sent).toEqual(["query { users { id name } }"]);
+  });
+
+  it("renames a __typename reached through a fragment", async () => {
+    const { result } = await send(
+      "{ remote_users { ...F } } fragment F on User { kind: __typename }",
+      {},
+      { users: [{ kind: "RemoteUser" }] },
+    );
+
+    expect(result).toEqual({ data: { remote_users: [{ kind: "User" }] } });
+  });
+
+  it("calls no remote for a field in a fragment a directive excludes", async () => {
+    const { sent } = await send("{ ... @skip(if: true) { remote_users { id } } }");
+
+    expect(sent).toEqual([]);
+  });
+});
+
 describe("handleGraphQLRequestFactory.handler — meta fields", () => {
   it("answers a root __typename with the root type's name", async () => {
     const factory = factoryFn(buildEntities());
@@ -779,6 +1232,73 @@ describe("handleGraphQLRequestFactory — SQL memoization", () => {
 
       expect(seen).toHaveLength(2);
       expect(seen[1]).toContain('"users_renamed"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not serve one named operation another's SQL", async () => {
+    const entities = tableEntities();
+    entities.queriesMap.other_users = { ...entities.queriesMap.users, dottedQuotedName: '"other"' };
+    const factory = factoryFn(entities);
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      const query = "query A { users { id } } query B { other_users { id } }";
+      await factory.handler(query, {}, fakeReq, undefined, { operationName: "A" });
+      await factory.handler(query, {}, fakeReq, undefined, { operationName: "B" });
+
+      expect(seen).toHaveLength(2);
+      expect(seen[0]).toContain('"users"');
+      expect(seen[1]).toContain('"other"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("rebuilds SQL when a directive inside a fragment can change the selection", async () => {
+    const factory = factoryFn(tableEntities());
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      const query =
+        "query Q($skip: Boolean!) { users { ...F } } fragment F on User { id @skip(if: $skip) name }";
+      await factory.handler(query, { skip: false }, fakeReq, undefined);
+      await factory.handler(query, { skip: true }, fakeReq, undefined);
+
+      expect(seen).toHaveLength(2);
+      expect(seen[0]).toContain('"id"');
+      expect(seen[1]).not.toContain('"id"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("selects a table field a root fragment holds", async () => {
+    const factory = factoryFn(tableEntities());
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      await factory.handler(
+        "{ ...F } fragment F on Query { users { name } }",
+        {},
+        fakeReq,
+        undefined,
+      );
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toContain('"users"');
+      expect(seen[0]).toContain('"name"');
+    } finally {
+      restore();
+    }
+  });
+
+  it("runs no SQL for a table field a directive excludes", async () => {
+    const factory = factoryFn(tableEntities());
+    const { seen, restore } = stubSqliteAdapter();
+    try {
+      expect(
+        await factory.handler("{ users @skip(if: true) { id } }", {}, fakeReq, undefined),
+      ).toEqual({ data: {} });
+      expect(seen).toEqual([]);
     } finally {
       restore();
     }
