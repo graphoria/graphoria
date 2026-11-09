@@ -14,11 +14,36 @@ import { isHoistedName } from "./valueExtractors";
 // A named fragment can be spread under many fields, so a small document can
 // describe a tree whose every node the builders walk. MAX_QUERY_COST is off
 // unless configured, so this bound holds regardless. It counts each occurrence
-// of a field, merged or not, which also caps the work done here.
+// of a field, merged or not.
 const MAX_EXPANDED_SELECTIONS = 50_000;
+
+// A walk can cost far more than it selects, through fragments that hold only
+// further spreads or fields a directive excludes, so each entry is also a step.
+const MAX_WALK_STEPS = 4 * MAX_EXPANDED_SELECTIONS;
 
 const hasControlFlow = (selection: SelectionAnalysis): boolean =>
   selection.directives?.some((directive) => CONTROL_FLOW_DIRECTIVES.has(directive.name)) === true;
+
+// `keep` has answered these, so the builders need not read them per occurrence.
+const withoutControlFlow = (selection: SelectionAnalysis): SelectionAnalysis => {
+  if (!hasControlFlow(selection)) return selection;
+
+  const { directives = [], ...rest } = selection;
+  const others = directives.filter((directive) => !CONTROL_FLOW_DIRECTIVES.has(directive.name));
+  return others.length > 0 ? { ...rest, directives: others } : rest;
+};
+
+// A fragment's entries are the same objects wherever it is spread, and one
+// request gives each the same answer.
+const memoized = <K, V>(compute: (key: K) => V): ((key: K) => V) => {
+  const known = new Map<K, V>();
+  return (key) => {
+    if (known.has(key)) return known.get(key)!;
+    const value = compute(key);
+    known.set(key, value);
+    return value;
+  };
+};
 
 /**
  * Turns analyzed selections into the plain fields execution answers, as the
@@ -37,7 +62,15 @@ export const resolveSelections = (
   definitions: VariableDefinition[] = [],
 ): SelectionAnalysis[] => {
   const fieldsByName = new Map(fragments.map((fragment) => [fragment.name, fragment.fields]));
-  let remaining = fragments.length > 0 ? MAX_EXPANDED_SELECTIONS : Number.POSITIVE_INFINITY;
+  const bounded = fragments.length > 0;
+  let selectionsLeft = bounded ? MAX_EXPANDED_SELECTIONS : Number.POSITIVE_INFINITY;
+  let stepsLeft = bounded ? MAX_WALK_STEPS : Number.POSITIVE_INFINITY;
+  const kept = memoized(keep);
+
+  const tooComplex = () =>
+    new Error(
+      `Query too complex: fragments expand to more than ${MAX_EXPANDED_SELECTIONS} selections`,
+    );
 
   const literals = new Map(
     definitions
@@ -58,8 +91,12 @@ export const resolveSelections = (
     );
   };
 
+  const argumentsKey = memoized((args: Record<string, unknown>) =>
+    JSON.stringify(argumentValue(args)),
+  );
+
   const identity = (field: SelectionAnalysis): string =>
-    JSON.stringify([field.name, argumentValue(field.arguments)]);
+    `${field.name}:${field.arguments ? argumentsKey(field.arguments) : ""}`;
 
   const occurrencesOf = (
     last: SelectionAnalysis,
@@ -79,7 +116,8 @@ export const resolveSelections = (
     conditional: boolean,
   ): void => {
     for (const selection of entries ?? []) {
-      if (!keep(selection)) continue;
+      if (--stepsLeft < 0) throw tooComplex();
+      if (!kept(selection)) continue;
 
       if (selection.name.startsWith("... on ")) {
         collect(selection.selections, groups, spread, conditional || hasControlFlow(selection));
@@ -89,13 +127,9 @@ export const resolveSelections = (
         spread.add(name);
         collect(fieldsByName.get(name), groups, spread, conditional || hasControlFlow(selection));
       } else {
-        if (--remaining < 0) {
-          throw new Error(
-            `Query too complex: fragments expand to more than ${MAX_EXPANDED_SELECTIONS} selections`,
-          );
-        }
-        const entry =
-          conditional && selection.isRequired ? { ...selection, isRequired: undefined } : selection;
+        if (--selectionsLeft < 0) throw tooComplex();
+        const plain = withoutControlFlow(selection);
+        const entry = conditional && plain.isRequired ? { ...plain, isRequired: undefined } : plain;
         const key = selection.alias || selection.name;
         const group = groups.get(key);
         if (group) group.push(entry);

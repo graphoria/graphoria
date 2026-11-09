@@ -260,7 +260,8 @@ under [Bounding how much one query asks for](./CONFIGURATION.md#bounding-how-muc
 A document with named fragments is bounded whether or not `MAX_QUERY_COST` is set. A fragment can be
 spread under many fields, so a few lines can describe a tree of millions of selections, each of which
 would become SQL. Such a document may expand to at most 50 000 selections, counted before repeated
-fields merge, and past that it fails with a fixed limit no setting raises:
+fields merge, and take at most 200 000 steps to walk, what a directive excludes included. Past either
+it fails with a fixed limit no setting raises:
 
 ```
 Query too complex: fragments expand to more than 50000 selections

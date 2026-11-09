@@ -218,6 +218,17 @@ describe("resolveSelections", () => {
     expect(names(resolved[0]!.selections!)).toEqual(["y"]);
   });
 
+  it("drops the control-flow directives it has answered", () => {
+    const directives = [{ name: "include", arguments: { if: true } }, { name: "uppercase" }];
+
+    expect(resolveSelections([{ name: "a", directives }], [], keepAll)).toEqual([
+      { name: "a", directives: [{ name: "uppercase" }] },
+    ]);
+    expect(resolveSelections([{ name: "b", directives: [directives[0]!] }], [], keepAll)).toEqual([
+      { name: "b" },
+    ]);
+  });
+
   it("keeps a transform directive on the field it sits on", () => {
     const upper = [{ name: "uppercase" }];
     const resolved = resolveSelections([inline([{ name: "a", directives: upper }])], [], keepAll);
@@ -262,6 +273,58 @@ describe("resolveSelections", () => {
       expect(() => resolveSelections([spread("F0")], fanOut(24), keepAll)).toThrow(
         "Query too complex: fragments expand to more than 50000 selections",
       );
+    });
+
+    const underManyFields = (count = 500) =>
+      Array.from({ length: count }, (_, index) => field(`p${index}`, [spread("F")]));
+    const TOO_COMPLEX = "Query too complex: fragments expand to more than 50000 selections";
+
+    it("counts the entries a directive excludes as steps", () => {
+      const excluded = Array.from({ length: 500 }, (_, index) => field(`x${index}`));
+
+      expect(() =>
+        resolveSelections(
+          underManyFields(),
+          [fragment("F", excluded)],
+          (selection) => !selection.name.startsWith("x"),
+        ),
+      ).toThrow(TOO_COMPLEX);
+    });
+
+    it("counts a spread repeated in one set as a step", () => {
+      const repeated = Array.from({ length: 500 }, () => spread("G"));
+
+      expect(() =>
+        resolveSelections(
+          underManyFields(),
+          [fragment("F", repeated), fragment("G", [field("x")])],
+          keepAll,
+        ),
+      ).toThrow(TOO_COMPLEX);
+    });
+
+    it("counts a chain of fragments that select nothing on the way as steps", () => {
+      const links = 300;
+      const chain = [
+        ...Array.from({ length: links }, (_, i) =>
+          fragment(i === 0 ? "F" : `F${i}`, [spread(`F${i + 1}`)]),
+        ),
+        fragment(`F${links}`, [field("x")]),
+      ];
+
+      expect(() => resolveSelections(underManyFields(1000), chain, keepAll)).toThrow(TOO_COMPLEX);
+    });
+
+    it("asks once about an entry of a fragment spread many times", () => {
+      const seen = new Map<string, number>();
+      const counting = (selection: SelectionAnalysis) => {
+        seen.set(selection.name, (seen.get(selection.name) ?? 0) + 1);
+        return true;
+      };
+
+      resolveSelections(underManyFields(50), [fragment("F", [field("x")])], counting);
+
+      expect(seen.get("x")).toBe(1);
     });
 
     // Validation rejects these for callers. An operator's unvalidated document
