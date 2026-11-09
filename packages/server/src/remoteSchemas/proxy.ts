@@ -1,3 +1,5 @@
+import { assertName } from "graphql";
+
 import type { SelectionAnalysis } from "../analyzeQuery/types";
 import type { RemoteSchemaResolved } from "./types";
 
@@ -73,8 +75,9 @@ const serializeValue = (value: unknown, variables: CallerValues): string => {
     return `[${value.map((item) => serializeValue(item, variables)).join(", ")}]`;
   }
   if (typeof value === "object") {
+    // A key comes from the caller's variables too, and is written unquoted.
     const entries = Object.entries(value as Record<string, unknown>).map(
-      ([k, v]) => `${k}: ${serializeValue(v, variables)}`,
+      ([k, v]) => `${assertName(k)}: ${serializeValue(v, variables)}`,
     );
     return `{${entries.join(", ")}}`;
   }

@@ -387,6 +387,35 @@ describe("Remote Schema Proxy — what it writes upstream", () => {
     expect(sent()).toBe("query { user { id profile { __typename } } }");
     expect(result).toEqual({ id: "1", profile: {} });
   });
+
+  it("writes an input object's keys", async () => {
+    const { sent } = upstream({ doA: { id: "1" } });
+
+    await proxyRemoteField(
+      { name: "test_doA", arguments: { input: "$f" }, selections: [{ name: "id" }] },
+      createMockRemoteSchema(),
+      "doA",
+      { f: { a: 1, _b2: "x" } },
+      "mutation",
+    );
+
+    expect(sent()).toBe('mutation { doA(input: {a: 1, _b2: "x"}) { id } }');
+  });
+
+  it("sends nothing when an input object's key is not a GraphQL name", async () => {
+    const { fetchMock } = upstream({});
+
+    await expect(
+      proxyRemoteField(
+        { name: "test_doA", arguments: { input: "$f" }, selections: [{ name: "id" }] },
+        createMockRemoteSchema(),
+        "doA",
+        { f: { "a: 1}) { id } dropAll zz: doA(input: {name": "x" } },
+        "mutation",
+      ),
+    ).rejects.toThrow("Names must");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("Remote Schema Proxy — tracing", () => {
