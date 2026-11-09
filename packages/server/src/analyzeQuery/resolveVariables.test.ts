@@ -788,6 +788,22 @@ describe("buildFinalVariables", () => {
     // Runtime overrides default
     expect(result.allVariables.limit).toBe(20);
   });
+
+  it("does not let a request replace a hoisted literal", () => {
+    const result = buildFinalVariables(
+      [{ name: "static_0", type: "Int", required: false, defaultValue: 1 }],
+      {
+        resolvedMap: new Map(),
+        newStaticVariables: [],
+        resolvedRuntimeValues: {},
+        resolvedObjectVarNames: new Set(),
+        nestedReferencedVars: new Set(),
+      },
+      { static_0: 500, static_x: 2 },
+    );
+
+    expect(result.allVariables).toEqual({ static_0: 1, static_x: 2 });
+  });
 });
 
 // ─── resolveVariables (orchestrator) ────────────────────────────────────────

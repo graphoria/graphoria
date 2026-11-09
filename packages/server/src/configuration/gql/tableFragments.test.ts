@@ -263,6 +263,22 @@ describe("a response key selected by more than one field", () => {
     expect(await asReader(query)).toEqual({ data: { x: [{ id: 1 }] } });
   });
 
+  it("refuses a variable named like a hoisted literal", async () => {
+    expect(
+      await engine.execute(`query Q($static_9: Int) { main_tasks(limit: $static_9) { id } }`, {
+        static_9: 1,
+      }),
+    ).toHaveProperty("errors");
+  });
+
+  it("does not let a request replace a literal", async () => {
+    expect(
+      await engine.execute(`{ main_tasks(${BY_ID}, limit: 1) { id } }`, { static_0: 3 }),
+    ).toEqual({
+      data: { main_tasks: [{ id: 1 }] },
+    });
+  });
+
   it("answers the last occurrence alone when the arguments differ", async () => {
     expect(
       await asAna(

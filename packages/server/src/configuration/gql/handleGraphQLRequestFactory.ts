@@ -27,6 +27,7 @@ import { checkQueryCost } from "../../analyzeQuery/costLimit";
 import { depthLimitRule, isDepthLimitError } from "../../analyzeQuery/depthLimit";
 import { CONTROL_FLOW_DIRECTIVES } from "../../analyzeQuery/directiveUtils";
 import { introspectionLimitRule } from "../../analyzeQuery/introspectionLimit";
+import { reservedVariableNamesRule } from "../../analyzeQuery/reservedVariables";
 import { resolveOperationSelections, selectOperation } from "../../analyzeQuery/resolveSelections";
 import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
@@ -231,6 +232,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       (rule) => rule !== OverlappingFieldsCanBeMergedRule && rule !== MaxIntrospectionDepthRule,
     ),
     introspectionLimitRule,
+    reservedVariableNamesRule,
   ];
 
   // undefined = unparseable query (never cached)

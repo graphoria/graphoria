@@ -9,6 +9,7 @@ import type {
 import { filterBasedOnDirective } from "../databases/common";
 import { CONTROL_FLOW_DIRECTIVES } from "./directiveUtils";
 import { META_FIELDS } from "./metaFields";
+import { isHoistedName } from "./valueExtractors";
 
 // A named fragment can be spread under many fields, so a small document can
 // describe a tree whose every node the builders walk. MAX_QUERY_COST is off
@@ -40,7 +41,7 @@ export const resolveSelections = (
 
   const literals = new Map(
     definitions
-      .filter((definition) => definition.name.startsWith("static_"))
+      .filter((definition) => isHoistedName(definition.name))
       .map((definition) => [`$${definition.name}`, definition.defaultValue]),
   );
 
