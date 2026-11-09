@@ -38,6 +38,9 @@ export const metaDocument = (
     (definition): definition is FragmentDefinitionNode =>
       definition.kind === Kind.FRAGMENT_DEFINITION,
   );
+  const fragmentsByName = new Map(
+    fragments.map((definition) => [definition.name.value, definition]),
+  );
   // `null` for a root-level fragment with no meta field, and while one is being
   // walked, which ends a cycle.
   const narrowed = new Map<string, FragmentDefinitionNode | null>();
@@ -47,7 +50,7 @@ export const metaDocument = (
     if (known !== undefined) return known;
 
     narrowed.set(name, null);
-    const fragment = fragments.find((definition) => definition.name.value === name);
+    const fragment = fragmentsByName.get(name);
     if (!fragment) return null;
 
     const selections = narrowSelections(fragment.selectionSet.selections);
