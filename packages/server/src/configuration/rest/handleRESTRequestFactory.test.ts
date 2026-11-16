@@ -242,6 +242,32 @@ describe("handleRESTRequestFactory hook lifecycle (custom handler)", () => {
   });
 });
 
+describe("handleRESTRequestFactory operationRuntime", () => {
+  it("runs init once when REST and operationRuntime.initDataOf both ask", async () => {
+    let initCount = 0;
+
+    const factory = handleRESTRequestFactory(
+      stubEntities("op_runtime_init", {
+        handler: () => ({ ok: true }),
+        hooks: {
+          init: () => {
+            initCount++;
+            return { v: initCount };
+          },
+        },
+      }),
+      stubGql(),
+    );
+    const route = factory.operationsEnhanced.op_runtime_init;
+
+    expect(await factory.operationRuntime.initDataOf(route)).toEqual({ v: 1 });
+    await factory.handler(new URL("http://x/test"), "/test", "GET", fakeReq());
+    expect(await factory.operationRuntime.initDataOf(route)).toEqual({ v: 1 });
+
+    expect(initCount).toBe(1);
+  });
+});
+
 describe("handleRESTRequestFactory beforeRequest REST parameter sources", () => {
   it("passes pathParams, queryParams, and body separately to beforeRequest", async () => {
     let observed: Record<string, unknown> = {};
