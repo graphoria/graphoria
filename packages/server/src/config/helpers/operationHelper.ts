@@ -274,20 +274,24 @@ operation.typed = <TRepository>() => {
 // Type utilities for operations
 // ============================================================================
 
+// `any`, not `unknown`: these positions are contravariant, where `unknown` matches no operation.
 /**
  * Infer the input type from an operation
  */
 export type InferOperationInput<T> =
-  T extends TypedOperation<infer TInput, unknown, unknown> ? TInput : never;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  T extends TypedOperation<infer TInput, any, any, any> ? TInput : never;
 
 /**
  * Infer the output type from an operation
  */
 export type InferOperationOutput<T> =
-  T extends TypedOperation<unknown, infer TOutput, unknown> ? TOutput : never;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  T extends TypedOperation<any, infer TOutput, any, any> ? TOutput : never;
 
 /**
  * Infer the init data type from an operation
  */
 export type InferOperationInitData<T> =
-  T extends TypedOperation<unknown, unknown, infer TInitData> ? TInitData : never;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  T extends TypedOperation<any, any, infer TInitData, any> ? TInitData : never;
