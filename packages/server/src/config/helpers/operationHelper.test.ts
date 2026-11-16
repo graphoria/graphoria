@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { parse } from "graphql";
 import { z } from "zod";
 
+import type { ConfigurationFn } from "..";
 import type { DefaultInput } from "../types/operation";
 import type {
   InferOperationInitData,
@@ -133,5 +134,138 @@ describe("InferOperation* utilities", () => {
     const initData: Equal<InferOperationInitData<typeof op>, unknown> = true;
 
     expect([input, output, initData]).toEqual([true, true, true]);
+  });
+});
+// What a typed client reads from an operation: the type-only carrier.
+type CarrierOf<T extends { __operationTypes?: unknown }> = NonNullable<T["__operationTypes"]>;
+
+describe("operation() type carrier", () => {
+  const doc = parse("query { ping }") as TadaLike<{ ping: boolean }>;
+
+  // Inside `satisfies ConfigurationFn` on purpose: its contextual return type is
+  // what infers a hook-less query's output as `any` without the NoInfer.
+  const configure = (({ operation, z }) => ({
+    name: "carrier",
+    version: "1.0.0",
+    operations: {
+      getByDefault: operation({ query: "query { ping }", rest: { path: "/a" } }),
+      post: operation({ query: "mutation { ping }", rest: { path: "/b", method: "POST" } }),
+      withInput: operation({
+        query: "query { ping }",
+        input: z.object({ id: z.number(), limit: z.number().default(10) }),
+        rest: { path: "/c" },
+      }),
+      bySchema: operation({
+        query: doc,
+        output: z.object({ ok: z.boolean() }),
+        rest: { path: "/d" },
+        hooks: { afterRequest: ({ output }) => ({ ok: output.ping }) },
+      }),
+      byHook: operation({
+        query: doc,
+        rest: { path: "/e" },
+        hooks: { afterRequest: ({ output }) => ({ pinged: output.ping }) },
+      }),
+      byAsyncHook: operation({
+        query: doc,
+        rest: { path: "/f" },
+        hooks: { afterRequest: async ({ output }) => ({ pinged: output.ping }) },
+      }),
+      byDocument: operation({ query: doc, rest: { path: "/g" } }),
+      handled: operation({
+        input: z.object({ title: z.string() }),
+        output: z.object({ id: z.number() }),
+        rest: { path: "/h", method: "POST" },
+        handler: async () => ({ id: 1 }),
+      }),
+      handledBare: operation({
+        rest: { path: "/i", method: "DELETE" },
+        handler: async () => "ok",
+      }),
+    },
+  })) satisfies ConfigurationFn;
+
+  type Operations = ReturnType<typeof configure>["operations"];
+
+  it("reads the method from rest.method, GET by default", () => {
+    const getByDefault: Equal<CarrierOf<Operations["getByDefault"]>["method"], "GET"> = true;
+    const post: Equal<CarrierOf<Operations["post"]>["method"], "POST"> = true;
+    const handledBare: Equal<CarrierOf<Operations["handledBare"]>["method"], "DELETE"> = true;
+
+    expect([getByDefault, post, handledBare]).toEqual([true, true, true]);
+  });
+
+  it("reads the caller's input: optional where the schema defaults, nothing without a schema", () => {
+    const withInput: Equal<
+      CarrierOf<Operations["withInput"]>["input"],
+      { id: number; limit?: number | undefined }
+    > = true;
+    const without: Equal<CarrierOf<Operations["getByDefault"]>["input"], void> = true;
+    const handled: Equal<CarrierOf<Operations["handled"]>["input"], { title: string }> = true;
+
+    expect([withInput, without, handled]).toEqual([true, true, true]);
+  });
+
+  it("reads a query's output from the schema, then the hook, then the document", () => {
+    const bySchema: Equal<CarrierOf<Operations["bySchema"]>["output"], { ok: boolean }> = true;
+    const byHook: Equal<CarrierOf<Operations["byHook"]>["output"], { pinged: boolean }> = true;
+    const byAsyncHook: Equal<CarrierOf<Operations["byAsyncHook"]>["output"], { pinged: boolean }> =
+      true;
+    const byDocument: Equal<CarrierOf<Operations["byDocument"]>["output"], { ping: boolean }> =
+      true;
+    const byString: Equal<CarrierOf<Operations["getByDefault"]>["output"], unknown> = true;
+
+    expect([bySchema, byHook, byAsyncHook, byDocument, byString]).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+  });
+
+  it("reads a handler's output from the schema, unknown without one", () => {
+    const handled: Equal<CarrierOf<Operations["handled"]>["output"], { id: number }> = true;
+    const handledBare: Equal<CarrierOf<Operations["handledBare"]>["output"], unknown> = true;
+
+    expect([handled, handledBare]).toEqual([true, true]);
+  });
+
+  it("types InferOperationOutput from afterRequest when a query has no output schema", () => {
+    const byHook: Equal<InferOperationOutput<Operations["byHook"]>, { pinged: boolean }> = true;
+
+    expect(byHook).toBe(true);
+  });
+
+  it("refuses an afterRequest that returns another shape than the output schema", () => {
+    operation({
+      query: doc,
+      output: z.object({ ok: z.boolean() }),
+      rest: { path: "/j" },
+      hooks: {
+        // @ts-expect-error the hook returns the `output` schema's type
+        afterRequest: ({ output }) => ({ pinged: output.ping }),
+      },
+    });
+
+    expect(true).toBe(true);
+  });
+
+  it("survives a spread", () => {
+    const spread = { ...operation({ query: doc, rest: { path: "/k" } }), timeout: 5 };
+    const carrier: Equal<
+      CarrierOf<typeof spread>,
+      { method: "GET"; input: void; output: { ping: boolean } }
+    > = true;
+
+    expect(carrier).toBe(true);
+  });
+
+  it("never exists at runtime, and setting it fails validation", () => {
+    const op = operation({ handler: async () => "ok", rest: { path: "/l" } });
+
+    expect("__operationTypes" in op).toBe(false);
+    expect(OperationZod.safeParse(op).success).toBe(true);
+    expect(OperationZod.safeParse({ ...op, __operationTypes: {} }).success).toBe(false);
   });
 });

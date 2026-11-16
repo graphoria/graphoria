@@ -91,6 +91,7 @@ export {
   type InferOperationInput,
   type InferOperationOutput,
   type InferOperationInitData,
+  type OperationTypes,
 } from "./helpers";
 
 // Re-export cron definition types

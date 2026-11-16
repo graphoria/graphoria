@@ -33,6 +33,19 @@ type InferOutput<TOutputSchema> = TOutputSchema extends z.ZodType<infer T> ? T :
  */
 type InferRestParam<T> = T extends z.ZodType<infer O> ? O : undefined;
 
+type RestMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+/** Type-only carrier: what a typed client needs to know about an operation. Never set at runtime. */
+export type OperationTypes<TMethod extends RestMethod, TInput, TOutput> = {
+  readonly __operationTypes?: { method: TMethod; input: TInput; output: TOutput };
+};
+
+/** What a caller sends: the `input` schema before parsing, or nothing without one. */
+type CallerInput<TInputSchema> = TInputSchema extends z.ZodType ? z.input<TInputSchema> : void;
+
+/** A query operation's output: the `output` schema's type, else what `afterRequest` returns. */
+type QueryOutput<TOutputSchema, TAfter> = TOutputSchema extends z.ZodType<infer T> ? T : TAfter;
+
 /**
  * REST exposure config with per-source schema generics, so `pathParams`,
  * `queryParams`, and `body` can be inferred into the `beforeRequest` context.
@@ -41,11 +54,12 @@ type RestConfigInput<
   TPathParams extends z.ZodType | undefined,
   TQueryParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
+  TMethod extends RestMethod,
 > = {
   /** Route path (e.g. `/users/:id`) */
   path: string;
   /** HTTP method (defaults to GET) */
-  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  method?: TMethod;
   /** Zod schema for path parameters */
   pathParams?: TPathParams;
   /** Zod schema for query-string parameters */
@@ -99,6 +113,7 @@ type HandlerOperationConfig<
   TPathParams extends z.ZodType | undefined,
   TQueryParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
+  TMethod extends RestMethod,
 > = Omit<
   HandlerOperation<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TInitData, TRepository>,
   "handler" | "input" | "output" | "hooks" | "rest"
@@ -119,7 +134,7 @@ type HandlerOperationConfig<
     TBody
   >;
   /** REST exposure configuration */
-  rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
+  rest?: RestConfigInput<TPathParams, TQueryParams, TBody, TMethod>;
 };
 
 /**
@@ -133,6 +148,8 @@ type QueryOperationConfig<
   TQueryParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
   TQuery extends string | AnyQueryDocument,
+  TMethod extends RestMethod,
+  TAfter,
 > = Omit<
   QueryOperation<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TInitData>,
   "input" | "output" | "hooks" | "rest" | "query"
@@ -146,7 +163,7 @@ type QueryOperationConfig<
   /** Hooks for initialization and request transformation */
   hooks?: OperationHooksConfig<
     InferInput<TInputSchema>,
-    InferOutput<TOutputSchema>,
+    QueryOutput<TOutputSchema, TAfter>,
     TInitData,
     TPathParams,
     TQueryParams,
@@ -154,7 +171,7 @@ type QueryOperationConfig<
     QueryResultOf<TQuery>
   >;
   /** REST exposure configuration */
-  rest?: RestConfigInput<TPathParams, TQueryParams, TBody>;
+  rest?: RestConfigInput<TPathParams, TQueryParams, TBody, TMethod>;
 };
 
 // Overload 1: Query-based operation (has `query`, no `handler`)
@@ -166,6 +183,8 @@ export function operation<
   TQueryParams extends z.ZodType | undefined = undefined,
   TBody extends z.ZodType | undefined = undefined,
   TQuery extends string | AnyQueryDocument = string,
+  TMethod extends RestMethod = "GET",
+  TAfter = QueryResultOf<TQuery>,
 >(
   config: QueryOperationConfig<
     TInputSchema,
@@ -174,9 +193,18 @@ export function operation<
     TPathParams,
     TQueryParams,
     TBody,
-    TQuery
+    TQuery,
+    TMethod,
+    TAfter
   >,
-): QueryOperation<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TInitData>;
+  // NoInfer: under `satisfies ConfigurationFn` the contextual return type would
+  // otherwise be an inference site for TAfter and turn every output into `any`.
+): QueryOperation<
+  InferInput<TInputSchema>,
+  QueryOutput<TOutputSchema, NoInfer<TAfter>>,
+  TInitData
+> &
+  OperationTypes<TMethod, CallerInput<TInputSchema>, QueryOutput<TOutputSchema, NoInfer<TAfter>>>;
 
 // Overload 2: Handler-based operation without custom repository type (no generic provided)
 export function operation<
@@ -186,6 +214,7 @@ export function operation<
   TPathParams extends z.ZodType | undefined = undefined,
   TQueryParams extends z.ZodType | undefined = undefined,
   TBody extends z.ZodType | undefined = undefined,
+  TMethod extends RestMethod = "GET",
 >(
   config: HandlerOperationConfig<
     unknown,
@@ -194,9 +223,11 @@ export function operation<
     TInitData,
     TPathParams,
     TQueryParams,
-    TBody
+    TBody,
+    TMethod
   >,
-): HandlerOperation<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TInitData, unknown>;
+): HandlerOperation<InferInput<TInputSchema>, InferOutput<TOutputSchema>, TInitData, unknown> &
+  OperationTypes<TMethod, CallerInput<TInputSchema>, InferOutput<TOutputSchema>>;
 
 // Implementation
 export function operation(config: unknown): unknown {
@@ -245,6 +276,7 @@ operation.typed = <TRepository>() => {
     TPathParams extends z.ZodType | undefined = undefined,
     TQueryParams extends z.ZodType | undefined = undefined,
     TBody extends z.ZodType | undefined = undefined,
+    TMethod extends RestMethod = "GET",
   >(
     config: HandlerOperationConfig<
       TRepository,
@@ -253,14 +285,16 @@ operation.typed = <TRepository>() => {
       TInitData,
       TPathParams,
       TQueryParams,
-      TBody
+      TBody,
+      TMethod
     >,
   ): HandlerOperation<
     InferInput<TInputSchema>,
     InferOutput<TOutputSchema>,
     TInitData,
     TRepository
-  > => {
+  > &
+    OperationTypes<TMethod, CallerInput<TInputSchema>, InferOutput<TOutputSchema>> => {
     return config as HandlerOperation<
       InferInput<TInputSchema>,
       InferOutput<TOutputSchema>,
