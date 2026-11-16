@@ -82,6 +82,7 @@ const handlerFor = (
     endpoint: "/trpc",
     roles,
     maxBatchSize: 10,
+    enableCors: true,
     resolveCaller: async () => USER,
     ...options,
   });
@@ -686,5 +687,153 @@ describe("createTRPCHandler cache", () => {
 
     expect(gql.calls).toBe(2);
     expect(await getCache("trpc_cached_rest")!.keys()).toHaveLength(2);
+  });
+});
+
+describe("createTRPCHandler caller", () => {
+  const LIMITED = { ...USER, limit: { allowed: false, retryAfterMs: 1500 } };
+
+  it("answers a rate-limited caller TOO_MANY_REQUESTS with Retry-After, running nothing", async () => {
+    let runs = 0;
+    const handler = handlerFor(
+      { user: roleOf({ echo: { ...echo, handler: () => ++runs } }) },
+      { resolveCaller: async () => LIMITED },
+    );
+
+    const response = await query(handler, "echo", { id: 7 });
+
+    expect(response.headers.get("retry-after")).toBe("2");
+    expect(await failureOf(response)).toEqual({
+      status: 429,
+      code: "TOO_MANY_REQUESTS",
+      message: "TOO_MANY_REQUESTS",
+    });
+    // The context is read before the input is parsed.
+    expect((await failureOf(await query(handler, "echo", { id: "seven" }))).status).toBe(429);
+    expect(runs).toBe(0);
+  });
+
+  // tRPC looks the procedure up and checks the method before it reads the
+  // context, so these two answers stay what they are; the header still rides them.
+  it("keeps Retry-After on a rate-limited caller's NOT_FOUND and METHOD_NOT_SUPPORTED", async () => {
+    const handler = handlerFor({ user: roleOf({ echo }) }, { resolveCaller: async () => LIMITED });
+
+    const missing = await query(handler, "missing");
+    const wrongMethod = await mutate(handler, "echo", { id: 7 });
+
+    expect([missing.status, missing.headers.get("retry-after")]).toEqual([404, "2"]);
+    expect([wrongMethod.status, wrongMethod.headers.get("retry-after")]).toEqual([405, "2"]);
+    expect(wrongMethod.headers.get("allow")).toBe("GET");
+  });
+
+  it("never sends Retry-After 0: under a second rounds up to one, as S429 does", async () => {
+    const handler = handlerFor(
+      { user: roleOf({ echo }) },
+      { resolveCaller: async () => ({ ...USER, limit: { allowed: false, retryAfterMs: 0 } }) },
+    );
+
+    const response = await query(handler, "echo", { id: 7 });
+
+    expect([response.status, response.headers.get("retry-after")]).toEqual([429, "1"]);
+  });
+
+  it("sends no Retry-After to a caller within its limit", async () => {
+    const handler = handlerFor(
+      { user: roleOf({ echo }) },
+      { resolveCaller: async () => ({ ...USER, limit: { allowed: true, retryAfterMs: 0 } }) },
+    );
+
+    const response = await query(handler, "echo", { id: 7 });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.has("retry-after")).toBe(false);
+  });
+
+  it("logs a caller it cannot resolve and answers nothing of the error", async () => {
+    const error = spyOn(logger("trpc"), "error").mockImplementation((() => {}) as never);
+    const boom = new Error("Cannot read properties of undefined (reading 'handlers')");
+    try {
+      const handler = handlerFor(
+        { user: roleOf({ echo }) },
+        {
+          resolveCaller: async () => {
+            throw boom;
+          },
+        },
+      );
+
+      const response = await query(handler, "echo", { id: 7 });
+      const body = await response.text();
+
+      // No role is known, so the request goes to a router that holds nothing.
+      expect(response.status).toBe(404);
+      expect(JSON.parse(body).error.data.code).toBe("NOT_FOUND");
+      expect(body).not.toContain("handlers");
+      expect(error).toHaveBeenCalledWith({ err: boom }, "trpc caller resolution failed");
+    } finally {
+      error.mockRestore();
+    }
+  });
+});
+
+describe("createTRPCHandler CORS", () => {
+  const CORS = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-credentials": "true",
+    "access-control-allow-methods": "*",
+    "access-control-allow-headers": "*",
+  };
+  const corsOf = (response: Response) =>
+    Object.fromEntries(Object.keys(CORS).map((name) => [name, response.headers.get(name)]));
+
+  it("sends the CORS headers every REST response carries, on answers and errors alike", async () => {
+    const handler = handlerFor({ user: roleOf({ echo }) });
+
+    expect(corsOf(await query(handler, "echo", { id: 7 }))).toEqual(CORS);
+    expect(corsOf(await query(handler, "echo", { id: "seven" }))).toEqual(CORS);
+    expect(corsOf(await query(handler, "missing"))).toEqual(CORS);
+  });
+
+  it("answers a preflight without resolving a caller", async () => {
+    let resolved = 0;
+    const handler = handlerFor(
+      { user: roleOf({ echo }) },
+      {
+        resolveCaller: async () => {
+          resolved++;
+          return USER;
+        },
+      },
+    );
+
+    const response = await handler(
+      new Request("http://localhost/trpc/echo", { method: "OPTIONS" }) as BunRequest,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(corsOf(response)).toEqual(CORS);
+    expect(resolved).toBe(0);
+  });
+
+  it("leaves a preflight to tRPC when CORS is off", async () => {
+    let resolved = 0;
+    const handler = handlerFor(
+      { user: roleOf({ echo }) },
+      {
+        enableCors: false,
+        resolveCaller: async () => {
+          resolved++;
+          return USER;
+        },
+      },
+    );
+
+    const response = await handler(
+      new Request("http://localhost/trpc/echo", { method: "OPTIONS" }) as BunRequest,
+    );
+
+    expect(response.status).not.toBe(200);
+    expect(resolved).toBe(1);
   });
 });

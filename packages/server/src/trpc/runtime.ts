@@ -5,9 +5,11 @@ import type { AnyTRPCProcedure, AnyTRPCRouter } from "@trpc/server";
 import type { BunRequest } from "bun";
 import type { HandleGraphQLRequest } from "../configuration/gql/handleGraphQLRequestFactory";
 import type { HandleRESTRequest } from "../configuration/rest/handleRESTRequestFactory";
+import type { ConsumeResult } from "../utils/rateLimit";
 import type { SessionContext } from "../utils/sessionVariables";
 
 import { logger } from "../logging";
+import { S200, setCorsHeaders } from "../utils/responses";
 
 /** The caller of a request: what every procedure of that request runs as. */
 export type TRPCContext = { role: string; session: SessionContext; req: BunRequest };
@@ -22,10 +24,12 @@ export type CreateTRPCHandlerOptions = {
   endpoint: string;
   roles: Record<string, { handlers: RoleHandlers }>;
   maxBatchSize: number;
+  enableCors: boolean;
+  /** The same resolution as REST: token or admin secret, one rate-limit check, the audit record. */
   resolveCaller: (
     req: Request,
     server?: Bun.Server<unknown>,
-  ) => Promise<{ role: string; session: SessionContext }>;
+  ) => Promise<{ role: string; session: SessionContext; limit?: ConsumeResult }>;
 };
 
 const log = logger("trpc");
@@ -162,6 +166,7 @@ export const createTRPCHandler = ({
   endpoint,
   roles,
   maxBatchSize,
+  enableCors,
   resolveCaller,
 }: CreateTRPCHandlerOptions) => {
   const argumentless = new Set<string>();
@@ -179,16 +184,52 @@ export const createTRPCHandler = ({
   }
 
   return async (req: BunRequest, server?: Bun.Server<unknown>): Promise<Response> => {
-    // Resolved outside tRPC: the caller's role picks the router.
-    const { role, session } = await resolveCaller(req, server);
+    if (req.method === "OPTIONS" && enableCors) return new S200(null);
+
+    // Resolved outside tRPC: the caller's role picks the router. A failure is
+    // not answered here, where it would be a body the tRPC client cannot parse:
+    // createContext throws it, and every call of the request answers it in
+    // tRPC's envelope.
+    let caller: TRPCContext | undefined;
+    let failure: TRPCError | undefined;
+    let retryAfter: string | undefined;
+
+    try {
+      const { role, session, limit } = await resolveCaller(req, server);
+      caller = { role, session, req };
+
+      if (limit && !limit.allowed) {
+        failure = new TRPCError({ code: "TOO_MANY_REQUESTS" });
+        // As S429 computes it: seconds, and never 0.
+        retryAfter = String(Math.max(1, Math.ceil(limit.retryAfterMs / 1000)));
+      }
+    } catch (error) {
+      log.error({ err: error }, "trpc caller resolution failed");
+      failure = internalError();
+    }
 
     return fetchRequestHandler({
       endpoint,
       req,
-      router: routers.get(role) ?? emptyRouter,
+      // No role is known for a caller that failed to resolve: every name is NOT_FOUND.
+      router: (caller && routers.get(caller.role)) ?? emptyRouter,
       allowBatching: true,
       maxBatchSize,
-      createContext: () => ({ role, session, req }),
+      createContext: () => {
+        if (failure || !caller) throw failure ?? internalError();
+
+        return caller;
+      },
+      // On every answer, whatever its calls answer: tRPC checks the name and the
+      // method before it reads the context, and a stream's head is written
+      // before any error is known.
+      responseMeta: () => {
+        const headers = new Headers();
+        setCorsHeaders(headers);
+        if (retryAfter) headers.set("Retry-After", retryAfter);
+
+        return { headers };
+      },
     });
   };
 };

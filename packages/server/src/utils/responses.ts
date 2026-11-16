@@ -1,4 +1,4 @@
-const setCorsHeaders = (headers: Headers) => {
+export const setCorsHeaders = (headers: Headers) => {
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Access-Control-Allow-Credentials", "true");
   headers.set("Access-Control-Allow-Methods", "*");
