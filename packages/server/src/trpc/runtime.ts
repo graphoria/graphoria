@@ -47,7 +47,9 @@ const internalError = () =>
  * exist, before it checks the method or parses the input.
  */
 const buildRouter = (role: string, { gql, rest }: RoleHandlers, argumentless: Set<string>) => {
-  const { initDataOf, handlerOptions } = rest.operationRuntime;
+  const { initDataOf, handlerOptions, cacheFor } = rest.operationRuntime;
+  // Concurrent misses on one key share one execution, as on REST.
+  const inflight = new Map<string, Promise<unknown>>();
   const procedures: Record<string, AnyTRPCProcedure> = {};
 
   for (const [name, route] of Object.entries(rest.operationsEnhanced)) {
@@ -79,6 +81,43 @@ const buildRouter = (role: string, { gql, rest }: RoleHandlers, argumentless: Se
       return route.hooks?.afterRequest ? route.hooks.afterRequest({ output: data }) : data;
     };
 
+    // The operation's REST store under tRPC's own keys: the stored shape differs,
+    // so the two surfaces never read each other's entries. The key carries
+    // `variables`, which is what InvalidationHelper matches on.
+    const cached = async (variables: Record<string, unknown>, ctx: TRPCContext) => {
+      const cache = route.query ? cacheFor(route.routeKey) : undefined;
+      if (!cache) return execute(variables, ctx);
+
+      const key = JSON.stringify({
+        trpc: route.routeKey,
+        variables,
+        sub: ctx.session.sub,
+        role: ctx.session.role,
+      });
+
+      // Stored after afterRequest, so a hit does not run the hook again.
+      const hit = await cache.get(key);
+      if (hit !== undefined) return JSON.parse(hit);
+
+      const pending = inflight.get(key);
+      if (pending) return pending;
+
+      const miss = (async () => {
+        const payload = await execute(variables, ctx);
+        // `undefined` (an afterRequest that returns nothing) has no JSON text: answered, not stored.
+        const serialized = JSON.stringify(payload);
+        if (serialized !== undefined) await cache.set(key, serialized);
+
+        return payload;
+      })();
+      inflight.set(key, miss);
+      try {
+        return await miss;
+      } finally {
+        inflight.delete(key);
+      }
+    };
+
     const resolve = async ({ input, ctx }: { input: unknown; ctx: TRPCContext }) => {
       log.debug({ operation: name, type, role }, "trpc call");
 
@@ -98,7 +137,7 @@ const buildRouter = (role: string, { gql, rest }: RoleHandlers, argumentless: Se
           input ??
           {};
 
-        return await execute(variables, ctx);
+        return await cached(variables, ctx);
       } catch (error) {
         if (isTRPCError(error)) throw error;
 

@@ -502,3 +502,189 @@ describe("createTRPCHandler boot warning", () => {
     }
   });
 });
+
+describe("createTRPCHandler cache", () => {
+  const CACHE = { ttl: 10_000, max: 10 };
+
+  // A counting GraphQL stub, optionally slow enough for calls to overlap.
+  const countingGql = (delayMs = 0) => {
+    const gql = {
+      ...stubGql(),
+      calls: 0,
+      operatorQuery: async () => {
+        gql.calls++;
+        if (delayMs) await Bun.sleep(delayMs);
+        return { data: { ping: true } };
+      },
+    };
+    return gql;
+  };
+
+  it("stores a miss after afterRequest, and answers a hit without the query or the hook", async () => {
+    const { getCache } = await import("../singletons/cache");
+    const gql = countingGql();
+    let hooks = 0;
+    const handler = handlerFor({
+      user: roleOf(
+        {
+          trpc_cached: {
+            query: "query { ping }",
+            input: z.object({ id: z.number() }),
+            cache: CACHE,
+            hooks: {
+              afterRequest: ({ output }: { output: object }) => ({ ...output, n: ++hooks }),
+            },
+          },
+        },
+        gql,
+      ),
+    });
+
+    const first = await dataOf(await query(handler, "trpc_cached", { id: 7 }));
+    const second = await dataOf(await query(handler, "trpc_cached", { id: 7 }));
+
+    expect(first).toEqual({ ping: true, n: 1 });
+    expect(second).toEqual(first);
+    expect({ queries: gql.calls, hooks }).toEqual({ queries: 1, hooks: 1 });
+
+    const store = getCache("trpc_cached")!;
+    const [key] = await store.keys();
+    expect(key).toBe(
+      JSON.stringify({ trpc: "trpc_cached", variables: { id: 7 }, sub: "alice", role: "user" }),
+    );
+    expect(await store.get(key)).toBe(JSON.stringify({ ping: true, n: 1 }));
+  });
+
+  it("keeps one entry per caller: another sub or another role shares none", async () => {
+    const { getCache } = await import("../singletons/cache");
+    const gql = countingGql();
+    const operations = { trpc_cached_callers: { query: "query { ping }", cache: CACHE } };
+    let caller = { role: "user", session: { role: "user", sub: "alice" } };
+    const handler = handlerFor(
+      { user: roleOf(operations, gql), admin: roleOf(operations, gql) },
+      { resolveCaller: async () => caller },
+    );
+
+    await query(handler, "trpc_cached_callers");
+    caller = { role: "user", session: { role: "user", sub: "bob" } };
+    await query(handler, "trpc_cached_callers");
+    caller = { role: "admin", session: { role: "admin", sub: "alice" } };
+    await query(handler, "trpc_cached_callers");
+    caller = { role: "user", session: { role: "user", sub: "alice" } };
+    await query(handler, "trpc_cached_callers");
+
+    expect(gql.calls).toBe(3);
+    expect(await getCache("trpc_cached_callers")!.keys()).toHaveLength(3);
+  });
+
+  it("answers an afterRequest that returns nothing, and stores nothing", async () => {
+    const { getCache } = await import("../singletons/cache");
+    const gql = countingGql();
+    const handler = handlerFor({
+      user: roleOf(
+        {
+          trpc_cached_nothing: {
+            query: "query { ping }",
+            cache: CACHE,
+            hooks: { afterRequest: () => undefined },
+          },
+        },
+        gql,
+      ),
+    });
+
+    const first = await query(handler, "trpc_cached_nothing");
+    await query(handler, "trpc_cached_nothing");
+
+    expect(await first.json()).toEqual({ result: {} });
+    expect(gql.calls).toBe(2);
+    expect(await getCache("trpc_cached_nothing")!.keys()).toEqual([]);
+  });
+
+  it("is cleared by InvalidationHelper, by variables or whole", async () => {
+    const { InvalidationHelper, getCache } = await import("../singletons/cache");
+    const gql = countingGql();
+    const handler = handlerFor({
+      user: roleOf(
+        {
+          trpc_cached_invalidated: {
+            query: "query { ping }",
+            input: z.object({ id: z.number() }),
+            cache: CACHE,
+          },
+        },
+        gql,
+      ),
+    });
+    const store = () => getCache("trpc_cached_invalidated")!;
+
+    await query(handler, "trpc_cached_invalidated", { id: 7 });
+    await query(handler, "trpc_cached_invalidated", { id: 8 });
+    expect(await store().keys()).toHaveLength(2);
+
+    await InvalidationHelper.invalidate("trpc_cached_invalidated", { id: 7 });
+    expect(await store().keys()).toEqual([
+      JSON.stringify({
+        trpc: "trpc_cached_invalidated",
+        variables: { id: 8 },
+        sub: "alice",
+        role: "user",
+      }),
+    ]);
+
+    await query(handler, "trpc_cached_invalidated", { id: 7 });
+    expect(gql.calls).toBe(3);
+
+    await InvalidationHelper.invalidate("trpc_cached_invalidated");
+    expect(await store().keys()).toEqual([]);
+  });
+
+  it("shares one execution between concurrent misses on one key", async () => {
+    const gql = countingGql(10);
+    let hooks = 0;
+    const handler = handlerFor({
+      user: roleOf(
+        {
+          trpc_cached_herd: {
+            query: "query { ping }",
+            cache: CACHE,
+            hooks: {
+              afterRequest: ({ output }: { output: object }) => ({ ...output, n: ++hooks }),
+            },
+          },
+        },
+        gql,
+      ),
+    });
+
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () => query(handler, "trpc_cached_herd")),
+    );
+    const bodies = await Promise.all(responses.map((response) => response.text()));
+
+    expect({ queries: gql.calls, hooks }).toEqual({ queries: 1, hooks: 1 });
+    expect(new Set(bodies)).toEqual(
+      new Set([JSON.stringify({ result: { data: { ping: true, n: 1 } } })]),
+    );
+  });
+
+  it("keeps its entries apart from the operation's REST entries", async () => {
+    const { getCache } = await import("../singletons/cache");
+    const gql = countingGql();
+    const user = roleOf({ trpc_cached_rest: { query: "query { ping }", cache: CACHE } }, gql);
+    const handler = handlerFor({ user });
+
+    await query(handler, "trpc_cached_rest");
+    await user.handlers.rest.handler(
+      new URL("http://localhost/trpc_cached_rest"),
+      "/trpc_cached_rest",
+      "GET",
+      new Request("http://localhost/trpc_cached_rest"),
+      USER.session,
+    );
+    await query(handler, "trpc_cached_rest");
+
+    expect(gql.calls).toBe(2);
+    expect(await getCache("trpc_cached_rest")!.keys()).toHaveLength(2);
+  });
+});
