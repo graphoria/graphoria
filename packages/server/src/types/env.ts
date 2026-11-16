@@ -61,6 +61,9 @@ export const EnvZod = z
     METRICS_ENDPOINT: z.string().default("/metrics"),
     METRICS_SECRET: secretList,
     METRICS_MAX_OPERATION_LABELS: z.coerce.number().int().min(1).default(200),
+    TRPC_ENABLED: z.stringbool().default(false),
+    TRPC_ENDPOINT: z.string().default("/trpc"),
+    TRPC_MAX_BATCH_SIZE: z.coerce.number().int().positive().default(10),
     // Only the gate is graphoria's own. The rest are the standard OpenTelemetry
     // names, so a cluster that already injects them into its pods needs to set
     // nothing but TRACING_ENABLED.
@@ -155,6 +158,11 @@ export const EnvZod = z
       endpoint: env.METRICS_ENDPOINT,
       secrets: env.METRICS_SECRET,
       maxOperationLabels: env.METRICS_MAX_OPERATION_LABELS,
+    },
+    trpc: {
+      enabled: env.TRPC_ENABLED,
+      endpoint: env.TRPC_ENDPOINT,
+      maxBatchSize: env.TRPC_MAX_BATCH_SIZE,
     },
     tracing: {
       enabled: env.TRACING_ENABLED,
