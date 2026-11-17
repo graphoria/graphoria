@@ -169,9 +169,9 @@ Off by default. `RATE_LIMIT_MAX` is the request ceiling per window for an authen
 | `RATE_LIMIT_TRUST_PROXY`   | `boolean` | `false` | Read the client address from `X-Forwarded-For` |
 
 A caller gets **one bucket across every endpoint** — `/graphql` including the websocket upgrade,
-`/rest/*` (the agent's `/rest/ai` included), `/mcp`, the console login and the console's `/api/ai`
-and `/api/graphql` — because what exhausts a server is total request volume, not volume on one
-route. An idle bucket refills to `max`, so a caller may burst `max` then sustain `max` per window.
+`/rest/*` (the agent's `/rest/ai` included), `/trpc/*`, `/mcp`, the console login and the console's
+`/api/ai` and `/api/graphql` — because what exhausts a server is total request volume, not volume on
+one route. A tRPC batch is one request, whatever the number of calls it carries. An idle bucket refills to `max`, so a caller may burst `max` then sustain `max` per window.
 Over budget is `429` with `Retry-After` in seconds. The
 [health endpoints](./OBSERVABILITY.md#health-endpoints) are outside the limit, so a probe is never
 answered `429`.

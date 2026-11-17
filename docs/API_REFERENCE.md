@@ -8,7 +8,7 @@ Complete exports reference for all Graphoria packages.
 
 ## @graphoria/server
 
-Main server package. Two export paths: `.` (the server runtime) and `./config` (configuration helpers + types — `operation`, `cron`, `queue`, virtual-column builders, `z`, `ConfigurationFn`). Installing `@graphoria/server` alone is enough, except for queues and AI: the RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Installing the adapters](./QUEUES.md#installing-the-adapters)) and the AI agent + MCP runtimes in `@graphoria/ai` (see [Installing](./AI.md#installing)).
+Main server package. Three export paths: `.` (the server runtime), `./config` (configuration helpers + types — `operation`, `cron`, `queue`, virtual-column builders, `z`, `ConfigurationFn`) and `./trpc` (the typed tRPC router of a configuration, types only). Installing `@graphoria/server` alone is enough, except for queues and AI: the RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Installing the adapters](./QUEUES.md#installing-the-adapters)) and the AI agent + MCP runtimes in `@graphoria/ai` (see [Installing](./AI.md#installing)). The opt-in tRPC surface needs `@trpc/server` in your own dependencies (see [tRPC](./TRPC.md#enabling-trpc)).
 
 ### Main Export (`.`)
 
@@ -128,6 +128,7 @@ type Prefixes = {
   console: string; // e.g. "/_console" — mounted only when CONSOLE_ENABLED
   health: string; // e.g. "/health" — serves /health/live and /health/ready
   metrics: string; // e.g. "/metrics" — mounted only when METRICS_ENABLED
+  trpc: string; // e.g. "/trpc" — mounted only when TRPC_ENABLED
 };
 ```
 
@@ -313,7 +314,10 @@ Re-exported Zod library for convenience.
 type InferOperationInput<T>    // Extract TInput from a TypedOperation
 type InferOperationOutput<T>   // Extract TOutput from a TypedOperation
 type InferOperationInitData<T> // Extract TInitData from a TypedOperation
+type OperationTypes<TMethod, TInput, TOutput> // What a typed client reads from an operation
 ```
+
+`OperationTypes` is the type-only `__operationTypes` property on what `operation()` and `operation.typed()` return: the operation's `rest.method`, the input a caller sends and the output it gets. Nothing sets it at runtime, and setting it in a configuration fails validation. `TRPCRouterOf` (below) reads it.
 
 #### Cron Types
 
@@ -339,6 +343,18 @@ type InferOperationInitData<T> // Extract TInitData from a TypedOperation
 | `RedisCacheStoreConfigZod`  | Schema for a `redis` store      |
 | `ServerConnectionZod`       | Schema for ServerConnection     |
 | `SQLiteConnectionZod`       | Schema for SQLiteConnection     |
+
+### tRPC Export (`./trpc`)
+
+Import: `import type { TRPCRouterOf } from "@graphoria/server/trpc"`
+
+Types only; it needs `@trpc/server` installed. See [tRPC](./TRPC.md).
+
+```typescript
+type TRPCRouterOf<TConfig> // The tRPC router type of a configuration function or object
+```
+
+`createTRPCClient<TRPCRouterOf<typeof config>>(…)` types a client from `graphoria.ts` without code generation: one procedure per operation made with `operation()` or `operation.typed()`, a query when its `rest.method` is `GET` and a mutation otherwise. Keep the configuration's literal types with `satisfies ConfigurationFn`.
 
 ---
 

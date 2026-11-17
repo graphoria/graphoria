@@ -72,6 +72,7 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 
 - **Auto-generated GraphQL API** from database schema with zero configuration
 - **Auto-generated REST API** from GraphQL schema for maximum compatibility
+- **Typed tRPC procedures** — every operation as a tRPC query or mutation, its types inferred from `graphoria.ts` without code generation (opt-in)
 - **Multi-database support** — PostgreSQL, SQL Server (MSSQL), MySQL, SQLite
 - **JWT or PASETO authentication** with argon2id password hashing and role-based access control (RBAC)
 - **Row-level security** — per-role filters with session variable injection
@@ -257,7 +258,7 @@ Every privileged action is written as one structured record through a pino child
 
 | Action                                | Actor                                                            | Target                                       | When                                                                                                                                                                                                                                   |
 | ------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admin_secret.used`                   | `admin_secret`, address, and at `/rest/ai` or `/mcp` the `scope` | the endpoint (method, path) or `websocket`   | A `/graphql`, `/rest/*` or `POST /mcp` request or a websocket `connection_init` that presented the admin secret, and `AI_SECRET` / `AI_MCP_SECRET` on their own routes; `GET /metrics` writes none                                     |
+| `admin_secret.used`                   | `admin_secret`, address, and at `/rest/ai` or `/mcp` the `scope` | the endpoint (method, path) or `websocket`   | A `/graphql`, `/rest/*`, `/trpc/*` or `POST /mcp` request or a websocket `connection_init` that presented the admin secret, and `AI_SECRET` / `AI_MCP_SECRET` on their own routes; `GET /metrics` writes none                          |
 | `auth.login`                          | `credentials`, username                                          | `auth`, with `via` and (on success) the role | `auth_login` over GraphQL or REST; `outcome` is `success` or `failure`                                                                                                                                                                 |
 | `auth.logout`                         | the session                                                      | `auth`, with the JTIs it revoked             | `auth_logout`, when it revoked at least one token                                                                                                                                                                                      |
 | `queue.publish`                       | the session                                                      | the publisher                                | A queue publisher mutation                                                                                                                                                                                                             |
@@ -377,6 +378,7 @@ Generated GraphQL fields follow the `{schema}_{name}` pattern by default — e.g
 | -------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | GET/POST | `/graphql`      | GraphQL over HTTP, POST only. GET is the WebSocket upgrade (graphql-ws); a plain GET is `404`.                               |
 | GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies).                                                                                 |
+| GET/POST | `/trpc/*`       | Operations as typed tRPC procedures (opt-in via `TRPC_ENABLED`).                                                             |
 | GET      | `/graphiql`     | Bundled GraphiQL playground.                                                                                                 |
 | GET      | `/scalar`       | Bundled Scalar API docs.                                                                                                     |
 | GET      | `/openapi.json` | Unified OpenAPI spec (operations + remote-REST).                                                                             |
@@ -461,6 +463,7 @@ The three limits that ship on — query depth, page size and the statement timeo
 | [Permissions & Access Control](./docs/PERMISSIONS.md) | RBAC, row-level filtering, session variables, ordering                                                     |
 | [Resource Limits](./docs/LIMITS.md)                   | Depth, page size, timeouts, rate limiting and the query cost budget                                        |
 | [Operations](./docs/OPERATIONS.md)                    | Custom query and handler operations, hooks, caching                                                        |
+| [tRPC](./docs/TRPC.md)                                | Operations as typed tRPC procedures, with no code generation                                               |
 | [Cron Jobs](./docs/CRON.md)                           | Scheduled background work with cron expressions and ISO datetimes                                          |
 | [Queues](./docs/QUEUES.md)                            | RabbitMQ and Kafka publishers, subscribers, cache invalidation                                             |
 | [Subscriptions](./docs/SUBSCRIPTIONS.md)              | GraphQL subscriptions over WebSockets                                                                      |

@@ -211,16 +211,18 @@ operation({
 - `output` types the mutation's result: an object schema gives `<name>Output!`, a nullable object (`.nullable()`) a nullable `<name>Output`, and any other output, or none, `Boolean!`. A nullable field inside `output` or `input` is a nullable field of its own type. A handler's REST answer is the JSON of what it returns, `null` included; a handler that returns nothing answers an empty body. `/openapi.json` describes that answer with the `output` schema as is, without the `data` envelope a query operation's answer has.
 - Path and query values arrive as strings: declare a number `z.coerce.number()`. A parameter declared `z.boolean()` is converted before validation, accepting `true`/`1`/`yes`/`on`/`y`/`enabled` and `false`/`0`/`no`/`off`/`n`/`disabled` (case-insensitive); any other value fails validation. Declaring it `z.boolean()` rather than `z.stringbool()` is also what makes the OpenAPI spec describe it as a boolean, so the docs render a true/false picker instead of a free-text box.
 
+With `TRPC_ENABLED`, every operation with a `rest` route is also a tRPC procedure under `/trpc/*`: a query when `rest.method` is `GET`, a mutation otherwise. A procedure takes its arguments from `input` alone and never reads `rest.pathParams`, `queryParams` or `body`, so give `input` to an operation a tRPC client calls with arguments. See [tRPC](./TRPC.md).
+
 ## Hooks lifecycle
 
-Three optional hooks let you extend an operation without changing its core query/handler. They run on its REST route only: a call through GraphQL runs the handler alone.
+Three optional hooks let you extend an operation without changing its core query/handler. They run on its REST route and on its [tRPC](./TRPC.md) procedure: a call through GraphQL runs the handler alone.
 
 ```typescript
 operation({
   /* … */
   hooks: {
     init: async ({ gqlQuery }) => {
-      // Runs on the route's first REST request. Return value is cached and passed to beforeRequest.
+      // Runs on the operation's first REST or tRPC request. Return value is cached and passed to beforeRequest.
       return await loadStaticConfig();
     },
     beforeRequest: ({ input, pathParams, queryParams, body }, initData) => {
@@ -240,9 +242,9 @@ operation({
 });
 ```
 
-`init` is the right place for one-time work: priming a cache, loading static metadata, opening a connection to a third-party service. It runs on the route's first REST request, not at boot, and its return value is preserved between requests and passed as the second argument to `beforeRequest`. An `init` that returns `undefined` runs again on the next request, and requests that arrive while it is still running each run it too: keep it idempotent.
+`init` is the right place for one-time work: priming a cache, loading static metadata, opening a connection to a third-party service. It runs on the operation's first REST or tRPC request, not at boot, and its return value is preserved between requests and passed as the second argument to `beforeRequest`. An `init` that returns `undefined` runs again on the next request, and requests that arrive while it is still running each run it too: keep it idempotent.
 
-`beforeRequest` is a transform from the validated `input` to the actual variables (or handler input). Alongside the merged `input`, the context exposes each REST source separately — `pathParams`, `queryParams`, and `body`, each parsed with its own `rest.*` schema (or `undefined` when that schema is omitted). Use it to inject server-side context, normalize input, or short-circuit the request by throwing.
+`beforeRequest` is a transform from the validated `input` to the actual variables (or handler input). Alongside the merged `input`, the context exposes each REST source separately — `pathParams`, `queryParams`, and `body`, each parsed with its own `rest.*` schema (or `undefined` when that schema is omitted). Use it to inject server-side context, normalize input, or short-circuit the request by throwing. Over tRPC the three REST sources are always `undefined` and `input` is the procedure's parsed input, so a hook that serves both surfaces reads `input`.
 
 `afterRequest` runs only on success, for both query- and handler-based operations. Throw to convert a successful response into an error. Its `output` is the operation's output payload: for query operations the unwrapped GraphQL `data` — the value you return replaces `data` in the response envelope (other fields are preserved); for handler operations it's whatever the handler returned. When a query operation is cached, `afterRequest` runs on the cache miss and its transformed result is what gets cached, so cache hits reuse it without re-invoking the hook — avoid per-request values (e.g. timestamps) there if the route is cached.
 
@@ -290,7 +292,7 @@ cache: {
 }
 ```
 
-Caches are operation-scoped. These fields shape the in-process `memory` store; whether the operation also reads a Redis store comes from [`caches`](./CONFIGURATION.md#caches) or its own `stores`. See [Cache Configuration](./CONFIGURATION.md#cache-configuration). The cache key is built from the path, the method, the resolved input and the caller's `sub` and role — two requests share a cache entry only when all of these match.
+Caches are operation-scoped. These fields shape the in-process `memory` store; whether the operation also reads a Redis store comes from [`caches`](./CONFIGURATION.md#caches) or its own `stores`. See [Cache Configuration](./CONFIGURATION.md#cache-configuration). The cache key is built from the path, the method, the resolved input and the caller's `sub` and role — two requests share a cache entry only when all of these match. A [tRPC](./TRPC.md) call keeps its own entries in the same store, keyed by the operation, the resolved input and the same `sub` and role, so the two surfaces never share an entry.
 
 To invalidate a cache from outside the request flow, attach a queue subscriber and call `cache.invalidate(operationName, pattern?)` from its handler. See [Queues](./QUEUES.md) for examples. With `memory` in front of Redis, see [invalidation across processes](./CONFIGURATION.md#caches).
 
@@ -354,3 +356,11 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 Path params, query params, and body are zod-validated before the operation runs; validation errors return `400` with a JSON description of the offending fields.
+
+tRPC, with `TRPC_ENABLED` and a client typed from the configuration (see [tRPC](./TRPC.md)):
+
+```typescript
+const { orders } = await client.getOrdersByCustomer.query({ customerId: "cus_42", limit: 10 });
+```
+
+The call takes the operation's `input`, validated by its schema; a failure is a `BAD_REQUEST` error.

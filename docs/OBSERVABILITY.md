@@ -146,7 +146,7 @@ and counting it against a caller ceiling would drop samples.
 
 | Metric                                         | Type      | Labels                                   | Means                                                                            |
 | ---------------------------------------------- | --------- | ---------------------------------------- | -------------------------------------------------------------------------------- |
-| `graphoria_http_requests_total`                | counter   | `route`, `method`, `status`              | Requests answered by the GraphQL and REST routes. `route` is `graphql` or `rest` |
+| `graphoria_http_requests_total`                | counter   | `route`, `method`, `status`              | Requests answered by the API routes. `route` is one of `graphql`, `rest`, `trpc` |
 | `graphoria_http_request_duration_seconds`      | histogram | `route`, `method`                        | Time to answer one of those requests                                             |
 | `graphoria_graphql_operations_total`           | counter   | `operation`, `type`, `role`, `outcome`   | Operations handled. `outcome` is `success` or `error`                            |
 | `graphoria_graphql_operation_duration_seconds` | histogram | `operation`, `type`, `role`              | Time spent handling one, database time included                                  |
@@ -229,7 +229,7 @@ hand, the same way the Prometheus exposition above is.
 
 | Span                      | Kind     | Opened by                            | Attributes                                                                                       |
 | ------------------------- | -------- | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `<METHOD> <route>`        | server   | The GraphQL and REST routes          | `http.request.method`, `http.route`, `url.scheme`, `server.address`, `http.response.status_code` |
+| `<METHOD> <route>`        | server   | The GraphQL, REST and tRPC routes    | `http.request.method`, `http.route`, `url.scheme`, `server.address`, `http.response.status_code` |
 | `graphoria.analyze`       | internal | The GraphQL handler                  | `graphoria.analysis.cached`                                                                      |
 | `<type> <operation>`      | internal | The GraphQL handler                  | `graphql.operation.name`, `graphql.operation.type`, `graphoria.role`                             |
 | `db.query`                | client   | Every statement through the executor | `db.system`, `db.name`, `db.statement`, plus the operation's name, type and role when it has one |
@@ -241,8 +241,8 @@ hand, the same way the Prometheus exposition above is.
 | `graphoria.remote_rest`   | client   | A remote REST proxy                  | `http.request.method`, `server.address`, `http.response.status_code`                             |
 
 A request roots one trace; a cron tick and a subscription poll each root their own, because neither
-sits inside one. REST operations, cron queries, an operation hook's `gqlQuery` and MCP's
-`graphql_execute` all run through the GraphQL handler, so they get the operation span without
+sits inside one. REST and tRPC query operations, cron queries, an operation hook's `gqlQuery` and
+MCP's `graphql_execute` all run through the GraphQL handler, so they get the operation span without
 anything further.
 
 An operation is named the way the metrics label and the slow query log name one: its own name, or

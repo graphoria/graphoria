@@ -88,7 +88,7 @@ unset credential matches nothing, not even an empty header.
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CONSOLE_READ_SECRET`  | `POST {console}/api/login`, for a session that can read every console page, the auth users' names and roles among them                                                                                                                                                      | A `read` session gets `403` from `queues/publish`, `cron`, `ai`, `graphql`, `users/roles`, a `POST`, `PATCH` or `DELETE` to `users`, and a `POST` to `users/active` or `users/password` |
 | `CONSOLE_WRITE_SECRET` | The same login, for a session that can also publish to queues, control cron, ask the AI agent or run a GraphQL query as any role granted `ai`, and create, edit, deactivate, reactivate or delete auth users of any role but the superadmin role, and reset their passwords | Sent in the admin-secret header anywhere, it is the anonymous role                                                                                                                      |
-| `AI_SECRET`            | `POST /rest/ai`, in the admin-secret header, reading as `AI_SECRET_ROLE`                                                                                                                                                                                                    | Sent to `/graphql`, any other `/rest/*` route, the websocket or `/mcp` it is the anonymous role, so the GraphQL `ask` field stays out of reach                                          |
+| `AI_SECRET`            | `POST /rest/ai`, in the admin-secret header, reading as `AI_SECRET_ROLE`                                                                                                                                                                                                    | Sent to `/graphql`, any other `/rest/*` route, `/trpc/*`, the websocket or `/mcp` it is the anonymous role, so the GraphQL `ask` field stays out of reach                               |
 | `AI_MCP_SECRET`        | `POST /mcp`, reading as `AI_MCP_SECRET_ROLE`                                                                                                                                                                                                                                | Anywhere else it is the anonymous role                                                                                                                                                  |
 | `METRICS_SECRET`       | `GET /metrics`, when `METRICS_ENABLED=true`                                                                                                                                                                                                                                 | Anywhere else it is the anonymous role                                                                                                                                                  |
 
@@ -243,9 +243,9 @@ The `{ in: "$session.claims.<array>" }` pattern resolves to the caller's own lis
 
 ### C8 — No cache entry crosses a caller or a role
 
-Graphoria caches REST operation responses and per-role query analysis. A cache keyed too loosely is
-a cross-tenant leak that is invisible in the query builder, so each key is asserted directly, from a
-primed cache.
+Graphoria caches operation responses, over REST and over tRPC, and per-role query analysis. A cache
+keyed too loosely is a cross-tenant leak that is invisible in the query builder, so each key is
+asserted directly, from a primed cache.
 
 | Test (`schema-isolation.test.ts`)                                        |
 | ------------------------------------------------------------------------ |
@@ -254,6 +254,10 @@ primed cache.
 | does not serve a user's cached rows to a different role                  |
 | does not route a cached operation to a role that was not granted it      |
 | does not serve one caller's cached query analysis to another             |
+
+A tRPC call keeps its own entries in the operation's store, keyed by the operation, the variables
+and the caller's `sub` and role; `trpc/runtime.test.ts` asserts that two callers who differ by `sub`,
+or by role, share none.
 
 ### C9 — A subscriber is pushed only rows it may read
 
@@ -341,9 +345,9 @@ to; all of them keep one caller from consuming the server.
 | Request rate      | `RATE_LIMIT_MAX`, `RATE_LIMIT_ANONYMOUS_MAX` | `0` — **off**  | Requests per `RATE_LIMIT_WINDOW_MS` per caller |
 | Query cost        | `MAX_QUERY_COST`                             | `0` — **off**  | Estimated rows one query asks a database for   |
 
-Operator-authored queries are exempt from the depth, page and cost limits: REST operations, cron
-jobs and the query function handed to operation hooks take their text from the configuration, never
-from a caller, so a limit there could only reject the operator's own intent.
+Operator-authored queries are exempt from the depth, page and cost limits: operations, over REST or
+tRPC, cron jobs and the query function handed to operation hooks take their text from the
+configuration, never from a caller, so a limit there could only reject the operator's own intent.
 
 **The query cost budget ships off too.** Depth bounds how deep a query nests and the page size
 bounds one list field; neither bounds a query that is merely wide — a hundred sibling relationships,
@@ -359,16 +363,16 @@ deployment. See [Rate limiting](./CONFIGURATION.md#rate-limiting).
 ## Audit log
 
 Every privileged action writes one record through a pino child logger tagged `component: "audit"`,
-at `info` regardless of `LOG_LEVEL`: a `/graphql`, `/rest/*` or `POST /mcp` request or a websocket
-`connection_init` that presents the admin secret, `AI_SECRET` on `POST /rest/ai` and `AI_MCP_SECRET`
-on `POST /mcp`, every login and logout, every queue publish, every agent invocation with its prompt,
+at `info` regardless of `LOG_LEVEL`: a `/graphql`, `/rest/*`, `/trpc/*` or `POST /mcp` request or a
+websocket `connection_init` that presents the admin secret, `AI_SECRET` on `POST /rest/ai` and
+`AI_MCP_SECRET` on `POST /mcp`, every login and logout, every queue publish, every agent invocation with its prompt,
 and every console login, logout, publish, cron action and user creation. A scrape of `GET /metrics` writes none.
 Each record names the actor, the action, the target and the time, and secret-bearing keys are
 redacted before it is written. The catalogue is in the [README](../README.md#audit-log).
 
 It is a log, not a store. It goes where the rest of the log goes, and it holds only what a handler
-saw. Such a `/graphql`, `/rest/*` or `POST /mcp` request is recorded before the rate limiter
-answers, so one answered `429` still leaves its record (`rateLimit.test.ts` asserts it for
+saw. Such a `/graphql`, `/rest/*`, `/trpc/*` or `POST /mcp` request is recorded before the rate
+limiter answers, so one answered `429` still leaves its record (`rateLimit.test.ts` asserts it for
 `POST /mcp`); a console login the limiter refuses leaves none. `auth_login` records the username but
 not the client address. An audit trail that outlives the process is the operator's log shipping.
 
