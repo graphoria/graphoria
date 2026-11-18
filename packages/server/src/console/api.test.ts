@@ -48,6 +48,8 @@ const fakeEnv = {
   ai: { secrets: [], mcp: { secrets: [] } },
   jwt: { secrets: ["test-jwt-secret"], expiresIn: "5m", rtExpiresIn: "7d" },
   rateLimit: { max: 0, anonymousMax: 0, windowMs: 60_000, trustProxy: false },
+  metrics: { enabled: false },
+  trpc: { enabled: false },
 };
 
 /** A `Bun.serve` route handler is handed a BunRequest; only `cookies` is extra. */
@@ -432,6 +434,29 @@ describe("consoleRoutesFactory", () => {
       features: { auth: true, ai: false, mcp: false, cors: true },
       session: { scope: "write" },
     });
+  });
+
+  it("lists on /config only the endpoints the server mounts", async () => {
+    const all = { ...prefixes, metrics: "/metrics", trpc: "/trpc" };
+    const listed = async (env: Record<string, unknown>) => {
+      const routes = consoleRoutesFactory({
+        env: { ...fakeEnv, ...env },
+        consolePath: "/_console",
+        prefixes: all,
+        projectConfiguration: fakeProjectConfiguration,
+        analyzedConfiguration: fakeAnalyzedConfiguration,
+        tokenService,
+      });
+
+      return (await (await routes["/_console/api/config"].GET(req())).json()).prefixes;
+    };
+
+    expect(await listed({})).toEqual(prefixes);
+    expect(await listed({ metrics: { enabled: true } })).toEqual({
+      ...prefixes,
+      metrics: "/metrics",
+    });
+    expect(await listed({ trpc: { enabled: true } })).toEqual({ ...prefixes, trpc: "/trpc" });
   });
 
   it("reports MCP on when AI_MCP_ENABLED turns it on over the config", async () => {
