@@ -53,7 +53,7 @@
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^21.0.4",
-    "@sinonjs/fake-timers": "^15.4.0",
+    "@sinonjs/fake-timers": "^15.5.0",
     "@testing-library/react": "^16.3.3",
     "@types/sinonjs__fake-timers": "^15.0.1",
     "happy-dom": "^21.0.4",
