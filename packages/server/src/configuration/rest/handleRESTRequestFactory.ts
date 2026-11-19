@@ -79,6 +79,25 @@ export const handleRESTRequestFactory = (
 
   const routesInitDataPromises: Record<string, unknown> = {};
 
+  // Built per call: the singletons are read when a hook or a handler runs.
+  const handlerOptions = () => ({
+    gqlQuery: gqlSuperadminHandler?.operatorQuery ?? gql.operatorQuery,
+    databases: databasesConnections,
+    queues: queueManager,
+    repository: repositoryMap,
+  });
+
+  // For another surface: the memo the REST handler below fills inline, where a
+  // call would cost every request an extra await. `init` runs on a route's first
+  // request, whichever surface asks first, and an `undefined` result is not kept.
+  const initDataOf = async (route: (typeof routes)[number]) => {
+    if (routesInitDataPromises[route.routeKey] === undefined) {
+      routesInitDataPromises[route.routeKey] = await route.hooks?.init?.(handlerOptions());
+    }
+
+    return routesInitDataPromises[route.routeKey];
+  };
+
   // Waiters share the winner's serialized response and its ETag, so neither is
   // recomputed per waiter.
   const inflight = new Map<string, Promise<{ value: string; etag: string }>>();
@@ -105,6 +124,8 @@ export const handleRESTRequestFactory = (
 
   return {
     operationsEnhanced,
+    // What another surface needs to run an operation as this one does.
+    operationRuntime: { initDataOf, handlerOptions, cacheFor },
     handler: async (
       url: URL,
       pathname: string,
@@ -153,12 +174,7 @@ export const handleRESTRequestFactory = (
       if (route.hasError) return new S401({ error: "You are not authorized" });
 
       if (routesInitDataPromises[route.routeKey] === undefined) {
-        routesInitDataPromises[route.routeKey] = await route.hooks?.init?.({
-          gqlQuery: gqlSuperadminHandler?.operatorQuery ?? gql.operatorQuery,
-          databases: databasesConnections,
-          queues: queueManager,
-          repository: repositoryMap,
-        });
+        routesInitDataPromises[route.routeKey] = await route.hooks?.init?.(handlerOptions());
       }
 
       // Validate and parse each REST parameter source with Zod. A source is
@@ -337,15 +353,7 @@ export const handleRESTRequestFactory = (
       // Check if this route uses a custom handler
       if (route.handler) {
         try {
-          const result = await route.handler(
-            {
-              gqlQuery: gqlSuperadminHandler?.operatorQuery ?? gql.operatorQuery,
-              databases: databasesConnections,
-              queues: queueManager,
-              repository: repositoryMap,
-            },
-            variables,
-          );
+          const result = await route.handler(handlerOptions(), variables);
 
           // Apply afterRequest hook if present
           const finalResult = route.hooks?.afterRequest

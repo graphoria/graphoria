@@ -41,6 +41,7 @@ import { env } from "./singletons/env";
 import { setQueryTimeoutMs } from "./singletons/queryTimeout";
 import { setSlowQueryMs } from "./logging/slowQuery";
 import { instantiateQueues, queueManager } from "./singletons/queues";
+import { loadTrpcRuntime } from "./trpc/load";
 import { ConfigurationZod } from "./types/zod/configuration";
 import {
   createMemoryRateLimitStore,
@@ -134,6 +135,7 @@ const generatePrefixes = (options: Env) => ({
   console: options.prefix + options.console.endpoint,
   health: options.prefix + "/health",
   metrics: options.prefix + options.metrics.endpoint,
+  trpc: options.prefix + options.trpc.endpoint,
 });
 
 /**
@@ -759,6 +761,26 @@ const createGraphQLServer = async (env: Env) => {
         }
       }),
     );
+
+    // Operations as tRPC procedures, opt-in via TRPC_ENABLED. The caller is
+    // resolved inside, as on REST: its role picks the router.
+    if (env.trpc.enabled) {
+      const { createTRPCHandler } = await loadTrpcRuntime();
+
+      routes[`${prefixes.trpc}/*`] = withHttpTracing(
+        "trpc",
+        withHttpMetrics(
+          "trpc",
+          createTRPCHandler({
+            endpoint: prefixes.trpc,
+            roles: analyzedConfiguration.roles,
+            maxBatchSize: env.trpc.maxBatchSize,
+            enableCors: env.enableCors,
+            resolveCaller: getRoleHandlers,
+          }),
+        ),
+      );
+    }
 
     // Create WebSocket handler
     const { handler: websocketHandler, closeAll: closeWebsockets } = websocketHandlerFactory(

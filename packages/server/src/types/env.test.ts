@@ -308,6 +308,40 @@ describe("EnvZod metrics", () => {
   });
 });
 
+describe("EnvZod tRPC", () => {
+  const baseEnv = {
+    ADMIN_SECRET: "x",
+    JWT_SECRET: "y",
+  };
+
+  it("ships off, on /trpc, with batches capped at 10 calls", () => {
+    const env = EnvZod.parse(baseEnv);
+
+    expect(env.trpc).toEqual({ enabled: false, endpoint: "/trpc", maxBatchSize: 10 });
+  });
+
+  it("reads the gate, the endpoint and a coerced batch size", () => {
+    const env = EnvZod.parse({
+      ...baseEnv,
+      TRPC_ENABLED: "true",
+      TRPC_ENDPOINT: "/rpc",
+      TRPC_MAX_BATCH_SIZE: "25",
+    });
+
+    expect(env.trpc).toEqual({ enabled: true, endpoint: "/rpc", maxBatchSize: 25 });
+  });
+
+  it("keeps TRPC_ENABLED=false off rather than coercing it on", () => {
+    const env = EnvZod.parse({ ...baseEnv, TRPC_ENABLED: "false" });
+
+    expect(env.trpc.enabled).toBe(false);
+  });
+
+  it("rejects a batch size of zero", () => {
+    expect(() => EnvZod.parse({ ...baseEnv, TRPC_MAX_BATCH_SIZE: "0" })).toThrow();
+  });
+});
+
 describe("EnvZod tracing", () => {
   const baseEnv = {
     ADMIN_SECRET: "x",

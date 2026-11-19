@@ -14,7 +14,7 @@ The runtime that powers Graphoria — schema introspection, GraphQL/REST handler
 bun add @graphoria/server
 ```
 
-Installing the server package is enough: the runtime is exported from `@graphoria/server` and the configuration helpers + types from `@graphoria/server/config`. The exceptions are queues and AI: the RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Queues](../../docs/QUEUES.md#installing-the-adapters)) and the AI agent + MCP runtimes in `@graphoria/ai` (see [AI](../../docs/AI.md#installing)); the server discovers each at boot.
+Installing the server package is enough: the runtime is exported from `@graphoria/server` and the configuration helpers + types from `@graphoria/server/config`. The exceptions are queues and AI: the RabbitMQ and Kafka adapters ship in `@graphoria/queues` (see [Queues](../../docs/QUEUES.md#installing-the-adapters)) and the AI agent + MCP runtimes in `@graphoria/ai` (see [AI](../../docs/AI.md#installing)); the server discovers each at boot. The opt-in [tRPC surface](../../docs/TRPC.md) needs `@trpc/server`, an optional peer, in your own dependencies.
 
 ## Public API
 
@@ -98,6 +98,9 @@ The server reads a small set of environment variables. Every variable has a sens
 | `RATE_LIMIT_STORE`     | `memory`                                              | `memory`, or a `redis` store from `caches.stores` to share rate limits across processes.                                                                                                                                    |
 | `GRAPHQL_API_ENDPOINT` | `/graphql`                                            | GraphQL endpoint path.                                                                                                                                                                                                      |
 | `REST_API_PREFIX`      | `/rest`                                               | REST API prefix.                                                                                                                                                                                                            |
+| `TRPC_ENABLED`         | `false`                                               | Serve operations as tRPC procedures. Needs `@trpc/server` installed.                                                                                                                                                        |
+| `TRPC_ENDPOINT`        | `/trpc`                                               | tRPC endpoint path.                                                                                                                                                                                                         |
+| `TRPC_MAX_BATCH_SIZE`  | `10`                                                  | Calls one batched tRPC request may carry.                                                                                                                                                                                   |
 | `GRAPHIQL_ENDPOINT`    | `/graphiql`                                           | Built-in GraphiQL playground path.                                                                                                                                                                                          |
 | `SCALAR_ENDPOINT`      | `/scalar`                                             | Scalar API documentation path.                                                                                                                                                                                              |
 | `OPENAPI_ENDPOINT`     | `/openapi.json`                                       | OpenAPI document path.                                                                                                                                                                                                      |
@@ -136,6 +139,7 @@ import {
 - [Authentication](../../docs/AUTHENTICATION.md)
 - [Permissions & Access Control](../../docs/PERMISSIONS.md)
 - [Operations](../../docs/OPERATIONS.md)
+- [tRPC](../../docs/TRPC.md)
 - [Queues](../../docs/QUEUES.md)
 - [Cron Jobs](../../docs/CRON.md)
 - [Remote GraphQL Schemas](../../docs/REMOTE_SCHEMAS.md)

@@ -88,7 +88,9 @@ send them over plain HTTP.
 
 For a VM or a Compose stack, this Caddyfile is the whole proxy. Caddy manages the certificate for
 the site address itself ([automatic HTTPS](https://caddyserver.com/docs/automatic-https)).
-[`examples/deploy-caddy/`](../examples/deploy-caddy/) runs it in front of the starter project.
+[`examples/deploy-caddy/`](../examples/deploy-caddy/) runs it in front of the starter project. With
+the [tRPC surface](./TRPC.md) on, add `/trpc /trpc/*` to the `@api` matcher: it is off by default,
+so the matcher leaves it out.
 
 ```caddyfile
 api.example.com {
@@ -117,7 +119,8 @@ and stop publishing the app's. What the Caddyfile does, each point measured with
 front of the starter:
 
 - **Only the API is public.** `/graphql` (queries, mutations and the websocket) and `/rest` reach
-  Graphoria; every other path gets a `404` from Caddy. That keeps these off the internet:
+  Graphoria, and `/trpc` once you add it; every other path gets a `404` from Caddy. That keeps these
+  off the internet:
   - `/health/*` needs no credential, and each readiness request runs a query on every database;
   - `/metrics` is secret-gated but not rate limited;
   - `/_console` is the operator console, opened by the admin secret or a console secret;
@@ -504,6 +507,9 @@ spec:
         - path: { type: PathPrefix, value: /rest }
       backendRefs: [{ name: graphoria, port: 80 }]
 ```
+
+With the [tRPC surface](./TRPC.md) on, add `- path: { type: PathPrefix, value: /trpc }` to the `api`
+rule's matches.
 
 Why each part is there:
 

@@ -35,6 +35,9 @@ All secrets and runtime knobs are set via environment variables. Bun auto-loads 
 | `METRICS_ENDPOINT`             | `string`  | `/metrics`                    | Path the exposition is served at, under `PREFIX`                                                                                                                                   |
 | `METRICS_SECRET`               | `string`  | —                             | Scoped credential for scraping, in the admin-secret header. Comma-separated for rotation                                                                                           |
 | `METRICS_MAX_OPERATION_LABELS` | `number`  | `200`                         | Distinct GraphQL operation names given their own series before the rest fold into `other`                                                                                          |
+| `TRPC_ENABLED`                 | `boolean` | `false`                       | Serve operations as tRPC procedures. Needs `@trpc/server` installed — see [tRPC](./TRPC.md)                                                                                        |
+| `TRPC_ENDPOINT`                | `string`  | `/trpc`                       | Path the procedures are served under, itself under `PREFIX`                                                                                                                        |
+| `TRPC_MAX_BATCH_SIZE`          | `number`  | `10`                          | Calls one batched tRPC request may carry. A larger batch is refused whole                                                                                                          |
 
 See [`.env.example`](../.env.example) for the full list.
 
@@ -638,7 +641,7 @@ Off by default. Nothing is limited until you set a ceiling, and no warning fires
 | `RATE_LIMIT_TRUST_PROXY`   | `boolean` | `false`  | Read the client address from `X-Forwarded-For`                                        |
 | `RATE_LIMIT_STORE`         | `string`  | `memory` | `memory`, or a `redis` store from [`caches.stores`](#caches), shared by every process |
 
-A caller gets one token bucket across every endpoint — `/graphql` (queries and the websocket upgrade alike), `/rest/*` (the agent's `/rest/ai` included), `/mcp`, the console login and the console's `/api/ai` and `/api/graphql` — because what exhausts a server is total request volume, not volume on one route. An idle bucket refills to `max`, so a caller may burst `max` and then sustain `max` per window. Over budget is `429` with `Retry-After` in seconds.
+A caller gets one token bucket across every endpoint — `/graphql` (queries and the websocket upgrade alike), `/rest/*` (the agent's `/rest/ai` included), `/trpc/*` (a batch is one request), `/mcp`, the console login and the console's `/api/ai` and `/api/graphql` — because what exhausts a server is total request volume, not volume on one route. An idle bucket refills to `max`, so a caller may burst `max` and then sustain `max` per window. Over budget is `429` with `Retry-After` in seconds.
 
 Callers are identified by authenticated subject where there is one, and by client address otherwise. The admin secret is one subject, shared by everyone who presents it, and so is each AI credential on its own route: every holder of `AI_SECRET` shares one bucket under the ceiling of `AI_SECRET_ROLE`, every holder of `AI_MCP_SECRET` one under the ceiling of `AI_MCP_SECRET_ROLE`, and the console's AI routes one per role, shared by every console session that asks or queries as it, under that role's ceiling. **Neither the admin secret nor the superadmin role is exempt** — set `RATE_LIMIT_MAX` above what your own tooling needs. The console polls status every five seconds.
 

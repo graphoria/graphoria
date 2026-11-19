@@ -107,6 +107,13 @@ export const consoleRoutesFactory = ({
 }: ConsoleRoutesFactoryOptions): Record<string, Record<string, ConsoleRouteHandler>> => {
   const sessions = createConsoleSessions({ env, consolePath, tokenService });
   const aiSurfaces = resolveAISurfaces(env, projectConfiguration.ai);
+  // A surface switched off keeps its prefix but mounts no route: list what answers.
+  const mountedPrefixes = Object.fromEntries(
+    Object.entries(prefixes).filter(
+      ([name]) =>
+        (name !== "metrics" || env.metrics.enabled) && (name !== "trpc" || env.trpc.enabled),
+    ),
+  );
 
   const auth = projectConfiguration.auth;
   // The superadmin role bypasses RBAC, so a console session may not mint a user
@@ -368,7 +375,7 @@ export const consoleRoutesFactory = ({
       GET: guarded((_req, _server, scope) => ({
         name: projectConfiguration.name,
         version: projectConfiguration.version,
-        prefixes,
+        prefixes: mountedPrefixes,
         features: {
           auth: projectConfiguration.auth?.enabled ?? false,
           ai: aiSurfaces.agent,
