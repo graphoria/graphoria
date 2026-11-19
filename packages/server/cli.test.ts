@@ -434,6 +434,53 @@ describe("cli init", () => {
     expect(await readFile(join(cwd, "web", "App.tsx"), "utf8")).toBe("mine");
   });
 
+  it("writes nothing when the tRPC client it would create exists, with --auth --frontend --trpc", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await mkdir(join(cwd, "web"));
+    await writeFile(join(cwd, "web", "trpc.ts"), "mine");
+    const result = Bun.spawnSync(
+      [
+        "bun",
+        join(import.meta.dir, "cli.ts"),
+        "init",
+        "--yes",
+        "--auth",
+        "--frontend",
+        "--trpc",
+        "--no-install",
+      ],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("web/trpc.ts");
+    expect((await readdir(cwd, { recursive: true })).sort()).toEqual(["web", "web/trpc.ts"]);
+    expect(await readFile(join(cwd, "web", "trpc.ts"), "utf8")).toBe("mine");
+  });
+
+  it("leaves web/trpc.ts alone with --frontend --trpc, without --auth", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await mkdir(join(cwd, "web"));
+    await writeFile(join(cwd, "web", "trpc.ts"), "mine");
+    const result = Bun.spawnSync(
+      [
+        "bun",
+        join(import.meta.dir, "cli.ts"),
+        "init",
+        "--yes",
+        "--frontend",
+        "--trpc",
+        "--no-install",
+      ],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(await readFile(join(cwd, "web", "trpc.ts"), "utf8")).toBe("mine");
+  });
+
   it("writes nothing when a metrics file it would create exists", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
     cwds.push(cwd);

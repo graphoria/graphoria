@@ -180,11 +180,13 @@ bunx graphoria seed-auth --user editor --password <printed> --role editor --conf
 
 Log in with the `auth_login` mutation in GraphiQL, or `POST /rest/auth/login` with `{ "username": …, "password": … }`, and send the `access_token` it answers as `Authorization: Bearer <access_token>`. An operation a role is not granted answers `404` on its REST route, and that role's schema has no field for it. `publishBook` answers `null` for an id no book has.
 
-With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token. `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor, and to `events_onBookPublished` for both roles, refetching the list on either.
+With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md), which `package.json` adds. Signed out, it lists the authors next to a sign-in form; signed in, it shows each author's books, a draft with a badge, and to an editor the add-book form and a Publish button, both posting with the user's token (with `--trpc`, Publish calls tRPC instead: see [Call the operations over tRPC](#call-the-operations-over-trpc-with---trpc)). `tsconfig.json` types the queries from the editor's schema, `schema_editor.graphql`, since an editor's queries are the widest the app sends. With `--rabbitmq` too, the app subscribes to `events_onBookAdded` only for an editor, and to `events_onBookPublished` for both roles, refetching the list on either.
 
 ### Call the operations over tRPC with `--trpc`
 
 Tick `tRPC` in the extras list, or pass `--trpc` (`--no-trpc` answers no, and so does `--yes` alone). `.env` then sets `TRPC_ENABLED=true` and `package.json` adds `@trpc/server`, so each operation is also a [tRPC](./TRPC.md) procedure under `http://localhost:3000/trpc`: `addBook`, `publishBook` with `--auth`, and `books` with `--redis`. A call runs as its caller, as on `/rest/*`. `graphoria.ts` does not change: a TypeScript client made with `@trpc/client` types `addBook` and `publishBook` from it through `TRPCRouterOf` (see [Calling from a client](./TRPC.md#calling-from-a-client)), while `books`, a plain object rather than an `operation()`, is served without a client type.
+
+With `--auth --frontend` too, the app's Publish button calls `publishBook` through tRPC. `web/trpc.ts` holds the client, which sends the signed-in user's token as the GraphQL client does, and `package.json` adds `@trpc/client` at `@trpc/server`'s version. The add-book form still POSTs `/rest/add-book`.
 
 ### Schedule a job with `--cron`
 

@@ -23,6 +23,7 @@ import {
   RABBITMQ_MANAGEMENT_PORT,
   RABBITMQ_PORT,
   REDIS_COMMANDER_PORT,
+  TRPC_FILES,
   renderProject,
   seedSchema,
 } from "./initTemplates";
@@ -459,7 +460,7 @@ export const nextSteps = (
       ? [
           "",
           `${paint.name("tRPC")} serves the operations at ${link(3000, "/trpc")} (TRPC_ENABLED in .env); a call runs as its caller, as on /rest.`,
-          "A client made with @trpc/client types them from graphoria.ts through TRPCRouterOf from @graphoria/server/trpc.",
+          `A client made with @trpc/client types them from graphoria.ts through TRPCRouterOf from @graphoria/server/trpc${answers.auth && answers.frontend ? ", as web/trpc.ts does for the app's Publish button" : ""}.`,
         ]
       : []),
     ...(answers.cron
@@ -543,7 +544,8 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   refuseExisting([...PROJECT_FILES, "bun.lock"]);
   const io = args.yes ? NO_PROMPT_IO : interactive() ? TERMINAL_IO : NO_TERMINAL_IO;
   const answers = await collectAnswers(args, io);
-  if (answers.frontend) refuseExisting(FRONTEND_FILES);
+  if (answers.frontend)
+    refuseExisting([...FRONTEND_FILES, ...(answers.auth && answers.trpc ? TRPC_FILES : [])]);
   if (answers.metrics || answers.tracing)
     refuseExisting([...(answers.metrics ? METRICS_FILES : []), ...GRAFANA_FILES]);
   const warnings = [

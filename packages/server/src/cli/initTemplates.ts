@@ -106,6 +106,8 @@ export const FRONTEND_FILES = [
   "web/styles.css",
 ] as const;
 
+export const TRPC_FILES = ["web/trpc.ts"] as const;
+
 export const METRICS_FILES = [
   "prometheus.yml",
   "grafana/dashboards.yml",
@@ -141,8 +143,9 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
   "graphql-ws": "6.3.0",
 };
 
-// The optional peer TRPC_ENABLED loads. Exact: a test holds it to
-// packages/server's own devDependency, which dependabot bumps.
+// The optional peer TRPC_ENABLED loads, and the app's client, which must match
+// it. Exact: a test holds both to packages/server's own devDependencies, which
+// dependabot bumps.
 const TRPC_VERSION = "11.28.0";
 
 const packageJson = (
@@ -166,6 +169,7 @@ const packageJson = (
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
         ...((ai || mcp) && { "@graphoria/ai": `^${graphoria}` }),
         ...(auth && frontend && { "@graphoria/react": `^${graphoria}` }),
+        ...(trpc && auth && frontend && { "@trpc/client": TRPC_VERSION }),
         ...(trpc && { "@trpc/server": TRPC_VERSION }),
         ...(frontend && FRONTEND_DEPENDENCIES),
         ...(frontend && rabbitmq && FRONTEND_QUEUE_DEPENDENCIES),
@@ -1765,6 +1769,22 @@ const BOOK_REFRESH_AUTH = `  const [subscriptionAdded] = useSubscription({
   }, [subscriptionPublished.data, reexecute]);
 `;
 
+const PUBLISH_REST = `  const publish = async (id: number) => {
+    const response = await post("/rest/publish-book", { id });
+    if (response.ok) reexecute({ requestPolicy: "network-only" });
+  };
+`;
+
+const PUBLISH_TRPC = `  const publish = async (id: number) => {
+    try {
+      await trpc.publishBook.mutate({ id });
+    } catch {
+      return;
+    }
+    reexecute({ requestPolicy: "network-only" });
+  };
+`;
+
 const appTsxAuth = (values: ProjectValues) => {
   const schema = seedSchema(values);
 
@@ -1774,7 +1794,7 @@ import { useQuery${values.rabbitmq ? ", useSubscription" : ""} } from "urql";
 import { getAccessToken, useAuth } from "@graphoria/react";
 
 import { graphql } from "./graphql.ts";
-
+${values.trpc ? 'import { trpc } from "./trpc.ts";\n' : ""}
 export type Role = "reader" | "editor";
 
 // What a visitor without a token reads.
@@ -1897,11 +1917,7 @@ ${
     setYear("");
   };
 
-  const publish = async (id: number) => {
-    const response = await post("/rest/publish-book", { id });
-    if (response.ok) reexecute({ requestPolicy: "network-only" });
-  };
-
+${values.trpc ? PUBLISH_TRPC : PUBLISH_REST}
   return (
     <main className="mx-auto max-w-2xl p-8 font-sans">
       <div className="mb-6 flex items-center justify-between">
@@ -2007,6 +2023,28 @@ import type { introspection } from "./graphql-env.d.ts";
 export const graphql = initGraphQLTada<{ introspection: introspection }>();
 `;
 
+const TRPC_TS = `import { createTRPCClient, httpBatchLink } from "@trpc/client";
+import type { TRPCRouterOf } from "@graphoria/server/trpc";
+import { getAccessToken } from "@graphoria/react";
+
+import type config from "../graphoria";
+
+// The operations in graphoria.ts, typed from the configuration itself: no
+// code generation.
+export const trpc = createTRPCClient<TRPCRouterOf<typeof config>>({
+  links: [
+    httpBatchLink({
+      url: "/trpc",
+      maxItems: 10, // TRPC_MAX_BATCH_SIZE, 10 by default: a bigger batch fails whole.
+      headers: () => {
+        const token = getAccessToken();
+        return token ? { Authorization: \`Bearer \${token}\` } : {};
+      },
+    }),
+  ],
+});
+`;
+
 const frontendFiles = (values: ProjectValues): Record<(typeof FRONTEND_FILES)[number], string> => ({
   "bunfig.toml": BUNFIG,
   "web/index.html": indexHtml(values),
@@ -2034,6 +2072,7 @@ export const renderProject = (
   "docker-compose.yml": dockerCompose(values),
   "seed.sql": SEEDS[values.database](values),
   ...(values.frontend && frontendFiles(values)),
+  ...(values.frontend && values.auth && values.trpc && { "web/trpc.ts": TRPC_TS }),
   ...(values.metrics && {
     "prometheus.yml": PROMETHEUS_YML,
     "grafana/dashboards.yml": GRAFANA_DASHBOARD_PROVIDER,

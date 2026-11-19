@@ -868,6 +868,20 @@ describe("nextSteps", () => {
     expect(nextSteps(ANSWERS, true)).not.toContain("tRPC");
   });
 
+  it("names the app's tRPC client only with --auth --frontend", () => {
+    expect(
+      nextSteps({ ...ANSWERS, trpc: true, auth: true, frontend: true }, true, USERS),
+    ).toContain(
+      "through TRPCRouterOf from @graphoria/server/trpc, as web/trpc.ts does for the app's Publish button.\n",
+    );
+    expect(nextSteps({ ...ANSWERS, trpc: true, frontend: true }, true)).not.toContain(
+      "web/trpc.ts",
+    );
+    expect(nextSteps({ ...ANSWERS, trpc: true, auth: true }, true, USERS)).not.toContain(
+      "web/trpc.ts",
+    );
+  });
+
   it("says where the computed age comes from, and selects it in the sample query", () => {
     const steps = nextSteps({ ...ANSWERS, virtualColumns: true }, true);
 
