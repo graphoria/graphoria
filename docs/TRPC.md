@@ -15,6 +15,8 @@ bun add @trpc/server
 TRPC_ENABLED=true bun run start
 ```
 
+`bunx graphoria init --trpc` scaffolds a project with the surface on (see the [Quickstart](./QUICKSTART.md#call-the-operations-over-trpc-with---trpc)).
+
 `@trpc/server` is an optional peer of `@graphoria/server` (`^11.28.0`), loaded only when the surface is on. With `TRPC_ENABLED` on and the package missing, boot fails with `TRPC_ENABLED requires @trpc/server (add it to dependencies)`.
 
 | Variable              | Type      | Default | Description                                                  |

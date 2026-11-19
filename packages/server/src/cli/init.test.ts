@@ -74,6 +74,7 @@ describe("collectAnswers", () => {
     expect(answers.redis).toBe(false);
     expect(answers.dataTools).toBe(false);
     expect(answers.frontend).toBe(false);
+    expect(answers.trpc).toBe(false);
     expect(answers.cron).toBe(false);
     expect(answers.rateLimit).toBe(false);
     expect(answers.metrics).toBe(false);
@@ -111,6 +112,7 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      trpc: false,
       cron: false,
       rateLimit: false,
       metrics: false,
@@ -208,7 +210,7 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9, 10, 11]] });
+    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9, 10, 11, 12]] });
     const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({
@@ -217,6 +219,7 @@ describe("collectAnswers", () => {
       mcp: true,
       auth: true,
       frontend: true,
+      trpc: true,
       cron: true,
       rateLimit: true,
       metrics: true,
@@ -237,6 +240,7 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      trpc: false,
       cron: false,
       rateLimit: false,
       metrics: false,
@@ -258,6 +262,7 @@ describe("collectAnswers", () => {
       "Redis",
       "Data tools",
       "React frontend",
+      "tRPC",
       "Cron job",
       "Rate limits",
       "Metrics",
@@ -278,6 +283,7 @@ describe("collectAnswers", () => {
         redis: false,
         dataTools: false,
         frontend: false,
+        trpc: false,
         cron: false,
         rateLimit: false,
         metrics: false,
@@ -349,6 +355,14 @@ describe("collectAnswers", () => {
     expect(io.multiOptions[0]).not.toContain("React frontend");
   });
 
+  it.each([true, false])("skips the tRPC extra when --trpc is %p", async (trpc) => {
+    const io = prompter();
+    const answers = await collectAnswers({ ...ARGS, trpc }, io.io);
+
+    expect(answers.trpc).toBe(trpc);
+    expect(io.multiOptions[0]).not.toContain("tRPC");
+  });
+
   it.each([true, false])("skips the cron extra when --cron is %p", async (cron) => {
     const io = prompter();
     const answers = await collectAnswers({ ...ARGS, cron }, io.io);
@@ -411,6 +425,7 @@ describe("collectAnswers", () => {
       redis: false,
       dataTools: false,
       frontend: false,
+      trpc: false,
       cron: false,
       rateLimit: false,
       metrics: false,
@@ -580,6 +595,7 @@ const ANSWERS: InitAnswers = {
   redis: false,
   dataTools: false,
   frontend: false,
+  trpc: false,
   cron: false,
   rateLimit: false,
   metrics: false,
@@ -600,6 +616,7 @@ describe("recreateCommand", () => {
           redis: true,
           dataTools: true,
           frontend: true,
+          trpc: true,
           cron: true,
           rateLimit: true,
           metrics: true,
@@ -609,7 +626,7 @@ describe("recreateCommand", () => {
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --cron --rate-limit --metrics --tracing --virtual-columns",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --trpc --cron --rate-limit --metrics --tracing --virtual-columns",
     );
   });
 
@@ -843,6 +860,14 @@ describe("nextSteps", () => {
     expect(steps).not.toContain("prometheus");
   });
 
+  it("says where tRPC serves the operations, and how a client types them", () => {
+    expect(nextSteps({ ...ANSWERS, trpc: true }, true)).toContain(
+      "\ntRPC serves the operations at http://localhost:3000/trpc (TRPC_ENABLED in .env); a call runs as its caller, as on /rest.\n" +
+        "A client made with @trpc/client types them from graphoria.ts through TRPCRouterOf from @graphoria/server/trpc.\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("tRPC");
+  });
+
   it("says where the computed age comes from, and selects it in the sample query", () => {
     const steps = nextSteps({ ...ANSWERS, virtualColumns: true }, true);
 
@@ -920,6 +945,7 @@ describe("nextSteps", () => {
         redis: true,
         dataTools: true,
         frontend: true,
+        trpc: true,
         cron: true,
         rateLimit: true,
         metrics: true,
@@ -992,6 +1018,7 @@ describe("nextSteps", () => {
         auth: true,
         redis: true,
         dataTools: true,
+        trpc: true,
         cron: true,
         rateLimit: true,
         metrics: true,
@@ -1011,6 +1038,7 @@ describe("nextSteps", () => {
       "Redis",
       "dbgate",
       "Redis Commander",
+      "tRPC",
       "cron job",
       "Rate limits",
       "Metrics",

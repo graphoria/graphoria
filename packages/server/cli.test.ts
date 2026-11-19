@@ -117,6 +117,7 @@ describe("cli without env", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("Usage: graphoria");
     expect(result.stdout.toString()).toContain("[--frontend]");
+    expect(result.stdout.toString()).toContain("[--trpc]");
     expect(result.stdout.toString()).toContain("--database pg|mysql|mssql|sqlite");
     expect(result.stdout.toString()).toMatch(
       /JWT_SECRET\s+.*\(required with auth or the console\)/,
@@ -246,6 +247,18 @@ describe("cli init", () => {
     expect(values.METRICS_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(values.METRICS_SECRET).not.toBe(values.ADMIN_SECRET);
     expect(result.stdout.toString()).toContain("http://localhost:3000/metrics");
+  });
+
+  it("mounts the tRPC surface with --trpc", async () => {
+    const { cwd, result } = await init(["--yes", "--trpc", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect((await env(cwd)).TRPC_ENABLED).toBe("true");
+    expect(
+      JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies,
+    ).toHaveProperty("@trpc/server");
+    expect(result.stdout.toString()).toContain("http://localhost:3000/trpc");
   });
 
   it("adds the React frontend with --frontend", async () => {
@@ -523,6 +536,7 @@ describe("cli init", () => {
       "--no-redis",
       "--no-data-tools",
       "--no-frontend",
+      "--no-trpc",
       "--no-cron",
       "--no-rate-limit",
       "--no-metrics",

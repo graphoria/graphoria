@@ -50,6 +50,7 @@ type Extra =
   | "redis"
   | "dataTools"
   | "frontend"
+  | "trpc"
   | "cron"
   | "rateLimit"
   | "metrics"
@@ -186,6 +187,9 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     ...(args.frontend === undefined
       ? [extraChoice("frontend", "React frontend", "app at localhost:3000")]
       : []),
+    ...(args.trpc === undefined
+      ? [extraChoice("trpc", "tRPC", "operations as typed procedures at /trpc")]
+      : []),
     ...(args.cron === undefined
       ? [extraChoice("cron", "Cron job", "logs the book count every minute")]
       : []),
@@ -218,6 +222,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     redis: args.redis ?? chosen.has("redis"),
     dataTools: args.dataTools ?? chosen.has("dataTools"),
     frontend: args.frontend ?? chosen.has("frontend"),
+    trpc: args.trpc ?? chosen.has("trpc"),
     cron: args.cron ?? chosen.has("cron"),
     rateLimit: args.rateLimit ?? chosen.has("rateLimit"),
     metrics: args.metrics ?? chosen.has("metrics"),
@@ -270,6 +275,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.redis ? ["--redis"] : []),
     ...(answers.dataTools ? ["--data-tools"] : []),
     ...(answers.frontend ? ["--frontend"] : []),
+    ...(answers.trpc ? ["--trpc"] : []),
     ...(answers.cron ? ["--cron"] : []),
     ...(answers.rateLimit ? ["--rate-limit"] : []),
     ...(answers.metrics ? ["--metrics"] : []),
@@ -449,6 +455,13 @@ export const nextSteps = (
           "web/graphql-env.d.ts, which types the app's queries. Commit it.",
         ]
       : []),
+    ...(answers.trpc
+      ? [
+          "",
+          `${paint.name("tRPC")} serves the operations at ${link(3000, "/trpc")} (TRPC_ENABLED in .env); a call runs as its caller, as on /rest.`,
+          "A client made with @trpc/client types them from graphoria.ts through TRPCRouterOf from @graphoria/server/trpc.",
+        ]
+      : []),
     ...(answers.cron
       ? [
           "",
@@ -490,7 +503,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);

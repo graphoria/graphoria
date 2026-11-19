@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 
 import type { DatabaseType } from "../config";
 
+import { devDependencies } from "../../package.json";
 import { genResolverName } from "../databases/transformers/genResolverName";
 import { storesInUse } from "../singletons/cache";
 import { ConfigurationZod } from "../types/zod/configuration";
@@ -37,6 +38,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   redis: false,
   dataTools: false,
   frontend: false,
+  trpc: false,
   cron: false,
   rateLimit: false,
   metrics: false,
@@ -124,6 +126,10 @@ describe("renderProject paths", () => {
     );
   });
 
+  it.each(ENGINES)("adds no file for --trpc for %s", (database) => {
+    expect(Object.keys(renderWith({ trpc: true }, database)).sort()).toEqual(PATHS);
+  });
+
   it("lists those in METRICS_FILES and GRAFANA_FILES", () => {
     expect(Array.from<string>([...METRICS_FILES, ...GRAFANA_FILES]).sort()).toEqual(METRICS_PATHS);
   });
@@ -174,6 +180,16 @@ describe("renderProject package.json", () => {
     const pkg = JSON.parse(renderWith(patch as Partial<ProjectValues>)["package.json"]!);
 
     expect(pkg.dependencies).toEqual({ "@graphoria/server": "^0.6.0", ...expected });
+  });
+
+  it("adds @trpc/server with --trpc, at the server's own version", () => {
+    const pkg = JSON.parse(renderWith({ trpc: true })["package.json"]!);
+
+    expect(pkg.dependencies).toEqual({
+      "@graphoria/server": "^0.6.0",
+      "@trpc/server": devDependencies["@trpc/server"],
+    });
+    expect(pkg.dependencies["@trpc/server"]).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });
 
@@ -310,12 +326,20 @@ describe("renderProject .env", () => {
     },
   );
 
+  it.each(["pg", "sqlite"] as const)("mounts the tRPC surface with --trpc for %s", (database) => {
+    const lines = renderWith({ trpc: true }, database)[".env"]!.split("\n");
+
+    expect(lines).toContain("TRPC_ENABLED=true");
+    expect(render(database)[".env"]).not.toContain("TRPC_");
+  });
+
   it("adds every feature's settings together without overlap", () => {
     const lines = renderWith({
       rabbitmq: true,
       ai: true,
       redis: true,
       dataTools: true,
+      trpc: true,
       metrics: true,
       tracing: true,
     })[".env"]!.split("\n");
@@ -326,6 +350,7 @@ describe("renderProject .env", () => {
     expect(lines).toContain("REDIS_URL=redis://localhost:6379");
     expect(lines).toContain("AUTH_STORE=redis");
     expect(lines).toContain("RATE_LIMIT_STORE=redis");
+    expect(lines).toContain("TRPC_ENABLED=true");
     expect(lines).toContain("METRICS_ENABLED=true");
     expect(lines).toContain("TRACING_ENABLED=true");
     expect(lines).toContain("JAEGER_UI_PORT=16686");

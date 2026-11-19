@@ -14,6 +14,7 @@ export type InitArgs = {
   redis?: boolean;
   dataTools?: boolean;
   frontend?: boolean;
+  trpc?: boolean;
   cron?: boolean;
   rateLimit?: boolean;
   metrics?: boolean;
@@ -56,6 +57,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       redis: { type: "boolean" },
       "data-tools": { type: "boolean" },
       frontend: { type: "boolean" },
+      trpc: { type: "boolean" },
       cron: { type: "boolean" },
       "rate-limit": { type: "boolean" },
       metrics: { type: "boolean" },
@@ -89,6 +91,7 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values.redis !== undefined && { redis: values.redis }),
     ...(values["data-tools"] !== undefined && { dataTools: values["data-tools"] }),
     ...(values.frontend !== undefined && { frontend: values.frontend }),
+    ...(values.trpc !== undefined && { trpc: values.trpc }),
     ...(values.cron !== undefined && { cron: values.cron }),
     ...(values["rate-limit"] !== undefined && { rateLimit: values["rate-limit"] }),
     ...(values.metrics !== undefined && { metrics: values.metrics }),

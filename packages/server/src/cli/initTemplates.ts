@@ -14,6 +14,7 @@ export type InitAnswers = {
   redis: boolean;
   dataTools: boolean;
   frontend: boolean;
+  trpc: boolean;
   cron: boolean;
   rateLimit: boolean;
   metrics: boolean;
@@ -140,8 +141,12 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
   "graphql-ws": "6.3.0",
 };
 
+// The optional peer TRPC_ENABLED loads. Exact: a test holds it to
+// packages/server's own devDependency, which dependabot bumps.
+const TRPC_VERSION = "11.28.0";
+
 const packageJson = (
-  { name, rabbitmq, ai, mcp, auth, frontend }: ProjectValues,
+  { name, rabbitmq, ai, mcp, auth, frontend, trpc }: ProjectValues,
   { graphoria }: Versions,
 ) =>
   JSON.stringify(
@@ -161,6 +166,7 @@ const packageJson = (
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
         ...((ai || mcp) && { "@graphoria/ai": `^${graphoria}` }),
         ...(auth && frontend && { "@graphoria/react": `^${graphoria}` }),
+        ...(trpc && { "@trpc/server": TRPC_VERSION }),
         ...(frontend && FRONTEND_DEPENDENCIES),
         ...(frontend && rabbitmq && FRONTEND_QUEUE_DEPENDENCIES),
       },
@@ -771,6 +777,8 @@ RATE_LIMIT_STORE=redis
 `
     : "";
 
+const trpcEnv = ({ trpc }: ProjectValues) => (trpc ? "TRPC_ENABLED=true\n" : "");
+
 // The anonymous ceiling sits on the anonymous role in graphoria.ts when the
 // project grants one there.
 const rateLimitEnv = ({ rateLimit, auth, frontend }: ProjectValues) =>
@@ -805,7 +813,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${trpcEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -819,7 +827,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${trpcEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
