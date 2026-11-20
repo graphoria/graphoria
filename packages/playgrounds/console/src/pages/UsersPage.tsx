@@ -18,7 +18,7 @@ const CreateUserForm = ({ roles, onCreated }: { roles: string[]; onCreated: () =
   const [result, setResult] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaving(true);
     setResult(null);
@@ -160,7 +160,7 @@ const EditUserForm = ({
   const [result, setResult] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setResult(null);
     let parsedClaims: unknown = {};
@@ -245,7 +245,7 @@ const ResetPasswordForm = ({
   const [result, setResult] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaving(true);
     setResult(null);
