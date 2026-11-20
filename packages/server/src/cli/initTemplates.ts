@@ -14,6 +14,7 @@ export type InitAnswers = {
   redis: boolean;
   dataTools: boolean;
   frontend: boolean;
+  trpc: boolean;
   cron: boolean;
   rateLimit: boolean;
   metrics: boolean;
@@ -105,6 +106,8 @@ export const FRONTEND_FILES = [
   "web/styles.css",
 ] as const;
 
+export const TRPC_FILES = ["web/trpc.ts"] as const;
+
 export const METRICS_FILES = [
   "prometheus.yml",
   "grafana/dashboards.yml",
@@ -140,8 +143,13 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
   "graphql-ws": "6.3.0",
 };
 
+// The optional peer TRPC_ENABLED loads, and the app's client, which must match
+// it. Exact: a test holds both to packages/server's own devDependencies, which
+// dependabot bumps.
+const TRPC_VERSION = "11.28.0";
+
 const packageJson = (
-  { name, rabbitmq, ai, mcp, auth, frontend }: ProjectValues,
+  { name, rabbitmq, ai, mcp, auth, frontend, trpc }: ProjectValues,
   { graphoria }: Versions,
 ) =>
   JSON.stringify(
@@ -161,6 +169,8 @@ const packageJson = (
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
         ...((ai || mcp) && { "@graphoria/ai": `^${graphoria}` }),
         ...(auth && frontend && { "@graphoria/react": `^${graphoria}` }),
+        ...(trpc && auth && frontend && { "@trpc/client": TRPC_VERSION }),
+        ...(trpc && { "@trpc/server": TRPC_VERSION }),
         ...(frontend && FRONTEND_DEPENDENCIES),
         ...(frontend && rabbitmq && FRONTEND_QUEUE_DEPENDENCIES),
       },
@@ -771,6 +781,8 @@ RATE_LIMIT_STORE=redis
 `
     : "";
 
+const trpcEnv = ({ trpc }: ProjectValues) => (trpc ? "TRPC_ENABLED=true\n" : "");
+
 // The anonymous ceiling sits on the anonymous role in graphoria.ts when the
 // project grants one there.
 const rateLimitEnv = ({ rateLimit, auth, frontend }: ProjectValues) =>
@@ -805,7 +817,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${trpcEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteDotEnv(values);
@@ -819,7 +831,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
-${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
+${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${trpcEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 };
 
 const GITIGNORE = `node_modules
@@ -1602,7 +1614,7 @@ const appTsx = (values: ProjectValues) => {
   const schema = seedSchema(values);
 
   return `import { ${values.rabbitmq ? "useEffect, " : ""}useState } from "react";
-import type { FormEvent } from "react";
+import type { SubmitEvent } from "react";
 import { useQuery${values.rabbitmq ? ", useSubscription" : ""} } from "urql";
 
 import { graphql } from "./graphql.ts";
@@ -1628,7 +1640,7 @@ ${values.rabbitmq ? BOOK_ADDED_REFRESH : ""}
   const [year, setYear] = useState("");
   const [authorId, setAuthorId] = useState("");
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const response = await fetch("/rest/add-book", {
       method: "POST",
@@ -1757,16 +1769,32 @@ const BOOK_REFRESH_AUTH = `  const [subscriptionAdded] = useSubscription({
   }, [subscriptionPublished.data, reexecute]);
 `;
 
+const PUBLISH_REST = `  const publish = async (id: number) => {
+    const response = await post("/rest/publish-book", { id });
+    if (response.ok) reexecute({ requestPolicy: "network-only" });
+  };
+`;
+
+const PUBLISH_TRPC = `  const publish = async (id: number) => {
+    try {
+      await trpc.publishBook.mutate({ id });
+    } catch {
+      return;
+    }
+    reexecute({ requestPolicy: "network-only" });
+  };
+`;
+
 const appTsxAuth = (values: ProjectValues) => {
   const schema = seedSchema(values);
 
   return `import { ${values.rabbitmq ? "useEffect, " : ""}useState } from "react";
-import type { FormEvent } from "react";
+import type { SubmitEvent } from "react";
 import { useQuery${values.rabbitmq ? ", useSubscription" : ""} } from "urql";
 import { getAccessToken, useAuth } from "@graphoria/react";
 
 import { graphql } from "./graphql.ts";
-
+${values.trpc ? 'import { trpc } from "./trpc.ts";\n' : ""}
 export type Role = "reader" | "editor";
 
 // What a visitor without a token reads.
@@ -1819,7 +1847,7 @@ function SignIn() {
   // login() keeps this form mounted, so it holds its own pending state.
   const [submitting, setSubmitting] = useState(false);
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitting(true);
     await login(username, password);
@@ -1873,7 +1901,7 @@ ${values.rabbitmq ? BOOK_REFRESH_AUTH : ""}
   const [year, setYear] = useState("");
   const [authorId, setAuthorId] = useState("");
 
-  const addBook = async (event: FormEvent<HTMLFormElement>) => {
+  const addBook = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const response = await post("/rest/add-book", {
       title,
@@ -1889,11 +1917,7 @@ ${
     setYear("");
   };
 
-  const publish = async (id: number) => {
-    const response = await post("/rest/publish-book", { id });
-    if (response.ok) reexecute({ requestPolicy: "network-only" });
-  };
-
+${values.trpc ? PUBLISH_TRPC : PUBLISH_REST}
   return (
     <main className="mx-auto max-w-2xl p-8 font-sans">
       <div className="mb-6 flex items-center justify-between">
@@ -1999,6 +2023,28 @@ import type { introspection } from "./graphql-env.d.ts";
 export const graphql = initGraphQLTada<{ introspection: introspection }>();
 `;
 
+const TRPC_TS = `import { createTRPCClient, httpBatchLink } from "@trpc/client";
+import type { TRPCRouterOf } from "@graphoria/server/trpc";
+import { getAccessToken } from "@graphoria/react";
+
+import type config from "../graphoria";
+
+// The operations in graphoria.ts, typed from the configuration itself: no
+// code generation.
+export const trpc = createTRPCClient<TRPCRouterOf<typeof config>>({
+  links: [
+    httpBatchLink({
+      url: "/trpc",
+      maxItems: 10, // TRPC_MAX_BATCH_SIZE, 10 by default: a bigger batch fails whole.
+      headers: () => {
+        const token = getAccessToken();
+        return token ? { Authorization: \`Bearer \${token}\` } : {};
+      },
+    }),
+  ],
+});
+`;
+
 const frontendFiles = (values: ProjectValues): Record<(typeof FRONTEND_FILES)[number], string> => ({
   "bunfig.toml": BUNFIG,
   "web/index.html": indexHtml(values),
@@ -2026,6 +2072,7 @@ export const renderProject = (
   "docker-compose.yml": dockerCompose(values),
   "seed.sql": SEEDS[values.database](values),
   ...(values.frontend && frontendFiles(values)),
+  ...(values.frontend && values.auth && values.trpc && { "web/trpc.ts": TRPC_TS }),
   ...(values.metrics && {
     "prometheus.yml": PROMETHEUS_YML,
     "grafana/dashboards.yml": GRAFANA_DASHBOARD_PROVIDER,

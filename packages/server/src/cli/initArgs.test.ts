@@ -41,6 +41,12 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs([])).not.toHaveProperty("frontend");
   });
 
+  it("answers the tRPC question with --trpc or --no-trpc", () => {
+    expect(parseInitArgs(["--trpc"]).trpc).toBe(true);
+    expect(parseInitArgs(["--no-trpc"]).trpc).toBe(false);
+    expect(parseInitArgs([])).not.toHaveProperty("trpc");
+  });
+
   it("answers the RabbitMQ and AI questions with --rabbitmq/--no-rabbitmq and --ai/--no-ai", () => {
     expect(parseInitArgs(["--rabbitmq"]).rabbitmq).toBe(true);
     expect(parseInitArgs(["--no-rabbitmq"]).rabbitmq).toBe(false);

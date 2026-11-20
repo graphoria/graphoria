@@ -1,10 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { DatabaseType } from "../config";
 
+import { devDependencies } from "../../package.json";
 import { genResolverName } from "../databases/transformers/genResolverName";
 import { storesInUse } from "../singletons/cache";
 import { ConfigurationZod } from "../types/zod/configuration";
@@ -14,6 +15,7 @@ import {
   GRAFANA_FILES,
   METRICS_FILES,
   PROJECT_FILES,
+  TRPC_FILES,
   renderProject,
   type ProjectValues,
 } from "./initTemplates";
@@ -23,6 +25,9 @@ const PLAYGROUNDS = join(import.meta.dir, "../../../playgrounds/package.json");
 // What `@graphoria/server/config` resolves to. A generated config written outside
 // the workspace imports this instead: no node_modules above it holds the package.
 const CONFIG_SOURCE = join(import.meta.dir, "../config/index.ts");
+// The same for `@graphoria/server/trpc` and `@graphoria/react`, which web/trpc.ts imports.
+const TRPC_SOURCE = join(import.meta.dir, "../trpc/index.ts");
+const REACT_SOURCE = join(import.meta.dir, "../../../react/src/index.ts");
 
 const values = (database: DatabaseType): ProjectValues => ({
   database,
@@ -37,6 +42,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   redis: false,
   dataTools: false,
   frontend: false,
+  trpc: false,
   cron: false,
   rateLimit: false,
   metrics: false,
@@ -124,6 +130,10 @@ describe("renderProject paths", () => {
     );
   });
 
+  it.each(ENGINES)("adds no file for --trpc for %s", (database) => {
+    expect(Object.keys(renderWith({ trpc: true }, database)).sort()).toEqual(PATHS);
+  });
+
   it("lists those in METRICS_FILES and GRAFANA_FILES", () => {
     expect(Array.from<string>([...METRICS_FILES, ...GRAFANA_FILES]).sort()).toEqual(METRICS_PATHS);
   });
@@ -174,6 +184,16 @@ describe("renderProject package.json", () => {
     const pkg = JSON.parse(renderWith(patch as Partial<ProjectValues>)["package.json"]!);
 
     expect(pkg.dependencies).toEqual({ "@graphoria/server": "^0.6.0", ...expected });
+  });
+
+  it("adds @trpc/server with --trpc, at the server's own version", () => {
+    const pkg = JSON.parse(renderWith({ trpc: true })["package.json"]!);
+
+    expect(pkg.dependencies).toEqual({
+      "@graphoria/server": "^0.6.0",
+      "@trpc/server": devDependencies["@trpc/server"],
+    });
+    expect(pkg.dependencies["@trpc/server"]).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });
 
@@ -310,12 +330,20 @@ describe("renderProject .env", () => {
     },
   );
 
+  it.each(["pg", "sqlite"] as const)("mounts the tRPC surface with --trpc for %s", (database) => {
+    const lines = renderWith({ trpc: true }, database)[".env"]!.split("\n");
+
+    expect(lines).toContain("TRPC_ENABLED=true");
+    expect(render(database)[".env"]).not.toContain("TRPC_");
+  });
+
   it("adds every feature's settings together without overlap", () => {
     const lines = renderWith({
       rabbitmq: true,
       ai: true,
       redis: true,
       dataTools: true,
+      trpc: true,
       metrics: true,
       tracing: true,
     })[".env"]!.split("\n");
@@ -326,6 +354,7 @@ describe("renderProject .env", () => {
     expect(lines).toContain("REDIS_URL=redis://localhost:6379");
     expect(lines).toContain("AUTH_STORE=redis");
     expect(lines).toContain("RATE_LIMIT_STORE=redis");
+    expect(lines).toContain("TRPC_ENABLED=true");
     expect(lines).toContain("METRICS_ENABLED=true");
     expect(lines).toContain("TRACING_ENABLED=true");
     expect(lines).toContain("JAEGER_UI_PORT=16686");
@@ -1848,6 +1877,15 @@ describe("renderProject with the frontend", () => {
       });
     });
   });
+
+  // @types/react 19.3 deprecates FormEvent; onSubmit hands a SubmitEvent.
+  it.each([{}, { auth: true }])("types the submit handlers with SubmitEvent for %j", (patch) => {
+    const app = renderWith({ frontend: true, ...patch })["web/App.tsx"]!;
+
+    expect(app).toContain('import type { SubmitEvent } from "react";');
+    expect(app).toContain("async (event: SubmitEvent<HTMLFormElement>) => {");
+    expect(app).not.toContain("FormEvent");
+  });
 });
 
 describe("renderProject with --auth --frontend", () => {
@@ -1974,6 +2012,73 @@ describe("renderProject with --auth --frontend", () => {
     expect(JSON.parse(files["tsconfig.json"]!).compilerOptions.plugins[0].schema).toBe(
       "./.graphoria/schemas/schema_anonymous.graphql",
     );
+  });
+});
+
+describe("renderProject with --auth --frontend --trpc", () => {
+  const renderTrpcWeb = (patch: Partial<ProjectValues> = {}) =>
+    renderWith({ frontend: true, auth: true, trpc: true, ...patch });
+
+  it("adds web/trpc.ts, only with --auth --frontend", () => {
+    expect(Object.keys(renderTrpcWeb())).toContain("web/trpc.ts");
+    expect(Object.keys(renderTrpcWeb({ auth: false }))).not.toContain("web/trpc.ts");
+    expect(Object.keys(renderTrpcWeb({ frontend: false }))).not.toContain("web/trpc.ts");
+    expect(Object.keys(renderTrpcWeb({ trpc: false }))).not.toContain("web/trpc.ts");
+  });
+
+  it("lists the added file in TRPC_FILES", () => {
+    expect(Array.from<string>(TRPC_FILES)).toEqual(["web/trpc.ts"]);
+  });
+
+  it("adds @trpc/client at the server's version, only with --auth --frontend", () => {
+    const dependencies = (patch: Partial<ProjectValues> = {}) =>
+      JSON.parse(renderTrpcWeb(patch)["package.json"]!).dependencies;
+
+    expect(dependencies()["@trpc/client"]).toBe(devDependencies["@trpc/client"]);
+    expect(dependencies()["@trpc/client"]).toBe(dependencies()["@trpc/server"]);
+    expect(dependencies({ auth: false })).not.toHaveProperty("@trpc/client");
+    expect(dependencies({ frontend: false })).not.toHaveProperty("@trpc/client");
+  });
+
+  it("types the client from graphoria.ts and sends the user's token", () => {
+    const client = renderTrpcWeb()["web/trpc.ts"]!;
+
+    for (const marker of [
+      'import { createTRPCClient, httpBatchLink } from "@trpc/client";',
+      'import type { TRPCRouterOf } from "@graphoria/server/trpc";',
+      'import { getAccessToken } from "@graphoria/react";',
+      'import type config from "../graphoria";',
+      "export const trpc = createTRPCClient<TRPCRouterOf<typeof config>>({",
+      'url: "/trpc",',
+      "maxItems: 10,",
+      "return token ? { Authorization: `Bearer ${token}` } : {};",
+    ]) {
+      expect(client).toContain(marker);
+    }
+  });
+
+  it("publishes a draft through tRPC, and still adds a book over REST", () => {
+    const app = renderTrpcWeb()["web/App.tsx"]!;
+
+    expect(app).toContain(
+      'import { graphql } from "./graphql.ts";\nimport { trpc } from "./trpc.ts";',
+    );
+    expect(app).toContain(
+      "  const publish = async (id: number) => {\n" +
+        "    try {\n" +
+        "      await trpc.publishBook.mutate({ id });\n" +
+        "    } catch {\n" +
+        "      return;\n" +
+        "    }\n" +
+        '    reexecute({ requestPolicy: "network-only" });\n' +
+        "  };\n",
+    );
+    expect(app).not.toContain("/rest/publish-book");
+    expect(app).toContain('post("/rest/add-book", {');
+  });
+
+  it("imports no tRPC client without --trpc", () => {
+    expect(renderTrpcWeb({ trpc: false })["web/App.tsx"]).not.toContain("./trpc.ts");
   });
 });
 
@@ -2186,9 +2291,10 @@ describe("renderProject types the add-book operation", () => {
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
   // One tsc run over every engine's graphoria.ts and repository.ts, with and
-  // without --auth, plus copies that call the repository wrongly: their errors
-  // must be the only ones.
-  it("type-checks every engine's scaffold and rejects wrong repository calls", async () => {
+  // without --auth, and the tRPC client each --auth config types, plus copies
+  // that call the repository or the client wrongly: their errors must be the
+  // only ones.
+  it("type-checks every engine's scaffold and rejects wrong repository and client calls", async () => {
     dir = await mkdtemp(join(tmpdir(), "graphoria-init-types-"));
     const files: string[] = [];
     const write = async (
@@ -2197,8 +2303,9 @@ describe("renderProject types the add-book operation", () => {
       edit = (text: string) => text,
     ) => {
       await mkdir(join(dir, project));
-      for (const name of ["graphoria.ts", "repository.ts"]) {
+      for (const name of ["graphoria.ts", "repository.ts", "web/trpc.ts"]) {
         if (rendered[name] === undefined) continue;
+        await mkdir(dirname(join(dir, project, name)), { recursive: true });
         await writeFile(join(dir, project, name), edit(rendered[name]));
         files.push(`${project}/${name}`);
       }
@@ -2209,6 +2316,7 @@ describe("renderProject types the add-book operation", () => {
       redis: true,
       ai: true,
       mcp: true,
+      trpc: true,
       cron: true,
       rateLimit: true,
       virtualColumns: true,
@@ -2224,6 +2332,17 @@ describe("renderProject types the add-book operation", () => {
     await write("publish-typo", renderWith({ ...everything, auth: true }), (text) =>
       text.replace("repository.main.books.publish(", "repository.main.books.publsh("),
     );
+    await writeFile(
+      join(dir, "pg-auth/web/probe.ts"),
+      'import { trpc } from "./trpc.ts";\n\nvoid trpc.publishBook.mutate({ id: 1 });\nvoid trpc.publishBook.mutate({ id: "1" });\n',
+    );
+    files.push("pg-auth/web/probe.ts");
+    // web/trpc.ts imports @trpc/client by name, as the scaffold installs it.
+    await mkdir(join(dir, "node_modules/@trpc"), { recursive: true });
+    await symlink(
+      dirname(Bun.resolveSync("@trpc/client/package.json", import.meta.dir)),
+      join(dir, "node_modules/@trpc/client"),
+    );
     const { compilerOptions } = JSON.parse(renderWith({ frontend: true })["tsconfig.json"]!);
     await writeFile(
       join(dir, "tsconfig.json"),
@@ -2233,7 +2352,11 @@ describe("renderProject types the add-book operation", () => {
           typeRoots: [
             dirname(dirname(Bun.resolveSync("@types/bun/package.json", import.meta.dir))),
           ],
-          paths: { "@graphoria/server/config": [CONFIG_SOURCE] },
+          paths: {
+            "@graphoria/server/config": [CONFIG_SOURCE],
+            "@graphoria/server/trpc": [TRPC_SOURCE],
+            "@graphoria/react": [REACT_SOURCE],
+          },
         },
         files,
       }),
@@ -2248,12 +2371,15 @@ describe("renderProject types the add-book operation", () => {
       .split("\n")
       .filter((line) => line.includes("error TS"));
 
-    expect(errors).toHaveLength(2);
+    expect(errors).toHaveLength(3);
     expect(errors.find((line) => line.startsWith("typo/graphoria.ts("))).toContain(
       "Property 'ad' does not exist",
     );
     expect(errors.find((line) => line.startsWith("publish-typo/graphoria.ts("))).toContain(
       "Property 'publsh' does not exist",
+    );
+    expect(errors.find((line) => line.startsWith("pg-auth/web/probe.ts(4,"))).toContain(
+      "Type 'string' is not assignable to type 'number'",
     );
   }, 60_000);
 });
