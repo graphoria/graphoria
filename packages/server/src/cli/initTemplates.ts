@@ -1614,7 +1614,7 @@ const appTsx = (values: ProjectValues) => {
   const schema = seedSchema(values);
 
   return `import { ${values.rabbitmq ? "useEffect, " : ""}useState } from "react";
-import type { FormEvent } from "react";
+import type { SubmitEvent } from "react";
 import { useQuery${values.rabbitmq ? ", useSubscription" : ""} } from "urql";
 
 import { graphql } from "./graphql.ts";
@@ -1640,7 +1640,7 @@ ${values.rabbitmq ? BOOK_ADDED_REFRESH : ""}
   const [year, setYear] = useState("");
   const [authorId, setAuthorId] = useState("");
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const response = await fetch("/rest/add-book", {
       method: "POST",
@@ -1789,7 +1789,7 @@ const appTsxAuth = (values: ProjectValues) => {
   const schema = seedSchema(values);
 
   return `import { ${values.rabbitmq ? "useEffect, " : ""}useState } from "react";
-import type { FormEvent } from "react";
+import type { SubmitEvent } from "react";
 import { useQuery${values.rabbitmq ? ", useSubscription" : ""} } from "urql";
 import { getAccessToken, useAuth } from "@graphoria/react";
 
@@ -1847,7 +1847,7 @@ function SignIn() {
   // login() keeps this form mounted, so it holds its own pending state.
   const [submitting, setSubmitting] = useState(false);
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitting(true);
     await login(username, password);
@@ -1901,7 +1901,7 @@ ${values.rabbitmq ? BOOK_REFRESH_AUTH : ""}
   const [year, setYear] = useState("");
   const [authorId, setAuthorId] = useState("");
 
-  const addBook = async (event: FormEvent<HTMLFormElement>) => {
+  const addBook = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const response = await post("/rest/add-book", {
       title,

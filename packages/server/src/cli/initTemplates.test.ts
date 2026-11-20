@@ -1877,6 +1877,15 @@ describe("renderProject with the frontend", () => {
       });
     });
   });
+
+  // @types/react 19.3 deprecates FormEvent; onSubmit hands a SubmitEvent.
+  it.each([{}, { auth: true }])("types the submit handlers with SubmitEvent for %j", (patch) => {
+    const app = renderWith({ frontend: true, ...patch })["web/App.tsx"]!;
+
+    expect(app).toContain('import type { SubmitEvent } from "react";');
+    expect(app).toContain("async (event: SubmitEvent<HTMLFormElement>) => {");
+    expect(app).not.toContain("FormEvent");
+  });
 });
 
 describe("renderProject with --auth --frontend", () => {
