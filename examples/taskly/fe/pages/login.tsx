@@ -20,7 +20,7 @@ export function LoginPage() {
   const params = new URLSearchParams(searchString);
   const returnTo = params.get("returnTo");
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     if (!username.trim() || !password.trim()) return;
