@@ -1,6 +1,7 @@
 import { readdir, rm } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { isString } from "es-toolkit/compat";
+import { format } from "oxfmt";
 
 import type { Configuration } from "../types/configuration";
 import type { CodegenArgs } from "./codegenArgs";
@@ -12,8 +13,23 @@ import { env } from "../singletons/env";
 import { ConfigurationZod } from "../types/zod/configuration";
 import { formatSchema, schemaFileName } from "../utils/writeSchema";
 import { CODEGEN_USAGE, parseCodegenArgs } from "./codegenArgs";
+import { operationOutputs, renderOperationTypes } from "./operationTypes";
 
-export type CodegenResult = { written: string[] };
+export type CodegenResult = { written: string[]; types: { path: string; operations?: number } };
+
+export type CodegenDependencies = {
+  /** Test seam: whether @trpc/server resolves, as the server's tRPC loader checks it. */
+  trpcResolves?: () => boolean;
+};
+
+const trpcServerResolves = () => {
+  try {
+    import.meta.resolve("@trpc/server");
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const SCHEMA_FILE = /^schema_.+\.graphql$/;
 const OPENAPI_FILE = /^openapi_.+\.json$/;
@@ -59,7 +75,10 @@ const prune = async (dir: string, pattern: RegExp, written: Map<string, string>)
   }
 };
 
-export const runCodegen = async (args: CodegenArgs): Promise<CodegenResult> => {
+export const runCodegen = async (
+  args: CodegenArgs,
+  { trpcResolves = trpcServerResolves }: CodegenDependencies = {},
+): Promise<CodegenResult> => {
   assertDistinctRoles(env);
   if (env.leftoverSchemasOutputDir) {
     logger("codegen").warn(
@@ -95,18 +114,41 @@ export const runCodegen = async (args: CodegenArgs): Promise<CodegenResult> => {
       );
     }
 
+    // Beside the config, where its `import type {} from "./graphoria-env"` looks.
+    const typesPath = resolve(
+      args.types ?? join(dirname(resolve(configPath)), "graphoria-env.d.ts"),
+    );
+    let operations: number | undefined;
+    // Only @graphoria/server/trpc reads the file, and it needs the optional peer.
+    if (trpcResolves()) {
+      const outputs = operationOutputs(analyzed.roles[env.superadmin.role]!);
+      operations = Object.keys(outputs).length;
+      files.set(
+        typesPath,
+        (await format("graphoria-env.d.ts", renderOperationTypes(outputs))).code,
+      );
+    }
+
     for (const [path, contents] of files) await writeOutput(path, contents);
     await prune(join(outDir, "schemas"), SCHEMA_FILE, files);
     await prune(join(outDir, "openapi"), OPENAPI_FILE, files);
 
-    return { written: [...files.keys()] };
+    return { written: [...files.keys()], types: { path: typesPath, operations } };
   } finally {
     await disconnectDatabases();
   }
 };
 
-export const summaryLines = (result: CodegenResult, cwd: string): string[] =>
-  result.written.map((path) => `wrote ${relative(cwd, path)}`);
+export const summaryLines = (result: CodegenResult, cwd: string): string[] => {
+  const types = relative(cwd, result.types.path);
+  const { operations } = result.types;
+  return [
+    ...result.written.map((path) => `wrote ${relative(cwd, path)}`),
+    operations === undefined
+      ? `skipped ${types}: @trpc/server does not resolve, and only @graphoria/server/trpc reads it`
+      : `typed ${operations} operation${operations === 1 ? "" : "s"} in ${types}`,
+  ];
+};
 
 export const codegenCommand = async (argv: string[]): Promise<void> => {
   const log = logger("cli");

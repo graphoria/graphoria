@@ -105,7 +105,7 @@ describe("graphoria codegen", () => {
       quiet.stdout
         .split("\n")
         .filter(Boolean)
-        .every((line) => line.startsWith("wrote ")),
+        .every((line) => line.startsWith("wrote ") || line.startsWith("typed ")),
     ).toBe(true);
     // An info line: SQLite's introspection reads bun:sqlite directly, so the
     // executor's debug `query executed` never prints here.
@@ -117,10 +117,17 @@ describe("graphoria codegen", () => {
 
     expect(
       summaryLines(
-        { written: ["/p/.graphoria/schemas/schema_a.graphql", "/p/out/openapi_a.json"] },
+        {
+          written: ["/p/.graphoria/schemas/schema_a.graphql", "/p/out/openapi_a.json"],
+          types: { path: "/p/graphoria-env.d.ts", operations: 0 },
+        },
         "/p",
       ),
-    ).toEqual(["wrote .graphoria/schemas/schema_a.graphql", "wrote out/openapi_a.json"]);
+    ).toEqual([
+      "wrote .graphoria/schemas/schema_a.graphql",
+      "wrote out/openapi_a.json",
+      "typed 0 operations in graphoria-env.d.ts",
+    ]);
   });
 
   it("creates no auth table, though autoCreateTables is on", async () => {
@@ -303,4 +310,48 @@ describe("graphoria codegen", () => {
     expect(await ls(join(dir, "legacy"))).toEqual([]);
     expect(await ls(join(dir, ".graphoria"))).toEqual(["openapi", "schemas"]);
   }, 30_000);
+
+  it("writes the types file beside the config, typing its plain-string operations", async () => {
+    const dir = await project();
+    await mkdir(join(dir, "server"));
+    await writeFile(join(dir, "server", "graphoria.ts"), configSource(dir, {}));
+
+    const result = codegen(dir, ["--config", "server/graphoria.ts"]);
+
+    expect(result.exitCode).toBe(0);
+    const types = await Bun.file(join(dir, "server", "graphoria-env.d.ts")).text();
+    expect(types).toContain("interface GraphoriaGeneratedOperationOutputs");
+    expect(types).toMatch(
+      /books: \{\s*main_books: \{ id: number; title: string; published_year: number \}\[\];?\s*\}/,
+    );
+    expect(result.stdout).toContain("typed 1 operation in server/graphoria-env.d.ts");
+  }, 30_000);
+
+  it("skips the types file, saying so, when @trpc/server does not resolve", async () => {
+    const dir = await project();
+    const { runCodegen } = await import("./codegen");
+
+    const result = await runCodegen(
+      { config: join(dir, "graphoria.ts"), out: join(dir, ".graphoria") },
+      { trpcResolves: () => false },
+    );
+
+    expect(result.types.operations).toBeUndefined();
+    expect(await Bun.file(join(dir, "graphoria-env.d.ts")).exists()).toBe(false);
+  }, 30_000);
+
+  it("prints how many operations the types file holds, or that it skipped it", async () => {
+    const { summaryLines } = await import("./codegen");
+    const types = (operations?: number) => ({ path: "/p/graphoria-env.d.ts", operations });
+
+    expect(summaryLines({ written: [], types: types(1) }, "/p")).toEqual([
+      "typed 1 operation in graphoria-env.d.ts",
+    ]);
+    expect(summaryLines({ written: [], types: types(2) }, "/p")).toEqual([
+      "typed 2 operations in graphoria-env.d.ts",
+    ]);
+    expect(summaryLines({ written: [], types: types() }, "/p")).toEqual([
+      "skipped graphoria-env.d.ts: @trpc/server does not resolve, and only @graphoria/server/trpc reads it",
+    ]);
+  });
 });

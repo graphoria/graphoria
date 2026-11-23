@@ -51,7 +51,7 @@ graphoria v${version}
 
 Usage: graphoria [options]
        graphoria seed-auth --user <name> --password <pwd> --role <role> --config <path> [--claims <json>]
-       graphoria codegen [--config <path>] [--out <dir>]
+       graphoria codegen [--config <path>] [--out <dir>] [--types <file>]
        graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]
 
 Options:
@@ -64,7 +64,7 @@ Options:
 
 Subcommands:
   seed-auth              Insert an auth user (argon2id-hashed) into the configured auth database
-  codegen                Write the per-role GraphQL schemas and OpenAPI documents, without starting the server
+  codegen                Write the per-role schemas, OpenAPI documents and tRPC output types, without starting the server
   init                   Scaffold a Graphoria project with Docker Compose in the current directory
 
 Environment variables:
