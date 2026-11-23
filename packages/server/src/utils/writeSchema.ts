@@ -6,8 +6,10 @@ export const writeSchema = async (
   roles: AnalyzedConfiguration["roles"],
   outputDir: string,
 ): Promise<void> => {
-  Object.entries(roles).forEach(async ([role, schema]) => {
-    const { code } = await format("schema.graphql", schema.typeDefs);
-    await Bun.write(`${outputDir}/schema_${role}.graphql`, code);
-  });
+  await Promise.all(
+    Object.entries(roles).map(async ([role, schema]) => {
+      const { code } = await format("schema.graphql", schema.typeDefs);
+      await Bun.write(`${outputDir}/schema_${role}.graphql`, code);
+    }),
+  );
 };
