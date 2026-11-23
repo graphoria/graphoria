@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { SelectionAnalysis, VariableDefinition } from "../analyzeQuery/types";
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
+import type { DatabaseType } from "../types/configuration";
 
 import {
   buildOrderByClauseFp,
@@ -9,6 +10,7 @@ import {
   buildWhereClauseFp,
   filterBasedOnDirective,
   findJoinCondition,
+  processFieldSelectionsFp,
   qualifiedNameFp,
   wrapIdentifierFp,
 } from "./common";
@@ -1551,5 +1553,57 @@ describe("findJoinCondition ancestor conditions", () => {
     );
     expect(sql).toContain(`t2."second_col" = t3."second_col"`);
     expect(sql).toContain(`t3."third_col" = t1."third_col"`);
+  });
+});
+
+describe("processFieldSelectionsFp virtual columns", () => {
+  const VIRTUAL: Record<string, unknown> = {
+    v_name: { virtual: true, dataType: "text", expression: "first_name || ' ' || last_name" },
+    v_flag: {
+      virtual: true,
+      dataType: "boolean",
+      expression: "SELECT count(*) FROM orders o WHERE o.user_id = t1.id",
+    },
+    v_data: { virtual: true, dataType: "blob", function: "zeroblob", params: ["2"] },
+  };
+  const entities = stubEntities({
+    isVirtualColumn: ((_table: string, column: string) =>
+      VIRTUAL[column]) as unknown as MergedEntities["isVirtualColumn"],
+  });
+  const select = (dbType: DatabaseType, selection: SelectionAnalysis) =>
+    processFieldSelectionsFp(dbType)(
+      entities,
+      [],
+      {},
+      { name: "users", selections: [selection] },
+      "users",
+      "t1",
+      0,
+      () => "",
+      ([name, selector]) => `${name}: ${selector}`,
+    );
+
+  it("applies a directive to a virtual column, as to a physical one", () => {
+    expect(
+      select("pg", { name: "v_name", directives: [{ name: "uppercase", arguments: {} }] }),
+    ).toBe("v_name: UPPER((first_name || ' ' || last_name))");
+  });
+
+  it("encodes a SQLite boolean naming the expression once, then applies the directives", () => {
+    expect(
+      select("sqlite", { name: "v_flag", directives: [{ name: "uppercase", arguments: {} }] }),
+    ).toBe(
+      "v_flag: UPPER(CASE NOT NOT (SELECT count(*) FROM orders o WHERE o.user_id = t1.id) WHEN 1 THEN json('true') WHEN 0 THEN json('false') END)",
+    );
+  });
+
+  it("encodes a SQLite blob naming the expression once", () => {
+    expect(select("sqlite", { name: "v_data" })).toBe(
+      "v_data: nullif(rtrim(ltrim(quote(zeroblob(2)), 'X'''), ''''), 'NULL')",
+    );
+  });
+
+  it("leaves any other SQLite virtual column as is", () => {
+    expect(select("sqlite", { name: "v_name" })).toBe("v_name: (first_name || ' ' || last_name)");
   });
 });
