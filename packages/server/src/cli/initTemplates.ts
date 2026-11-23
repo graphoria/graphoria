@@ -1,6 +1,7 @@
 import type { DatabaseType } from "../config";
 
 import { GRAFANA_DASHBOARD } from "./grafanaDashboard";
+import { EMPTY_OPERATION_TYPES } from "./operationTypes";
 
 export type InitAnswers = {
   database: DatabaseType;
@@ -108,6 +109,8 @@ export const FRONTEND_FILES = [
 
 export const TRPC_FILES = ["web/trpc.ts"] as const;
 
+export const TRPC_ENV_FILES = ["graphoria-env.d.ts"] as const;
+
 export const METRICS_FILES = [
   "prometheus.yml",
   "grafana/dashboards.yml",
@@ -157,13 +160,13 @@ const packageJson = (
       name,
       private: true,
       type: "module",
-      scripts: frontend
-        ? {
-            dev: "PRINT_SCHEMAS=true bun --watch index.ts",
-            start: "bun index.ts",
-            types: "gql-tada generate output",
-          }
-        : { dev: "bun --watch index.ts", start: "bun index.ts" },
+      scripts: {
+        dev: "bun --watch index.ts",
+        start: "bun index.ts",
+        ...((frontend || trpc) && {
+          types: frontend ? "graphoria codegen && gql-tada generate output" : "graphoria codegen",
+        }),
+      },
       dependencies: {
         "@graphoria/server": `^${graphoria}`,
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
@@ -544,15 +547,22 @@ const booksCaller = ({ auth, frontend }: ProjectValues) => {
   return frontend ? "" : " Call it with the admin secret.";
 };
 
+// gql.tada comes with --frontend only; without it, graphoria-env.d.ts types the
+// plain string.
+const booksQuery = (values: ProjectValues) => {
+  const query = `"query { ${seedSchema(values)}_books(orderBy: { published_year: DESC }) { id title published_year } }"`;
+  return values.frontend ? `graphql(\n        ${query},\n      )` : query;
+};
+
 const BOOKS_OPERATION = (
   values: ProjectValues,
 ) => `    // GET /rest/books answers from this process first, then from Redis, and runs
     // the query again once the entry is 10 seconds old.${booksCaller(values)}
-    books: {
-      query: "query { ${seedSchema(values)}_books(orderBy: { published_year: DESC }) { id title published_year } }",
+    books: operation({
+      query: ${booksQuery(values)},
       rest: { path: "/books", method: "GET" },
       cache: { ttl: 10_000, max: 100 },
-    },
+    }),
 `;
 
 const PUBLISH_BOOK_HANDLER = `      handler: ({ repository }, { id }) => repository.main.books.publish(id),
@@ -673,11 +683,11 @@ const publishBookInput = z.object({ id: z.number().int() });
 
 const graphoriaConfig = (
   values: ProjectValues,
-) => `import { operation, ${values.virtualColumns ? "virtualColumnExpression, " : ""}z } from "@graphoria/server/config";
+) => `${values.trpc ? '// The output types of the plain-string operations, which bun run types writes.\nimport type {} from "./graphoria-env";\n' : ""}import { operation, ${values.virtualColumns ? "virtualColumnExpression, " : ""}z } from "@graphoria/server/config";
 import type { ConfigurationFn } from "@graphoria/server/config";
 
 import { createRepository, type Repository } from "./repository";
-
+${values.frontend && values.redis ? 'import { graphql } from "./web/graphql";\n' : ""}
 // Bun loads these from .env; in Docker Compose they come from the environment.
 const env = (name: string) => {
   const value = process.env[name];
@@ -838,8 +848,8 @@ const GITIGNORE = `node_modules
 .env
 `;
 
-// .graphoria holds the schemas `bun run dev` prints.
-const GITIGNORE_FRONTEND = `${GITIGNORE}.graphoria
+// .graphoria holds what `bun run types` generates: the schemas and the OpenAPI documents.
+const GITIGNORE_GENERATED = `${GITIGNORE}.graphoria
 `;
 
 // The database file and the journals SQLite writes beside it.
@@ -847,11 +857,11 @@ const SQLITE_FILES = `*.db
 *.db-*
 `;
 
-const gitignore = ({ database, frontend }: ProjectValues) =>
-  `${frontend ? GITIGNORE_FRONTEND : GITIGNORE}${database === "sqlite" ? SQLITE_FILES : ""}`;
+const gitignore = ({ database, frontend, trpc }: ProjectValues) =>
+  `${frontend || trpc ? GITIGNORE_GENERATED : GITIGNORE}${database === "sqlite" ? SQLITE_FILES : ""}`;
 
-const dockerignore = ({ database }: ProjectValues) =>
-  `${DOCKERIGNORE}${database === "sqlite" ? SQLITE_FILES : ""}`;
+const dockerignore = ({ database, frontend, trpc }: ProjectValues) =>
+  `${DOCKERIGNORE}${frontend || trpc ? ".graphoria\n" : ""}${database === "sqlite" ? SQLITE_FILES : ""}`;
 
 // The Compose volume mounts at /app/data, and the runtime user writes the
 // database file there.
@@ -2017,7 +2027,7 @@ ${values.trpc ? PUBLISH_TRPC : PUBLISH_REST}
 
 const GRAPHQL_TS = `import { initGraphQLTada } from "gql.tada";
 
-// \`bun run types\` writes this file from the schema \`bun run dev\` prints.
+// \`bun run types\` writes this file, from the database, with no server running.
 import type { introspection } from "./graphql-env.d.ts";
 
 export const graphql = initGraphQLTada<{ introspection: introspection }>();
@@ -2029,8 +2039,8 @@ import { getAccessToken } from "@graphoria/react";
 
 import type config from "../graphoria";
 
-// The operations in graphoria.ts, typed from the configuration itself: no
-// code generation.
+// The operations in graphoria.ts, typed from the configuration itself; one whose
+// query is a plain string, from the graphoria-env.d.ts that bun run types writes.
 export const trpc = createTRPCClient<TRPCRouterOf<typeof config>>({
   links: [
     httpBatchLink({
@@ -2071,6 +2081,7 @@ export const renderProject = (
   ".dockerignore": dockerignore(values),
   "docker-compose.yml": dockerCompose(values),
   "seed.sql": SEEDS[values.database](values),
+  ...(values.trpc && { "graphoria-env.d.ts": EMPTY_OPERATION_TYPES }),
   ...(values.frontend && frontendFiles(values)),
   ...(values.frontend && values.auth && values.trpc && { "web/trpc.ts": TRPC_TS }),
   ...(values.metrics && {

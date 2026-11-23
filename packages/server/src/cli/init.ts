@@ -23,6 +23,7 @@ import {
   RABBITMQ_MANAGEMENT_PORT,
   RABBITMQ_PORT,
   REDIS_COMMANDER_PORT,
+  TRPC_ENV_FILES,
   TRPC_FILES,
   renderProject,
   seedSchema,
@@ -347,12 +348,15 @@ export const nextSteps = (
     ...(answers.tracing ? ["jaeger", "grafana"] : []),
   ].join(" ");
 
+  const typesScript = answers.frontend || answers.trpc;
+
   const run =
     answers.database === "sqlite"
       ? [
           ...(installed ? [] : [`First run ${inline("bun install")}.`, ""]),
-          `Run it on this machine; the first boot creates ${answers.dbName}.db and seeds it:`,
+          `Run it on this machine; the first ${typesScript ? inline("bun run types") : "boot"} creates ${answers.dbName}.db and seeds it:`,
           ...(services ? [command(`docker compose up -d --wait ${services}`)] : []),
+          ...(typesScript ? [command("bun run types")] : []),
           command("bun run dev"),
           open,
           "",
@@ -376,6 +380,7 @@ export const nextSteps = (
           ...(answers.database === "mssql" && services
             ? [command(`docker compose up -d --wait ${services}`)]
             : []),
+          ...(typesScript ? [command("bun run types")] : []),
           command("bun run dev"),
         ];
 
@@ -449,11 +454,19 @@ export const nextSteps = (
             : []),
         ]
       : []),
-    ...(answers.frontend
+    ...(typesScript
       ? [
           "",
-          `Once ${inline("bun run dev")} has printed the schema, ${inline("bun run types")} writes`,
-          "web/graphql-env.d.ts, which types the app's queries. Commit it.",
+          `${inline("bun run types")} reads the database, with no server running, and writes`,
+          `${[
+            ...(answers.frontend ? ["web/graphql-env.d.ts, which types the app's queries"] : []),
+            ...(answers.trpc
+              ? ["graphoria-env.d.ts, which types the plain-string operations"]
+              : []),
+          ].join(
+            ", and ",
+          )}. Commit ${answers.frontend && answers.trpc ? "both" : "it"}, and run it again`,
+          "after a change to the tables or to graphoria.ts.",
         ]
       : []),
     ...(answers.trpc
@@ -546,6 +559,7 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   const answers = await collectAnswers(args, io);
   if (answers.frontend)
     refuseExisting([...FRONTEND_FILES, ...(answers.auth && answers.trpc ? TRPC_FILES : [])]);
+  if (answers.trpc) refuseExisting([...TRPC_ENV_FILES]);
   if (answers.metrics || answers.tracing)
     refuseExisting([...(answers.metrics ? METRICS_FILES : []), ...GRAFANA_FILES]);
   const warnings = [

@@ -19,6 +19,7 @@ import {
   renderProject,
   type ProjectValues,
 } from "./initTemplates";
+import { EMPTY_OPERATION_TYPES } from "./operationTypes";
 
 const STARTER = join(import.meta.dir, "../../../../examples/docker-compose-starter");
 const PLAYGROUNDS = join(import.meta.dir, "../../../playgrounds/package.json");
@@ -130,12 +131,76 @@ describe("renderProject paths", () => {
     );
   });
 
-  it.each(ENGINES)("adds no file for --trpc for %s", (database) => {
-    expect(Object.keys(renderWith({ trpc: true }, database)).sort()).toEqual(PATHS);
+  it.each(ENGINES)("adds graphoria-env.d.ts for --trpc for %s", (database) => {
+    expect(Object.keys(renderWith({ trpc: true }, database)).sort()).toEqual(
+      [...PATHS, "graphoria-env.d.ts"].sort(),
+    );
   });
 
   it("lists those in METRICS_FILES and GRAFANA_FILES", () => {
     expect(Array.from<string>([...METRICS_FILES, ...GRAFANA_FILES]).sort()).toEqual(METRICS_PATHS);
+  });
+});
+
+describe("generated types", () => {
+  it("runs graphoria codegen from bun run types with --trpc alone", () => {
+    expect(JSON.parse(renderWith({ trpc: true })["package.json"]!).scripts).toEqual({
+      dev: "bun --watch index.ts",
+      start: "bun index.ts",
+      types: "graphoria codegen",
+    });
+  });
+
+  it("has no types script without --frontend or --trpc", () => {
+    expect(JSON.parse(renderWith({})["package.json"]!).scripts).toEqual({
+      dev: "bun --watch index.ts",
+      start: "bun index.ts",
+    });
+  });
+
+  it("serves books as an operation(), so the tRPC router types it", () => {
+    expect(renderWith({ redis: true })["graphoria.ts"]).toContain("    books: operation({\n");
+  });
+
+  it("writes books' query with the app's graphql() with --frontend, a plain string without", () => {
+    const config = renderWith({ frontend: true, redis: true })["graphoria.ts"]!;
+
+    expect(config).toContain('import { graphql } from "./web/graphql";\n');
+    expect(config).toContain(
+      '      query: graphql(\n        "query { public_books(orderBy: { published_year: DESC }) { id title published_year } }",\n      ),\n',
+    );
+    expect(renderWith({ redis: true, trpc: true })["graphoria.ts"]).toContain(
+      '      query: "query { public_books(orderBy: { published_year: DESC }) { id title published_year } }",\n',
+    );
+    expect(renderWith({ frontend: true })["graphoria.ts"]).not.toContain("./web/graphql");
+  });
+
+  it("keeps .graphoria out of git and the image whenever bun run types exists", () => {
+    for (const patch of [{ frontend: true }, { trpc: true }]) {
+      const files = renderWith(patch);
+      expect(files[".gitignore"]).toContain(".graphoria\n");
+      expect(files[".dockerignore"]).toContain(".graphoria\n");
+    }
+    expect(renderWith({})[".gitignore"]).not.toContain(".graphoria");
+    expect(renderWith({})[".dockerignore"]).not.toContain(".graphoria");
+  });
+
+  it("writes a graphoria-env.d.ts that types nothing yet, imported by graphoria.ts, with --trpc", () => {
+    const files = renderWith({ trpc: true });
+
+    expect(files["graphoria-env.d.ts"]).toBe(EMPTY_OPERATION_TYPES);
+    expect(files["graphoria.ts"]).toContain('import type {} from "./graphoria-env";\n');
+    expect(renderWith({})).not.toHaveProperty("graphoria-env.d.ts");
+    expect(renderWith({})["graphoria.ts"]).not.toContain("graphoria-env");
+  });
+
+  it("names bun run types and graphoria-env.d.ts in the web clients' comments", () => {
+    const files = renderWith({ frontend: true, auth: true, trpc: true });
+
+    expect(files["web/graphql.ts"]).toContain("`bun run types`");
+    expect(files["web/graphql.ts"]).not.toContain("bun run dev");
+    expect(files["web/trpc.ts"]).toContain("graphoria-env.d.ts");
+    expect(files["web/trpc.ts"]).not.toContain("no\n// code generation");
   });
 });
 
@@ -1515,13 +1580,11 @@ describe("renderProject with the frontend", () => {
     expect(pkg.dependencies).not.toHaveProperty("urql");
   });
 
-  it("prints the schemas in dev and generates the types from them", () => {
-    const pkg = JSON.parse(renderWeb("pg")["package.json"]!);
-
-    expect(pkg.scripts).toEqual({
-      dev: "PRINT_SCHEMAS=true bun --watch index.ts",
+  it("generates the schemas and the types with bun run types, not in dev", () => {
+    expect(JSON.parse(renderWeb("pg")["package.json"]!).scripts).toEqual({
+      dev: "bun --watch index.ts",
       start: "bun index.ts",
-      types: "gql-tada generate output",
+      types: "graphoria codegen && gql-tada generate output",
     });
   });
 
@@ -1723,16 +1786,25 @@ describe("renderProject with the frontend", () => {
       await rm(dir, { recursive: true, force: true });
     });
 
+    // gql.tada is not installed here: this graphql() parses the query, as gql.tada's does.
+    const PARSING_GRAPHQL = `import { parse } from ${JSON.stringify(Bun.resolveSync("graphql", import.meta.dir))};
+
+export const graphql = (query: string) => parse(query);
+`;
+
     let seq = 0;
     const parse = async (
       frontend: boolean,
       database: DatabaseType,
       patch: Partial<ProjectValues> = {},
     ) => {
+      const project = join(dir, `${database}-${frontend}-${seq++}`);
       const path = await writeProject(
-        join(dir, `${database}-${frontend}-${seq++}`),
+        project,
         renderProject({ ...values(database), frontend, ...patch }, versions),
       );
+      await mkdir(join(project, "web"));
+      await writeFile(join(project, "web/graphql.ts"), PARSING_GRAPHQL);
       const configure = (await import(path)).default as (helpers: object) => unknown;
       return ConfigurationZod.parse(configure({}));
     };
@@ -2290,10 +2362,23 @@ describe("renderProject types the add-book operation", () => {
 
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
+  // gql.tada is not installed here: this graphql() types every document's
+  // answer as the books query's.
+  const TYPED_GRAPHQL = `export const graphql = (
+  _query: string,
+): {
+  readonly kind: "Document";
+  __apiType?: (variables: Record<string, never>) => {
+    public_books: { id: number; title: string; published_year: number }[];
+  };
+} => ({ kind: "Document" });
+`;
+
   // One tsc run over every engine's graphoria.ts and repository.ts, with and
-  // without --auth, and the tRPC client each --auth config types, plus copies
-  // that call the repository or the client wrongly: their errors must be the
-  // only ones.
+  // without --auth, and the tRPC clients the configs type, plus copies that
+  // call the repository or a client wrongly: their errors must be the only
+  // ones. books' answer takes its type from the app's graphql() with
+  // --frontend, and from graphoria-env.d.ts without.
   it("type-checks every engine's scaffold and rejects wrong repository and client calls", async () => {
     dir = await mkdtemp(join(tmpdir(), "graphoria-init-types-"));
     const files: string[] = [];
@@ -2303,10 +2388,19 @@ describe("renderProject types the add-book operation", () => {
       edit = (text: string) => text,
     ) => {
       await mkdir(join(dir, project));
-      for (const name of ["graphoria.ts", "repository.ts", "web/trpc.ts"]) {
+      for (const name of [
+        "graphoria.ts",
+        "repository.ts",
+        "web/trpc.ts",
+        "web/graphql.ts",
+        "graphoria-env.d.ts",
+      ]) {
         if (rendered[name] === undefined) continue;
         await mkdir(dirname(join(dir, project, name)), { recursive: true });
-        await writeFile(join(dir, project, name), edit(rendered[name]));
+        await writeFile(
+          join(dir, project, name),
+          name === "web/graphql.ts" ? TYPED_GRAPHQL : edit(rendered[name]),
+        );
         files.push(`${project}/${name}`);
       }
     };
@@ -2332,9 +2426,19 @@ describe("renderProject types the add-book operation", () => {
     await write("publish-typo", renderWith({ ...everything, auth: true }), (text) =>
       text.replace("repository.main.books.publish(", "repository.main.books.publsh("),
     );
+    await write("pg-trpc", renderWith({ redis: true, trpc: true, auth: true }));
+    await writeFile(
+      join(dir, "pg-trpc/graphoria-env.d.ts"),
+      "declare global {\n  interface GraphoriaGeneratedOperationOutputs {\n    books: { main_books: { id: number; title: string; published_year: number }[] };\n  }\n}\nexport {};\n",
+    );
+    await writeFile(
+      join(dir, "pg-trpc/client.ts"),
+      'import { createTRPCClient } from "@trpc/client";\nimport type { TRPCRouterOf } from "@graphoria/server/trpc";\n\nimport type config from "./graphoria";\n\nconst trpc = createTRPCClient<TRPCRouterOf<typeof config>>({ links: [] });\nvoid trpc.books.query().then((answer) => answer.nope);\n',
+    );
+    files.push("pg-trpc/client.ts");
     await writeFile(
       join(dir, "pg-auth/web/probe.ts"),
-      'import { trpc } from "./trpc.ts";\n\nvoid trpc.publishBook.mutate({ id: 1 });\nvoid trpc.publishBook.mutate({ id: "1" });\n',
+      'import { trpc } from "./trpc.ts";\n\nvoid trpc.publishBook.mutate({ id: 1 });\nvoid trpc.publishBook.mutate({ id: "1" });\nvoid trpc.books.query().then((answer) => answer.nope);\n',
     );
     files.push("pg-auth/web/probe.ts");
     // web/trpc.ts imports @trpc/client by name, as the scaffold installs it.
@@ -2371,7 +2475,7 @@ describe("renderProject types the add-book operation", () => {
       .split("\n")
       .filter((line) => line.includes("error TS"));
 
-    expect(errors).toHaveLength(3);
+    expect(errors).toHaveLength(5);
     expect(errors.find((line) => line.startsWith("typo/graphoria.ts("))).toContain(
       "Property 'ad' does not exist",
     );
@@ -2380,6 +2484,12 @@ describe("renderProject types the add-book operation", () => {
     );
     expect(errors.find((line) => line.startsWith("pg-auth/web/probe.ts(4,"))).toContain(
       "Type 'string' is not assignable to type 'number'",
+    );
+    expect(errors.find((line) => line.startsWith("pg-auth/web/probe.ts(5,"))).toContain(
+      "Property 'nope' does not exist on type '{ public_books:",
+    );
+    expect(errors.find((line) => line.startsWith("pg-trpc/client.ts(7,"))).toContain(
+      "Property 'nope' does not exist on type '{ main_books:",
     );
   }, 60_000);
 });

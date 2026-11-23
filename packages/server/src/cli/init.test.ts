@@ -903,6 +903,30 @@ describe("nextSteps", () => {
     );
   });
 
+  it("runs bun run types before bun run dev whenever the project has the script", () => {
+    expect(nextSteps({ ...ANSWERS, frontend: true }, true)).toContain(
+      "  docker compose up -d --wait db\n  bun run types\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, database: "mssql", trpc: true }, true)).toContain(
+      "  docker compose run --rm db-init\n  bun run types\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, trpc: true }, true)).toContain(
+      "the first `bun run types` creates app.db and seeds it:\n  bun run types\n  bun run dev\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("bun run types");
+  });
+
+  it("names the files bun run types writes, and when to run it again", () => {
+    expect(nextSteps({ ...ANSWERS, frontend: true, trpc: true }, true)).toContain(
+      "`bun run types` reads the database, with no server running, and writes\n" +
+        "web/graphql-env.d.ts, which types the app's queries, and graphoria-env.d.ts, which types the plain-string operations. Commit both, and run it again\n" +
+        "after a change to the tables or to graphoria.ts.\n",
+    );
+    expect(nextSteps({ ...ANSWERS, trpc: true }, true)).toContain(
+      "\ngraphoria-env.d.ts, which types the plain-string operations. Commit it, and run it again\n",
+    );
+  });
+
   it("starts the broker and Redis too for a host run", () => {
     const both = { ...ANSWERS, rabbitmq: true, redis: true };
 

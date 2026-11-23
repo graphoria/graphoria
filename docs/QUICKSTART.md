@@ -78,17 +78,17 @@ Tick `React frontend` in the extras list, or pass `--frontend` (`--no-frontend` 
 
 Its add-book form POSTs `/rest/add-book`, and the app fetches the list again once the operation answers with the stored row. With `--rabbitmq` too, the operation also publishes `events_bookAdded` after the insert, and the app refetches the list when `events_onBookAdded` delivers it instead.
 
-Five files change too: `graphoria.ts` opens the seed and `addBook` to anonymous callers without `--auth` (below); `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` adds `.graphoria`.
+Six files change too: `graphoria.ts` opens the seed and `addBook` to anonymous callers without `--auth` (below), and with `--redis` writes `books`' query with `web/graphql.ts`'s `graphql()`, so gql.tada types its answer from the schema, as it types the app's queries; `index.ts` serves the app on `/` next to Graphoria's routes (`createHandlers` and `Bun.serve`, as in [Embedding into an existing Bun app](#5-embedding-into-an-existing-bun-app)); `package.json` adds React, urql, gql.tada and Tailwind, and a `types` script; `tsconfig.json` adds the DOM, JSX and the gql.tada TypeScript plugin; `.gitignore` and `.dockerignore` add `.graphoria`.
 
 Without `--auth`, the app has no login. `graphoria.ts` leaves auth off and grants the `anonymous` role the two seed tables, so anyone who reaches the server reads them without a secret, in GraphiQL too, and with `--mcp` through the MCP server. Tables are read-only in the generated API, but the grant also lets anyone add books through `addBook`, with `--redis` read `GET /rest/books`, with `--rabbitmq` publish to or watch the `events` queue, and with `--ai` ask the agent, which calls your LLM provider. Take the grant out before those tables hold anything that is not public: it applies whether auth is on or off. With `--auth`, see [Add login with two roles](#add-login-with-two-roles-with---auth).
 
-The query types come from the schema, which `bun run dev` prints to `.graphoria/schemas/`. Once it has, run:
+The query types come from the database's schema, which `bun run types` reads with no server running ([`graphoria codegen`](./CODEGEN.md), then gql.tada). Once the database is up and seeded (with SQLite, straight away), run:
 
 ```bash
 bun run types
 ```
 
-It writes `web/graphql-env.d.ts`; commit that file. Until it exists the app still runs, but `tsc` reports errors in `web/`. After a change to the tables, restart `bun run dev` and run `bun run types` again.
+It writes `web/graphql-env.d.ts`; commit that file. Until it exists the app still runs, but `tsc` reports errors in `web/`. After a change to the tables or to `graphoria.ts` (permissions, operations, remotes), run `bun run types` again: restarting `bun run dev` no longer refreshes the schemas.
 
 ### Add a RabbitMQ broker with `--rabbitmq`
 
@@ -184,7 +184,7 @@ With `--frontend` too, the app signs in through [`@graphoria/react`](./REACT.md)
 
 ### Call the operations over tRPC with `--trpc`
 
-Tick `tRPC` in the extras list, or pass `--trpc` (`--no-trpc` answers no, and so does `--yes` alone). `.env` then sets `TRPC_ENABLED=true` and `package.json` adds `@trpc/server`, so each operation is also a [tRPC](./TRPC.md) procedure under `http://localhost:3000/trpc`: `addBook`, `publishBook` with `--auth`, and `books` with `--redis`. A call runs as its caller, as on `/rest/*`. `graphoria.ts` does not change: a TypeScript client made with `@trpc/client` types `addBook` and `publishBook` from it through `TRPCRouterOf` (see [Calling from a client](./TRPC.md#calling-from-a-client)), while `books`, a plain object rather than an `operation()`, is served without a client type.
+Tick `tRPC` in the extras list, or pass `--trpc` (`--no-trpc` answers no, and so does `--yes` alone). `.env` then sets `TRPC_ENABLED=true` and `package.json` adds `@trpc/server`, so each operation is also a [tRPC](./TRPC.md) procedure under `http://localhost:3000/trpc`: `addBook`, `publishBook` with `--auth`, and `books` with `--redis`. A call runs as its caller, as on `/rest/*`. `graphoria.ts` gains one line, `import type {} from "./graphoria-env";`, and the project gains `graphoria-env.d.ts`, a `types` script and `.graphoria` in `.gitignore` and `.dockerignore`. A TypeScript client made with `@trpc/client` types `addBook` and `publishBook` from `graphoria.ts` through `TRPCRouterOf` (see [Calling from a client](./TRPC.md#calling-from-a-client)), and with `--frontend` `books` too, whose `query` goes through the app's gql.tada `graphql()`. Without `--frontend`, `books`' `query` is a plain string, typed from the `graphoria-env.d.ts` that `bun run types` writes ([`graphoria codegen`](./CODEGEN.md)). Commit it.
 
 With `--auth --frontend` too, the app's Publish button calls `publishBook` through tRPC. `web/trpc.ts` holds the client, which sends the signed-in user's token as the GraphQL client does, and `package.json` adds `@trpc/client` at `@trpc/server`'s version. The add-book form still POSTs `/rest/add-book`.
 
