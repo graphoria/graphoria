@@ -2,6 +2,7 @@ process.env.ADMIN_SECRET ??= "test-admin";
 process.env.JWT_SECRET ??= "test-jwt";
 
 import { describe, expect, it } from "bun:test";
+import { buildSchema } from "graphql";
 import { z } from "zod";
 
 import type { RemoteRESTResolved } from "../../remoteREST/types";
@@ -13,6 +14,11 @@ const { getSchema } = await import("../getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
 const { generateOpenAPI, operationDataSchema } = await import("./generateOpenAPI");
 const { OperationsZod } = await import("../../config");
+const { createMockMSSQL, createMockMySQL, createMockPG, createMockSQLite } =
+  await import("../../__test/common");
+const { DatabaseStructureZod } = await import("../../types/db");
+const { ConfigurationZod } = await import("../../types/zod/configuration");
+const { transformRemoteSchema } = await import("../../remoteSchemas/transform");
 
 const options = {
   prefix: "",
@@ -535,5 +541,281 @@ describe("operationDataSchema", () => {
     expect(operationDataSchema(role.handlers.rest.operationsEnhanced["probe"]!, role)).toEqual(
       documented,
     );
+  });
+});
+
+describe("data schema of what the server answers", () => {
+  type EntitiesOfRole = Parameters<typeof getSchema>[0];
+  const roleWith = (
+    operations: Record<string, unknown>,
+    entities: Partial<Omit<EntitiesOfRole, "operations">> = {},
+  ) =>
+    getSchema({
+      tables: StoreMSSQL.tables,
+      storedProcedures: [],
+      queues: [],
+      remoteSchemas: [],
+      remoteREST: [],
+      ...entities,
+      operations: OperationsZod.parse(operations),
+    });
+  const probe = (query: string, method: "GET" | "POST" = "GET") => ({
+    probe: { query, rest: { path: "/probe", method } },
+  });
+  // oxlint-disable-next-line typescript/no-explicit-any
+  const dataOf = (role: ReturnType<typeof roleWith>, method = "get"): any =>
+    // oxlint-disable-next-line typescript/no-explicit-any
+    (generateOpenAPI({ role, options }).paths!["/probe"] as any)[method].responses[200].content[
+      "application/json"
+    ].schema.properties.data;
+
+  it("types a column by its last transform directive", () => {
+    const data = dataOf(
+      roleWith(
+        probe(`query {
+          dbo_categories {
+            name @uppercase
+            category_id @multiply(by: 2)
+            slug @uppercase @round
+            parent_category_id @default(value: "0")
+          }
+          dbo_addresses { line1 @default(value: "-") }
+        }`),
+      ),
+    );
+
+    expect(data.properties.dbo_categories.items.properties).toEqual({
+      name: { type: "string", nullable: false },
+      category_id: { type: "number", nullable: false },
+      slug: { type: "number", nullable: false },
+      parent_category_id: {},
+    });
+    expect(data.properties.dbo_addresses.items.properties.line1).toEqual({
+      type: "string",
+      nullable: true,
+    });
+  });
+
+  it("types a groupBy key and its items by their directives, an aggregate value by its GraphQL type", () => {
+    const data = dataOf(
+      roleWith(
+        probe(`query {
+          dbo_categories_aggregate(groupBy: [name]) {
+            key { name @multiply(by: 1) }
+            items { name @round }
+            min { category_id @uppercase }
+          }
+        }`),
+      ),
+    );
+    const group = data.properties.dbo_categories_aggregate.items.properties;
+
+    expect(group.key.properties.name).toEqual({ type: "number", nullable: false });
+    expect(group.items.items.properties.name).toEqual({ type: "number", nullable: false });
+    expect(group.min.properties.category_id).toEqual({ type: "number", nullable: true });
+  });
+
+  it("types a transform on a virtual column", () => {
+    const tables = StoreMSSQL.tables.map((table) =>
+      table.resolverName === "dbo_categories"
+        ? {
+            ...table,
+            columns: [
+              ...table.columns,
+              {
+                name: "label",
+                fieldName: "label",
+                dataType: "nvarchar",
+                isNullable: false,
+                description: null,
+                virtual: true,
+                expression: "name + slug",
+              },
+            ],
+          }
+        : table,
+    ) as unknown as typeof StoreMSSQL.tables;
+
+    const data = dataOf(roleWith(probe("query { dbo_categories { label @round } }"), { tables }));
+
+    expect(data.properties.dbo_categories.items.properties.label).toEqual({
+      type: "number",
+      nullable: false,
+    });
+  });
+
+  const docsOn = (create: typeof createMockPG, extra: Record<string, unknown>[] = []) =>
+    create(
+      DatabaseStructureZod.parse({
+        tables: [
+          {
+            schema: "public",
+            name: "docs",
+            entityType: "table",
+            tableDescription: null,
+            foreignKeys: [],
+            columns: [
+              { name: "id", dataType: "integer", isNullable: false },
+              { name: "body", dataType: "json", isNullable: true },
+              { name: "meta", dataType: "jsonb", isNullable: true },
+              { name: "tags", dataType: "ARRAY", isNullable: true },
+              ...extra,
+            ],
+          },
+        ],
+        storedProcedures: [],
+      }),
+    );
+  const text = { type: "string", nullable: true };
+
+  const flagBit = { name: "flag", dataType: "bit", isNullable: true };
+  const flag = { type: "string", nullable: true };
+
+  it.each([
+    [
+      "pg",
+      createMockPG,
+      {
+        body: {},
+        meta: {},
+        tags: {},
+        price: { type: "string", nullable: false },
+        flag,
+      },
+      [{ name: "price", dataType: "money", isNullable: false }, flagBit],
+    ],
+    [
+      "mysql",
+      createMockMySQL,
+      { body: {}, meta: text, tags: text, flag, built: { type: "number", nullable: false } },
+      [flagBit, { name: "built", dataType: "year", isNullable: false }],
+    ],
+    ["sqlite", createMockSQLite, { body: text, meta: text, tags: text }, []],
+    ["mssql", createMockMSSQL, { body: text, meta: text, tags: text }, []],
+  ])("types JSON and array columns as %s answers them", (_engine, create, expected, extra) => {
+    const data = dataOf(
+      roleWith(probe(`query { public_docs { ${Object.keys(expected).join(" ")} } }`), {
+        tables: docsOn(create, extra).tables,
+      }),
+    );
+
+    expect(data.properties.public_docs.items.properties).toEqual(expected);
+  });
+
+  it("types a stored procedure's answer, a root with no selection set", () => {
+    const { storedProcedures } = createMockPG(
+      DatabaseStructureZod.parse({
+        tables: [],
+        storedProcedures: [{ schema: "public", name: "refresh_stats", parameters: [] }],
+      }),
+    );
+    const name = Object.keys(
+      roleWith({}, { tables: [], storedProcedures }).schema.getMutationType()!.getFields(),
+    ).find((field) => field.includes("refresh_stats"))!;
+
+    const data = dataOf(
+      roleWith(probe(`mutation { ${name} }`, "POST"), { tables: [], storedProcedures }),
+      "post",
+    );
+
+    expect(data).toEqual({
+      type: "object",
+      properties: { [name]: { type: "boolean", nullable: false } },
+      required: [name],
+    });
+  });
+
+  it("types a queue publisher's answer", () => {
+    const { queues } = ConfigurationZod.parse({
+      name: "publisher-test",
+      version: "1.0.0",
+      queues: [
+        {
+          type: "rabbitmq",
+          name: "events",
+          enabled: true,
+          connection: {
+            hostname: "localhost",
+            port: 5672,
+            username: "u",
+            password: "p",
+            vhost: "/",
+          },
+          publishers: { bookAdded: { topic: "books", routingKey: "book.added" } },
+          topics: { books: { type: "topic" } },
+        },
+      ],
+    });
+
+    const data = dataOf(
+      roleWith(probe('mutation { events_bookAdded(data: "{}") }', "POST"), { queues }),
+      "post",
+    );
+
+    expect(data.properties.events_bookAdded).toEqual({ type: "boolean", nullable: false });
+  });
+
+  // The output type declares the lists `[String]!` and `[Int]!`.
+  it("types an operation output's scalar lists, their items nullable as GraphQL's", () => {
+    const data = dataOf(
+      roleWith({
+        makeTags: {
+          handler: async () => ({ tags: ["a"], counts: [1] }),
+          output: z.object({ tags: z.array(z.string()), counts: z.array(z.number().int()) }),
+          rest: { path: "/make-tags", method: "POST" },
+        },
+        ...probe("mutation { makeTags { tags counts } }", "POST"),
+      }),
+      "post",
+    );
+
+    expect(data.properties.makeTags.properties).toEqual({
+      tags: { type: "array", items: { type: "string", nullable: true }, nullable: false },
+      counts: { type: "array", items: { type: "number", nullable: true }, nullable: false },
+    });
+  });
+
+  it("types a remote's scalars and lists, and leaves its custom scalars and unions untyped", () => {
+    const remote = transformRemoteSchema(
+      buildSchema(`
+        scalar JSON
+        type Cat { id: ID! name: String }
+        type Dog { id: ID! barks: Boolean }
+        union Pet = Cat | Dog
+        type Query { count: Int! tags: [String!] info: JSON pets: [Pet] }
+      `),
+      { name: "ext", url: "http://127.0.0.1:1/graphql" },
+    );
+
+    const data = dataOf(
+      roleWith(
+        probe("query { ext_count ext_tags ext_info ext_pets { ... on ext_Dog { barks } } }"),
+        {
+          remoteSchemas: [remote],
+        },
+      ),
+    );
+
+    expect(data.properties).toEqual({
+      ext_count: { type: "number", nullable: false },
+      ext_tags: { type: "array", items: { type: "string", nullable: false }, nullable: true },
+      ext_info: {},
+      ext_pets: { type: "array", items: {} },
+    });
+  });
+
+  it("leaves a field under @when out of required, and a root meta field under it in", () => {
+    const data = dataOf(
+      roleWith(
+        probe(`query ($on: Boolean!) {
+          __typename @when(and: [$on])
+          dbo_categories { name @when(and: [$on]) slug ...Rest }
+        }
+        fragment Rest on dbo_categories { category_id @when(or: [$on]) }`),
+      ),
+    );
+
+    expect(data.required).toContain("__typename");
+    expect(data.properties.dbo_categories.items.required).toEqual(["slug"]);
   });
 });
