@@ -525,3 +525,31 @@ describe("EnvZod stores", () => {
     expect(EnvZod.parse(baseEnv).leftoverCacheStore).toBe(false);
   });
 });
+
+describe("EnvZod OUTPUT_DIR and SCHEMAS_OUTPUT_DIR", () => {
+  const baseEnv = { ADMIN_SECRET: "x", JWT_SECRET: "y" };
+  const dirs = (input: Record<string, string>) => {
+    const env = EnvZod.parse({ ...baseEnv, ...input });
+    return [env.outputDir, env.schemas.outputDir, env.leftoverSchemasOutputDir];
+  };
+
+  it("roots the generated files at ./.graphoria by default", () => {
+    expect(dirs({})).toEqual(["./.graphoria", "./.graphoria/schemas", undefined]);
+  });
+
+  it("puts the schemas under OUTPUT_DIR", () => {
+    expect(dirs({ OUTPUT_DIR: "./out" })).toEqual(["./out", "out/schemas", undefined]);
+  });
+
+  it("still writes a lone SCHEMAS_OUTPUT_DIR's path, flagged as read", () => {
+    expect(dirs({ SCHEMAS_OUTPUT_DIR: "./legacy" })).toEqual(["./.graphoria", "./legacy", "read"]);
+  });
+
+  it("ignores SCHEMAS_OUTPUT_DIR once OUTPUT_DIR is set, flagged as ignored", () => {
+    expect(dirs({ OUTPUT_DIR: "./out", SCHEMAS_OUTPUT_DIR: "./legacy" })).toEqual([
+      "./out",
+      "out/schemas",
+      "ignored",
+    ]);
+  });
+});

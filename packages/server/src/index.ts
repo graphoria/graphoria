@@ -188,6 +188,16 @@ const bootAnalyzedConfiguration = async (
     );
   }
 
+  if (env.leftoverSchemasOutputDir === "read") {
+    logger("graphoria").warn(
+      "SCHEMAS_OUTPUT_DIR is deprecated: set OUTPUT_DIR instead, under which PRINT_SCHEMAS writes schemas/",
+    );
+  } else if (env.leftoverSchemasOutputDir === "ignored") {
+    logger("graphoria").warn(
+      "SCHEMAS_OUTPUT_DIR is deprecated and ignored: OUTPUT_DIR is set, and PRINT_SCHEMAS writes schemas/ under it",
+    );
+  }
+
   setQueryTimeoutMs(env.queryTimeoutMs);
   setSlowQueryMs(env.slowQueryMs);
   configureMetrics({

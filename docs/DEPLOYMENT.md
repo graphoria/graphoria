@@ -44,8 +44,7 @@ Pin both versions: the Bun tag in the two `FROM` lines, and `@graphoria/server` 
 (`bun add --exact`), since Graphoria is pre-1.0 and a minor release can change behaviour.
 
 The image runs with a read-only root filesystem: the starter boots, serves and passes its
-healthcheck with nothing writable. `PRINT_SCHEMAS` writes the generated schemas under the project
-directory: keep it off in the image, or point `SCHEMAS_OUTPUT_DIR` at a writable volume.
+healthcheck with nothing writable. `PRINT_SCHEMAS` writes the generated schemas under `OUTPUT_DIR` (`./.graphoria` by default), in the project directory: keep it off in the image, or point `OUTPUT_DIR` at a writable volume. `SCHEMAS_OUTPUT_DIR`, which it replaces, is deprecated: boot logs a `warn` while it is set.
 
 ## Configuration and secrets
 

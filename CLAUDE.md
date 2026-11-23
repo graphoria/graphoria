@@ -109,7 +109,7 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 | Zod schemas (config validation)                                 | Authoring in `config/types/*.ts` (public); server transforms (`ConfigurationZod`, auth normalization, queue pivot, cron) in `types/zod/*.ts`                           |
 | Env loader                                                      | `types/env.ts` (`EnvZod`)                                                                                                                                              |
 | Test fixtures                                                   | `__test/fixtures/`, `__test/dbMocks.ts`, `__test/dataset/`                                                                                                             |
-| Generated per-role schemas (build artefact)                     | `__schemas/`                                                                                                                                                           |
+| Generated per-role schemas (build artefact)                     | `<OUTPUT_DIR>/schemas/` (`./.graphoria/schemas/` by default; `PRINT_SCHEMAS`)                                                                                          |
 
 `src/config/types/` declares the config shape as Zod (public via `@graphoria/server/config`). The authoring types are `z.input` of those schemas, with generic overlays only where Zod types a field as `z.custom`.
 
