@@ -11,7 +11,7 @@ import { fragmentFanOut } from "../../__test/fragmentFanOut";
 
 const { getSchema } = await import("../getSchemas");
 const { StoreMSSQL } = await import("../../__test/dataset/store");
-const { generateOpenAPI } = await import("./generateOpenAPI");
+const { generateOpenAPI, operationDataSchema } = await import("./generateOpenAPI");
 const { OperationsZod } = await import("../../config");
 
 const options = {
@@ -509,5 +509,31 @@ describe("generateOpenAPI", () => {
       },
       required: ["answer", "queries"],
     });
+  });
+});
+
+describe("operationDataSchema", () => {
+  it("is the schema the document gives the answer's data", () => {
+    const role = getSchema({
+      tables: StoreMSSQL.tables,
+      storedProcedures: [],
+      queues: [],
+      operations: OperationsZod.parse({
+        probe: {
+          query: "query { dbo_categories { name slug } }",
+          rest: { path: "/probe", method: "GET" },
+        },
+      }),
+      remoteSchemas: [],
+      remoteREST: [],
+    });
+
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const documented = (generateOpenAPI({ role, options }).paths!["/probe"] as any).get
+      .responses[200].content["application/json"].schema.properties.data;
+
+    expect(operationDataSchema(role.handlers.rest.operationsEnhanced["probe"]!, role)).toEqual(
+      documented,
+    );
   });
 });

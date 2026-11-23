@@ -18,7 +18,8 @@ import type {
 } from "graphql";
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { SelectionAnalysis } from "../../analyzeQuery/types";
-import type { GetSchemaReturn } from "../../configuration/getSchemas";
+import type { GetSchemaReturn, SchemaEntities } from "../../configuration/getSchemas";
+import type { OperationsEnhanced } from "./index";
 import type { Env } from "../../types/env";
 
 import { META_FIELDS } from "../../analyzeQuery/metaFields";
@@ -223,6 +224,65 @@ export const getTags = (url: string) => {
   return ["Data"];
 };
 
+/**
+ * The schema of what a query operation answers: REST's `data`, and tRPC's whole
+ * payload. One function, so the OpenAPI document and `graphoria codegen` cannot drift.
+ */
+export const operationDataSchema = (
+  value: OperationsEnhanced[string],
+  entities: Pick<SchemaEntities, "schema">,
+): Record<string, unknown> => {
+  const operation = value.queryStructure!.operations[0];
+  // A query that fails validation, which may spread fragments in a
+  // cycle, answers 401 and no data.
+  const fields = value.hasError
+    ? operation.fields
+    : resolveSelections(
+        operation.fields,
+        value.queryStructure!.fragments,
+        () => true,
+        operation.variables,
+      ).filter((field) => !META_FIELDS.has(field.name));
+  const rootType =
+    (operation.operation === "mutation"
+      ? entities.schema.getMutationType()
+      : entities.schema.getQueryType()) ?? undefined;
+  const meta =
+    operation.meta && !value.hasError
+      ? rootMetaPropertiesOf(operation.meta, rootType)
+      : { properties: {}, required: [] };
+  return {
+    type: "object" as const,
+    properties: fields.reduce<Record<string, unknown>>((acc, field) => {
+      if (field.isArray) {
+        acc[field.alias || field.name] = {
+          type: "array",
+          items: {
+            type: "object",
+            properties: processSelections(resolveFieldType(rootType, field.name).objectType, field),
+            required: (field.selections ?? [])
+              .filter((f) => f.isRequired)
+              .map((f) => f.alias || f.name),
+          },
+        };
+      } else {
+        acc[field.alias || field.name] = {
+          type: "object",
+          properties: processSelections(resolveFieldType(rootType, field.name).objectType, field),
+          required: (field.selections ?? [])
+            .filter((f) => f.isRequired)
+            .map((f) => f.alias || f.name),
+        };
+      }
+      return acc;
+    }, meta.properties),
+    required: [
+      ...meta.required,
+      ...fields.filter((f) => f.isRequired).map((f) => f.alias || f.name),
+    ],
+  };
+};
+
 export const generateOpenAPI = ({
   title = "REST API",
   version = "1.0.0",
@@ -304,63 +364,7 @@ export const generateOpenAPI = ({
         // Build response schema: from responseSchema (custom handler) or queryStructure (query-based)
         const responseDataSchema = value.output
           ? convertFromZod(value.output)
-          : (() => {
-              const operation = value.queryStructure!.operations[0];
-              // A query that fails validation, which may spread fragments in a
-              // cycle, answers 401 and no data.
-              const fields = value.hasError
-                ? operation.fields
-                : resolveSelections(
-                    operation.fields,
-                    value.queryStructure!.fragments,
-                    () => true,
-                    operation.variables,
-                  ).filter((field) => !META_FIELDS.has(field.name));
-              const rootType =
-                (operation.operation === "mutation"
-                  ? role.schema.getMutationType()
-                  : role.schema.getQueryType()) ?? undefined;
-              const meta =
-                operation.meta && !value.hasError
-                  ? rootMetaPropertiesOf(operation.meta, rootType)
-                  : { properties: {}, required: [] };
-              return {
-                type: "object" as const,
-                properties: fields.reduce<Record<string, unknown>>((acc, field) => {
-                  if (field.isArray) {
-                    acc[field.alias || field.name] = {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: processSelections(
-                          resolveFieldType(rootType, field.name).objectType,
-                          field,
-                        ),
-                        required: (field.selections ?? [])
-                          .filter((f) => f.isRequired)
-                          .map((f) => f.alias || f.name),
-                      },
-                    };
-                  } else {
-                    acc[field.alias || field.name] = {
-                      type: "object",
-                      properties: processSelections(
-                        resolveFieldType(rootType, field.name).objectType,
-                        field,
-                      ),
-                      required: (field.selections ?? [])
-                        .filter((f) => f.isRequired)
-                        .map((f) => f.alias || f.name),
-                    };
-                  }
-                  return acc;
-                }, meta.properties),
-                required: [
-                  ...meta.required,
-                  ...fields.filter((f) => f.isRequired).map((f) => f.alias || f.name),
-                ],
-              };
-            })();
+          : operationDataSchema(value, role);
 
         const hasParameters = value.input;
 
