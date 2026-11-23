@@ -57,6 +57,27 @@ export const loadConfiguration = async (config: string): Promise<Configuration> 
   }
 };
 
+export const assertDistinctRoles = ({
+  superadmin,
+  anonymousRole,
+}: Pick<Env, "superadmin" | "anonymousRole">) => {
+  if (superadmin.role === anonymousRole) {
+    throw new Error(
+      `SUPERADMIN_ROLE and ANONYMOUS_ROLE are both "${anonymousRole}": every caller without a credential would read as the full-access role`,
+    );
+  }
+};
+
+// The enabled remotes that did not resolve: the boot warns and goes on without them.
+const leftOut = (
+  configs: { name: string; enabled?: boolean }[],
+  resolved: { config: { name: string } }[],
+) =>
+  configs
+    .filter((config) => config.enabled !== false)
+    .filter((config) => !resolved.some((remote) => remote.config.name === config.name))
+    .map(({ name }) => name);
+
 export const analyzeConfiguration = async (configuration: Configuration, options: Env) => {
   const log = logger("configuration");
   log.info("starting configuration analysis");
@@ -179,6 +200,10 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     openapiFor,
     queues: enabledQueues,
     auth: configuration.auth,
+    leftOutRemotes: {
+      remoteSchemas: leftOut(configuration.remoteSchemas ?? [], resolvedRemoteSchemas),
+      remoteREST: leftOut(configuration.remoteREST ?? [], resolvedRemoteREST),
+    },
   };
 };
 

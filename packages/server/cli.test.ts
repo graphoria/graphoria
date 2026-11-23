@@ -117,6 +117,7 @@ describe("cli without env", () => {
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("Usage: graphoria");
+    expect(result.stdout.toString()).toContain("graphoria codegen [--config <path>] [--out <dir>]");
     expect(result.stdout.toString()).toContain("[--frontend]");
     expect(result.stdout.toString()).toContain("[--trpc]");
     expect(result.stdout.toString()).toContain("--database pg|mysql|mssql|sqlite");

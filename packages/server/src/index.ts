@@ -13,7 +13,7 @@ import type { SessionContext } from "./utils/sessionVariables";
 import { createTokenService } from "./authentication";
 import { createConfiguredTokenRepository } from "./authentication/tokenRepository";
 import { MEMORY_STORE } from "./config/types/cache";
-import { analyzeConfiguration, loadConfiguration } from "./configuration";
+import { analyzeConfiguration, assertDistinctRoles, loadConfiguration } from "./configuration";
 import { buildExecute } from "./configuration/gql/buildExecute";
 import { websocketHandlerFactory } from "./configuration/gql/handleGraphQLSubscriptionFactory";
 import { consoleRoutesFactory } from "./console/api";
@@ -222,11 +222,7 @@ const bootAnalyzedConfiguration = async (
     throw new Error("Configuration is required to create the GraphQL server");
   }
 
-  if (env.superadmin.role === env.anonymousRole) {
-    throw new Error(
-      `SUPERADMIN_ROLE and ANONYMOUS_ROLE are both "${env.anonymousRole}": every caller without a credential would read as the full-access role`,
-    );
-  }
+  assertDistinctRoles(env);
 
   // Load configuration if a path was given, otherwise validate the inline object
   const projectConfiguration: Configuration = isString(env.configuration)

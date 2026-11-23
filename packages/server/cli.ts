@@ -16,6 +16,16 @@ if (rawArgs[0] === "seed-auth") {
   await seedAuthCommand(rawArgs.slice(1));
 }
 
+if (rawArgs[0] === "codegen") {
+  process.env.ADMIN_SECRET ??= "";
+  // The logger reads LOG_LEVEL when it loads, and defaults to debug: the
+  // analysis' info lines, and each query on a network engine, would print
+  // around the summary.
+  process.env.LOG_LEVEL ??= "warn";
+  const { codegenCommand } = await import("./src/cli/codegen");
+  await codegenCommand(rawArgs.slice(1));
+}
+
 if (rawArgs[0] === "init") {
   const { initCommand } = await import("./src/cli/init");
   await initCommand(rawArgs.slice(1));
@@ -41,6 +51,7 @@ graphoria v${version}
 
 Usage: graphoria [options]
        graphoria seed-auth --user <name> --password <pwd> --role <role> --config <path> [--claims <json>]
+       graphoria codegen [--config <path>] [--out <dir>]
        graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]
 
 Options:
@@ -53,6 +64,7 @@ Options:
 
 Subcommands:
   seed-auth              Insert an auth user (argon2id-hashed) into the configured auth database
+  codegen                Write the per-role GraphQL schemas and OpenAPI documents, without starting the server
   init                   Scaffold a Graphoria project with Docker Compose in the current directory
 
 Environment variables:

@@ -46,6 +46,8 @@ Pin both versions: the Bun tag in the two `FROM` lines, and `@graphoria/server` 
 The image runs with a read-only root filesystem: the starter boots, serves and passes its
 healthcheck with nothing writable. `PRINT_SCHEMAS` writes the generated schemas under `OUTPUT_DIR` (`./.graphoria` by default), in the project directory: keep it off in the image, or point `OUTPUT_DIR` at a writable volume. `SCHEMAS_OUTPUT_DIR`, which it replaces, is deprecated: boot logs a `warn` while it is set.
 
+To write the schemas and the OpenAPI documents in CI without booting the server, run [`graphoria codegen`](./CODEGEN.md).
+
 ## Configuration and secrets
 
 Environment variables configure the server. They are read once at startup, so a change takes a

@@ -4,12 +4,13 @@ Reference guides for configuring and running Graphoria. New here? Start with the
 
 ## Getting started
 
-| Guide                                         | Description                                                           |
-| --------------------------------------------- | --------------------------------------------------------------------- |
-| [Quickstart](./QUICKSTART.md)                 | Zero to a running server in five minutes                              |
-| [Configuration Reference](./CONFIGURATION.md) | Full configuration schema — databases, auth, operations, queues, cron |
-| [Deployment](./DEPLOYMENT.md)                 | From the image to production: proxy, sizing, shutdown, Kubernetes     |
-| [API Reference](./API_REFERENCE.md)           | Complete package exports for server, config, and react                |
+| Guide                                         | Description                                                                    |
+| --------------------------------------------- | ------------------------------------------------------------------------------ |
+| [Quickstart](./QUICKSTART.md)                 | Zero to a running server in five minutes                                       |
+| [Codegen](./CODEGEN.md)                       | The per-role schemas and OpenAPI documents, written without running the server |
+| [Configuration Reference](./CONFIGURATION.md) | Full configuration schema — databases, auth, operations, queues, cron          |
+| [Deployment](./DEPLOYMENT.md)                 | From the image to production: proxy, sizing, shutdown, Kubernetes              |
+| [API Reference](./API_REFERENCE.md)           | Complete package exports for server, config, and react                         |
 
 ## Auth & access
 
