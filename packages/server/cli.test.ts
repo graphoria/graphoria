@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -122,7 +123,76 @@ describe("cli without env", () => {
     expect(result.stdout.toString()).toMatch(
       /JWT_SECRET\s+.*\(required with auth or the console\)/,
     );
+    expect(result.stdout.toString()).toMatch(/ADMIN_SECRET\s+.*\(required by the server\)/);
   });
+
+  it("seeds an auth user without ADMIN_SECRET", async () => {
+    const file = join(dir, "seed.db");
+    const config = join(dir, "seed.ts");
+    await writeFile(
+      config,
+      `export default () => (${JSON.stringify({
+        name: "cli-seed",
+        version: "1.0.0",
+        databases: [
+          { name: "seed", type: "sqlite", enabled: true, connection: { filename: file } },
+        ],
+        auth: {
+          enabled: true,
+          database: "seed",
+          schema: "main",
+          autoCreateTables: true,
+          permissions: { anonymous: { tables: [] }, reader: {} },
+        },
+      })});\n`,
+    );
+
+    const result = run([
+      "seed-auth",
+      "--user",
+      "ada",
+      "--password",
+      "Pa55word.x",
+      "--role",
+      "reader",
+      "--config",
+      config,
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const db = new Database(file, { readonly: true });
+    try {
+      expect(db.query('SELECT username, role FROM "user"').all()).toEqual([
+        { username: "ada", role: "reader" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("still refuses to boot the server without ADMIN_SECRET", async () => {
+    const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "--config", configPath], {
+      cwd: dir,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, PORT: "0" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    spawned.push(cli.pid);
+
+    // The supervisor restarts a crashed worker after a backoff: read the first
+    // worker's error, then stop it rather than wait out five crashes.
+    const reader = cli.stderr.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (!text.includes("ADMIN_SECRET")) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value);
+    }
+    spawned.push(...childrenOf(cli.pid));
+
+    expect(text).toContain("ADMIN_SECRET");
+  }, 30_000);
 });
 
 describe("cli init", () => {

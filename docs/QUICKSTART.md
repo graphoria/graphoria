@@ -171,7 +171,7 @@ The project then gets:
 | `seed.sql`      | A `status` column, `draft` by default; two drafts follow the six published books.                                                                                                                       |
 | `.env`          | `AUTH_STORE=memory`, which auth requires (with `--redis`, `AUTH_STORE=redis` is there already).                                                                                                         |
 
-`init` prints two `seed-auth` commands, one per role, each with a generated password that is printed only: it is not in `.env`, and the recreate command never carries it. Run them once the database is up (on SQLite in Docker, inside the container: put `docker compose exec graphoria` in front). `seed-auth` creates the auth user table if the server has not yet:
+`init` prints two `seed-auth` commands, one per role, each with a generated password that is printed only: it is not in `.env`, and the recreate command never carries it. Run them once the database is up (on SQLite in Docker, inside the container: put `docker compose exec graphoria` in front), with no `ADMIN_SECRET` needed. `seed-auth` creates the auth user table if the server has not yet:
 
 ```bash
 bunx graphoria seed-auth --user reader --password <printed> --role reader --config ./graphoria.ts

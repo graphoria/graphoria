@@ -6,9 +6,12 @@ import { createSupervisor } from "./src/cli/supervisor";
 
 const rawArgs = Bun.argv.slice(2);
 
-// Loaded on demand: seed-auth reaches the env singleton, which rejects a missing
-// ADMIN_SECRET at import, and --help or --version must run without one.
+// Loaded on demand, so --help and --version never reach the env singleton, which
+// rejects a missing ADMIN_SECRET at import. A subcommand that reads no secret
+// defaults it to none here, not above: the server's workers inherit process.env,
+// and must still refuse to boot without one.
 if (rawArgs[0] === "seed-auth") {
+  process.env.ADMIN_SECRET ??= "";
   const { seedAuthCommand } = await import("./src/cli/seedAuth");
   await seedAuthCommand(rawArgs.slice(1));
 }
@@ -53,7 +56,7 @@ Subcommands:
   init                   Scaffold a Graphoria project with Docker Compose in the current directory
 
 Environment variables:
-  ADMIN_SECRET           Admin secret for superadmin access (required)
+  ADMIN_SECRET           Admin secret for superadmin access (required by the server)
   JWT_SECRET             JWT signing secret (required with auth or the console)
   CONFIGURATION          Path to configuration file
   PORT                   Server port (default: 3000)

@@ -86,6 +86,8 @@ bunx graphoria seed-auth \
 | `--config`   | yes      | Path to your `graphoria.ts`.                                                                                 |
 | `--claims`   | no       | JSON object copied into the user's `claims` column.                                                          |
 
+`seed-auth` needs no `ADMIN_SECRET`: it reads the configuration, the variables it reads, and `SUPERADMIN_ROLE` and `ANONYMOUS_ROLE`.
+
 A value outside these rules exits 1 before connecting, naming the rule: a password under 8 characters, which `seed-auth` used to store, is one. A username already in the table exits 1 with `User "<name>" already exists`. Users already in the table log in as before, whatever their password.
 
 The same dispatcher backs the `bun run auth:seed` script for in-repo development. With `auth.autoCreateTables: true`, `seed-auth` creates the auth user table itself, as the server does on boot; with it off, the table must exist before seeding: apply the schema yourself.
