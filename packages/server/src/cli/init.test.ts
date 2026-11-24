@@ -916,6 +916,19 @@ describe("nextSteps", () => {
     expect(nextSteps(ANSWERS, true)).not.toContain("bun run types");
   });
 
+  it("runs everything in Docker with bun run up whenever the project has the script", () => {
+    expect(nextSteps({ ...ANSWERS, frontend: true }, true)).toContain(
+      "Run everything in Docker:\n  bun run up\n",
+    );
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, trpc: true }, true)).toContain(
+      "Or in Docker, with the database file on a volume:\n  bun run up",
+    );
+    expect(nextSteps(ANSWERS, true)).toContain(
+      "Run everything in Docker:\n  docker compose up -d --build\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("bun run up");
+  });
+
   it("names the files bun run types writes, and when to run it again", () => {
     expect(nextSteps({ ...ANSWERS, frontend: true, trpc: true }, true)).toContain(
       "`bun run types` reads the database, with no server running, and writes\n" +

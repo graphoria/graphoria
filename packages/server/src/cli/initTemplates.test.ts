@@ -148,10 +148,27 @@ describe("generated types", () => {
       dev: "bun --watch index.ts",
       start: "bun index.ts",
       types: "graphoria codegen",
+      up: "docker compose up -d --wait db && bun run types && docker compose up -d --build",
     });
   });
 
-  it("has no types script without --frontend or --trpc", () => {
+  it.each([
+    ["pg", "docker compose up -d --wait db && "],
+    ["mysql", "docker compose up -d --wait db && "],
+    ["mssql", "docker compose run --rm db-init && "],
+    ["sqlite", ""],
+  ] as const)(
+    "starts %s's seeded database for bun run types, then everything, with bun run up",
+    (database, before) => {
+      for (const patch of [{ frontend: true }, { trpc: true }]) {
+        expect(JSON.parse(renderWith(patch, database)["package.json"]!).scripts.up).toBe(
+          `${before}bun run types && docker compose up -d --build`,
+        );
+      }
+    },
+  );
+
+  it("has no types or up script without --frontend or --trpc", () => {
     expect(JSON.parse(renderWith({})["package.json"]!).scripts).toEqual({
       dev: "bun --watch index.ts",
       start: "bun index.ts",
@@ -1585,6 +1602,7 @@ describe("renderProject with the frontend", () => {
       dev: "bun --watch index.ts",
       start: "bun index.ts",
       types: "graphoria codegen && gql-tada generate output",
+      up: "docker compose up -d --wait db && bun run types && docker compose up -d --build",
     });
   });
 

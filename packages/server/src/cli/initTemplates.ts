@@ -151,8 +151,17 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
 // dependabot bumps.
 const TRPC_VERSION = "11.28.0";
 
+// What bun run up runs before bun run types reads the database: the container,
+// seeded. SQL Server's db-init seeds it once the server is up; SQLite has none.
+const DATABASE_UP: Record<ProjectValues["database"], string> = {
+  pg: "docker compose up -d --wait db && ",
+  mysql: "docker compose up -d --wait db && ",
+  mssql: "docker compose run --rm db-init && ",
+  sqlite: "",
+};
+
 const packageJson = (
-  { name, rabbitmq, ai, mcp, auth, frontend, trpc }: ProjectValues,
+  { name, database, rabbitmq, ai, mcp, auth, frontend, trpc }: ProjectValues,
   { graphoria }: Versions,
 ) =>
   JSON.stringify(
@@ -165,6 +174,7 @@ const packageJson = (
         start: "bun index.ts",
         ...((frontend || trpc) && {
           types: frontend ? "graphoria codegen && gql-tada generate output" : "graphoria codegen",
+          up: `${DATABASE_UP[database]}bun run types && docker compose up -d --build`,
         }),
       },
       dependencies: {

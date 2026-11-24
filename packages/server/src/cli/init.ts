@@ -361,14 +361,14 @@ export const nextSteps = (
           open,
           "",
           "Or in Docker, with the database file on a volume:",
-          command("docker compose up -d --build"),
+          command(typesScript ? "bun run up" : "docker compose up -d --build"),
         ]
       : [
           ...(installed
             ? []
             : [`First run ${inline("bun install")}: the Dockerfile needs its bun.lock.`, ""]),
           "Run everything in Docker:",
-          command("docker compose up -d --build"),
+          command(typesScript ? "bun run up" : "docker compose up -d --build"),
           open,
           "",
           "Or run Graphoria on the host against the database container:",
