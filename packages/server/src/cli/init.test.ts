@@ -76,6 +76,7 @@ describe("collectAnswers", () => {
     expect(answers.dbName).toBe("app");
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
     expect(answers.dbPort).toBe(5432);
+    expect(answers.dbPortGiven).toBe(false);
     expect(answers.rabbitmq).toBe(false);
     expect(answers.ai).toBe(false);
     expect(answers.mcp).toBe(false);
@@ -114,6 +115,7 @@ describe("collectAnswers", () => {
       dbName: "shop",
       dbPassword: "S3cret.pass",
       dbPort: 13306,
+      dbPortGiven: true,
       rabbitmq: true,
       ai: false,
       mcp: false,
@@ -137,12 +139,24 @@ describe("collectAnswers", () => {
 
     expect(io.fallbacks.at(-1)).toBe("5433");
     expect(answers.dbPort).toBe(5433);
+    expect(answers.dbPortGiven).toBe(false);
   });
 
   it("keeps the --db-port it was given, taken or not", async () => {
     const io = prompter([], {}, () => false);
 
-    expect((await collectAnswers({ ...ARGS, dbPort: 15432 }, io.io)).dbPort).toBe(15432);
+    expect(await collectAnswers({ ...ARGS, dbPort: 15432 }, io.io)).toMatchObject({
+      dbPort: 15432,
+      dbPortGiven: true,
+    });
+  });
+
+  it("counts a port typed at the question as given, and the offered one as picked", async () => {
+    const typed = await collectAnswers(ARGS, prompter(["app", "pw", "15432"]).io);
+    const offered = await collectAnswers(ARGS, prompter(["app", "pw", "5432"]).io);
+
+    expect(typed).toMatchObject({ dbPort: 15432, dbPortGiven: true });
+    expect(offered).toMatchObject({ dbPort: 5432, dbPortGiven: false });
   });
 
   it("picks the published ports through the prober it was given", async () => {
@@ -448,6 +462,7 @@ describe("collectAnswers", () => {
       dbName: "app",
       dbPassword: "",
       dbPort: 0,
+      dbPortGiven: false,
       rabbitmq: false,
       ai: false,
       mcp: false,
@@ -635,6 +650,7 @@ describe("portNotes", () => {
     dbName: "app",
     dbPassword: "S3cret.pass",
     dbPort: 5432,
+    dbPortGiven: false,
     rabbitmq: true,
     ai: false,
     mcp: false,
@@ -652,13 +668,13 @@ describe("portNotes", () => {
   };
 
   it("says nothing when every port is the default and free", () => {
-    expect(portNotes(answers, false, () => true)).toEqual([]);
+    expect(portNotes(answers, () => true)).toEqual([]);
   });
 
   it("names each moved port, the port it got and the variable that holds it", () => {
     const moved = { ...DEFAULT_PORTS, app: 3002, redis: 6380, jaegerOtlp: 4319, grafana: 3003 };
 
-    expect(portNotes({ ...answers, ports: moved }, false, () => true)).toEqual([
+    expect(portNotes({ ...answers, ports: moved }, () => true)).toEqual([
       "Port 3000 is taken, so Graphoria uses 3002 instead (PORT in .env).",
       "Port 6379 is taken, so Redis uses 6380 instead (REDIS_PORT in .env).",
       "Port 4318 is taken, so Jaeger's OTLP receiver uses 4319 instead (JAEGER_OTLP_PORT in .env).",
@@ -666,18 +682,19 @@ describe("portNotes", () => {
     ]);
   });
 
-  it("says when it moved the database off its engine's taken port, unless --db-port chose it", () => {
+  it("says when it moved the database off its engine's taken port, unless the port was given", () => {
     const isFree = (port: number) => port !== 5432;
     const moved = { ...answers, dbPort: 5433 };
 
-    expect(portNotes(moved, false, isFree)).toEqual([
+    expect(portNotes(moved, isFree)).toEqual([
       "Port 5432 is taken, so the database uses 5433 instead (DB_PORT in .env).",
     ]);
-    expect(portNotes(moved, true, isFree)).toEqual([]);
+    expect(portNotes({ ...moved, dbPortGiven: true }, isFree)).toEqual([]);
   });
 
   it("warns about a database port that is itself taken", () => {
-    const [warning] = portNotes({ ...answers, dbPort: 15432 }, true, (port) => port !== 15432);
+    const given = { ...answers, dbPort: 15432, dbPortGiven: true };
+    const [warning] = portNotes(given, (port) => port !== 15432);
 
     expect(warning).toStartWith(
       "Port 15432 is in use on this host, so Docker Compose cannot publish the database on it. Set DB_PORT in .env",
@@ -685,9 +702,7 @@ describe("portNotes", () => {
   });
 
   it("has no database port to speak of on SQLite", () => {
-    expect(portNotes({ ...answers, database: "sqlite", dbPort: 0 }, false, () => false)).toEqual(
-      [],
-    );
+    expect(portNotes({ ...answers, database: "sqlite", dbPort: 0 }, () => false)).toEqual([]);
   });
 });
 
@@ -723,6 +738,7 @@ const ANSWERS: InitAnswers = {
   dbName: "app",
   dbPassword: "S3cret.pass",
   dbPort: 5432,
+  dbPortGiven: true,
   rabbitmq: false,
   ai: false,
   mcp: false,
@@ -784,6 +800,12 @@ describe("recreateCommand", () => {
     );
     expect(nextSteps(ANSWERS, true, undefined, PLAIN_PAINT, true)).toContain(
       "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --up",
+    );
+  });
+
+  it("leaves out a database port init picked, so a copy gets a free one", () => {
+    expect(recreateCommand({ ...ANSWERS, dbPort: 5433, dbPortGiven: false }, true)).toBe(
+      "bunx graphoria init --yes --database pg --db-name app",
     );
   });
 

@@ -161,18 +161,18 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
           passwordError(database, answer),
         );
 
-  const dbPort =
-    database === "sqlite"
-      ? 0
-      : (args.dbPort ??
-        Number(
-          await question(
-            io,
-            "Database port on this host",
-            String(freePort(ENGINES[database].port, new Set(), io.isPortFree)),
-            portError,
-          ),
-        ));
+  let dbPort = 0;
+  let dbPortGiven = false;
+  if (database !== "sqlite") {
+    if (args.dbPort !== undefined) {
+      dbPort = args.dbPort;
+      dbPortGiven = true;
+    } else {
+      const offered = freePort(ENGINES[database].port, new Set(), io.isPortFree);
+      dbPort = Number(await question(io, "Database port on this host", String(offered), portError));
+      dbPortGiven = dbPort !== offered;
+    }
+  }
 
   const extraChoices: Choice<Extra>[] = [
     ...(args.rabbitmq === undefined ? [extraChoice("rabbitmq", "RabbitMQ", "queues demo")] : []),
@@ -222,6 +222,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     dbName,
     dbPassword,
     dbPort,
+    dbPortGiven,
     rabbitmq: args.rabbitmq ?? chosen.has("rabbitmq"),
     ai: args.ai ?? chosen.has("ai"),
     mcp: args.mcp ?? chosen.has("mcp"),
@@ -320,7 +321,6 @@ const moved = (from: number, service: string, to: number, envVar: string) =>
 // database port that is itself taken (one --db-port or the question chose).
 export const portNotes = (
   answers: InitAnswers,
-  dbPortGiven: boolean,
   isFree: (port: number) => boolean = isPortFree,
 ): string[] => {
   const notes: string[] = [];
@@ -328,7 +328,7 @@ export const portNotes = (
     const engine = ENGINES[answers.database].port;
     const warning = portWarning(answers.dbPort, { service: "database", envVar: "DB_PORT" }, isFree);
     if (warning) notes.push(warning);
-    else if (!dbPortGiven && answers.dbPort !== engine && !isFree(engine))
+    else if (!answers.dbPortGiven && answers.dbPort !== engine && !isFree(engine))
       notes.push(moved(engine, "the database", answers.dbPort, "DB_PORT"));
   }
   for (const { key, service, envVar } of PUBLISHED) {
@@ -350,7 +350,9 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean, up = f
     "bunx graphoria init --yes",
     `--database ${answers.database}`,
     `--db-name ${answers.dbName}`,
-    ...(answers.database === "sqlite" ? [] : [`--db-port ${answers.dbPort}`]),
+    ...(answers.database !== "sqlite" && answers.dbPortGiven
+      ? [`--db-port ${answers.dbPort}`]
+      : []),
     ...(answers.rabbitmq ? ["--rabbitmq"] : []),
     ...(answers.ai ? ["--ai"] : []),
     ...(answers.mcp ? ["--mcp"] : []),
@@ -653,8 +655,7 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   if (answers.metrics || answers.tracing)
     refuseExisting([...(answers.metrics ? METRICS_FILES : []), ...GRAFANA_FILES]);
   const stderrPaint = paintFor(process.stderr);
-  for (const note of portNotes(answers, args.dbPort !== undefined, io.isPortFree))
-    console.warn(stderrPaint.warning(note));
+  for (const note of portNotes(answers, io.isPortFree)) console.warn(stderrPaint.warning(note));
 
   const name = projectName(dir);
   // Printed with the seed-auth commands only: not in .env, never in recreateCommand.

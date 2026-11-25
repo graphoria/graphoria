@@ -37,6 +37,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   dbName: "shop",
   dbPassword: "Pa55word.x",
   dbPort: 15432,
+  dbPortGiven: false,
   rabbitmq: false,
   ai: false,
   mcp: false,

@@ -443,7 +443,18 @@ describe("cli init", () => {
       "  ai: {\n    // POST /mcp answers MCP clients",
     );
     expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/mcp`);
-    expect(result.stdout.toString()).toContain(`--db-port ${values.DB_PORT} --mcp --no-install`);
+    expect(result.stdout.toString()).toContain("--db-name app --mcp --no-install\n");
+  });
+
+  it("recreates with the --db-port it was given, and without one it picked", async () => {
+    const given = await init(["--yes", "--db-port", "15432", "--no-install"]);
+    const picked = await init(["--yes", "--no-install"]);
+    cwds.push(given.cwd, picked.cwd);
+
+    expect(given.result.stdout.toString()).toContain(
+      "--db-name app --db-port 15432 --no-install\n",
+    );
+    expect(picked.result.stdout.toString()).toContain("--database pg --db-name app --no-install\n");
   });
 
   it("scaffolds Redis for the cache, the auth token store and the rate limits with --redis", async () => {

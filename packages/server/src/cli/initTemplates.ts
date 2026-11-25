@@ -8,6 +8,8 @@ export type InitAnswers = {
   dbName: string;
   dbPassword: string;
   dbPort: number;
+  // From --db-port or typed at the question, rather than the port init offered.
+  dbPortGiven: boolean;
   rabbitmq: boolean;
   ai: boolean;
   mcp: boolean;
