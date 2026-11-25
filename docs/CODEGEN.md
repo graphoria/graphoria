@@ -72,7 +72,19 @@ It logs at `warn` unless `LOG_LEVEL` is set. `SCHEMAS_OUTPUT_DIR` is deprecated 
 
 ## Output
 
-On success, it prints `wrote <path>` for each file, then `typed <n> operations in <path>`, or `skipped <path>` with the reason.
+On success, it prints a summary: the roles, a line per output (the types file with the number of operations it types, or why it skipped it), and how long the run took.
+
+```
+graphoria codegen  4 roles: superadmin, anonymous, reader, editor
+
+  ✓ GraphQL schemas     .graphoria/schemas/
+  ✓ OpenAPI documents   .graphoria/openapi/
+  ✓ tRPC output types   graphoria-env.d.ts (1 operation)
+
+  Done in 412ms
+```
+
+In a terminal the summary is in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
 
 ## Errors
 

@@ -5,6 +5,7 @@ import { format } from "oxfmt";
 
 import type { Configuration } from "../types/configuration";
 import type { CodegenArgs } from "./codegenArgs";
+import type { Paint } from "./paint";
 
 import { analyzeConfiguration, assertDistinctRoles, loadConfiguration } from "../configuration";
 import { logger } from "../logging";
@@ -14,8 +15,15 @@ import { ConfigurationZod } from "../types/zod/configuration";
 import { formatSchema, schemaFileName } from "../utils/writeSchema";
 import { CODEGEN_USAGE, parseCodegenArgs } from "./codegenArgs";
 import { operationOutputs, renderOperationTypes } from "./operationTypes";
+import { PLAIN_PAINT, paintFor } from "./paint";
+import { formatDuration } from "./progress";
 
-export type CodegenResult = { written: string[]; types: { path: string; operations?: number } };
+export type CodegenResult = {
+  roles: string[];
+  schemasDir: string;
+  openapiDir: string;
+  types: { path: string; operations?: number };
+};
 
 export type CodegenDependencies = {
   /** Test seam: whether @trpc/server resolves, as the server's tRPC loader checks it. */
@@ -105,11 +113,13 @@ export const runCodegen = async (
     }
 
     const outDir = resolve(args.out ?? env.outputDir);
+    const schemasDir = join(outDir, "schemas");
+    const openapiDir = join(outDir, "openapi");
     const files = new Map<string, string>();
     for (const [role, { typeDefs }] of Object.entries(analyzed.roles)) {
-      files.set(join(outDir, "schemas", schemaFileName(role)), await formatSchema(typeDefs));
+      files.set(join(schemasDir, schemaFileName(role)), await formatSchema(typeDefs));
       files.set(
-        join(outDir, "openapi", `openapi_${role}.json`),
+        join(openapiDir, `openapi_${role}.json`),
         `${JSON.stringify(analyzed.openapiFor(role), null, 2)}\n`,
       );
     }
@@ -130,23 +140,44 @@ export const runCodegen = async (
     }
 
     for (const [path, contents] of files) await writeOutput(path, contents);
-    await prune(join(outDir, "schemas"), SCHEMA_FILE, files);
-    await prune(join(outDir, "openapi"), OPENAPI_FILE, files);
+    await prune(schemasDir, SCHEMA_FILE, files);
+    await prune(openapiDir, OPENAPI_FILE, files);
 
-    return { written: [...files.keys()], types: { path: typesPath, operations } };
+    return {
+      roles: Object.keys(analyzed.roles),
+      schemasDir,
+      openapiDir,
+      types: { path: typesPath, operations },
+    };
   } finally {
     await disconnectDatabases();
   }
 };
 
-export const summaryLines = (result: CodegenResult, cwd: string): string[] => {
-  const types = relative(cwd, result.types.path);
-  const { operations } = result.types;
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+export const summaryLines = (
+  { roles, schemasDir, openapiDir, types }: CodegenResult,
+  cwd: string,
+  ms: number,
+  paint: Paint = PLAIN_PAINT,
+): string[] => {
+  const row = (label: string, path: string, note?: string) =>
+    `  ${paint.success("✓")} ${label.padEnd(20)}${paint.code(path)}${note ? ` ${paint.dim(note)}` : ""}`;
   return [
-    ...result.written.map((path) => `wrote ${relative(cwd, path)}`),
-    operations === undefined
-      ? `skipped ${types}: @trpc/server does not resolve, and only @graphoria/server/trpc reads it`
-      : `typed ${operations} operation${operations === 1 ? "" : "s"} in ${types}`,
+    `${paint.accent(paint.name("graphoria codegen"))}  ${paint.dim(`${plural(roles.length, "role")}:`)} ${roles.join(", ")}`,
+    "",
+    row("GraphQL schemas", `${relative(cwd, schemasDir)}/`),
+    row("OpenAPI documents", `${relative(cwd, openapiDir)}/`),
+    types.operations === undefined
+      ? paint.dim(`  – ${"tRPC output types".padEnd(20)}skipped: @trpc/server is not installed`)
+      : row(
+          "tRPC output types",
+          relative(cwd, types.path),
+          `(${plural(types.operations, "operation")})`,
+        ),
+    "",
+    paint.dim(`  Done in ${formatDuration(ms)}`),
   ];
 };
 
@@ -163,7 +194,15 @@ export const codegenCommand = async (argv: string[]): Promise<void> => {
   }
 
   try {
-    for (const line of summaryLines(await runCodegen(args), process.cwd())) console.log(line);
+    const started = performance.now();
+    const result = await runCodegen(args);
+    const lines = summaryLines(
+      result,
+      process.cwd(),
+      performance.now() - started,
+      paintFor(process.stdout),
+    );
+    console.log(lines.join("\n"));
     process.exit(0);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

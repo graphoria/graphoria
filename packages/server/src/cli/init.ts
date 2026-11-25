@@ -6,6 +6,7 @@ import { customAlphabet } from "nanoid";
 import type { DatabaseType } from "../config";
 import type { InitArgs } from "./initArgs";
 import type { HostPorts, InitAnswers } from "./initTemplates";
+import type { Paint } from "./paint";
 import type { Ask, Choice, MultiSelect, Say, Select } from "./prompt";
 
 import { version } from "../../package.json";
@@ -22,6 +23,7 @@ import {
   renderProject,
   seedSchema,
 } from "./initTemplates";
+import { PLAIN_PAINT, paintFor } from "./paint";
 import { ask, interactive, multiSelect, select } from "./prompt";
 
 export type InitIO = {
@@ -369,42 +371,6 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean, up = f
     ...(installed ? [] : ["--no-install"]),
     ...(up ? ["--up"] : []),
   ].join(" ");
-
-export type Paint = Record<
-  "code" | "url" | "name" | "secret" | "warning",
-  (text: string) => string
->;
-
-const plain = (text: string) => text;
-
-export const PLAIN_PAINT: Paint = {
-  code: plain,
-  url: plain,
-  name: plain,
-  secret: plain,
-  warning: plain,
-};
-
-const tint = (code: number) => (text: string) => `\x1b[${code}m${text}\x1b[39m`;
-
-// 16-color codes (36 cyan, 94 bright blue, 33 yellow), not 256 or truecolor: the terminal's theme
-// then chooses shades its background reads. Errors need none: on a terminal, Bun's console.error
-// prints them red by itself.
-export const COLOR_PAINT: Paint = {
-  code: tint(36),
-  url: tint(94),
-  name: (text) => `\x1b[1m${text}\x1b[22m`,
-  secret: tint(33),
-  warning: tint(33),
-};
-
-// Bun.color's "ansi" weighs TERM, NO_COLOR and FORCE_COLOR but never the stream, and
-// Bun.enableANSIColors holds while either stdout or stderr is a terminal: each stream decides alone.
-export const paintFor = (
-  stream: { isTTY?: boolean },
-  ansi = Bun.color("white", "ansi"),
-  forced = process.env.FORCE_COLOR !== undefined,
-): Paint => (ansi && (stream.isTTY || forced) ? COLOR_PAINT : PLAIN_PAINT);
 
 // What runs the project in Docker: `bun run up` writes the types first, where
 // the project has them.

@@ -92,7 +92,7 @@ describe("graphoria codegen", () => {
     expect(await ls(join(dir, ".graphoria", "openapi"))).toEqual(
       ROLES.map((role) => `openapi_${role}.json`),
     );
-    expect(result.stdout).toContain("wrote .graphoria/schemas/schema_reader.graphql");
+    expect(result.stdout).toContain("  ✓ GraphQL schemas     .graphoria/schemas/\n");
   }, 30_000);
 
   it("logs no debug or info line unless LOG_LEVEL asks", async () => {
@@ -105,30 +105,49 @@ describe("graphoria codegen", () => {
       quiet.stdout
         .split("\n")
         .filter(Boolean)
-        .every((line) => line.startsWith("wrote ") || line.startsWith("typed ")),
+        .every((line) => /^(graphoria codegen {2}| {2}[✓–] | {2}Done in )/.test(line)),
     ).toBe(true);
     // An info line: SQLite's introspection reads bun:sqlite directly, so the
     // executor's debug `query executed` never prints here.
     expect(loud.stdout).toContain("configuration analysis complete");
   }, 30_000);
 
-  it("prints a wrote line per file, relative to the working directory", async () => {
+  it("prints the roles, a line per output relative to the working directory, and the time", async () => {
     const { summaryLines } = await import("./codegen");
 
     expect(
       summaryLines(
         {
-          written: ["/p/.graphoria/schemas/schema_a.graphql", "/p/out/openapi_a.json"],
+          roles: ["superadmin", "anonymous", "reader", "editor"],
+          schemasDir: "/p/.graphoria/schemas",
+          openapiDir: "/p/out/openapi",
           types: { path: "/p/graphoria-env.d.ts", operations: 0 },
         },
         "/p",
+        412,
       ),
     ).toEqual([
-      "wrote .graphoria/schemas/schema_a.graphql",
-      "wrote out/openapi_a.json",
-      "typed 0 operations in graphoria-env.d.ts",
+      "graphoria codegen  4 roles: superadmin, anonymous, reader, editor",
+      "",
+      "  ✓ GraphQL schemas     .graphoria/schemas/",
+      "  ✓ OpenAPI documents   out/openapi/",
+      "  ✓ tRPC output types   graphoria-env.d.ts (0 operations)",
+      "",
+      "  Done in 412ms",
     ]);
   });
+
+  it("colors the summary through a pipe under FORCE_COLOR", async () => {
+    const dir = await project();
+
+    const result = codegen(dir, [], { FORCE_COLOR: "1" });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toStartWith("\x1b[36m\x1b[1mgraphoria codegen\x1b[22m\x1b[39m");
+    expect(result.stdout).toContain(
+      "  \x1b[32m✓\x1b[39m GraphQL schemas     \x1b[36m.graphoria/schemas/\x1b[39m\n",
+    );
+  }, 30_000);
 
   it("creates no auth table, though autoCreateTables is on", async () => {
     const dir = await project();
@@ -324,7 +343,9 @@ describe("graphoria codegen", () => {
     expect(types).toMatch(
       /books: \{\s*main_books: \{ id: number; title: string; published_year: number \}\[\];?\s*\}/,
     );
-    expect(result.stdout).toContain("typed 1 operation in server/graphoria-env.d.ts");
+    expect(result.stdout).toContain(
+      "  ✓ tRPC output types   server/graphoria-env.d.ts (1 operation)\n",
+    );
   }, 30_000);
 
   it("skips the types file, saying so, when @trpc/server does not resolve", async () => {
@@ -342,16 +363,22 @@ describe("graphoria codegen", () => {
 
   it("prints how many operations the types file holds, or that it skipped it", async () => {
     const { summaryLines } = await import("./codegen");
-    const types = (operations?: number) => ({ path: "/p/graphoria-env.d.ts", operations });
+    const typesLine = (operations?: number) =>
+      summaryLines(
+        {
+          roles: ["reader"],
+          schemasDir: "/p/s",
+          openapiDir: "/p/o",
+          types: { path: "/p/graphoria-env.d.ts", operations },
+        },
+        "/p",
+        4210,
+      );
 
-    expect(summaryLines({ written: [], types: types(1) }, "/p")).toEqual([
-      "typed 1 operation in graphoria-env.d.ts",
-    ]);
-    expect(summaryLines({ written: [], types: types(2) }, "/p")).toEqual([
-      "typed 2 operations in graphoria-env.d.ts",
-    ]);
-    expect(summaryLines({ written: [], types: types() }, "/p")).toEqual([
-      "skipped graphoria-env.d.ts: @trpc/server does not resolve, and only @graphoria/server/trpc reads it",
-    ]);
+    expect(typesLine(1)[0]).toBe("graphoria codegen  1 role: reader");
+    expect(typesLine(1)[4]).toBe("  ✓ tRPC output types   graphoria-env.d.ts (1 operation)");
+    expect(typesLine(2)[4]).toBe("  ✓ tRPC output types   graphoria-env.d.ts (2 operations)");
+    expect(typesLine()[4]).toBe("  – tRPC output types   skipped: @trpc/server is not installed");
+    expect(typesLine(1)[6]).toBe("  Done in 4.2s");
   });
 });

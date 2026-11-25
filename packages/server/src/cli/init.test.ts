@@ -9,15 +9,12 @@ import type { InitAnswers } from "./initTemplates";
 import type { Choice } from "./prompt";
 
 import {
-  COLOR_PAINT,
-  PLAIN_PAINT,
   collectAnswers,
   findConflicts,
   generatePassword,
   generateSecret,
   isPortFree,
   nextSteps,
-  paintFor,
   passwordError,
   pickPorts,
   portNotes,
@@ -28,6 +25,7 @@ import {
   upCommand,
 } from "./init";
 import { DEFAULT_PORTS } from "./initTemplates";
+import { COLOR_PAINT, PLAIN_PAINT } from "./paint";
 
 const ARGS: InitArgs = { yes: false, install: true, up: false };
 
@@ -1327,41 +1325,5 @@ describe("nextSteps", () => {
     expect(steps).toContain(
       "  \x1b[36mbunx graphoria seed-auth --user reader --password \x1b[39m\x1b[33mReaderPass123\x1b[39m\x1b[36m --role reader --config ./graphoria.ts\x1b[39m",
     );
-  });
-});
-
-describe("paintFor", () => {
-  it.each([
-    {
-      what: "a terminal whose TERM takes color",
-      isTTY: true,
-      ansi: "\x1b[97m",
-      forced: false,
-      want: COLOR_PAINT,
-    },
-    { what: "a pipe", isTTY: undefined, ansi: "\x1b[97m", forced: false, want: PLAIN_PAINT },
-    {
-      what: "a pipe under FORCE_COLOR",
-      isTTY: undefined,
-      ansi: "\x1b[97m",
-      forced: true,
-      want: COLOR_PAINT,
-    },
-    {
-      what: "a pipe under FORCE_COLOR=0",
-      isTTY: undefined,
-      ansi: "",
-      forced: true,
-      want: PLAIN_PAINT,
-    },
-    {
-      what: "a terminal under NO_COLOR, TERM=dumb or no TERM",
-      isTTY: true,
-      ansi: "",
-      forced: false,
-      want: PLAIN_PAINT,
-    },
-  ])("picks the paint for $what", ({ isTTY, ansi, forced, want }) => {
-    expect(paintFor({ isTTY }, ansi, forced)).toBe(want);
   });
 });
