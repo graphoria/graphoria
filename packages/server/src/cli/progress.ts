@@ -37,13 +37,14 @@ const run = async (command: string[], cwd: string) => {
   const proc = spawn(command, cwd);
   if (proc instanceof Error) {
     output.push(new TextEncoder().encode(`${proc.message}\n`));
-    return { ok: false, output };
+    return { ok: false, interrupted: false, output };
   }
   const collect = async (stream: ReadableStream<Uint8Array>) => {
     for await (const chunk of stream) output.push(chunk);
   };
   const [code] = await Promise.all([proc.exited, collect(proc.stdout), collect(proc.stderr)]);
-  return { ok: code === 0, output };
+  // A terminal's Ctrl+C reaches the command too, which may exit before this process hears of it.
+  return { ok: code === 0, interrupted: proc.signalCode === "SIGINT", output };
 };
 
 /**
@@ -77,15 +78,26 @@ export const runSteps = async (
     } else {
       out.write(`${step.doing}…\n`);
     }
+    const clear = out.isTTY ? CLEAR_LINE : "";
+    const interrupt = (): never => {
+      clearInterval(timer);
+      out.write(
+        `${clear}${paint.failure("✗")} ${step.doing} interrupted  ${paint.dim(elapsed())}\n`,
+      );
+      // 128 + SIGINT, as a shell reports it.
+      process.exit(130);
+    };
+    process.once("SIGINT", interrupt);
     let result: Awaited<ReturnType<typeof run>>;
     try {
       result = await run(step.command, cwd);
     } finally {
       clearInterval(timer);
+      process.off("SIGINT", interrupt);
     }
+    if (result.interrupted) interrupt();
 
     const time = paint.dim(elapsed());
-    const clear = out.isTTY ? CLEAR_LINE : "";
     if (result.ok) {
       out.write(`${clear}${paint.success("✓")} ${step.done.padEnd(width)}  ${time}\n`);
       continue;

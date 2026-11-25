@@ -101,4 +101,54 @@ describe("runSteps", () => {
     expect(writes.at(-1)).toStartWith("\r\x1b[2K✓ Slept  ");
     expect(writes.at(-1)).toMatch(/✓ Slept {2}\S+\n$/);
   });
+
+  // In a process of its own: an interrupt exits it.
+  const stepsScript = (command: string[]) => `
+const { runSteps } = await import(${JSON.stringify(join(import.meta.dir, "progress.ts"))});
+const { PLAIN_PAINT } = await import(${JSON.stringify(join(import.meta.dir, "paint.ts"))});
+const step = { doing: "Waiting", done: "Waited", command: ${JSON.stringify(command)} };
+await runSteps([step], { cwd: process.cwd(), out: process.stdout, errors: process.stderr, paint: PLAIN_PAINT });
+console.log("after");
+`;
+
+  it("stops at Ctrl+C on a terminal, clearing the spinner for a line that says so", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const proc = Bun.spawn([process.execPath, "-e", stepsScript(["sleep", "5"])], {
+      terminal: {
+        cols: 60,
+        rows: 10,
+        data: (_terminal, chunk) => {
+          output += decoder.decode(chunk, { stream: true });
+        },
+      },
+    });
+    try {
+      const deadline = Date.now() + 10_000;
+      while (!output.includes("Waiting…")) {
+        if (Date.now() > deadline) throw new Error(`no spinner in:\n${output}`);
+        await Bun.sleep(20);
+      }
+      proc.terminal!.write("\x03");
+
+      expect(await proc.exited).toBe(130);
+    } finally {
+      proc.kill();
+      proc.terminal!.close();
+    }
+    expect(output).toContain("\r\x1b[2K✗ Waiting interrupted  ");
+    expect(output).toMatch(/✗ Waiting interrupted {2}\S+\r\n$/);
+    expect(output).not.toContain("after");
+  });
+
+  it("stops, saying so, when a step's command dies of an interrupt", () => {
+    const result = Bun.spawnSync([
+      process.execPath,
+      "-e",
+      stepsScript(["sh", "-c", "kill -INT $$"]),
+    ]);
+
+    expect(result.exitCode).toBe(130);
+    expect(result.stdout.toString()).toMatch(/^Waiting…\n✗ Waiting interrupted {2}\S+\n$/);
+  });
 });
