@@ -67,7 +67,7 @@ beforeAll(async () => {
           reader: { tables: { main_tasks: { columns: ["id"] }, main_notes: { columns: "ALL" } } },
         },
       },
-    } as never,
+    },
   });
 });
 

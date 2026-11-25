@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { TablePermission } from "../config";
+import type { ConfigurationFn, ConfigurationInput, TablePermission } from "../config";
 import type { ConfigurationZod } from "./zod/configuration";
 
 // Re-export base types from the config module
@@ -13,6 +13,9 @@ export type {
 } from "../config";
 
 export type Configuration = z.infer<typeof ConfigurationZod>;
+
+/** A path to the configuration file, the function it exports by default, or an object. */
+export type ConfigurationSource = string | ConfigurationInput | ConfigurationFn;
 
 export type Database = Configuration["databases"][number];
 

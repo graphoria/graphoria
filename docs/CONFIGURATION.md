@@ -2,12 +2,12 @@
 
 > **See also:** [Permissions & Access Control](./PERMISSIONS.md) | [API Reference](./API_REFERENCE.md)
 
-Full reference for the Graphoria configuration file. Configuration is defined as a function that receives helpers and returns a `ConfigurationInput` object.
+Full reference for the Graphoria configuration file. Configuration is defined as a function that receives helpers and returns a `ConfigurationInput` object. The server takes the file's path (`CONFIGURATION`, the default) or the function itself, imported: see [`Env.configuration`](./API_REFERENCE.md#envconfiguration).
 
 ```typescript
-import type { ConfigurationFn } from "@graphoria/server/config";
+import { cron, type ConfigurationFn } from "@graphoria/server/config";
 
-export default (({ z, operation, cron, virtualColumnExpression, virtualColumnFunction }) => ({
+export default (({ z, operation, virtualColumnExpression, virtualColumnFunction }) => ({
   name: "My API",
   version: "1.0.0",
   databases: [...],

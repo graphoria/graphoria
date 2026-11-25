@@ -77,7 +77,7 @@ beforeAll(async () => {
           connection: { filename, attach: { catalog } },
         },
       ],
-    } as never,
+    },
   });
 });
 
@@ -344,7 +344,7 @@ describe("engine close", () => {
         databases: [
           { name: "default", enabled: true, type: "sqlite", connection: { filename: ":memory:" } },
         ],
-      } as never,
+      },
     });
 
     // Nothing listens here, and no test sends these clients a command.

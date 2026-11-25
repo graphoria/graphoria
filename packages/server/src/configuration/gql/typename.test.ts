@@ -61,7 +61,7 @@ beforeAll(async () => {
           rest: { path: "/make-thing", method: "POST" },
         },
       },
-    } as never,
+    },
   });
 });
 

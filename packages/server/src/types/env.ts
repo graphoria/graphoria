@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { version } from "../../package.json";
-import { ConfigurationZod } from "./zod/configuration";
+import type { ConfigurationSource } from "./configuration";
 
 // A secret env var is a comma-separated list: the first entry is the one in
 // use, the rest are still accepted so a rotation can overlap instead of cutting
@@ -20,7 +20,7 @@ export const EnvZod = z
     PORT: z.coerce.number().default(3000),
     NODE_ENV: z.string().default("DEVELOPMENT"),
     ADMIN_SECRET: z.string().transform(splitSecrets),
-    CONFIGURATION: z.union([z.string(), ConfigurationZod]).optional(),
+    CONFIGURATION: z.string().optional(),
     ANONYMOUS_ROLE: z.string().default("anonymous"),
     JWT_SECRET: secretList,
     JWT_EXPIRES_IN: z.string().default("5m"),
@@ -229,7 +229,8 @@ export const EnvZod = z
   }));
 
 export type EnvInput = z.input<typeof EnvZod>;
-export type Env = z.infer<typeof EnvZod> & {
+export type Env = Omit<z.infer<typeof EnvZod>, "configuration"> & {
+  configuration?: ConfigurationSource;
   logger?: import("pino").Logger | import("pino").LoggerOptions;
 };
 

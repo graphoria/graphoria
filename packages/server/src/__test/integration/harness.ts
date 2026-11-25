@@ -222,7 +222,7 @@ export const startServer = async (options: WithServerOptions): Promise<StartedSe
     // baseConfig declares Redis, from the compose stack, as the `redis` store.
     authStore: "redis",
     ...env,
-    configuration: { ...baseConfig(engine), ...config } as never,
+    configuration: { ...baseConfig(engine), ...config },
   });
 
   const raw = await rawClient(engine);

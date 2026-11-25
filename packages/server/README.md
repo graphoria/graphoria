@@ -42,6 +42,16 @@ const { server, prefixes } = await createBunServer({
 });
 ```
 
+`configuration` also takes the configuration itself, as the entry imports it:
+
+```typescript
+import { createBunServer } from "@graphoria/server";
+
+import config from "./graphoria";
+
+const { server, prefixes } = await createBunServer({ configuration: config, port: 3000 });
+```
+
 ### Embedding into an existing Bun.serve
 
 ```typescript

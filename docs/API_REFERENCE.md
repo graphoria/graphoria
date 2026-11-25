@@ -87,12 +87,12 @@ Either teardown stops waiting after its second, not working: the steps left stil
 
 The `graphoria` CLI supervises its server processes: it restarts one that crashes (after 1 s, doubling up to 30 s), stops at the 5th crash within 60 s with a non-zero exit, and on SIGTERM, SIGINT or SIGHUP stops every worker and exits `0` when all of them stopped cleanly.
 
-#### `createGraphQLEngine(env)`
+#### `createGraphQLEngine(options?)`
 
 Run GraphQL queries in-process, without an HTTP server. Performs the same boot as `createBunServer` minus the route / websocket / queue / cron layer: no queue connects, and a publish from an operation handler answers `false`. It does not require `AUTH_STORE`: with auth on and the variable unset, the `login`, `refresh` and `logout` mutations keep their records in the process.
 
 ```typescript
-async function createGraphQLEngine(env: Partial<Env>): Promise<{
+async function createGraphQLEngine(options?: Partial<Env>): Promise<{
   execute: Execute;
   roles: string[];
   close: () => Promise<void>; // releases the database connections, Redis pools and token store
@@ -134,7 +134,7 @@ type Prefixes = {
 
 #### `configureLogging(loggerOrOptions)`
 
-Inject a custom pino logger or options before any `logger` call. First call wins — subsequent calls are ignored.
+Inject a custom pino logger or options before any `logger` call. First call wins — subsequent calls are ignored. A call that comes after a `logger` call already built the default root is ignored too, and says so: it logs `custom logger ignored: …` at `warn` through that root, as component `logging`.
 
 ```typescript
 function configureLogging(loggerOrOptions: pino.Logger | pino.LoggerOptions): void;
@@ -160,6 +160,28 @@ const { server, logger } = await createBunServer();
 const log = logger("my-feature"); // child logger bound to { component: "my-feature" }
 log.info("ready");
 ```
+
+#### `Env.configuration`
+
+What the boot loads, in one of three forms:
+
+- a path to the configuration file, resolved against the working directory: the default, from `CONFIGURATION`;
+- the function that file exports by default, as the entry imports it;
+- a `ConfigurationInput` object.
+
+```typescript
+import { createBunServer } from "@graphoria/server";
+
+import config from "./graphoria";
+
+await createBunServer({ configuration: config });
+```
+
+The option wins over `CONFIGURATION`, and the boot fails with `Configuration is required to create the GraphQL server` when neither is set. The function gets the same helpers the path form passes, and its result is awaited. A module namespace (`await import("./graphoria")`) is refused: pass its `default`.
+
+The import form lets the server entry and a [tRPC client](./TRPC.md#calling-from-a-client) name the same module. The CLI keeps the path, since a function cannot reach another process: `graphoria`, its `--cluster` workers and `codegen` read `--config` or `CONFIGURATION`, and `seed-auth` takes `--config`.
+
+An imported configuration's top level runs when the entry imports it, before the boot: an error thrown there fails that import, without the `Configuration could not be loaded:` prefix the boot gives the path form and the function.
 
 #### `Env.logger`
 

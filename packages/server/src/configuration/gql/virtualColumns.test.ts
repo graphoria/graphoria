@@ -68,7 +68,7 @@ beforeAll(async () => {
           },
         },
       ],
-    } as never,
+    },
   });
 });
 

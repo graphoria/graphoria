@@ -1,6 +1,5 @@
 import { readdir, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { isString } from "es-toolkit/compat";
 import { format } from "oxfmt";
 import { z } from "zod";
 
@@ -98,8 +97,7 @@ export const runCodegen = async (
     );
   }
 
-  const configPath =
-    args.config ?? (isString(env.configuration) ? env.configuration : "./graphoria.ts");
+  const configPath = args.config ?? env.configuration ?? "./graphoria.ts";
   const parsed = ConfigurationZod.safeParse(await loadConfiguration(configPath));
   if (!parsed.success) {
     throw new Error(`${relative(process.cwd(), resolve(configPath))} is invalid`, {

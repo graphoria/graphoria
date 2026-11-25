@@ -163,9 +163,10 @@ export type BootSignalTarget = SignalTarget & {
  * exits 0 at once. Returns the function that removes the listeners.
  */
 export const exitOnSignalDuringBoot = (target: BootSignalTarget = process) => {
-  const log = logger("shutdown");
+  // Not at setup: this runs before the boot's configureLogging, and asking for a
+  // logger here would fix the default root.
   const onSignal = (signal: NodeJS.Signals) => {
-    log.info({ signal }, "signal during boot, exiting");
+    logger("shutdown").info({ signal }, "signal during boot, exiting");
     target.exit(0);
   };
 
