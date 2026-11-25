@@ -317,6 +317,8 @@ type InferOperationInitData<T> // Extract TInitData from a TypedOperation
 type OperationTypes<TMethod, TInput, TOutput> // What a typed client reads from an operation
 ```
 
+`InferOperationOutput` stays `unknown` for a plain-string operation: the generated types reach the tRPC router only.
+
 `OperationTypes` is the type-only `__operationTypes` property on what `operation()` and `operation.typed()` return: the operation's `rest.method`, the input a caller sends and the output it gets. Nothing sets it at runtime, and setting it in a configuration fails validation. `TRPCRouterOf` (below) reads it.
 
 #### Cron Types
@@ -352,9 +354,10 @@ Types only; it needs `@trpc/server` installed. See [tRPC](./TRPC.md).
 
 ```typescript
 type TRPCRouterOf<TConfig> // The tRPC router type of a configuration function or object
+interface GraphoriaGeneratedOperationOutputs // Global: the output types graphoria codegen writes, by operation name
 ```
 
-`createTRPCClient<TRPCRouterOf<typeof config>>(…)` types a client from `graphoria.ts` without code generation: one procedure per operation made with `operation()` or `operation.typed()`, a query when its `rest.method` is `GET` and a mutation otherwise. Keep the configuration's literal types with `satisfies ConfigurationFn`.
+`createTRPCClient<TRPCRouterOf<typeof config>>(…)` types a client from `graphoria.ts`: one procedure per operation made with `operation()` or `operation.typed()`, a query when its `rest.method` is `GET` and a mutation otherwise. A plain-string operation's output comes from `graphoria codegen` (see [Codegen](./CODEGEN.md)). Keep the configuration's literal types with `satisfies ConfigurationFn`.
 
 ---
 

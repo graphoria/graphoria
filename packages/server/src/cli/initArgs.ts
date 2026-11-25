@@ -21,6 +21,7 @@ export type InitArgs = {
   tracing?: boolean;
   virtualColumns?: boolean;
   install: boolean;
+  up: boolean;
 };
 
 export const DATABASE_TYPES: readonly DatabaseType[] = ["pg", "mysql", "mssql", "sqlite"];
@@ -64,10 +65,15 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
       tracing: { type: "boolean" },
       "virtual-columns": { type: "boolean" },
       install: { type: "boolean", default: true },
+      up: { type: "boolean", default: false },
     },
     allowNegative: true,
     strict: true,
   });
+
+  if (values.up && !values.install) {
+    throw new Error("--up runs the project, which needs the install: drop --no-install");
+  }
 
   if (values.database !== undefined && !isDatabaseType(values.database)) {
     throw new Error(`--database must be one of ${DATABASE_TYPES.join(", ")}`);
@@ -98,5 +104,6 @@ export const parseInitArgs = (argv: string[]): InitArgs => {
     ...(values.tracing !== undefined && { tracing: values.tracing }),
     ...(values["virtual-columns"] !== undefined && { virtualColumns: values["virtual-columns"] }),
     install: values.install,
+    up: values.up,
   };
 };

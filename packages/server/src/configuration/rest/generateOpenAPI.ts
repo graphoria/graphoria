@@ -1,7 +1,9 @@
 import {
   GraphQLObjectType,
+  isAbstractType,
   isListType,
   isNonNullType,
+  isScalarType,
   Kind,
   SchemaMetaFieldDef,
   TypeMetaFieldDef,
@@ -18,12 +20,17 @@ import type {
 } from "graphql";
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { SelectionAnalysis } from "../../analyzeQuery/types";
-import type { GetSchemaReturn } from "../../configuration/getSchemas";
+import type { GetSchemaReturn, SchemaEntities } from "../../configuration/getSchemas";
+import type { OperationsEnhanced } from "./index";
+import type { DatabaseType } from "../../types/configuration";
+import type { TableResolver } from "../../types/db";
 import type { Env } from "../../types/env";
 
 import { META_FIELDS } from "../../analyzeQuery/metaFields";
 import { resolveSelections } from "../../analyzeQuery/resolveSelections";
 import { getFieldType, unwrapType } from "../../analyzeQuery/typeUtils";
+import { DIRECTIVE_RESULT_TYPES, isDirectiveName } from "../../databases/directives";
+import { columnFieldName } from "../../databases/transformers/graphqlName";
 import { convertFromZod, errors } from "./openApiErrors";
 
 // Deliberately coarse: Int and Float both map to "number", so a column keeps
@@ -42,14 +49,77 @@ const openApiTypeOf = (namedType: GraphQLType | undefined) => {
   }
 };
 
+type DataSchema = Record<string, unknown>;
+type DataSchemaEntities = Pick<SchemaEntities, "schema" | "queriesMap">;
+type AnsweredType = "string" | "number" | "boolean" | "untyped";
+
+// No JSON type describes it: a JSON column's value, a remote's custom scalar, a
+// member of an interface or a union.
+const UNTYPED: DataSchema = {};
+
+const BUILT_IN_SCALARS = new Set(["String", "ID", "Int", "Float", "Boolean"]);
+
+// Where an engine's JSON answer is not the SDL scalar's type. json_build_object
+// and JSON_OBJECT embed a JSON or array column's value, not its text, behind a
+// String (SQLite and MSSQL answer the text); PostgreSQL's money and bit and
+// MySQL's bit answer strings, MySQL's year a number.
+const ANSWERED_TYPES: Partial<Record<DatabaseType, Record<string, AnsweredType>>> = {
+  pg: { json: "untyped", jsonb: "untyped", array: "untyped", money: "string", bit: "string" },
+  mysql: { json: "untyped", bit: "string", year: "number" },
+};
+
 const resolveFieldType = (parentType: GraphQLObjectType | undefined, fieldName: string) => {
   const fieldType = parentType && getFieldType(parentType, fieldName);
   const namedType = fieldType ? unwrapType(fieldType).type : undefined;
 
   return {
+    fieldType,
     namedType,
     objectType: namedType instanceof GraphQLObjectType ? namedType : undefined,
   };
+};
+
+// A field with no selection set, typed from its GraphQL type.
+const scalarSchemaOf = (type: GraphQLType | undefined, isRequired: boolean): DataSchema => {
+  const nullableType = isNonNullType(type) ? type.ofType : type;
+
+  if (isListType(nullableType)) {
+    return {
+      type: "array",
+      items: scalarSchemaOf(nullableType.ofType, isNonNullType(nullableType.ofType)),
+      nullable: !isRequired,
+    };
+  }
+  if (
+    isAbstractType(nullableType) ||
+    (isScalarType(nullableType) && !BUILT_IN_SCALARS.has(nullableType.name))
+  ) {
+    return UNTYPED;
+  }
+
+  return { type: openApiTypeOf(nullableType), nullable: !isRequired };
+};
+
+// A column answers its SQL value: the JSON type its engine embeds it as, then
+// each transform directive's, in order.
+const columnSchemaOf = (
+  table: TableResolver,
+  field: SelectionAnalysis,
+  namedType: GraphQLType | undefined,
+): DataSchema => {
+  const column = table.columns.find((candidate) => columnFieldName(candidate) === field.name);
+  const answered = column && ANSWERED_TYPES[table.db.type]?.[column.dataType.toLowerCase()];
+  const type = (field.directives ?? []).reduce<AnsweredType>(
+    (current, { name }) => {
+      if (!isDirectiveName(name)) return current;
+      const result = DIRECTIVE_RESULT_TYPES[name];
+      if (result === "default") return current === "string" ? "string" : "untyped";
+      return result;
+    },
+    answered ?? openApiTypeOf(namedType),
+  );
+
+  return type === "untyped" ? UNTYPED : { type, nullable: !field.isRequired };
 };
 
 /**
@@ -63,31 +133,40 @@ const resolveFieldType = (parentType: GraphQLObjectType | undefined, fieldName: 
 const processSelections = (
   parentType: GraphQLObjectType | undefined,
   fieldParent: SelectionAnalysis,
+  entities: DataSchemaEntities,
 ) =>
   fieldParent.selections?.reduce<Record<string, unknown>>((acc, field) => {
-    const { namedType, objectType } = resolveFieldType(parentType, field.name);
+    const key = field.alias || field.name;
+    const { fieldType, namedType, objectType } = resolveFieldType(parentType, field.name);
+    // Only a table's type, a groupBy key and its items included, is SQL the
+    // directives reach: an aggregate value keeps its GraphQL type.
+    const table = parentType && entities.queriesMap[parentType.name];
 
-    if (field.isArray) {
-      acc[field.alias || field.name] = {
+    if (isAbstractType(namedType)) {
+      acc[key] = field.isArray
+        ? { type: "array", items: UNTYPED, nullable: !field.isRequired }
+        : UNTYPED;
+    } else if (!field.selections) {
+      acc[key] = table
+        ? columnSchemaOf(table, field, namedType)
+        : scalarSchemaOf(fieldType, Boolean(field.isRequired));
+    } else if (field.isArray) {
+      acc[key] = {
         type: "array",
         items: {
           type: "object",
-          properties: processSelections(objectType, field),
-          required: (field.selections ?? [])
-            .filter((f) => f.isRequired)
-            .map((f) => f.alias || f.name),
+          properties: processSelections(objectType, field, entities),
+          required: field.selections.filter((f) => f.isRequired).map((f) => f.alias || f.name),
           nullable: !field.isRequired,
         },
       };
     } else {
-      acc[field.alias || field.name] = field.selections
-        ? {
-            type: "object",
-            properties: processSelections(objectType, field),
-            required: field.selections.filter((f) => f.isRequired).map((f) => f.alias || f.name),
-            nullable: !field.isRequired,
-          }
-        : { type: openApiTypeOf(namedType), nullable: !field.isRequired };
+      acc[key] = {
+        type: "object",
+        properties: processSelections(objectType, field, entities),
+        required: field.selections.filter((f) => f.isRequired).map((f) => f.alias || f.name),
+        nullable: !field.isRequired,
+      };
     }
 
     return acc;
@@ -223,6 +302,72 @@ export const getTags = (url: string) => {
   return ["Data"];
 };
 
+/**
+ * The schema of what a query operation answers: REST's `data`, and tRPC's whole
+ * payload. One function, so the OpenAPI document and `graphoria codegen` cannot drift.
+ */
+export const operationDataSchema = (
+  value: OperationsEnhanced[string],
+  entities: DataSchemaEntities,
+): Record<string, unknown> => {
+  const operation = value.queryStructure!.operations[0];
+  // A query that fails validation, which may spread fragments in a
+  // cycle, answers 401 and no data.
+  const fields = value.hasError
+    ? operation.fields
+    : resolveSelections(
+        operation.fields,
+        value.queryStructure!.fragments,
+        () => true,
+        operation.variables,
+      ).filter((field) => !META_FIELDS.has(field.name));
+  const rootType =
+    (operation.operation === "mutation"
+      ? entities.schema.getMutationType()
+      : entities.schema.getQueryType()) ?? undefined;
+  const meta =
+    operation.meta && !value.hasError
+      ? rootMetaPropertiesOf(operation.meta, rootType)
+      : { properties: {}, required: [] };
+  return {
+    type: "object" as const,
+    properties: fields.reduce<Record<string, unknown>>((acc, field) => {
+      const key = field.alias || field.name;
+      const { fieldType, namedType, objectType } = resolveFieldType(rootType, field.name);
+
+      if (isAbstractType(namedType)) {
+        acc[key] = field.isArray ? { type: "array", items: UNTYPED } : UNTYPED;
+      } else if (!field.selections && fieldType) {
+        acc[key] = scalarSchemaOf(fieldType, Boolean(field.isRequired));
+      } else if (field.isArray) {
+        acc[key] = {
+          type: "array",
+          items: {
+            type: "object",
+            properties: processSelections(objectType, field, entities),
+            required: (field.selections ?? [])
+              .filter((f) => f.isRequired)
+              .map((f) => f.alias || f.name),
+          },
+        };
+      } else {
+        acc[key] = {
+          type: "object",
+          properties: processSelections(objectType, field, entities),
+          required: (field.selections ?? [])
+            .filter((f) => f.isRequired)
+            .map((f) => f.alias || f.name),
+        };
+      }
+      return acc;
+    }, meta.properties),
+    required: [
+      ...meta.required,
+      ...fields.filter((f) => f.isRequired).map((f) => f.alias || f.name),
+    ],
+  };
+};
+
 export const generateOpenAPI = ({
   title = "REST API",
   version = "1.0.0",
@@ -304,63 +449,7 @@ export const generateOpenAPI = ({
         // Build response schema: from responseSchema (custom handler) or queryStructure (query-based)
         const responseDataSchema = value.output
           ? convertFromZod(value.output)
-          : (() => {
-              const operation = value.queryStructure!.operations[0];
-              // A query that fails validation, which may spread fragments in a
-              // cycle, answers 401 and no data.
-              const fields = value.hasError
-                ? operation.fields
-                : resolveSelections(
-                    operation.fields,
-                    value.queryStructure!.fragments,
-                    () => true,
-                    operation.variables,
-                  ).filter((field) => !META_FIELDS.has(field.name));
-              const rootType =
-                (operation.operation === "mutation"
-                  ? role.schema.getMutationType()
-                  : role.schema.getQueryType()) ?? undefined;
-              const meta =
-                operation.meta && !value.hasError
-                  ? rootMetaPropertiesOf(operation.meta, rootType)
-                  : { properties: {}, required: [] };
-              return {
-                type: "object" as const,
-                properties: fields.reduce<Record<string, unknown>>((acc, field) => {
-                  if (field.isArray) {
-                    acc[field.alias || field.name] = {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: processSelections(
-                          resolveFieldType(rootType, field.name).objectType,
-                          field,
-                        ),
-                        required: (field.selections ?? [])
-                          .filter((f) => f.isRequired)
-                          .map((f) => f.alias || f.name),
-                      },
-                    };
-                  } else {
-                    acc[field.alias || field.name] = {
-                      type: "object",
-                      properties: processSelections(
-                        resolveFieldType(rootType, field.name).objectType,
-                        field,
-                      ),
-                      required: (field.selections ?? [])
-                        .filter((f) => f.isRequired)
-                        .map((f) => f.alias || f.name),
-                    };
-                  }
-                  return acc;
-                }, meta.properties),
-                required: [
-                  ...meta.required,
-                  ...fields.filter((f) => f.isRequired).map((f) => f.alias || f.name),
-                ],
-              };
-            })();
+          : operationDataSchema(value, role);
 
         const hasParameters = value.input;
 

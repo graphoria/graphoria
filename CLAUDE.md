@@ -109,7 +109,7 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 | Zod schemas (config validation)                                 | Authoring in `config/types/*.ts` (public); server transforms (`ConfigurationZod`, auth normalization, queue pivot, cron) in `types/zod/*.ts`                           |
 | Env loader                                                      | `types/env.ts` (`EnvZod`)                                                                                                                                              |
 | Test fixtures                                                   | `__test/fixtures/`, `__test/dbMocks.ts`, `__test/dataset/`                                                                                                             |
-| Generated per-role schemas (build artefact)                     | `__schemas/`                                                                                                                                                           |
+| Generated per-role schemas (build artefact)                     | `<OUTPUT_DIR>/schemas/` (`./.graphoria/schemas/` by default; `PRINT_SCHEMAS`, `graphoria codegen`)                                                                     |
 
 `src/config/types/` declares the config shape as Zod (public via `@graphoria/server/config`). The authoring types are `z.input` of those schemas, with generic overlays only where Zod types a field as `z.custom`.
 
@@ -154,9 +154,9 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 
 ### Add a data-transform directive
 
-1. Add a handler entry to `DIRECTIVE_HANDLERS` in `databases/directives.ts`. Return the SQL fragment given the `querySelector`, `directive.arguments`, and `dbType`.
+1. Add a handler entry to `HANDLERS` (exported as `DIRECTIVE_HANDLERS`) in `databases/directives.ts`. Return the SQL fragment given the `querySelector`, `directive.arguments`, and `dbType`. Declare what it answers in `DIRECTIVE_RESULT_TYPES` beside it: the type-check fails without it, and the OpenAPI document and `graphoria codegen` read it.
 2. Add tests in `databases/directives.test.ts` — there's a row per directive there already.
-3. The directive is auto-applied in `applyDirectives` (left-to-right chaining); no schema definition file needs editing because directives are accepted permissively in queries.
+3. The directive is auto-applied in `applyDirectives` (left-to-right chaining). Declare it in the SDL too (`directiveTypes`, `configuration/getSchemas/type-definition-generator/index.ts`): `KnownDirectivesRule` rejects an undeclared one. `DIRECTIVE_ARG_SPEC` (`analyzeQuery/directiveUtils.ts`) validates and binds its arguments, which are otherwise extracted raw.
 
 ### Add a `ConfigurationInput` field
 

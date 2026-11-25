@@ -32,16 +32,32 @@ export type RetryClock = { now(): number; sleep(ms: number): Promise<unknown> };
 
 const systemClock: RetryClock = { now: () => Date.now(), sleep: (ms) => Bun.sleep(ms) };
 
+export type ConnectRetry = {
+  database: string;
+  /** Where it connects: the host and port, or the SQLite file. */
+  at: string;
+  attempt: number;
+  retryInMs: number;
+  error: unknown;
+};
+
+const warnRetry = ({ database, at, attempt, retryInMs, error }: ConnectRetry) =>
+  logger("db").warn(
+    { database, at, attempt, retryInMs, err: error },
+    "database connect failed, retrying",
+  );
+
 /**
  * Keeps calling `connect` until it resolves or `deadline` passes, backing off
  * 1 s → 30 s. The last wait is cut short so one final attempt runs at the
  * deadline. The last error is rethrown.
  */
 export const connectWithRetry = async <T>(
-  name: string,
+  target: Pick<ConnectRetry, "database" | "at">,
   connect: () => Promise<T>,
   deadline: number,
   clock: RetryClock = systemClock,
+  onRetry: (retry: ConnectRetry) => void = warnRetry,
 ): Promise<T> => {
   let delay = RETRY_INITIAL_DELAY_MS;
   for (let attempt = 1; ; attempt++) {
@@ -51,10 +67,7 @@ export const connectWithRetry = async <T>(
       const remaining = deadline - clock.now();
       if (remaining <= 0) throw error;
       const wait = Math.min(delay, remaining);
-      logger("db").warn(
-        { database: name, attempt, retryInMs: wait, err: error },
-        "database connect failed, retrying",
-      );
+      onRetry({ ...target, attempt, retryInMs: wait, error });
       await clock.sleep(wait);
       delay = Math.min(delay * 2, RETRY_MAX_DELAY_MS);
     }
@@ -65,28 +78,42 @@ export const instantiateDatabasesConnections = async (
   databases: Database[],
   retryMs = 0,
   clock: RetryClock = systemClock,
+  onRetry: (retry: ConnectRetry) => void = warnRetry,
 ) => {
   // One deadline for every database, so the whole connect phase has one budget.
   const deadline = clock.now() + retryMs;
 
   for await (const db of databases) {
     let connection: SQL | ConnectionPool | SQLiteDatabase | undefined;
+    const target = {
+      database: db.name,
+      at:
+        db.type === "sqlite"
+          ? db.connection.filename
+          : `${db.connection.host}:${db.connection.port}`,
+    };
+    const retried = <T>(connect: () => Promise<T>) =>
+      connectWithRetry(target, connect, deadline, clock, onRetry);
 
-    if (db.type === "pg") {
-      connection = await connectWithRetry(db.name, () => getPoolPostgreSQL(db), deadline, clock);
-      databasesConnections[db.name] = connection;
-    } else if (db.type === "mssql") {
-      connection = await connectWithRetry(db.name, () => getPoolMSSQL(db), deadline, clock);
-      databasesConnections[db.name] = connection;
-    } else if (db.type === "mysql") {
-      connection = await connectWithRetry(db.name, () => getPoolMySQL(db), deadline, clock);
-      databasesConnections[db.name] = connection;
-    } else if (db.type === "sqlite") {
-      // Not retried: a file that does not open (a missing directory, permissions,
-      // the version floor) fails the same way on every attempt.
-      connection = await getPoolSQLite(db);
-      databasesConnections[db.name] = connection;
+    try {
+      if (db.type === "pg") {
+        connection = await retried(() => getPoolPostgreSQL(db));
+      } else if (db.type === "mssql") {
+        connection = await retried(() => getPoolMSSQL(db));
+      } else if (db.type === "mysql") {
+        connection = await retried(() => getPoolMySQL(db));
+      } else if (db.type === "sqlite") {
+        // Not retried: a file that does not open (a missing directory, permissions,
+        // the version floor) fails the same way on every attempt.
+        connection = await getPoolSQLite(db);
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Could not connect to database "${db.name}" at ${target.at}: ${reason}`, {
+        cause: error,
+      });
     }
+    if (connection) databasesConnections[db.name] = connection;
 
     if (connection && db.onConnect) {
       await db.onConnect(connection, db);

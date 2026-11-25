@@ -2,7 +2,7 @@
 
 > **See also:** [Operations](./OPERATIONS.md) | [Permissions](./PERMISSIONS.md) | [Resource Limits](./LIMITS.md)
 
-Graphoria can serve every [operation](./OPERATIONS.md) as a [tRPC](https://trpc.io) procedure under `/trpc/*`. A TypeScript client then calls `client.<operation>.query()` or `.mutate()` with the input and output types inferred from `graphoria.ts`, without code generation.
+Graphoria can serve every [operation](./OPERATIONS.md) as a [tRPC](https://trpc.io) procedure under `/trpc/*`. A TypeScript client then calls `client.<operation>.query()` or `.mutate()` with the input and output types inferred from `graphoria.ts`; an operation whose `query` is a plain string takes its output type from the `graphoria-env.d.ts` that [`graphoria codegen`](./CODEGEN.md) writes.
 
 The surface is **opt-in** and covers **operations only**. Tables, stored procedures, queues, remote schemas and remote REST stay on GraphQL and REST: their types exist only after introspection, and [gql.tada](https://gql-tada.0no.co) already types that access.
 
@@ -51,6 +51,8 @@ const task = await client.createTask.mutate({ title });
 
 Keep `maxItems` at or under `TRPC_MAX_BATCH_SIZE`. The client batches every call of one tick without limit by default, and a batch over the cap fails whole: eleven calls in one tick against the default cap reject all eleven. With `maxItems: 10` the client sends two requests. `httpBatchStreamLink` takes the same option.
 
+The output types of plain-string operations come from `graphoria-env.d.ts`, which [`graphoria codegen`](./CODEGEN.md) writes beside `graphoria.ts`. `graphoria.ts` imports it, `import type {} from "./graphoria-env";` (`init --trpc` writes both; add the line to an existing project), and every `import type config` then carries the types, whichever install of `@graphoria/server` the client resolves, since `GraphoriaGeneratedOperationOutputs` is a global interface. A client that reads the server's emitted declarations (project references) does not get the file, since declaration emit drops that import: add `graphoria-env.d.ts` to its `files`. Keep one configuration per TypeScript program: two generated files that type the same operation differently collide (TS2717), and an operation one of them leaves out takes the other's type.
+
 The caller is resolved as on `/graphql` and `/rest/*`: `Authorization: Bearer <token>` for the token's role, the admin secret (`x-admin-secret` by default) for the superadmin role, the anonymous role without a credential or with a bad or revoked token.
 
 ## Queries and mutations
@@ -68,11 +70,11 @@ An operation needs a `rest` route to be a procedure, as it needs one to be serve
 
 The client's types come from what `operation()` returns:
 
-| Type           | Comes from                                                                                                            |
-| -------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Input          | The `input` schema, before parsing: a field with `.default()` is optional. Without `input` the call takes no argument |
-| Query output   | The `output` schema; else what `afterRequest` returns; else the gql.tada document's result; else `unknown`            |
-| Handler output | The `output` schema; else `unknown`                                                                                   |
+| Type           | Comes from                                                                                                                                          |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input          | The `input` schema, before parsing: a field with `.default()` is optional. Without `input` the call takes no argument                               |
+| Query output   | The `output` schema; else what `afterRequest` returns; else the gql.tada document's result; else the type `graphoria codegen` wrote; else `unknown` |
+| Handler output | The `output` schema; else `unknown`                                                                                                                 |
 
 `output` describes the answer and is not enforced, as on REST.
 
