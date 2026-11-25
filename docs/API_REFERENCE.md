@@ -134,7 +134,7 @@ type Prefixes = {
 
 #### `configureLogging(loggerOrOptions)`
 
-Inject a custom pino logger or options before any `logger` call. First call wins — subsequent calls are ignored.
+Inject a custom pino logger or options before any `logger` call. First call wins — subsequent calls are ignored. A call that comes after a `logger` call already built the default root is ignored too, and says so: it logs `custom logger ignored: …` at `warn` through that root, as component `logging`.
 
 ```typescript
 function configureLogging(loggerOrOptions: pino.Logger | pino.LoggerOptions): void;

@@ -20,6 +20,11 @@ const DEFAULT_OPTIONS: pino.LoggerOptions = {
 };
 
 let _rootLogger: pino.Logger | null = null;
+// A root getRootLogger built means a logger was asked for before configureLogging.
+let rootIsDefault = false;
+
+const IGNORED_WARNING =
+  "custom logger ignored: a logger was created before configureLogging or Env.logger took effect, so the default logger stays in use; pass Env.logger to the process's first boot, or call configureLogging before it";
 
 const isPinoInstance = (v: unknown): v is pino.Logger =>
   typeof v === "object" && v !== null && typeof (v as pino.Logger).info === "function";
@@ -27,13 +32,16 @@ const isPinoInstance = (v: unknown): v is pino.Logger =>
 const getRootLogger = (): pino.Logger => {
   if (!_rootLogger) {
     _rootLogger = pino(DEFAULT_OPTIONS);
+    rootIsDefault = true;
   }
   return _rootLogger;
 };
 
 /**
  * Inject a custom pino logger or options BEFORE the first `logger` call.
- * First call wins — subsequent calls are ignored.
+ * First call wins — subsequent calls are ignored. A call that comes after a
+ * `logger` call already built the default root is ignored too, and warns
+ * through that root.
  *
  * @example
  *   // Pass a pre-configured pino instance
@@ -44,7 +52,11 @@ const getRootLogger = (): pino.Logger => {
  *   configureLogging({ level: "trace", transport: { target: "pino/file", options: { destination: "/var/log/app.log" } } });
  */
 export const configureLogging = (loggerOrOptions: pino.Logger | pino.LoggerOptions): void => {
-  if (_rootLogger) return; // first-write-wins
+  if (_rootLogger) {
+    // first-write-wins
+    if (rootIsDefault) logger("logging").warn(IGNORED_WARNING);
+    return;
+  }
 
   if (isPinoInstance(loggerOrOptions)) {
     _rootLogger = loggerOrOptions;
