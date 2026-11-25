@@ -345,7 +345,7 @@ export const sampleQuery = (
   return `{ ${schema}_authors { name ${schema}_books { title${answers.virtualColumns ? " age" : ""} } } }`;
 };
 
-export const recreateCommand = (answers: InitAnswers, installed: boolean): string =>
+export const recreateCommand = (answers: InitAnswers, installed: boolean, up = false): string =>
   [
     "bunx graphoria init --yes",
     `--database ${answers.database}`,
@@ -365,6 +365,7 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.tracing ? ["--tracing"] : []),
     ...(answers.virtualColumns ? ["--virtual-columns"] : []),
     ...(installed ? [] : ["--no-install"]),
+    ...(up ? ["--up"] : []),
   ].join(" ");
 
 export type Paint = Record<
@@ -403,11 +404,17 @@ export const paintFor = (
   forced = process.env.FORCE_COLOR !== undefined,
 ): Paint => (ansi && (stream.isTTY || forced) ? COLOR_PAINT : PLAIN_PAINT);
 
+// What runs the project in Docker: `bun run up` writes the types first, where
+// the project has them.
+export const upCommand = ({ frontend, trpc }: Pick<InitAnswers, "frontend" | "trpc">): string[] =>
+  frontend || trpc ? ["bun", "run", "up"] : ["docker", "compose", "up", "-d", "--build"];
+
 export const nextSteps = (
   answers: InitAnswers,
   installed: boolean,
   users?: { reader: string; editor: string },
   paint: Paint = PLAIN_PAINT,
+  up = false,
 ) => {
   if (answers.auth && !users) throw new Error("nextSteps: auth needs the demo users' passwords");
 
@@ -443,14 +450,14 @@ export const nextSteps = (
           open,
           "",
           "Or in Docker, with the database file on a volume:",
-          command(typesScript ? "bun run up" : "docker compose up -d --build"),
+          command(upCommand(answers).join(" ")),
         ]
       : [
           ...(installed
             ? []
             : [`First run ${inline("bun install")}: the Dockerfile needs its bun.lock.`, ""]),
           "Run everything in Docker:",
-          command(typesScript ? "bun run up" : "docker compose up -d --build"),
+          command(upCommand(answers).join(" ")),
           open,
           "",
           "Or run Graphoria on the host against the database container:",
@@ -594,12 +601,12 @@ export const nextSteps = (
     `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
     "",
     "Recreate this setup in a new directory without prompts (the secrets are regenerated):",
-    command(recreateCommand(answers, installed)),
+    command(recreateCommand(answers, installed, up)),
   ].join("\n");
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install] [--up]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);
@@ -698,6 +705,33 @@ export const initCommand = async (argv: string[]): Promise<never> => {
     console.log("");
   }
 
-  console.log(nextSteps(answers, args.install, users, paintFor(process.stdout)));
+  const up = upCommand(answers).join(" ");
+  let upFailed = false;
+  if (args.up) {
+    console.log(`Starting it in Docker (${up})…`);
+    try {
+      const run = Bun.spawn(upCommand(answers), {
+        cwd: dir,
+        stdout: "inherit",
+        stderr: "inherit",
+        stdin: "inherit",
+      });
+      upFailed = (await run.exited) !== 0;
+    } catch (error) {
+      // Bun.spawn throws when the command is not on the PATH: docker, without Docker.
+      console.error(`init: ${error instanceof Error ? error.message : String(error)}`);
+      upFailed = true;
+    }
+    console.log("");
+  }
+
+  // The steps print even when --up failed: they carry the demo users' passwords.
+  console.log(nextSteps(answers, args.install, users, paintFor(process.stdout), args.up));
+  if (upFailed) {
+    console.error(
+      `init: ${up} failed. The project is written and installed: fix the error above, then run \`${up}\`.`,
+    );
+    process.exit(1);
+  }
   process.exit(0);
 };

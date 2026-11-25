@@ -25,10 +25,11 @@ import {
   projectName,
   recreateCommand,
   sampleQuery,
+  upCommand,
 } from "./init";
 import { DEFAULT_PORTS } from "./initTemplates";
 
-const ARGS: InitArgs = { yes: false, install: true };
+const ARGS: InitArgs = { yes: false, install: true, up: false };
 
 type Menus = { select?: number[]; multiSelect?: number[][] };
 
@@ -777,8 +778,31 @@ describe("recreateCommand", () => {
     );
   });
 
+  it("adds --up when init ran the project", () => {
+    expect(recreateCommand(ANSWERS, true, true)).toBe(
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --up",
+    );
+    expect(nextSteps(ANSWERS, true, undefined, PLAIN_PAINT, true)).toContain(
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --up",
+    );
+  });
+
   it("never carries a password", () => {
     expect(recreateCommand(ANSWERS, true)).not.toContain(ANSWERS.dbPassword);
+  });
+});
+
+describe("upCommand", () => {
+  it("runs bun run up where the project has it, docker compose up -d --build elsewhere", () => {
+    expect(upCommand({ frontend: false, trpc: false })).toEqual([
+      "docker",
+      "compose",
+      "up",
+      "-d",
+      "--build",
+    ]);
+    expect(upCommand({ frontend: true, trpc: false })).toEqual(["bun", "run", "up"]);
+    expect(upCommand({ frontend: false, trpc: true })).toEqual(["bun", "run", "up"]);
   });
 });
 

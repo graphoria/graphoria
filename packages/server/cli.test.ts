@@ -228,12 +228,21 @@ describe("cli init", () => {
     return { cwd, result };
   };
 
-  /** A directory whose `bun` prints its arguments, then fails with FAKE_BUN_ERROR when set. */
+  /**
+   * A directory whose `bun` and `docker` print their arguments. `bun` then fails
+   * with FAKE_BUN_ERROR when set, `bun run` with FAKE_BUN_RUN_ERROR, and `docker`
+   * with FAKE_DOCKER_ERROR.
+   */
   const fakeBun = async () => {
     const bin = await mkdtemp(join(tmpdir(), "graphoria-fake-bun-"));
     await writeFile(
       join(bin, "bun"),
-      '#!/bin/sh\necho "fake bun $*"\nif [ -n "$FAKE_BUN_ERROR" ]; then echo "$FAKE_BUN_ERROR" >&2; exit 1; fi\n',
+      '#!/bin/sh\necho "fake bun $*"\nif [ -n "$FAKE_BUN_ERROR" ]; then echo "$FAKE_BUN_ERROR" >&2; exit 1; fi\nif [ "$1" = run ] && [ -n "$FAKE_BUN_RUN_ERROR" ]; then echo "$FAKE_BUN_RUN_ERROR" >&2; exit 1; fi\n',
+      { mode: 0o755 },
+    );
+    await writeFile(
+      join(bin, "docker"),
+      '#!/bin/sh\necho "fake docker $*"\nif [ -n "$FAKE_DOCKER_ERROR" ]; then echo "$FAKE_DOCKER_ERROR" >&2; exit 1; fi\n',
       { mode: 0o755 },
     );
     cwds.push(bin);
@@ -916,6 +925,75 @@ describe("cli init", () => {
     expect(result.stderr.toString()).toContain("error: GET https://registry.npmjs.org/nope - 404");
     expect(result.stderr.toString()).toContain("init: bun install failed.");
     expect(await readdir(cwd)).toContain("graphoria.ts");
+  });
+
+  it("runs bun run up after the install with --up, then prints the steps", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(
+      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      undefined,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+      },
+    );
+    cwds.push(cwd);
+    const stdout = result.stdout.toString();
+
+    expect(result.exitCode).toBe(0);
+    const install = stdout.indexOf("fake bun install --silent --no-env-file\n");
+    const starting = stdout.indexOf("Starting it in Docker (bun run up)…\n");
+    const up = stdout.indexOf("fake bun run up\n");
+    const steps = stdout.indexOf("Recreate this setup");
+    expect([install, starting, up, steps].every((at) => at >= 0)).toBe(true);
+    expect(install < starting && starting < up && up < steps).toBe(true);
+    expect(stdout).toContain(" --trpc --up\n");
+    expect(stdout).not.toContain("fake docker");
+  });
+
+  it("runs docker compose up -d --build with --up when the project has no up script", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(["--yes", "--database", "sqlite", "--up"], undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain(
+      "Starting it in Docker (docker compose up -d --build)…\nfake docker compose up -d --build\n",
+    );
+  });
+
+  it("exits 1 when --up fails, after the steps and the error, keeping the files", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(
+      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      undefined,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+        FAKE_BUN_RUN_ERROR: "Bind for 0.0.0.0:3000 failed: port is already allocated",
+      },
+    );
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.toString()).toContain("Recreate this setup");
+    expect(result.stderr.toString()).toContain("port is already allocated");
+    expect(result.stderr.toString()).toContain(
+      "init: bun run up failed. The project is written and installed: fix the error above, then run `bun run up`.",
+    );
+    expect(await readdir(cwd)).toContain("graphoria.ts");
+  });
+
+  it("rejects --up with --no-install as a usage error, writing nothing", async () => {
+    const { cwd, result } = await init(["--yes", "--up", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain(
+      "init: --up runs the project, which needs the install: drop --no-install",
+    );
+    expect(result.stderr.toString()).toContain("[--no-install] [--up]");
+    expect(await readdir(cwd)).toEqual([]);
   });
 
   it("writes nothing when a file it would create exists", async () => {

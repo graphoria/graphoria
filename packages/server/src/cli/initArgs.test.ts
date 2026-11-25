@@ -4,7 +4,14 @@ import { parseInitArgs } from "./initArgs";
 
 describe("parseInitArgs", () => {
   it("prompts, installs and leaves the engine open by default", () => {
-    expect(parseInitArgs([])).toEqual({ yes: false, install: true });
+    expect(parseInitArgs([])).toEqual({ yes: false, install: true, up: false });
+  });
+
+  it("runs the project after the install with --up, which --no-install would skip", () => {
+    expect(parseInitArgs(["--up"]).up).toBe(true);
+    expect(() => parseInitArgs(["--up", "--no-install"])).toThrow(
+      "--up runs the project, which needs the install: drop --no-install",
+    );
   });
 
   it("takes every default with --yes or -y", () => {
