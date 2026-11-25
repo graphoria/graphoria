@@ -124,6 +124,8 @@ You can also filter and order by them:
 
 Filtering and ordering work because Graphoria knows the SQL expression behind the column — it inlines the expression into the `WHERE` and `ORDER BY` clauses. There's no extra round-trip and no in-memory post-processing.
 
+Directives apply to a virtual column as to any column: `full_name @uppercase` answers the upper-cased name. On SQLite, a virtual column declared `boolean` answers `true` or `false`, and one declared `blob` answers its hex, as a physical column does. Declare the type the expression answers: an expression that answers a blob behind another type fails the query, and one declared `blob` must answer a blob or `NULL`, since a text or a number comes back re-quoted (`'Xavier'` as `"avier"`, `12` as `"12"`). On MySQL, a `boolean` virtual column answers what its expression does: a comparison such as `id = 1` answers `true` or `false`, while `IF()`, `CASE` or a `TINYINT` column answer `1` or `0`.
+
 ## Caveats
 
 - **Indexability** — a virtual column built from an expression is not automatically indexed. If you filter on it heavily, create a function-based index (`CREATE INDEX … ON public.users ((first_name || ' ' || last_name))` on PostgreSQL).

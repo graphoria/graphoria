@@ -72,7 +72,7 @@ We ship fast and fix forward. If you're evaluating Graphoria for production, pin
 
 - **Auto-generated GraphQL API** from database schema with zero configuration
 - **Auto-generated REST API** from GraphQL schema for maximum compatibility
-- **Typed tRPC procedures** — every operation as a tRPC query or mutation, its types inferred from `graphoria.ts` without code generation (opt-in)
+- **Typed tRPC procedures** — every operation as a tRPC query or mutation, its types inferred from `graphoria.ts`, and from `graphoria codegen` for a plain-string query (opt-in)
 - **Multi-database support** — PostgreSQL, SQL Server (MSSQL), MySQL, SQLite
 - **JWT or PASETO authentication** with argon2id password hashing and role-based access control (RBAC)
 - **Row-level security** — per-role filters with session variable injection
@@ -463,7 +463,7 @@ The three limits that ship on — query depth, page size and the statement timeo
 | [Permissions & Access Control](./docs/PERMISSIONS.md) | RBAC, row-level filtering, session variables, ordering                                                     |
 | [Resource Limits](./docs/LIMITS.md)                   | Depth, page size, timeouts, rate limiting and the query cost budget                                        |
 | [Operations](./docs/OPERATIONS.md)                    | Custom query and handler operations, hooks, caching                                                        |
-| [tRPC](./docs/TRPC.md)                                | Operations as typed tRPC procedures, with no code generation                                               |
+| [tRPC](./docs/TRPC.md)                                | Operations as typed tRPC procedures, typed from `graphoria.ts`                                             |
 | [Cron Jobs](./docs/CRON.md)                           | Scheduled background work with cron expressions and ISO datetimes                                          |
 | [Queues](./docs/QUEUES.md)                            | RabbitMQ and Kafka publishers, subscribers, cache invalidation                                             |
 | [Subscriptions](./docs/SUBSCRIPTIONS.md)              | GraphQL subscriptions over WebSockets                                                                      |

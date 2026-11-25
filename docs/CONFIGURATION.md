@@ -253,7 +253,7 @@ One sharp edge behind that: `connectionOptions` is validated against an undiscri
 
 #### Waiting for the database at boot
 
-A database that cannot be reached at boot — down, still starting, or not scheduled yet — does not stop the server at once. Boot retries the connection, waiting 1 s, then 2 s, 4 s and so on up to 30 s between attempts, for up to `DB_CONNECT_RETRY_MS` (default `60000`). The last wait is cut short so that one final attempt runs when the window closes; if that fails too, the last error is thrown and the process exits `1`, leaving the restart to your orchestrator. Each failed attempt is logged at `warn` with the database's name and the error.
+A database that cannot be reached at boot — down, still starting, or not scheduled yet — does not stop the server at once. Boot retries the connection, waiting 1 s, then 2 s, 4 s and so on up to 30 s between attempts, for up to `DB_CONNECT_RETRY_MS` (default `60000`). The last wait is cut short so that one final attempt runs when the window closes; if that fails too, the last error is thrown, naming the database and its host and port, and the process exits `1`, leaving the restart to your orchestrator. Each failed attempt is logged at `warn` with the database's name, its host and port (`at`) and the error.
 
 - Every connection error is retried, a wrong password or an unknown database included; the `warn` line carries the engine's message.
 - The window covers every database together, not each one: with several databases, the ones connected first use up part of it.

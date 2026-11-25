@@ -6,11 +6,24 @@ import { createSupervisor } from "./src/cli/supervisor";
 
 const rawArgs = Bun.argv.slice(2);
 
-// Loaded on demand: seed-auth reaches the env singleton, which rejects a missing
-// ADMIN_SECRET at import, and --help or --version must run without one.
+// Loaded on demand, so --help and --version never reach the env singleton, which
+// rejects a missing ADMIN_SECRET at import. A subcommand that reads no secret
+// defaults it to none here, not above: the server's workers inherit process.env,
+// and must still refuse to boot without one.
 if (rawArgs[0] === "seed-auth") {
+  process.env.ADMIN_SECRET ??= "";
   const { seedAuthCommand } = await import("./src/cli/seedAuth");
   await seedAuthCommand(rawArgs.slice(1));
+}
+
+if (rawArgs[0] === "codegen") {
+  process.env.ADMIN_SECRET ??= "";
+  // The logger reads LOG_LEVEL when it loads, and defaults to debug: the
+  // analysis' info lines, and each query on a network engine, would print
+  // around the summary.
+  process.env.LOG_LEVEL ??= "warn";
+  const { codegenCommand } = await import("./src/cli/codegen");
+  await codegenCommand(rawArgs.slice(1));
 }
 
 if (rawArgs[0] === "init") {
@@ -38,7 +51,8 @@ graphoria v${version}
 
 Usage: graphoria [options]
        graphoria seed-auth --user <name> --password <pwd> --role <role> --config <path> [--claims <json>]
-       graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]
+       graphoria codegen [--config <path>] [--out <dir>] [--types <file>]
+       graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install] [--up]
 
 Options:
   -c, --config <path>    Path to configuration file (env: CONFIGURATION)
@@ -50,10 +64,11 @@ Options:
 
 Subcommands:
   seed-auth              Insert an auth user (argon2id-hashed) into the configured auth database
+  codegen                Write the per-role schemas, OpenAPI documents and tRPC output types, without starting the server
   init                   Scaffold a Graphoria project with Docker Compose in the current directory
 
 Environment variables:
-  ADMIN_SECRET           Admin secret for superadmin access (required)
+  ADMIN_SECRET           Admin secret for superadmin access (required by the server)
   JWT_SECRET             JWT signing secret (required with auth or the console)
   CONFIGURATION          Path to configuration file
   PORT                   Server port (default: 3000)

@@ -3,7 +3,12 @@ import { describe, expect, test } from "bun:test";
 import type { DatabaseType } from "../types/configuration";
 
 import { filterBasedOnDirective } from "./common";
-import { DIRECTIVE_HANDLERS, applyDirectives } from "./directives";
+import {
+  DIRECTIVE_HANDLERS,
+  DIRECTIVE_RESULT_TYPES,
+  applyDirectives,
+  type DirectiveName,
+} from "./directives";
 
 describe("Directive Handlers", () => {
   describe("uppercase directive", () => {
@@ -1507,5 +1512,27 @@ describe("SQLite directive forms", () => {
         { name: "len", type: "Int", required: true },
       ]),
     ).toBe("SUBSTR(name, 1, $1)");
+  });
+});
+
+describe("DIRECTIVE_RESULT_TYPES", () => {
+  test("declares what every directive answers", () => {
+    expect(Object.keys(DIRECTIVE_RESULT_TYPES).sort()).toEqual(
+      Object.keys(DIRECTIVE_HANDLERS).sort(),
+    );
+  });
+
+  test("is keyed by the handlers' own names, so the type-check rejects a directive without one", () => {
+    // `string` here would make Record<DirectiveName, …> accept a missing directive.
+    const keyed: string extends DirectiveName ? false : true = true;
+    expect(keyed).toBe(true);
+  });
+});
+
+describe("applyDirectives' lookup", () => {
+  test("leaves the selector as is for a name only Object.prototype has", () => {
+    expect(
+      applyDirectives("t1.name", [{ name: "toString" }, { name: "hasOwnProperty" }], "pg"),
+    ).toBe("t1.name");
   });
 });

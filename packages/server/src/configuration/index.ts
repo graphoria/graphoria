@@ -33,6 +33,9 @@ export const loadConfiguration = async (config: string): Promise<Configuration> 
     // project root) so CONFIGURATION="graphoria.ts" works like an absolute path.
     const configPath = isAbsolute(config) ? config : resolve(process.cwd(), config);
 
+    // import() would name this module as the importer of the missing file.
+    if (!(await Bun.file(configPath).exists())) throw new Error(`no file at ${configPath}`);
+
     // Dynamic import of the TypeScript file
     const configModule = await import(configPath);
 
@@ -51,11 +54,35 @@ export const loadConfiguration = async (config: string): Promise<Configuration> 
 
     throw new Error("Invalid configuration module");
   } catch (error) {
-    logger("configuration").error({ err: error }, "failed to import configuration");
-
-    throw new Error("Configuration could not be loaded");
+    // The message carries the reason: callers print it, and pino cannot
+    // serialize the error an import that does not resolve throws.
+    throw new Error(
+      `Configuration could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 };
+
+export const assertDistinctRoles = ({
+  superadmin,
+  anonymousRole,
+}: Pick<Env, "superadmin" | "anonymousRole">) => {
+  if (superadmin.role === anonymousRole) {
+    throw new Error(
+      `SUPERADMIN_ROLE and ANONYMOUS_ROLE are both "${anonymousRole}": every caller without a credential would read as the full-access role`,
+    );
+  }
+};
+
+// The enabled remotes that did not resolve: the boot warns and goes on without them.
+const leftOut = (
+  configs: { name: string; enabled?: boolean }[],
+  resolved: { config: { name: string } }[],
+) =>
+  configs
+    .filter((config) => config.enabled !== false)
+    .filter((config) => !resolved.some((remote) => remote.config.name === config.name))
+    .map(({ name }) => name);
 
 export const analyzeConfiguration = async (configuration: Configuration, options: Env) => {
   const log = logger("configuration");
@@ -179,6 +206,10 @@ export const analyzeConfiguration = async (configuration: Configuration, options
     openapiFor,
     queues: enabledQueues,
     auth: configuration.auth,
+    leftOutRemotes: {
+      remoteSchemas: leftOut(configuration.remoteSchemas ?? [], resolvedRemoteSchemas),
+      remoteREST: leftOut(configuration.remoteREST ?? [], resolvedRemoteREST),
+    },
   };
 };
 

@@ -11,6 +11,7 @@ import { storesInUse } from "../singletons/cache";
 import { ConfigurationZod } from "../types/zod/configuration";
 import { GRAFANA_DASHBOARD } from "./grafanaDashboard";
 import {
+  DEFAULT_PORTS,
   FRONTEND_FILES,
   GRAFANA_FILES,
   METRICS_FILES,
@@ -18,7 +19,9 @@ import {
   TRPC_FILES,
   renderProject,
   type ProjectValues,
+  upSteps,
 } from "./initTemplates";
+import { EMPTY_OPERATION_TYPES } from "./operationTypes";
 
 const STARTER = join(import.meta.dir, "../../../../examples/docker-compose-starter");
 const PLAYGROUNDS = join(import.meta.dir, "../../../playgrounds/package.json");
@@ -35,6 +38,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   dbName: "shop",
   dbPassword: "Pa55word.x",
   dbPort: 15432,
+  dbPortGiven: false,
   rabbitmq: false,
   ai: false,
   mcp: false,
@@ -48,6 +52,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   metrics: false,
   tracing: false,
   virtualColumns: false,
+  ports: DEFAULT_PORTS,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
@@ -130,12 +135,133 @@ describe("renderProject paths", () => {
     );
   });
 
-  it.each(ENGINES)("adds no file for --trpc for %s", (database) => {
-    expect(Object.keys(renderWith({ trpc: true }, database)).sort()).toEqual(PATHS);
+  it.each(ENGINES)("adds graphoria-env.d.ts for --trpc for %s", (database) => {
+    expect(Object.keys(renderWith({ trpc: true }, database)).sort()).toEqual(
+      [...PATHS, "graphoria-env.d.ts"].sort(),
+    );
   });
 
   it("lists those in METRICS_FILES and GRAFANA_FILES", () => {
     expect(Array.from<string>([...METRICS_FILES, ...GRAFANA_FILES]).sort()).toEqual(METRICS_PATHS);
+  });
+});
+
+describe("generated types", () => {
+  it("runs graphoria codegen from bun run types with --trpc alone", () => {
+    expect(JSON.parse(renderWith({ trpc: true })["package.json"]!).scripts).toEqual({
+      dev: "bun --watch index.ts",
+      start: "bun index.ts",
+      types: "graphoria codegen",
+      up: "docker compose --progress quiet up -d --wait db && bun run --silent types && docker compose --progress quiet up -d --build",
+    });
+  });
+
+  it.each([
+    ["pg", "docker compose --progress quiet up -d --wait db && "],
+    ["mysql", "docker compose --progress quiet up -d --wait db && "],
+    ["mssql", "docker compose --progress quiet run --rm db-init && "],
+    ["sqlite", ""],
+  ] as const)(
+    "starts %s's seeded database for bun run types, then everything, with bun run up",
+    (database, before) => {
+      for (const patch of [{ frontend: true }, { trpc: true }]) {
+        expect(JSON.parse(renderWith(patch, database)["package.json"]!).scripts.up).toBe(
+          `${before}bun run --silent types && docker compose --progress quiet up -d --build`,
+        );
+      }
+    },
+  );
+
+  it.each<[DatabaseType, string[][]]>([
+    ["pg", [["docker", "compose", "up", "-d", "--wait", "db"]]],
+    ["mysql", [["docker", "compose", "up", "-d", "--wait", "db"]]],
+    ["mssql", [["docker", "compose", "run", "--rm", "db-init"]]],
+    ["sqlite", []],
+  ])("hands init --up bun run up's steps on %s, one by one", (database, before) => {
+    for (const patch of [{ frontend: true }, { trpc: true }]) {
+      const steps = upSteps({ database, frontend: false, trpc: false, ...patch });
+      expect(steps.map(({ command }) => command)).toEqual([
+        ...before,
+        ["bun", "run", "types"],
+        ["docker", "compose", "up", "-d", "--build"],
+      ]);
+    }
+  });
+
+  it("keeps Docker's progress and bun run's script line out of bun run up's steps when quiet", () => {
+    const loud = upSteps({ database: "mssql", frontend: true, trpc: false });
+    const quiet = upSteps({ database: "mssql", frontend: true, trpc: false }, { quiet: true });
+
+    expect(quiet.map(({ command }) => command)).toEqual([
+      ["docker", "compose", "--progress", "quiet", "run", "--rm", "db-init"],
+      ["bun", "run", "--silent", "types"],
+      ["docker", "compose", "--progress", "quiet", "up", "-d", "--build"],
+    ]);
+    expect(quiet.map(({ doing, done }) => [doing, done])).toEqual(
+      loud.map(({ doing, done }) => [doing, done]),
+    );
+  });
+
+  it("hands init --up docker compose up -d --build alone where there is no bun run up", () => {
+    expect(upSteps({ database: "pg", frontend: false, trpc: false })).toEqual([
+      {
+        doing: "Building and starting the containers",
+        done: "Built and started the containers",
+        command: ["docker", "compose", "up", "-d", "--build"],
+      },
+    ]);
+  });
+
+  it("has no types or up script without --frontend or --trpc", () => {
+    expect(JSON.parse(renderWith({})["package.json"]!).scripts).toEqual({
+      dev: "bun --watch index.ts",
+      start: "bun index.ts",
+    });
+  });
+
+  it("serves books as an operation(), so the tRPC router types it", () => {
+    expect(renderWith({ redis: true })["graphoria.ts"]).toContain("    books: operation({\n");
+  });
+
+  it("writes books' query with the app's graphql() with --frontend, a plain string without", () => {
+    const config = renderWith({ frontend: true, redis: true })["graphoria.ts"]!;
+
+    expect(config).toContain('import { graphql } from "./web/graphql";\n');
+    expect(config).toContain(
+      '      query: graphql(\n        "query { public_books(orderBy: { published_year: DESC }) { id title published_year } }",\n      ),\n',
+    );
+    expect(renderWith({ redis: true, trpc: true })["graphoria.ts"]).toContain(
+      '      query: "query { public_books(orderBy: { published_year: DESC }) { id title published_year } }",\n',
+    );
+    expect(renderWith({ frontend: true })["graphoria.ts"]).not.toContain("./web/graphql");
+  });
+
+  it("keeps .graphoria out of git and the image whenever bun run types exists", () => {
+    for (const patch of [{ frontend: true }, { trpc: true }]) {
+      const files = renderWith(patch);
+      expect(files[".gitignore"]).toContain(".graphoria\n");
+      expect(files[".dockerignore"]).toContain(".graphoria\n");
+    }
+    expect(renderWith({})[".gitignore"]).not.toContain(".graphoria");
+    expect(renderWith({})[".dockerignore"]).not.toContain(".graphoria");
+  });
+
+  it("writes a graphoria-env.d.ts that types nothing yet, imported by graphoria.ts, with --trpc", () => {
+    const files = renderWith({ trpc: true });
+
+    expect(files["graphoria-env.d.ts"]).toBe(EMPTY_OPERATION_TYPES);
+    expect(files["graphoria.ts"]).toContain('import type {} from "./graphoria-env";\n');
+    expect(renderWith({})).not.toHaveProperty("graphoria-env.d.ts");
+    expect(renderWith({})["graphoria.ts"]).not.toContain("graphoria-env");
+  });
+
+  it("names bun run types and graphoria-env.d.ts in the web clients' comments", () => {
+    const files = renderWith({ frontend: true, auth: true, trpc: true });
+
+    expect(files["web/graphql.ts"]).toContain("`bun run types`");
+    expect(files["web/graphql.ts"]).not.toContain("bun run dev");
+    expect(files["web/trpc.ts"]).toContain("graphoria-env.d.ts");
+    expect(files["web/trpc.ts"]).not.toContain("no\n// code generation");
   });
 });
 
@@ -212,6 +338,45 @@ describe("renderProject .env", () => {
     expect(lines).toContain(`DB_USER=${user}`);
     expect(lines).toContain("DB_PASSWORD=Pa55word.x");
     expect(lines).toContain("DB_NAME=shop");
+  });
+
+  it.each(ENGINES)("sets the port Graphoria listens and is published on for %s", (database) => {
+    expect(render(database)[".env"]!.split("\n")).toContain("PORT=3000");
+    expect(
+      renderWith({ ports: { ...DEFAULT_PORTS, app: 3005 } }, database)[".env"]!.split("\n"),
+    ).toContain("PORT=3005");
+  });
+
+  it("writes every published port init picked", () => {
+    const ports = {
+      app: 3005,
+      redis: 6380,
+      rabbitmq: 5673,
+      rabbitmqManagement: 15673,
+      dbgate: 9001,
+      redisCommander: 8082,
+      jaegerUi: 16687,
+      jaegerOtlp: 4319,
+      grafana: 3006,
+    };
+    const patch = { redis: true, rabbitmq: true, dataTools: true, tracing: true, metrics: true };
+    const lines = renderWith({ ...patch, ports })[".env"]!.split("\n");
+
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        "PORT=3005",
+        "REDIS_PORT=6380",
+        "REDIS_URL=redis://localhost:6380",
+        "RABBITMQ_PORT=5673",
+        "RABBITMQ_MANAGEMENT_PORT=15673",
+        "DBGATE_PORT=9001",
+        "REDIS_COMMANDER_PORT=8082",
+        "JAEGER_UI_PORT=16687",
+        "JAEGER_OTLP_PORT=4319",
+        "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4319",
+        "GRAFANA_PORT=3006",
+      ]),
+    );
   });
 
   it("adds the RabbitMQ settings, with a generated password", () => {
@@ -440,8 +605,31 @@ describe("renderProject docker-compose.yml", () => {
     expect(services.graphoria.build).toBe(".");
     expect(services.graphoria.init).toBe(true);
     expect(services.graphoria.env_file).toBe(".env");
-    expect(services.graphoria.environment).toEqual({ DB_HOST: "db", DB_PORT: String(port) });
-    expect(services.graphoria.ports).toEqual(["3000:3000"]);
+    expect(services.graphoria.environment).toEqual({
+      DB_HOST: "db",
+      DB_PORT: String(port),
+      PORT: "3000",
+    });
+    expect(services.graphoria.ports).toEqual(["${PORT}:3000"]);
+  });
+
+  it.each(ENGINES)(
+    "publishes Graphoria on .env's PORT, listening on 3000 inside, for %s",
+    (database) => {
+      const { services } = compose(database);
+
+      expect(services.graphoria.ports).toEqual(["${PORT}:3000"]);
+      expect(services.graphoria.environment).toMatchObject({ PORT: "3000" });
+    },
+  );
+
+  it("names the port init picked in the header's GraphiQL link", () => {
+    for (const database of ENGINES) {
+      const yml = renderWith({ ports: { ...DEFAULT_PORTS, app: 3005 } }, database)[
+        "docker-compose.yml"
+      ]!;
+      expect(yml).toContain("# Then open http://localhost:3005/graphiql.");
+    }
   });
 
   it.each(["pg", "mysql"] as const)("seeds %s from the image's init scripts", (database) => {
@@ -501,7 +689,7 @@ describe("renderProject docker-compose.yml", () => {
       const { services, volumes } = compose(database, { redis: true });
 
       expect(services.redis!.image).toBe("redis:8");
-      expect(services.redis!.ports).toEqual(["6379:6379"]);
+      expect(services.redis!.ports).toEqual(["${REDIS_PORT}:6379"]);
       expect(services.redis!.volumes).toContain("redis-data:/data");
       expect(services.redis!.healthcheck?.test).toBeDefined();
       expect(services.graphoria!.environment).toMatchObject({
@@ -522,7 +710,7 @@ describe("renderProject docker-compose.yml", () => {
       expect(services.jaeger!.image).toBe("jaegertracing/jaeger:2.20.0");
       expect(services.jaeger!.ports).toEqual([
         "127.0.0.1:${JAEGER_UI_PORT}:16686",
-        "127.0.0.1:4318:4318",
+        "127.0.0.1:${JAEGER_OTLP_PORT}:4318",
       ]);
       expect(services.jaeger!.tmpfs).toEqual(["/tmp"]);
       expect(services.jaeger!.healthcheck?.test).toBeDefined();
@@ -1515,13 +1703,12 @@ describe("renderProject with the frontend", () => {
     expect(pkg.dependencies).not.toHaveProperty("urql");
   });
 
-  it("prints the schemas in dev and generates the types from them", () => {
-    const pkg = JSON.parse(renderWeb("pg")["package.json"]!);
-
-    expect(pkg.scripts).toEqual({
-      dev: "PRINT_SCHEMAS=true bun --watch index.ts",
+  it("generates the schemas and the types with bun run types, not in dev", () => {
+    expect(JSON.parse(renderWeb("pg")["package.json"]!).scripts).toEqual({
+      dev: "bun --watch index.ts",
       start: "bun index.ts",
-      types: "gql-tada generate output",
+      types: "graphoria codegen && gql-tada generate output",
+      up: "docker compose --progress quiet up -d --wait db && bun run --silent types && docker compose --progress quiet up -d --build",
     });
   });
 
@@ -1723,16 +1910,25 @@ describe("renderProject with the frontend", () => {
       await rm(dir, { recursive: true, force: true });
     });
 
+    // gql.tada is not installed here: this graphql() parses the query, as gql.tada's does.
+    const PARSING_GRAPHQL = `import { parse } from ${JSON.stringify(Bun.resolveSync("graphql", import.meta.dir))};
+
+export const graphql = (query: string) => parse(query);
+`;
+
     let seq = 0;
     const parse = async (
       frontend: boolean,
       database: DatabaseType,
       patch: Partial<ProjectValues> = {},
     ) => {
+      const project = join(dir, `${database}-${frontend}-${seq++}`);
       const path = await writeProject(
-        join(dir, `${database}-${frontend}-${seq++}`),
+        project,
         renderProject({ ...values(database), frontend, ...patch }, versions),
       );
+      await mkdir(join(project, "web"));
+      await writeFile(join(project, "web/graphql.ts"), PARSING_GRAPHQL);
       const configure = (await import(path)).default as (helpers: object) => unknown;
       return ConfigurationZod.parse(configure({}));
     };
@@ -2198,7 +2394,10 @@ describe("renderProject for SQLite", () => {
     };
 
     expect(Object.keys(compose.services)).toEqual(["graphoria"]);
-    expect(compose.services.graphoria!.environment).toEqual({ DB_FILE: "data/shop.db" });
+    expect(compose.services.graphoria!.environment).toEqual({
+      DB_FILE: "data/shop.db",
+      PORT: "3000",
+    });
     expect(compose.services.graphoria!.volumes).toEqual(["db-data:/app/data"]);
     expect(Object.keys(compose.volumes)).toEqual(["db-data"]);
   });
@@ -2290,10 +2489,23 @@ describe("renderProject types the add-book operation", () => {
 
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
+  // gql.tada is not installed here: this graphql() types every document's
+  // answer as the books query's.
+  const TYPED_GRAPHQL = `export const graphql = (
+  _query: string,
+): {
+  readonly kind: "Document";
+  __apiType?: (variables: Record<string, never>) => {
+    public_books: { id: number; title: string; published_year: number }[];
+  };
+} => ({ kind: "Document" });
+`;
+
   // One tsc run over every engine's graphoria.ts and repository.ts, with and
-  // without --auth, and the tRPC client each --auth config types, plus copies
-  // that call the repository or the client wrongly: their errors must be the
-  // only ones.
+  // without --auth, and the tRPC clients the configs type, plus copies that
+  // call the repository or a client wrongly: their errors must be the only
+  // ones. books' answer takes its type from the app's graphql() with
+  // --frontend, and from graphoria-env.d.ts without.
   it("type-checks every engine's scaffold and rejects wrong repository and client calls", async () => {
     dir = await mkdtemp(join(tmpdir(), "graphoria-init-types-"));
     const files: string[] = [];
@@ -2303,10 +2515,19 @@ describe("renderProject types the add-book operation", () => {
       edit = (text: string) => text,
     ) => {
       await mkdir(join(dir, project));
-      for (const name of ["graphoria.ts", "repository.ts", "web/trpc.ts"]) {
+      for (const name of [
+        "graphoria.ts",
+        "repository.ts",
+        "web/trpc.ts",
+        "web/graphql.ts",
+        "graphoria-env.d.ts",
+      ]) {
         if (rendered[name] === undefined) continue;
         await mkdir(dirname(join(dir, project, name)), { recursive: true });
-        await writeFile(join(dir, project, name), edit(rendered[name]));
+        await writeFile(
+          join(dir, project, name),
+          name === "web/graphql.ts" ? TYPED_GRAPHQL : edit(rendered[name]),
+        );
         files.push(`${project}/${name}`);
       }
     };
@@ -2332,9 +2553,19 @@ describe("renderProject types the add-book operation", () => {
     await write("publish-typo", renderWith({ ...everything, auth: true }), (text) =>
       text.replace("repository.main.books.publish(", "repository.main.books.publsh("),
     );
+    await write("pg-trpc", renderWith({ redis: true, trpc: true, auth: true }));
+    await writeFile(
+      join(dir, "pg-trpc/graphoria-env.d.ts"),
+      "declare global {\n  interface GraphoriaGeneratedOperationOutputs {\n    books: { main_books: { id: number; title: string; published_year: number }[] };\n  }\n}\nexport {};\n",
+    );
+    await writeFile(
+      join(dir, "pg-trpc/client.ts"),
+      'import { createTRPCClient } from "@trpc/client";\nimport type { TRPCRouterOf } from "@graphoria/server/trpc";\n\nimport type config from "./graphoria";\n\nconst trpc = createTRPCClient<TRPCRouterOf<typeof config>>({ links: [] });\nvoid trpc.books.query().then((answer) => answer.nope);\n',
+    );
+    files.push("pg-trpc/client.ts");
     await writeFile(
       join(dir, "pg-auth/web/probe.ts"),
-      'import { trpc } from "./trpc.ts";\n\nvoid trpc.publishBook.mutate({ id: 1 });\nvoid trpc.publishBook.mutate({ id: "1" });\n',
+      'import { trpc } from "./trpc.ts";\n\nvoid trpc.publishBook.mutate({ id: 1 });\nvoid trpc.publishBook.mutate({ id: "1" });\nvoid trpc.books.query().then((answer) => answer.nope);\n',
     );
     files.push("pg-auth/web/probe.ts");
     // web/trpc.ts imports @trpc/client by name, as the scaffold installs it.
@@ -2371,7 +2602,7 @@ describe("renderProject types the add-book operation", () => {
       .split("\n")
       .filter((line) => line.includes("error TS"));
 
-    expect(errors).toHaveLength(3);
+    expect(errors).toHaveLength(5);
     expect(errors.find((line) => line.startsWith("typo/graphoria.ts("))).toContain(
       "Property 'ad' does not exist",
     );
@@ -2380,6 +2611,12 @@ describe("renderProject types the add-book operation", () => {
     );
     expect(errors.find((line) => line.startsWith("pg-auth/web/probe.ts(4,"))).toContain(
       "Type 'string' is not assignable to type 'number'",
+    );
+    expect(errors.find((line) => line.startsWith("pg-auth/web/probe.ts(5,"))).toContain(
+      "Property 'nope' does not exist on type '{ public_books:",
+    );
+    expect(errors.find((line) => line.startsWith("pg-trpc/client.ts(7,"))).toContain(
+      "Property 'nope' does not exist on type '{ main_books:",
     );
   }, 60_000);
 });
