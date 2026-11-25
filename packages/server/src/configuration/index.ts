@@ -1,9 +1,10 @@
 import { isAbsolute, resolve } from "path";
 
-import { isFunction, isPlainObject } from "es-toolkit";
+import { isFunction, isPlainObject, isString } from "es-toolkit";
 import { z } from "zod";
 
-import type { Configuration } from "../types/configuration";
+import type { ConfigurationHelpers, ConfigurationInput } from "../config";
+import type { Configuration, ConfigurationSource } from "../types/configuration";
 import type { Env } from "../types/env";
 import type { OpenAPIV3_1 } from "openapi-types";
 
@@ -26,33 +27,48 @@ import { generateOpenAPI } from "./rest/generateOpenAPI";
 import { resolveAISurfaces } from "../singletons/ai";
 import { setCaches } from "../singletons/cache";
 
-export const loadConfiguration = async (config: string): Promise<Configuration> => {
+const configurationHelpers: ConfigurationHelpers = {
+  z,
+  operation,
+  createOneToBooleanMSSQL,
+  createYAndNToBooleanMSSQL,
+  virtualColumnExpression,
+  virtualColumnFunction,
+};
+
+const importDefault = async (config: string): Promise<unknown> => {
+  // A dynamic import() with a relative specifier resolves against this module,
+  // not the project root. Resolve relative paths against the process cwd (the
+  // project root) so CONFIGURATION="graphoria.ts" works like an absolute path.
+  const configPath = isAbsolute(config) ? config : resolve(process.cwd(), config);
+
+  // import() would name this module as the importer of the missing file.
+  if (!(await Bun.file(configPath).exists())) throw new Error(`no file at ${configPath}`);
+
+  const configModule = await import(configPath);
+  if (!("default" in configModule)) throw new Error(`no default export in ${configPath}`);
+  return configModule.default;
+};
+
+/**
+ * Resolves a configuration source to the object its function returns, or to
+ * the object itself: a path is imported for its default export first.
+ */
+export const loadConfiguration = async (
+  source: ConfigurationSource,
+): Promise<ConfigurationInput> => {
   try {
-    // A dynamic import() with a relative specifier resolves against this module,
-    // not the project root. Resolve relative paths against the process cwd (the
-    // project root) so CONFIGURATION="graphoria.ts" works like an absolute path.
-    const configPath = isAbsolute(config) ? config : resolve(process.cwd(), config);
+    const configuration = isString(source) ? await importDefault(source) : source;
 
-    // import() would name this module as the importer of the missing file.
-    if (!(await Bun.file(configPath).exists())) throw new Error(`no file at ${configPath}`);
+    // Awaited inside the try: a function that rejects is wrapped like one that throws.
+    if (isFunction(configuration)) return await configuration(configurationHelpers);
+    if (isPlainObject(configuration)) return configuration as ConfigurationInput;
 
-    // Dynamic import of the TypeScript file
-    const configModule = await import(configPath);
-
-    if (isFunction(configModule?.default)) {
-      return configModule.default({
-        z,
-        operation,
-        createOneToBooleanMSSQL,
-        createYAndNToBooleanMSSQL,
-        virtualColumnExpression,
-        virtualColumnFunction,
-      });
-    } else if (isPlainObject(configModule.default)) {
-      return configModule.default as Configuration;
-    }
-
-    throw new Error("Invalid configuration module");
+    const namespace =
+      typeof configuration === "object" && configuration !== null && "default" in configuration;
+    throw new Error(
+      `Invalid configuration: expected the configuration function or a plain object${namespace ? "; pass the module's default export" : ""}`,
+    );
   } catch (error) {
     // The message carries the reason: callers print it, and pino cannot
     // serialize the error an import that does not resolve throws.
