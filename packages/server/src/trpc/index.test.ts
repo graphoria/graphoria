@@ -76,7 +76,7 @@ const typeChecks = async () => {
 };
 
 describe("TRPCRouterOf", () => {
-  it("types a client from a configuration without code generation", () => {
+  it("types a client from a configuration alone, a plain-string query unknown without codegen", () => {
     expect(typeChecks).toBeTypeOf("function");
   });
 });

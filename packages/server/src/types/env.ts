@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import { z } from "zod";
 
 import { version } from "../../package.json";
@@ -47,7 +49,10 @@ export const EnvZod = z
     PREFIX: z.string().default(""),
     CORS_ENABLED: z.stringbool().default(true),
     PRINT_SCHEMAS: z.stringbool().default(false),
-    SCHEMAS_OUTPUT_DIR: z.string().default("./.graphoria/schemas"),
+    // OUTPUT_DIR has no default: the transform must know whether it is set.
+    OUTPUT_DIR: z.string().optional(),
+    // Deprecated: read only while OUTPUT_DIR is unset, with a boot warn.
+    SCHEMAS_OUTPUT_DIR: z.string().optional(),
     QUERY_ON_RESPONSE: z.stringbool().default(false),
     MAX_QUERY_DEPTH: z.coerce.number().int().min(0).default(8),
     DEFAULT_PAGE_SIZE: z.coerce.number().int().min(0).default(100),
@@ -142,9 +147,19 @@ export const EnvZod = z
       store: env.RATE_LIMIT_STORE,
     },
     leftoverCacheStore: env.CACHE_STORE !== undefined,
+    outputDir: env.OUTPUT_DIR ?? "./.graphoria",
+    leftoverSchemasOutputDir:
+      env.SCHEMAS_OUTPUT_DIR === undefined
+        ? undefined
+        : env.OUTPUT_DIR === undefined
+          ? ("read" as const)
+          : ("ignored" as const),
     schemas: {
       print: env.PRINT_SCHEMAS,
-      outputDir: env.SCHEMAS_OUTPUT_DIR,
+      outputDir:
+        env.OUTPUT_DIR !== undefined
+          ? join(env.OUTPUT_DIR, "schemas")
+          : (env.SCHEMAS_OUTPUT_DIR ?? "./.graphoria/schemas"),
     },
     superadmin: {
       role: env.SUPERADMIN_ROLE,

@@ -515,17 +515,21 @@ describe("createMcpServer", () => {
         },
         { enabled: true } as Auth,
       );
-      const issuer = createJWTService(env, {
-        saveJti: async () => {},
-        isTokenUsed: async () => false,
-        revoke: async () => {},
-        isRevoked: async () => false,
-        checkRefresh: async () => ({ isUsed: false, isRevoked: false }),
-        revokeUserRefreshTokens: async () => {},
-        isUserRefreshTokenRevoked: async () => false,
-        ping: async () => true,
-        close: () => {},
-      });
+      // Its own secret: another file may have loaded the env singleton without JWT_SECRET.
+      const issuer = createJWTService(
+        { ...env, jwt: { ...env.jwt, secrets: ["test-jwt"] } },
+        {
+          saveJti: async () => {},
+          isTokenUsed: async () => false,
+          revoke: async () => {},
+          isRevoked: async () => false,
+          checkRefresh: async () => ({ isUsed: false, isRevoked: false }),
+          revokeUserRefreshTokens: async () => {},
+          isUserRefreshTokenRevoked: async () => false,
+          ping: async () => true,
+          close: () => {},
+        },
+      );
       const editorToken = await issuer.createToken({ sub: "boss@acme.test", role: "editor" });
       const caller = { session: { sub: "ana@acme.test", role: "user" } };
 

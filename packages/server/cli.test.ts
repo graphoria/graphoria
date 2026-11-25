@@ -1,9 +1,12 @@
+import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { version } from "./package.json";
+import { isPortFree } from "./src/cli/init";
+import { SPINNER } from "./src/cli/progress";
 
 let dir: string;
 let configPath: string;
@@ -116,13 +119,85 @@ describe("cli without env", () => {
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("Usage: graphoria");
+    expect(result.stdout.toString()).toContain(
+      "graphoria codegen [--config <path>] [--out <dir>] [--types <file>]",
+    );
     expect(result.stdout.toString()).toContain("[--frontend]");
     expect(result.stdout.toString()).toContain("[--trpc]");
     expect(result.stdout.toString()).toContain("--database pg|mysql|mssql|sqlite");
     expect(result.stdout.toString()).toMatch(
       /JWT_SECRET\s+.*\(required with auth or the console\)/,
     );
+    expect(result.stdout.toString()).toMatch(/ADMIN_SECRET\s+.*\(required by the server\)/);
   });
+
+  it("seeds an auth user without ADMIN_SECRET", async () => {
+    const file = join(dir, "seed.db");
+    const config = join(dir, "seed.ts");
+    await writeFile(
+      config,
+      `export default () => (${JSON.stringify({
+        name: "cli-seed",
+        version: "1.0.0",
+        databases: [
+          { name: "seed", type: "sqlite", enabled: true, connection: { filename: file } },
+        ],
+        auth: {
+          enabled: true,
+          database: "seed",
+          schema: "main",
+          autoCreateTables: true,
+          permissions: { anonymous: { tables: [] }, reader: {} },
+        },
+      })});\n`,
+    );
+
+    const result = run([
+      "seed-auth",
+      "--user",
+      "ada",
+      "--password",
+      "Pa55word.x",
+      "--role",
+      "reader",
+      "--config",
+      config,
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const db = new Database(file, { readonly: true });
+    try {
+      expect(db.query('SELECT username, role FROM "user"').all()).toEqual([
+        { username: "ada", role: "reader" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("still refuses to boot the server without ADMIN_SECRET", async () => {
+    const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "--config", configPath], {
+      cwd: dir,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, PORT: "0" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    spawned.push(cli.pid);
+
+    // The supervisor restarts a crashed worker after a backoff: read the first
+    // worker's error, then stop it rather than wait out five crashes.
+    const reader = cli.stderr.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (!text.includes("ADMIN_SECRET")) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value);
+    }
+    spawned.push(...childrenOf(cli.pid));
+
+    expect(text).toContain("ADMIN_SECRET");
+  }, 30_000);
 });
 
 describe("cli init", () => {
@@ -154,17 +229,33 @@ describe("cli init", () => {
     return { cwd, result };
   };
 
-  /** A directory whose `bun` prints its arguments, then fails with FAKE_BUN_ERROR when set. */
+  /**
+   * A directory whose `bun` and `docker` print their arguments and add them to its
+   * `calls` file. `bun` then fails with FAKE_BUN_ERROR when set, `bun run` with
+   * FAKE_BUN_RUN_ERROR, `docker compose version` with FAKE_COMPOSE_ERROR,
+   * `docker version` with FAKE_DAEMON_ERROR, and any other `docker` with FAKE_DOCKER_ERROR.
+   */
   const fakeBun = async () => {
     const bin = await mkdtemp(join(tmpdir(), "graphoria-fake-bun-"));
     await writeFile(
       join(bin, "bun"),
-      '#!/bin/sh\necho "fake bun $*"\nif [ -n "$FAKE_BUN_ERROR" ]; then echo "$FAKE_BUN_ERROR" >&2; exit 1; fi\n',
+      '#!/bin/sh\necho "fake bun $*"\necho "bun $*" >> "${0%/*}/calls"\nif [ -n "$FAKE_BUN_ERROR" ]; then echo "$FAKE_BUN_ERROR" >&2; exit 1; fi\nif [ "$1" = run ] && [ -n "$FAKE_BUN_RUN_ERROR" ]; then echo "$FAKE_BUN_RUN_ERROR" >&2; exit 1; fi\n',
+      { mode: 0o755 },
+    );
+    await writeFile(
+      join(bin, "docker"),
+      '#!/bin/sh\necho "fake docker $*"\necho "docker $*" >> "${0%/*}/calls"\ncase "$*" in\n  "compose version") error="$FAKE_COMPOSE_ERROR" ;;\n  version*) error="$FAKE_DAEMON_ERROR" ;;\n  *) error="$FAKE_DOCKER_ERROR" ;;\nesac\nif [ -n "$error" ]; then echo "$error" >&2; exit 1; fi\n',
       { mode: 0o755 },
     );
     cwds.push(bin);
     return bin;
   };
+
+  const calls = async (bin: string) =>
+    (await readFile(join(bin, "calls"), "utf8").catch(() => "")).split("\n").filter(Boolean);
+
+  // What init --up asks Docker before it writes anything.
+  const DOCKER_CHECKS = ["docker compose version", "docker version --format {{.Server.Version}}"];
 
   /** Runs init in a terminal, typing each step's keys once its prompt shows. */
   const initInTerminal = async (
@@ -181,9 +272,10 @@ describe("cli init", () => {
     const cli = join(import.meta.dir, "cli.ts");
     // Bun's terminal takes all three streams, so sh pipes stdout alone out of it, as `| tee` does
     // (the exit code is then cat's).
+    // process.execPath, not "bun": the PATH in extraEnv may lead to a fake bun.
     const command = pipeStdout
       ? ["sh", "-c", 'bun "$0" init "$@" | cat', cli, ...args]
-      : ["bun", cli, "init", ...args];
+      : [process.execPath, cli, "init", ...args];
     const proc = Bun.spawn(command, {
       cwd,
       env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
@@ -222,6 +314,13 @@ describe("cli init", () => {
   const cwds: string[] = [];
   afterAll(() => Promise.all(cwds.map((cwd) => rm(cwd, { recursive: true, force: true }))));
 
+  // The port init gives a service no other one competes for: its default, or
+  // the next free one on this host.
+  const firstFree = (port: number) => {
+    while (!isPortFree(port)) port++;
+    return String(port);
+  };
+
   it("scaffolds a project with every default", async () => {
     const { cwd, result } = await init(["--yes", "--no-install"]);
     cwds.push(cwd);
@@ -231,7 +330,12 @@ describe("cli init", () => {
     const values = await env(cwd);
     expect(values.ADMIN_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(values.JWT_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(values).toMatchObject({ DB_USER: "postgres", DB_NAME: "app", DB_PORT: "5432" });
+    expect(values).toMatchObject({
+      DB_USER: "postgres",
+      DB_NAME: "app",
+      DB_PORT: firstFree(5432),
+      PORT: firstFree(3000),
+    });
     expect(JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies).toEqual({
       "@graphoria/server": `^${version}`,
     });
@@ -246,7 +350,7 @@ describe("cli init", () => {
     expect(values.METRICS_ENABLED).toBe("true");
     expect(values.METRICS_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(values.METRICS_SECRET).not.toBe(values.ADMIN_SECRET);
-    expect(result.stdout.toString()).toContain("http://localhost:3000/metrics");
+    expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/metrics`);
   });
 
   it("mounts the tRPC surface with --trpc", async () => {
@@ -254,11 +358,12 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
-    expect((await env(cwd)).TRPC_ENABLED).toBe("true");
+    const values = await env(cwd);
+    expect(values.TRPC_ENABLED).toBe("true");
     expect(
       JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies,
     ).toHaveProperty("@trpc/server");
-    expect(result.stdout.toString()).toContain("http://localhost:3000/trpc");
+    expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/trpc`);
   });
 
   it("adds the React frontend with --frontend", async () => {
@@ -320,13 +425,15 @@ describe("cli init", () => {
     });
     const values = await env(cwd);
     expect(values.RABBITMQ_HOST).toBe("localhost");
-    expect(values.RABBITMQ_MANAGEMENT_PORT).toBe("15672");
+    expect(values.RABBITMQ_MANAGEMENT_PORT).toBe(firstFree(15672));
     expect(values.RABBITMQ_VHOST).toBe("/");
     expect(values.RABBITMQ_PASSWORD).toMatch(/^[A-Za-z0-9]{16}$/);
     const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
     expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq"]);
     expect((await readdir(cwd)).sort()).toEqual(FILES);
-    expect(result.stdout.toString()).toContain("http://localhost:15672");
+    expect(result.stdout.toString()).toContain(
+      `http://localhost:${values.RABBITMQ_MANAGEMENT_PORT}`,
+    );
     expect(result.stdout.toString()).toContain("/rest/ai");
   });
 
@@ -339,12 +446,24 @@ describe("cli init", () => {
       "@graphoria/server": `^${version}`,
       "@graphoria/ai": `^${version}`,
     });
-    expect((await env(cwd)).LLM_PROVIDER).toBeUndefined();
+    const values = await env(cwd);
+    expect(values.LLM_PROVIDER).toBeUndefined();
     expect(await readFile(join(cwd, "graphoria.ts"), "utf8")).toContain(
       "  ai: {\n    // POST /mcp answers MCP clients",
     );
-    expect(result.stdout.toString()).toContain("http://localhost:3000/mcp");
-    expect(result.stdout.toString()).toContain("--db-port 5432 --mcp --no-install");
+    expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/mcp`);
+    expect(result.stdout.toString()).toContain("--db-name app --mcp --no-install\n");
+  });
+
+  it("recreates with the --db-port it was given, and without one it picked", async () => {
+    const given = await init(["--yes", "--db-port", "15432", "--no-install"]);
+    const picked = await init(["--yes", "--no-install"]);
+    cwds.push(given.cwd, picked.cwd);
+
+    expect(given.result.stdout.toString()).toContain(
+      "--db-name app --db-port 15432 --no-install\n",
+    );
+    expect(picked.result.stdout.toString()).toContain("--database pg --db-name app --no-install\n");
   });
 
   it("scaffolds Redis for the cache, the auth token store and the rate limits with --redis", async () => {
@@ -353,7 +472,8 @@ describe("cli init", () => {
 
     expect(result.exitCode).toBe(0);
     const values = await env(cwd);
-    expect(values.REDIS_URL).toBe("redis://localhost:6379");
+    expect(values.REDIS_PORT).toBe(firstFree(6379));
+    expect(values.REDIS_URL).toBe(`redis://localhost:${values.REDIS_PORT}`);
     expect(values.AUTH_STORE).toBe("redis");
     expect(values.RATE_LIMIT_STORE).toBe("redis");
     expect(values.CACHE_STORE).toBeUndefined();
@@ -410,7 +530,7 @@ describe("cli init", () => {
     const values = await env(cwd);
     expect(values.RABBITMQ_HOST).toBe("localhost");
     expect(values.LLM_PROVIDER).toBe("ollama");
-    expect(values.REDIS_URL).toBe("redis://localhost:6379");
+    expect(values.REDIS_URL).toBe(`redis://localhost:${values.REDIS_PORT}`);
     expect(values.AUTH_STORE).toBe("redis");
     expect(values.RATE_LIMIT_STORE).toBe("redis");
     expect(values.CACHE_STORE).toBeUndefined();
@@ -457,6 +577,21 @@ describe("cli init", () => {
     expect(result.stderr.toString()).toContain("web/trpc.ts");
     expect((await readdir(cwd, { recursive: true })).sort()).toEqual(["web", "web/trpc.ts"]);
     expect(await readFile(join(cwd, "web", "trpc.ts"), "utf8")).toBe("mine");
+  });
+
+  it("writes nothing when the graphoria-env.d.ts it would create exists, with --trpc", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "graphoria-cli-init-"));
+    cwds.push(cwd);
+    await writeFile(join(cwd, "graphoria-env.d.ts"), "mine");
+    const result = Bun.spawnSync(
+      ["bun", join(import.meta.dir, "cli.ts"), "init", "--yes", "--trpc", "--no-install"],
+      { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("graphoria-env.d.ts");
+    expect((await readdir(cwd, { recursive: true })).sort()).toEqual(["graphoria-env.d.ts"]);
+    expect(await readFile(join(cwd, "graphoria-env.d.ts"), "utf8")).toBe("mine");
   });
 
   it("leaves web/trpc.ts alone with --frontend --trpc, without --auth", async () => {
@@ -678,7 +813,7 @@ describe("cli init", () => {
 
     expect(exitCode).toBe(0);
     expect(output).toContain("  \x1b[36mbun run dev\x1b[39m");
-    expect(output).toContain("\x1b[94mhttp://localhost:3000/graphiql\x1b[39m");
+    expect(output).toContain(`\x1b[94mhttp://localhost:${(await env(cwd)).PORT}/graphiql\x1b[39m`);
   }, 30_000);
 
   it("prints the guide without color under NO_COLOR, or into a pipe", async () => {
@@ -733,7 +868,7 @@ describe("cli init", () => {
     }
   };
 
-  it.each(["--metrics", "--tracing"])("warns when Grafana's port is taken (%s)", async (flag) => {
+  it.each(["--metrics", "--tracing"])("moves Grafana off a taken port (%s)", async (flag) => {
     const holder = hold(3001);
     const { cwd, result } = await init(["--yes", flag, "--no-install"]).finally(() =>
       holder?.stop(true),
@@ -741,12 +876,14 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
+    const { GRAFANA_PORT } = await env(cwd);
+    expect(GRAFANA_PORT).not.toBe("3001");
     expect(result.stderr.toString()).toContain(
-      "Port 3001 is in use on this host, so Docker Compose cannot publish the Grafana on it. Set GRAFANA_PORT in .env to a free port",
+      `Port 3001 is taken, so Grafana uses ${GRAFANA_PORT} instead (GRAFANA_PORT in .env).`,
     );
   });
 
-  it("warns when the port Jaeger takes OTLP on is taken", async () => {
+  it("moves Jaeger's OTLP receiver off a taken port, and points the traces at it", async () => {
     const holder = hold(4318);
     const { cwd, result } = await init(["--yes", "--tracing", "--no-install"]).finally(() =>
       holder?.stop(true),
@@ -754,9 +891,26 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
+    const values = await env(cwd);
+    expect(values.JAEGER_OTLP_PORT).not.toBe("4318");
+    expect(values.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`http://localhost:${values.JAEGER_OTLP_PORT}`);
     expect(result.stderr.toString()).toContain(
-      "Port 4318 is in use on this host, so Docker Compose cannot publish the Jaeger OTLP receiver on it. No .env variable moves it",
+      `Port 4318 is taken, so Jaeger's OTLP receiver uses ${values.JAEGER_OTLP_PORT} instead (JAEGER_OTLP_PORT in .env).`,
     );
+  });
+
+  it("moves Graphoria off a taken port 3000, and links the app there", async () => {
+    const holder = hold(3000);
+    const { cwd, result } = await init(["--yes", "--no-install"]).finally(() => holder?.stop(true));
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    const { PORT } = await env(cwd);
+    expect(PORT).not.toBe("3000");
+    expect(result.stderr.toString()).toContain(
+      `Port 3000 is taken, so Graphoria uses ${PORT} instead (PORT in .env).`,
+    );
+    expect(result.stdout.toString()).toContain(`then open http://localhost:${PORT}/graphiql`);
   });
 
   it("colors the guide through a pipe under FORCE_COLOR", async () => {
@@ -767,16 +921,20 @@ describe("cli init", () => {
     expect(result.stdout.toString()).toContain("  \x1b[36mbun run dev\x1b[39m");
   });
 
-  it("runs bun install silently, saying so first", async () => {
+  it("runs bun install silently as a step, holding its output back", async () => {
     const bin = await fakeBun();
     const { cwd, result } = await init(["--yes", "--database", "sqlite"], undefined, {
       PATH: `${bin}:${process.env.PATH}`,
     });
     cwds.push(cwd);
+    const stdout = result.stdout.toString();
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("Installing dependencies (bun install)…");
-    expect(result.stdout.toString()).toContain("fake bun install --silent --no-env-file\n");
+    expect(stdout).toMatch(
+      /\n✓ Created \S+ \(SQLite\), \d+ files\nInstalling dependencies…\n✓ Installed dependencies {2}\S+\n\n/,
+    );
+    expect(stdout).not.toContain("fake bun");
+    expect(await calls(bin)).toEqual(["bun install --silent --no-env-file"]);
   });
 
   it("exits 1 when bun install fails, after Bun's own error, keeping the files", async () => {
@@ -788,9 +946,202 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(1);
+    expect(result.stdout.toString()).toContain("✗ Installing dependencies failed");
     expect(result.stderr.toString()).toContain("error: GET https://registry.npmjs.org/nope - 404");
     expect(result.stderr.toString()).toContain("init: bun install failed.");
     expect(await readdir(cwd)).toContain("graphoria.ts");
+  });
+
+  it("runs bun run up's steps after the install with --up, then prints the steps", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(
+      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      undefined,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+      },
+    );
+    cwds.push(cwd);
+    const stdout = result.stdout.toString();
+
+    expect(result.exitCode).toBe(0);
+    expect(await calls(bin)).toEqual([
+      ...DOCKER_CHECKS,
+      "bun install --silent --no-env-file",
+      "bun run types",
+      "docker compose up -d --build",
+    ]);
+    const lines = [
+      "✓ Installed dependencies",
+      "✓ Generated schemas, OpenAPI documents and types",
+      "✓ Built and started the containers",
+      "Recreate this setup",
+    ].map((line) => stdout.indexOf(line));
+    expect(lines.every((at) => at >= 0)).toBe(true);
+    expect(lines).toEqual(lines.toSorted((a, b) => a - b));
+    expect(stdout).toContain(" --trpc --up\n");
+    expect(stdout).not.toContain("fake ");
+  });
+
+  it("starts a network engine's database container before bun run types with --up", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(["--yes", "--database", "pg", "--trpc", "--up"], undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(await calls(bin)).toEqual([
+      ...DOCKER_CHECKS,
+      "bun install --silent --no-env-file",
+      "docker compose up -d --wait db",
+      "bun run types",
+      "docker compose up -d --build",
+    ]);
+    expect(result.stdout.toString()).toContain("✓ Started the database");
+  });
+
+  it("runs docker compose up -d --build with --up when the project has no up script", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(["--yes", "--database", "sqlite", "--up"], undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(await calls(bin)).toEqual([
+      ...DOCKER_CHECKS,
+      "bun install --silent --no-env-file",
+      "docker compose up -d --build",
+    ]);
+    expect(result.stdout.toString()).toContain("✓ Built and started the containers");
+  });
+
+  it.each([
+    [
+      "docker is not on the PATH",
+      {},
+      "init: --up needs Docker, so nothing was written: docker is not on the PATH.\nInstall Docker, or leave out --up.\n",
+    ],
+    [
+      "Docker Compose is missing",
+      { FAKE_COMPOSE_ERROR: "docker: 'compose' is not a docker command." },
+      "init: --up needs Docker Compose, so nothing was written: docker: 'compose' is not a docker command.\nInstall the Compose plugin, or leave out --up.\n",
+    ],
+    [
+      "the Docker daemon does not answer",
+      {
+        FAKE_DAEMON_ERROR:
+          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      },
+      "init: --up needs a running Docker, so nothing was written: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\nStart Docker, or leave out --up.\n",
+    ],
+  ])("exits 2 before asking or writing anything when %s", async (situation, env, stderr) => {
+    const bin = await fakeBun();
+    if (situation === "docker is not on the PATH") await rm(join(bin, "docker"));
+    const { cwd, result } = await init(["--up"], undefined, { PATH: bin, ...env });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toBe(stderr);
+    expect(await readdir(cwd)).toEqual([]);
+    expect(await calls(bin)).not.toContain("bun install --silent --no-env-file");
+  });
+
+  it("exits 1 when an --up step fails, after its output, with what to run next in place of the guide", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(
+      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      undefined,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+        FAKE_DOCKER_ERROR: "Bind for 0.0.0.0:3000 failed: port is already allocated",
+      },
+    );
+    cwds.push(cwd);
+    const stdout = result.stdout.toString();
+    const { PORT } = await env(cwd);
+
+    expect(result.exitCode).toBe(1);
+    expect(stdout).toContain("✗ Building and starting the containers failed");
+    expect(stdout).not.toContain("bun run dev");
+    expect(stdout).not.toContain("Recreate this setup");
+    expect(result.stderr.toString()).toContain("port is already allocated");
+    expect(result.stderr.toString()).toEndWith(
+      `\ninit: docker compose up -d --build failed. The project is written and installed: fix the error above, then run \`bun run up\` and open http://localhost:${PORT}/graphiql.\n`,
+    );
+    expect(await readdir(cwd)).toContain("graphoria.ts");
+  });
+
+  it.each([
+    ["the install", { FAKE_BUN_ERROR: "error: GET https://registry.npmjs.org/nope - 404" }],
+    ["an --up step", { FAKE_DOCKER_ERROR: "failed to solve" }],
+  ])(
+    "keeps the demo users' commands, whose passwords print nowhere else, when %s fails",
+    async (_step, failure) => {
+      const bin = await fakeBun();
+      const { cwd, result } = await init(
+        ["--yes", "--database", "sqlite", "--auth", "--up"],
+        undefined,
+        { PATH: `${bin}:${process.env.PATH}`, ...failure },
+      );
+      cwds.push(cwd);
+      const stdout = result.stdout.toString();
+
+      expect(result.exitCode).toBe(1);
+      expect(stdout).toContain(
+        "\nTwo demo users, one per role; their passwords print only here. Once the database is up, create them:\n",
+      );
+      expect(stdout).toMatch(
+        /\n {2}bunx graphoria seed-auth --user reader --password \S+ --role reader --config \.\/graphoria\.ts\n {2}bunx graphoria seed-auth --user editor --password \S+ --role editor --config \.\/graphoria\.ts\n/,
+      );
+      expect(stdout).not.toContain("Recreate this setup");
+    },
+  );
+
+  it("stops at the --up step that fails", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(
+      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      undefined,
+      { PATH: `${bin}:${process.env.PATH}`, FAKE_BUN_RUN_ERROR: "codegen failed" },
+    );
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(1);
+    expect(await calls(bin)).toEqual([
+      ...DOCKER_CHECKS,
+      "bun install --silent --no-env-file",
+      "bun run types",
+    ]);
+    expect(result.stderr.toString()).toContain("init: bun run types failed.");
+  });
+
+  it("draws each step as a spinner in a terminal, then its ✓ line", async () => {
+    const bin = await fakeBun();
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      [],
+      { extraEnv: { PATH: `${bin}:${process.env.PATH}` } },
+    );
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain(`\r\x1b[2K${SPINNER[0]} Installing dependencies…`);
+    expect(output).toContain("\r\x1b[2K✓ Built and started the containers ");
+    expect(output).toMatch(/✓ Built and started the containers +\S+\r\n/);
+  });
+
+  it("rejects --up with --no-install as a usage error, writing nothing", async () => {
+    const { cwd, result } = await init(["--yes", "--up", "--no-install"]);
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain(
+      "init: --up runs the project, which needs the install: drop --no-install",
+    );
+    expect(result.stderr.toString()).toContain("[--no-install] [--up]");
+    expect(await readdir(cwd)).toEqual([]);
   });
 
   it("writes nothing when a file it would create exists", async () => {

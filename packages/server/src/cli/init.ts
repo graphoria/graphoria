@@ -5,28 +5,28 @@ import { customAlphabet } from "nanoid";
 
 import type { DatabaseType } from "../config";
 import type { InitArgs } from "./initArgs";
-import type { InitAnswers } from "./initTemplates";
+import type { HostPorts, InitAnswers } from "./initTemplates";
+import type { Paint } from "./paint";
+import type { Step } from "./progress";
 import type { Ask, Choice, MultiSelect, Say, Select } from "./prompt";
 
 import { version } from "../../package.json";
 import { DATABASE_TYPES, dbNameError, parseInitArgs, portError } from "./initArgs";
 import {
-  DBGATE_PORT,
+  DEFAULT_PORTS,
   ENGINES,
   FRONTEND_FILES,
   GRAFANA_FILES,
-  GRAFANA_PORT,
-  JAEGER_OTLP_PORT,
-  JAEGER_UI_PORT,
   METRICS_FILES,
   PROJECT_FILES,
-  RABBITMQ_MANAGEMENT_PORT,
-  RABBITMQ_PORT,
-  REDIS_COMMANDER_PORT,
+  TRPC_ENV_FILES,
   TRPC_FILES,
   renderProject,
   seedSchema,
+  upSteps,
 } from "./initTemplates";
+import { PLAIN_PAINT, paintFor } from "./paint";
+import { runSteps } from "./progress";
 import { ask, interactive, multiSelect, select } from "./prompt";
 
 export type InitIO = {
@@ -34,6 +34,7 @@ export type InitIO = {
   say: Say;
   select: Select;
   multiSelect: MultiSelect;
+  isPortFree: (port: number) => boolean;
 };
 
 const DATABASE_LABELS: Record<DatabaseType, string> = {
@@ -64,13 +65,23 @@ const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> =
   hint,
 });
 
-const TERMINAL_IO: InitIO = { ask, say: console.log, select, multiSelect };
+export const isPortFree = (port: number): boolean => {
+  try {
+    Bun.listen({ hostname: "0.0.0.0", port, socket: { data() {} } }).stop(true);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const TERMINAL_IO: InitIO = { ask, say: console.log, select, multiSelect, isPortFree };
 
 const NO_PROMPT_IO: InitIO = {
   ask: () => null,
   say: () => {},
   select: (_question, choices, initial) => choices[initial].value,
   multiSelect: (_question, _choices, initial) => [...initial],
+  isPortFree,
 };
 
 // 16, not more: see the MySQL rule in passwordError.
@@ -155,18 +166,18 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
           passwordError(database, answer),
         );
 
-  const dbPort =
-    database === "sqlite"
-      ? 0
-      : (args.dbPort ??
-        Number(
-          await question(
-            io,
-            "Database port on this host",
-            String(ENGINES[database].port),
-            portError,
-          ),
-        ));
+  let dbPort = 0;
+  let dbPortGiven = false;
+  if (database !== "sqlite") {
+    if (args.dbPort !== undefined) {
+      dbPort = args.dbPort;
+      dbPortGiven = true;
+    } else {
+      const offered = freePort(ENGINES[database].port, new Set(), io.isPortFree);
+      dbPort = Number(await question(io, "Database port on this host", String(offered), portError));
+      dbPortGiven = dbPort !== offered;
+    }
+  }
 
   const extraChoices: Choice<Extra>[] = [
     ...(args.rabbitmq === undefined ? [extraChoice("rabbitmq", "RabbitMQ", "queues demo")] : []),
@@ -211,11 +222,12 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
   const chosen = new Set(extras);
 
-  return {
+  const answers = {
     database,
     dbName,
     dbPassword,
     dbPort,
+    dbPortGiven,
     rabbitmq: args.rabbitmq ?? chosen.has("rabbitmq"),
     ai: args.ai ?? chosen.has("ai"),
     mcp: args.mcp ?? chosen.has("mcp"),
@@ -230,30 +242,105 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     tracing: args.tracing ?? chosen.has("tracing"),
     virtualColumns: args.virtualColumns ?? chosen.has("virtualColumns"),
   };
+  return { ...answers, ports: pickPorts(answers, io.isPortFree) };
 };
 
-export const isPortFree = (port: number): boolean => {
-  try {
-    Bun.listen({ hostname: "0.0.0.0", port, socket: { data() {} } }).stop(true);
-    return true;
-  } catch {
-    return false;
+// The first port from `preferred` up that is free and not in `taken`.
+const freePort = (
+  preferred: number,
+  taken: ReadonlySet<number>,
+  isFree: (port: number) => boolean,
+): number => {
+  for (let port = preferred; port <= 65535; port++) {
+    if (!taken.has(port) && isFree(port)) return port;
   }
+  return preferred;
+};
+
+// What the project publishes besides its database, in the order the ports are
+// handed out, and the .env variable each one lands in.
+const PUBLISHED: { key: keyof HostPorts; service: string; envVar: string }[] = [
+  { key: "app", service: "Graphoria", envVar: "PORT" },
+  { key: "redis", service: "Redis", envVar: "REDIS_PORT" },
+  { key: "rabbitmq", service: "RabbitMQ", envVar: "RABBITMQ_PORT" },
+  {
+    key: "rabbitmqManagement",
+    service: "RabbitMQ's management UI",
+    envVar: "RABBITMQ_MANAGEMENT_PORT",
+  },
+  { key: "dbgate", service: "dbgate", envVar: "DBGATE_PORT" },
+  { key: "redisCommander", service: "Redis Commander", envVar: "REDIS_COMMANDER_PORT" },
+  { key: "jaegerUi", service: "Jaeger's UI", envVar: "JAEGER_UI_PORT" },
+  { key: "jaegerOtlp", service: "Jaeger's OTLP receiver", envVar: "JAEGER_OTLP_PORT" },
+  { key: "grafana", service: "Grafana", envVar: "GRAFANA_PORT" },
+];
+
+// Each published port: its default when free, else the next free one that no
+// other service, the database included, already took. A service the project
+// leaves out keeps its default, unprobed.
+export const pickPorts = (
+  answers: Pick<
+    InitAnswers,
+    "database" | "dbPort" | "redis" | "rabbitmq" | "dataTools" | "metrics" | "tracing"
+  >,
+  isFree: (port: number) => boolean,
+): HostPorts => {
+  const published: Record<keyof HostPorts, boolean> = {
+    app: true,
+    redis: answers.redis,
+    rabbitmq: answers.rabbitmq,
+    rabbitmqManagement: answers.rabbitmq,
+    dbgate: answers.dataTools,
+    redisCommander: answers.dataTools && answers.redis,
+    jaegerUi: answers.tracing,
+    jaegerOtlp: answers.tracing,
+    grafana: answers.metrics || answers.tracing,
+  };
+  const taken = new Set(answers.database === "sqlite" ? [] : [answers.dbPort]);
+  const ports = { ...DEFAULT_PORTS };
+  for (const { key } of PUBLISHED) {
+    if (!published[key]) continue;
+    ports[key] = freePort(DEFAULT_PORTS[key], taken, isFree);
+    taken.add(ports[key]);
+  }
+  return ports;
 };
 
 export const portWarning = (
   port: number,
-  describe: { service: string; envVar?: string },
+  describe: { service: string; envVar: string },
   isFree: (port: number) => boolean = isPortFree,
 ): string | undefined => {
   if (isFree(port)) return undefined;
   const taken = `Port ${port} is in use on this host, so Docker Compose cannot publish the ${describe.service} on it.`;
-  if (describe.envVar === undefined)
-    return `${taken} No .env variable moves it, so free it before \`docker compose up\`.`;
   let free = port + 1;
   while (free <= 65535 && !isFree(free)) free++;
   const suggestion = free <= 65535 ? ` such as ${free}` : "";
   return `${taken} Set ${describe.envVar} in .env to a free port${suggestion} before \`docker compose up\`.`;
+};
+
+const moved = (from: number, service: string, to: number, envVar: string) =>
+  `Port ${from} is taken, so ${service} uses ${to} instead (${envVar} in .env).`;
+
+// What init says about the ports: the ones it moved off a taken default, and a
+// database port that is itself taken (one --db-port or the question chose).
+export const portNotes = (
+  answers: InitAnswers,
+  isFree: (port: number) => boolean = isPortFree,
+): string[] => {
+  const notes: string[] = [];
+  if (answers.database !== "sqlite") {
+    const engine = ENGINES[answers.database].port;
+    const warning = portWarning(answers.dbPort, { service: "database", envVar: "DB_PORT" }, isFree);
+    if (warning) notes.push(warning);
+    else if (!answers.dbPortGiven && answers.dbPort !== engine && !isFree(engine))
+      notes.push(moved(engine, "the database", answers.dbPort, "DB_PORT"));
+  }
+  for (const { key, service, envVar } of PUBLISHED) {
+    if (answers.ports[key] !== DEFAULT_PORTS[key])
+      notes.push(moved(DEFAULT_PORTS[key], service, answers.ports[key], envVar));
+  }
+  return notes;
 };
 
 export const sampleQuery = (
@@ -263,12 +350,14 @@ export const sampleQuery = (
   return `{ ${schema}_authors { name ${schema}_books { title${answers.virtualColumns ? " age" : ""} } } }`;
 };
 
-export const recreateCommand = (answers: InitAnswers, installed: boolean): string =>
+export const recreateCommand = (answers: InitAnswers, installed: boolean, up = false): string =>
   [
     "bunx graphoria init --yes",
     `--database ${answers.database}`,
     `--db-name ${answers.dbName}`,
-    ...(answers.database === "sqlite" ? [] : [`--db-port ${answers.dbPort}`]),
+    ...(answers.database !== "sqlite" && answers.dbPortGiven
+      ? [`--db-port ${answers.dbPort}`]
+      : []),
     ...(answers.rabbitmq ? ["--rabbitmq"] : []),
     ...(answers.ai ? ["--ai"] : []),
     ...(answers.mcp ? ["--mcp"] : []),
@@ -283,61 +372,55 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean): strin
     ...(answers.tracing ? ["--tracing"] : []),
     ...(answers.virtualColumns ? ["--virtual-columns"] : []),
     ...(installed ? [] : ["--no-install"]),
+    ...(up ? ["--up"] : []),
   ].join(" ");
 
-export type Paint = Record<
-  "code" | "url" | "name" | "secret" | "warning",
-  (text: string) => string
->;
+// What runs the project in Docker: `bun run up` writes the types first, where
+// the project has them.
+export const upCommand = ({ frontend, trpc }: Pick<InitAnswers, "frontend" | "trpc">): string[] =>
+  frontend || trpc ? ["bun", "run", "up"] : ["docker", "compose", "up", "-d", "--build"];
 
-const plain = (text: string) => text;
+type DemoUsers = { reader: string; editor: string };
 
-export const PLAIN_PAINT: Paint = {
-  code: plain,
-  url: plain,
-  name: plain,
-  secret: plain,
-  warning: plain,
+const seedCommands = (
+  { database }: Pick<InitAnswers, "database">,
+  users: DemoUsers,
+  paint: Paint,
+) => {
+  const seed = (role: "reader" | "editor", password: string) =>
+    `  ${paint.code(`bunx graphoria seed-auth --user ${role} --password `)}${paint.secret(password)}${paint.code(` --role ${role} --config ./graphoria.ts`)}`;
+  return [
+    seed("reader", users.reader),
+    seed("editor", users.editor),
+    ...(database === "sqlite"
+      ? [
+          `(SQLite in Docker: run them inside the container, prefixed with ${paint.code("`docker compose exec graphoria`")}.)`,
+        ]
+      : []),
+  ];
 };
-
-const tint = (code: number) => (text: string) => `\x1b[${code}m${text}\x1b[39m`;
-
-// 16-color codes (36 cyan, 94 bright blue, 33 yellow), not 256 or truecolor: the terminal's theme
-// then chooses shades its background reads. Errors need none: on a terminal, Bun's console.error
-// prints them red by itself.
-export const COLOR_PAINT: Paint = {
-  code: tint(36),
-  url: tint(94),
-  name: (text) => `\x1b[1m${text}\x1b[22m`,
-  secret: tint(33),
-  warning: tint(33),
-};
-
-// Bun.color's "ansi" weighs TERM, NO_COLOR and FORCE_COLOR but never the stream, and
-// Bun.enableANSIColors holds while either stdout or stderr is a terminal: each stream decides alone.
-export const paintFor = (
-  stream: { isTTY?: boolean },
-  ansi = Bun.color("white", "ansi"),
-  forced = process.env.FORCE_COLOR !== undefined,
-): Paint => (ansi && (stream.isTTY || forced) ? COLOR_PAINT : PLAIN_PAINT);
 
 export const nextSteps = (
   answers: InitAnswers,
   installed: boolean,
-  users?: { reader: string; editor: string },
+  users?: DemoUsers,
   paint: Paint = PLAIN_PAINT,
+  up = false,
 ) => {
   if (answers.auth && !users) throw new Error("nextSteps: auth needs the demo users' passwords");
 
   const command = (line: string) => `  ${paint.code(line)}`;
   const inline = (code: string) => paint.code(`\`${code}\``);
   const link = (port: number, path = "") => paint.url(`http://localhost:${port}${path}`);
-  const seed = (role: "reader" | "editor", password: string) =>
-    `  ${paint.code(`bunx graphoria seed-auth --user ${role} --password `)}${paint.secret(password)}${paint.code(` --role ${role} --config ./graphoria.ts`)}`;
+  const { ports } = answers;
 
-  const open = answers.frontend
-    ? `  then open ${link(3000)} (the app) or ${link(3000, "/graphiql")}`
-    : `  then open ${link(3000, "/graphiql")}`;
+  const urls = answers.frontend
+    ? `${link(ports.app)} (the app) or ${link(ports.app, "/graphiql")}`
+    : link(ports.app, "/graphiql");
+  const open = `  then open ${urls}`;
+  const restart = ["Start it again later with:", command(upCommand(answers).join(" ")), ""];
+  // After --up, the graphoria container holds the port a host run listens on.
+  const stopContainer = up ? [command("docker compose stop graphoria")] : [];
 
   // Besides the database, what graphoria.ts connects to: a host run starts
   // their containers too, and Grafana, which shows the traces Jaeger keeps.
@@ -347,27 +430,41 @@ export const nextSteps = (
     ...(answers.tracing ? ["jaeger", "grafana"] : []),
   ].join(" ");
 
+  const typesScript = answers.frontend || answers.trpc;
+
+  const sqliteHost = [
+    `${up ? "Or run" : "Run"} it on this machine; the first ${typesScript ? inline("bun run types") : "boot"} creates ${answers.dbName}.db and seeds it:`,
+    ...stopContainer,
+    ...(services ? [command(`docker compose up -d --wait ${services}`)] : []),
+    ...(typesScript ? [command("bun run types")] : []),
+    command("bun run dev"),
+  ];
+
   const run =
     answers.database === "sqlite"
-      ? [
-          ...(installed ? [] : [`First run ${inline("bun install")}.`, ""]),
-          `Run it on this machine; the first boot creates ${answers.dbName}.db and seeds it:`,
-          ...(services ? [command(`docker compose up -d --wait ${services}`)] : []),
-          command("bun run dev"),
-          open,
-          "",
-          "Or in Docker, with the database file on a volume:",
-          command("docker compose up -d --build"),
-        ]
+      ? up
+        ? [
+            `Running in Docker, with the database file on a volume: open ${urls}`,
+            ...restart,
+            ...sqliteHost,
+          ]
+        : [
+            ...(installed ? [] : [`First run ${inline("bun install")}.`, ""]),
+            ...sqliteHost,
+            open,
+            "",
+            "Or in Docker, with the database file on a volume:",
+            command(upCommand(answers).join(" ")),
+          ]
       : [
           ...(installed
             ? []
             : [`First run ${inline("bun install")}: the Dockerfile needs its bun.lock.`, ""]),
-          "Run everything in Docker:",
-          command("docker compose up -d --build"),
-          open,
-          "",
+          ...(up
+            ? [`Running in Docker: open ${urls}`, ...restart]
+            : ["Run everything in Docker:", command(upCommand(answers).join(" ")), open, ""]),
           "Or run Graphoria on the host against the database container:",
+          ...stopContainer,
           command(
             answers.database === "mssql"
               ? "docker compose run --rm db-init"
@@ -376,12 +473,13 @@ export const nextSteps = (
           ...(answers.database === "mssql" && services
             ? [command(`docker compose up -d --wait ${services}`)]
             : []),
+          ...(typesScript ? [command("bun run types")] : []),
           command("bun run dev"),
         ];
 
   const grafana = answers.metrics
-    ? `${paint.name("Grafana")} opens on the Graphoria dashboard at ${link(GRAFANA_PORT)} in the Docker run: Prometheus scrapes the graphoria service, not a host run${answers.tracing ? "; the traces are under Explore → Jaeger" : ""}.`
-    : `${paint.name("Grafana")} shows the traces at ${link(GRAFANA_PORT)}, under Explore → Jaeger.`;
+    ? `${paint.name("Grafana")} opens on the Graphoria dashboard at ${link(ports.grafana)} in the Docker run: Prometheus scrapes the graphoria service, not a host run${answers.tracing ? "; the traces are under Explore → Jaeger" : ""}.`
+    : `${paint.name("Grafana")} shows the traces at ${link(ports.grafana)}, under Explore → Jaeger.`;
 
   return [
     ...run,
@@ -389,23 +487,17 @@ export const nextSteps = (
       ? [
           "",
           `${paint.name("Two demo users")}, one per role. Once the database is up, create them:`,
-          seed("reader", users.reader),
-          seed("editor", users.editor),
-          ...(answers.database === "sqlite"
-            ? [
-                `(SQLite in Docker: run them inside the container, prefixed with ${inline("docker compose exec graphoria")}.)`,
-              ]
-            : []),
+          ...seedCommands(answers, users, paint),
           "Without a token you read the authors. A reader also reads the published books; an editor",
           "reads every book, adds drafts (addBook) and publishes them (publishBook).",
           "Log in with auth_login in GraphiQL or POST /rest/auth/login, then send",
-          `Authorization: Bearer <access_token>${answers.frontend ? `, or sign in at ${link(3000)}` : ""}.`,
+          `Authorization: Bearer <access_token>${answers.frontend ? `, or sign in at ${link(ports.app)}` : ""}.`,
         ]
       : []),
     ...(answers.rabbitmq
       ? [
           "",
-          `${paint.name("RabbitMQ")} management UI: ${link(RABBITMQ_MANAGEMENT_PORT)} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
+          `${paint.name("RabbitMQ")} management UI: ${link(ports.rabbitmqManagement)} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
           `Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.${answers.auth ? " Both take an editor's token or the admin secret." : ""}`,
           ...(answers.auth
             ? [
@@ -424,7 +516,7 @@ export const nextSteps = (
     ...(answers.mcp
       ? [
           "",
-          `The ${paint.name("MCP server")} answers MCP clients at ${link(3000, "/mcp")}. Its tools run as the caller, as on /graphql:`,
+          `The ${paint.name("MCP server")} answers MCP clients at ${link(ports.app, "/mcp")}. Its tools run as the caller, as on /graphql:`,
           answers.auth
             ? "without a header a client reads the authors; send a reader's or an editor's token, or the admin secret."
             : answers.frontend
@@ -443,23 +535,31 @@ export const nextSteps = (
     ...(answers.dataTools
       ? [
           "",
-          `${paint.name("dbgate")} explores the database at ${link(DBGATE_PORT)} once ${inline("docker compose up")} runs it.`,
+          `${paint.name("dbgate")} explores the database at ${link(ports.dbgate)} once ${inline("docker compose up")} runs it.`,
           ...(answers.redis
-            ? [`${paint.name("Redis Commander")} inspects Redis at ${link(REDIS_COMMANDER_PORT)}.`]
+            ? [`${paint.name("Redis Commander")} inspects Redis at ${link(ports.redisCommander)}.`]
             : []),
         ]
       : []),
-    ...(answers.frontend
+    ...(typesScript
       ? [
           "",
-          `Once ${inline("bun run dev")} has printed the schema, ${inline("bun run types")} writes`,
-          "web/graphql-env.d.ts, which types the app's queries. Commit it.",
+          `${inline("bun run types")} reads the database, with no server running, and writes`,
+          `${[
+            ...(answers.frontend ? ["web/graphql-env.d.ts, which types the app's queries"] : []),
+            ...(answers.trpc
+              ? ["graphoria-env.d.ts, which types the plain-string operations"]
+              : []),
+          ].join(
+            ", and ",
+          )}. Commit ${answers.frontend && answers.trpc ? "both" : "it"}, and run it again`,
+          "after a change to the tables or to graphoria.ts.",
         ]
       : []),
     ...(answers.trpc
       ? [
           "",
-          `${paint.name("tRPC")} serves the operations at ${link(3000, "/trpc")} (TRPC_ENABLED in .env); a call runs as its caller, as on /rest.`,
+          `${paint.name("tRPC")} serves the operations at ${link(ports.app, "/trpc")} (TRPC_ENABLED in .env); a call runs as its caller, as on /rest.`,
           `A client made with @trpc/client types them from graphoria.ts through TRPCRouterOf from @graphoria/server/trpc${answers.auth && answers.frontend ? ", as web/trpc.ts does for the app's Publish button" : ""}.`,
         ]
       : []),
@@ -478,13 +578,13 @@ export const nextSteps = (
     ...(answers.metrics
       ? [
           "",
-          `${paint.name("Metrics")}: ${link(3000, "/metrics")} answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.`,
+          `${paint.name("Metrics")}: ${link(ports.app, "/metrics")} answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.`,
         ]
       : []),
     ...(answers.tracing
       ? [
           "",
-          `${paint.name("Jaeger")} shows a trace for each request, down to the SQL it ran, at ${link(JAEGER_UI_PORT)}: pick the service named OTEL_SERVICE_NAME in .env.`,
+          `${paint.name("Jaeger")} shows a trace for each request, down to the SQL it ran, at ${link(ports.jaegerUi)}: pick the service named OTEL_SERVICE_NAME in .env.`,
         ]
       : []),
     ...(answers.metrics || answers.tracing ? [grafana] : []),
@@ -499,12 +599,12 @@ export const nextSteps = (
     `Try${answers.auth ? ", as a reader, an editor or with the admin secret" : ""}: ${paint.code(sampleQuery(answers))}`,
     "",
     "Recreate this setup in a new directory without prompts (the secrets are regenerated):",
-    command(recreateCommand(answers, installed)),
+    command(recreateCommand(answers, installed, up)),
   ].join("\n");
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install] [--up]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);
@@ -515,11 +615,61 @@ const noTerminal = (question: string): never => {
   process.exit(2);
 };
 
+const INSTALL: Step = {
+  doing: "Installing dependencies",
+  done: "Installed dependencies",
+  // --silent drops the progress and the package list, though a failed install still prints
+  // Bun's error. --no-env-file drops the line naming the .env just written, which the install
+  // reads nothing from (Bun 1.4.2 ignores the flag and prints the line).
+  command: ["bun", "install", "--silent", "--no-env-file"],
+};
+
+// What --up runs, and what a failure asks for. `docker info --format` exits 0
+// without a daemon; `docker version` does not.
+const DOCKER_CHECKS = [
+  {
+    command: ["docker", "compose", "version"],
+    needs: "Docker Compose",
+    fix: "Install the Compose plugin",
+  },
+  {
+    command: ["docker", "version", "--format", "{{.Server.Version}}"],
+    needs: "a running Docker",
+    fix: "Start Docker",
+  },
+];
+
+const refuseUp = (needs: string, reason: string, fix: string): never => {
+  console.error(`init: --up needs ${needs}, so nothing was written: ${reason}`);
+  console.error(`${fix}, or leave out --up.`);
+  process.exit(2);
+};
+
+const firstLine = (output: Buffer) =>
+  output
+    .toString()
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+
+/** Stops init, before it asks or writes anything, when --up could not run Docker. */
+const checkDocker = () => {
+  if (!Bun.which("docker")) refuseUp("Docker", "docker is not on the PATH.", "Install Docker");
+  for (const { command, needs, fix } of DOCKER_CHECKS) {
+    const { exitCode, stdout, stderr } = Bun.spawnSync(command, { stdin: "ignore" });
+    if (exitCode === 0) continue;
+    const reason =
+      firstLine(stderr) ?? firstLine(stdout) ?? `\`${command.join(" ")}\` exited ${exitCode}.`;
+    refuseUp(needs, reason, fix);
+  }
+};
+
 const NO_TERMINAL_IO: InitIO = {
   ask: noTerminal,
   say: () => {},
   select: noTerminal,
   multiSelect: noTerminal,
+  isPortFree,
 };
 
 export const initCommand = async (argv: string[]): Promise<never> => {
@@ -542,46 +692,16 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   };
 
   refuseExisting([...PROJECT_FILES, "bun.lock"]);
+  if (args.up) checkDocker();
   const io = args.yes ? NO_PROMPT_IO : interactive() ? TERMINAL_IO : NO_TERMINAL_IO;
   const answers = await collectAnswers(args, io);
   if (answers.frontend)
     refuseExisting([...FRONTEND_FILES, ...(answers.auth && answers.trpc ? TRPC_FILES : [])]);
+  if (answers.trpc) refuseExisting([...TRPC_ENV_FILES]);
   if (answers.metrics || answers.tracing)
     refuseExisting([...(answers.metrics ? METRICS_FILES : []), ...GRAFANA_FILES]);
-  const warnings = [
-    answers.database === "sqlite"
-      ? undefined
-      : portWarning(answers.dbPort, { service: "database", envVar: "DB_PORT" }),
-    answers.rabbitmq
-      ? portWarning(RABBITMQ_PORT, { service: "RabbitMQ", envVar: "RABBITMQ_PORT" })
-      : undefined,
-    answers.rabbitmq
-      ? portWarning(RABBITMQ_MANAGEMENT_PORT, {
-          service: "RabbitMQ management UI",
-          envVar: "RABBITMQ_MANAGEMENT_PORT",
-        })
-      : undefined,
-    answers.dataTools
-      ? portWarning(DBGATE_PORT, { service: "dbgate", envVar: "DBGATE_PORT" })
-      : undefined,
-    answers.dataTools && answers.redis
-      ? portWarning(REDIS_COMMANDER_PORT, {
-          service: "Redis Commander",
-          envVar: "REDIS_COMMANDER_PORT",
-        })
-      : undefined,
-    answers.tracing
-      ? portWarning(JAEGER_UI_PORT, { service: "Jaeger UI", envVar: "JAEGER_UI_PORT" })
-      : undefined,
-    answers.tracing
-      ? portWarning(JAEGER_OTLP_PORT, { service: "Jaeger OTLP receiver" })
-      : undefined,
-    answers.metrics || answers.tracing
-      ? portWarning(GRAFANA_PORT, { service: "Grafana", envVar: "GRAFANA_PORT" })
-      : undefined,
-  ];
   const stderrPaint = paintFor(process.stderr);
-  for (const warning of warnings) if (warning) console.warn(stderrPaint.warning(warning));
+  for (const note of portNotes(answers, io.isPortFree)) console.warn(stderrPaint.warning(note));
 
   const name = projectName(dir);
   // Printed with the seed-auth commands only: not in .env, never in recreateCommand.
@@ -612,26 +732,36 @@ export const initCommand = async (argv: string[]): Promise<never> => {
     process.exit(1);
   }
   const label = answers.database === "sqlite" ? "SQLite" : ENGINES[answers.database].label;
-  console.log(`\nCreated ${name} (${label}): ${written.join(", ")}\n`);
+  const paint = paintFor(process.stdout);
+  console.log(
+    `\n${paint.success("✓")} Created ${paint.name(name)} (${label}), ${written.length} files`,
+  );
 
-  if (args.install) {
-    console.log("Installing dependencies (bun install)…");
-    // --silent drops the progress and the package list, though a failed install still prints
-    // Bun's error. --no-env-file drops the line naming the .env just written, which the install
-    // reads nothing from (Bun 1.4.2 ignores the flag and prints the line).
-    const install = Bun.spawn(["bun", "install", "--silent", "--no-env-file"], {
-      cwd: dir,
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "inherit",
-    });
-    if ((await install.exited) !== 0) {
-      console.error("init: bun install failed. The files are written; run `bun install` next.");
-      process.exit(1);
+  const failed = await runSteps(
+    [...(args.install ? [INSTALL] : []), ...(args.up ? upSteps(answers) : [])],
+    { cwd: dir, out: process.stdout, errors: process.stderr, paint },
+  );
+  console.log("");
+  if (failed) {
+    // The guide is for a project that runs, but the passwords print nowhere else.
+    if (users) {
+      console.log(
+        [
+          `${paint.name("Two demo users")}, one per role; their passwords print only here. Once the database is up, create them:`,
+          ...seedCommands(answers, users, paint),
+          "",
+        ].join("\n"),
+      );
     }
-    console.log("");
+    const url = `http://localhost:${answers.ports.app}${answers.frontend ? "" : "/graphiql"}`;
+    console.error(
+      failed === INSTALL
+        ? "init: bun install failed. The files are written; run `bun install` next."
+        : `init: ${failed.command.join(" ")} failed. The project is written and installed: fix the error above, then run \`${upCommand(answers).join(" ")}\` and open ${url}.`,
+    );
+    process.exit(1);
   }
 
-  console.log(nextSteps(answers, args.install, users, paintFor(process.stdout)));
+  console.log(nextSteps(answers, args.install, users, paint, args.up));
   process.exit(0);
 };
