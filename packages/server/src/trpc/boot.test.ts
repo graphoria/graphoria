@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { TRPCRouterOf } from ".";
-import type { ConfigurationFn, ConfigurationHelpers } from "../config";
+import type { ConfigurationFn } from "../config";
 import type { AuditEvent } from "../logging/audit";
 
 // `singletons/env` parses process.env at module load.
@@ -68,19 +68,6 @@ const configure = (({ operation, z }) => ({
 type Router = TRPCRouterOf<typeof configure>;
 type Route = (req: Request) => Promise<Response>;
 
-const helpersOf = async (): Promise<ConfigurationHelpers> => {
-  const config = await import("../config");
-
-  return {
-    z: config.z,
-    operation: config.operation,
-    createOneToBooleanMSSQL: config.createOneToBooleanMSSQL,
-    createYAndNToBooleanMSSQL: config.createYAndNToBooleanMSSQL,
-    virtualColumnExpression: config.virtualColumnExpression,
-    virtualColumnFunction: config.virtualColumnFunction,
-  };
-};
-
 // A boot sets the process-wide query timeout, so it gets 0, its value before any boot.
 const boot = async (enabled: boolean) => {
   const { createHandlers } = await import("../index");
@@ -95,7 +82,7 @@ const boot = async (enabled: boolean) => {
     admin: { ...env.admin, secrets: [ADMIN_SECRET] },
     // createHandlers merges its options shallowly: the whole block is passed.
     trpc: { ...env.trpc, enabled },
-    configuration: configure(await helpersOf()) as never,
+    configuration: configure,
   });
 };
 

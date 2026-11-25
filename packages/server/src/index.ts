@@ -1,7 +1,6 @@
 import { join } from "path";
 
 import { serve } from "bun";
-import { isString } from "es-toolkit";
 
 import type { BunRequest } from "bun";
 import type { Capability } from "./authentication/capabilities";
@@ -224,10 +223,9 @@ const bootAnalyzedConfiguration = async (
 
   assertDistinctRoles(env);
 
-  // Load configuration if a path was given, otherwise validate the inline object
-  const projectConfiguration: Configuration = isString(env.configuration)
-    ? ConfigurationZod.parse(await loadConfiguration(env.configuration))
-    : ConfigurationZod.parse(env.configuration);
+  const projectConfiguration: Configuration = ConfigurationZod.parse(
+    await loadConfiguration(env.configuration),
+  );
 
   // The stores the env names need only the configuration, so a misnamed one
   // refuses boot before anything connects. The rate-limit store is resolved even
@@ -326,7 +324,9 @@ const startAgent = async (env: Env, ai: Configuration["ai"]) => {
  * exists, request-dependent features (operation `init`/`beforeRequest` hooks
  * and header-derived session variables) do not run.
  *
- * @param env - Resolved env-shaped config (`Env`); same shape the server takes.
+ * @param options - Resolved env-shaped config (`Env`); same shape the server takes.
+ *   `configuration` is a path, the configuration function (the `graphoria.ts`
+ *   default export) or a `ConfigurationInput` object.
  *   The configured token strategy's keys are required when auth or the
  *   console is enabled.
  * @returns `{ execute, roles, close, logger }` — call `close()` to release
@@ -336,10 +336,9 @@ const startAgent = async (env: Env, ai: Configuration["ai"]) => {
  * ```ts
  * import { createGraphQLEngine } from "@graphoria/server";
  *
- * const { execute, close } = await createGraphQLEngine({
- *   ...process.env,
- *   configuration: "./graphoria.ts",
- * } as Env);
+ * import config from "./graphoria";
+ *
+ * const { execute, close } = await createGraphQLEngine({ configuration: config });
  *
  * console.log(await execute("{ __typename }"));
  * await close();
@@ -378,17 +377,18 @@ export const createGraphQLEngine = async (options?: Partial<Env>) => {
 /**
  * Build the request-time pieces of a Graphoria server: per-role GraphQL
  * schemas, a websocket handler, and a routes map ready to feed into
- * `Bun.serve`. Loads the configuration (path or inline object), connects
- * databases, instantiates queues and cron jobs, then assembles handlers.
+ * `Bun.serve`. Loads the configuration (a path, the configuration function or
+ * an object), connects databases, instantiates queues and cron jobs, then
+ * assembles handlers.
  *
  * Internal — callers use {@link createBunServer} (full server),
  * {@link createHandlers} (handlers only), or {@link createGraphQLEngine}
  * (in-process query execution, no server).
  *
  * @param env - Resolved env-shaped config (`Env`). Required fields
- *   include `configuration` (path or `Configuration` object), `adminSecret`,
- *   and, when auth or the console is enabled, the chosen token strategy's keys
- *   (e.g. `jwtSecret`).
+ *   include `configuration` (a path, the configuration function or a
+ *   `ConfigurationInput` object), `adminSecret`, and, when auth or the console
+ *   is enabled, the chosen token strategy's keys (e.g. `jwtSecret`).
  * @returns `{ websocketHandler, closeWebsockets, routes, prefixes, logger,
  *   execute }` — `routes` is the map passed to `Bun.serve({ routes, websocket })`;
  *   `closeWebsockets(code, reason)` closes every open socket; `execute` runs a
@@ -818,6 +818,8 @@ const createGraphQLServer = async (env: Env) => {
  * lifecycle, multiple ports, integration tests).
  *
  * @param options - Partial overrides merged on top of `env` defaults.
+ *   `configuration` is a path, the configuration function (the `graphoria.ts`
+ *   default export) or a `ConfigurationInput` object.
  * @returns `{ serverHandlers, options: Env, prefixes, logger, execute, shutdown,
  *   handleSignals }` — `execute` runs a query in-process (see
  *   {@link createGraphQLEngine}); `shutdown(server)` drains the server, then
@@ -880,6 +882,8 @@ export async function createHandlers(options?: Partial<Env>) {
  * the server listens exits 0 at once.
  *
  * @param options - Partial overrides merged on top of `env` defaults.
+ *   `configuration` is a path, the configuration function (the `graphoria.ts`
+ *   default export) or a `ConfigurationInput` object.
  * @returns `{ server, prefixes, logger, execute, shutdown }` — `logger(name)`
  *   mints a component-named logger sharing the server's pino root (and any
  *   {@link configureLogging} / `env.logger` override); `execute` runs a query

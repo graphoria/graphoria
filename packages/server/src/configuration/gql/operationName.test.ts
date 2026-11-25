@@ -49,7 +49,7 @@ beforeAll(async () => {
         database: "default",
         permissions: { anonymous: { tables: "ALL" } },
       },
-    } as never,
+    },
   });
 
   const graphql = handlers.serverHandlers.routes[handlers.prefixes.graphql] as unknown as {

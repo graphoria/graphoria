@@ -57,7 +57,7 @@ const boot = async (options: Record<string, unknown>) => {
           connection: { filename: join(dir, "app.db") },
         },
       ],
-    } as never,
+    },
     ...options,
   });
 };
