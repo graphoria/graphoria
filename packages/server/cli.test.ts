@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { version } from "./package.json";
 import { isPortFree } from "./src/cli/init";
+import { SPINNER } from "./src/cli/progress";
 
 let dir: string;
 let configPath: string;
@@ -229,25 +230,28 @@ describe("cli init", () => {
   };
 
   /**
-   * A directory whose `bun` and `docker` print their arguments. `bun` then fails
-   * with FAKE_BUN_ERROR when set, `bun run` with FAKE_BUN_RUN_ERROR, and `docker`
-   * with FAKE_DOCKER_ERROR.
+   * A directory whose `bun` and `docker` print their arguments and add them to its
+   * `calls` file. `bun` then fails with FAKE_BUN_ERROR when set, `bun run` with
+   * FAKE_BUN_RUN_ERROR, and `docker` with FAKE_DOCKER_ERROR.
    */
   const fakeBun = async () => {
     const bin = await mkdtemp(join(tmpdir(), "graphoria-fake-bun-"));
     await writeFile(
       join(bin, "bun"),
-      '#!/bin/sh\necho "fake bun $*"\nif [ -n "$FAKE_BUN_ERROR" ]; then echo "$FAKE_BUN_ERROR" >&2; exit 1; fi\nif [ "$1" = run ] && [ -n "$FAKE_BUN_RUN_ERROR" ]; then echo "$FAKE_BUN_RUN_ERROR" >&2; exit 1; fi\n',
+      '#!/bin/sh\necho "fake bun $*"\necho "bun $*" >> "${0%/*}/calls"\nif [ -n "$FAKE_BUN_ERROR" ]; then echo "$FAKE_BUN_ERROR" >&2; exit 1; fi\nif [ "$1" = run ] && [ -n "$FAKE_BUN_RUN_ERROR" ]; then echo "$FAKE_BUN_RUN_ERROR" >&2; exit 1; fi\n',
       { mode: 0o755 },
     );
     await writeFile(
       join(bin, "docker"),
-      '#!/bin/sh\necho "fake docker $*"\nif [ -n "$FAKE_DOCKER_ERROR" ]; then echo "$FAKE_DOCKER_ERROR" >&2; exit 1; fi\n',
+      '#!/bin/sh\necho "fake docker $*"\necho "docker $*" >> "${0%/*}/calls"\nif [ -n "$FAKE_DOCKER_ERROR" ]; then echo "$FAKE_DOCKER_ERROR" >&2; exit 1; fi\n',
       { mode: 0o755 },
     );
     cwds.push(bin);
     return bin;
   };
+
+  const calls = async (bin: string) =>
+    (await readFile(join(bin, "calls"), "utf8").catch(() => "")).split("\n").filter(Boolean);
 
   /** Runs init in a terminal, typing each step's keys once its prompt shows. */
   const initInTerminal = async (
@@ -264,9 +268,10 @@ describe("cli init", () => {
     const cli = join(import.meta.dir, "cli.ts");
     // Bun's terminal takes all three streams, so sh pipes stdout alone out of it, as `| tee` does
     // (the exit code is then cat's).
+    // process.execPath, not "bun": the PATH in extraEnv may lead to a fake bun.
     const command = pipeStdout
       ? ["sh", "-c", 'bun "$0" init "$@" | cat', cli, ...args]
-      : ["bun", cli, "init", ...args];
+      : [process.execPath, cli, "init", ...args];
     const proc = Bun.spawn(command, {
       cwd,
       env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
@@ -912,16 +917,20 @@ describe("cli init", () => {
     expect(result.stdout.toString()).toContain("  \x1b[36mbun run dev\x1b[39m");
   });
 
-  it("runs bun install silently, saying so first", async () => {
+  it("runs bun install silently as a step, holding its output back", async () => {
     const bin = await fakeBun();
     const { cwd, result } = await init(["--yes", "--database", "sqlite"], undefined, {
       PATH: `${bin}:${process.env.PATH}`,
     });
     cwds.push(cwd);
+    const stdout = result.stdout.toString();
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("Installing dependencies (bun install)…");
-    expect(result.stdout.toString()).toContain("fake bun install --silent --no-env-file\n");
+    expect(stdout).toMatch(
+      /\n✓ Created \S+ \(SQLite\), \d+ files\nInstalling dependencies…\n✓ Installed dependencies {2}\S+\n\n/,
+    );
+    expect(stdout).not.toContain("fake bun");
+    expect(await calls(bin)).toEqual(["bun install --silent --no-env-file"]);
   });
 
   it("exits 1 when bun install fails, after Bun's own error, keeping the files", async () => {
@@ -933,12 +942,13 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(1);
+    expect(result.stdout.toString()).toContain("✗ Installing dependencies failed");
     expect(result.stderr.toString()).toContain("error: GET https://registry.npmjs.org/nope - 404");
     expect(result.stderr.toString()).toContain("init: bun install failed.");
     expect(await readdir(cwd)).toContain("graphoria.ts");
   });
 
-  it("runs bun run up after the install with --up, then prints the steps", async () => {
+  it("runs bun run up's steps after the install with --up, then prints the steps", async () => {
     const bin = await fakeBun();
     const { cwd, result } = await init(
       ["--yes", "--database", "sqlite", "--trpc", "--up"],
@@ -951,14 +961,38 @@ describe("cli init", () => {
     const stdout = result.stdout.toString();
 
     expect(result.exitCode).toBe(0);
-    const install = stdout.indexOf("fake bun install --silent --no-env-file\n");
-    const starting = stdout.indexOf("Starting it in Docker (bun run up)…\n");
-    const up = stdout.indexOf("fake bun run up\n");
-    const steps = stdout.indexOf("Recreate this setup");
-    expect([install, starting, up, steps].every((at) => at >= 0)).toBe(true);
-    expect(install < starting && starting < up && up < steps).toBe(true);
+    expect(await calls(bin)).toEqual([
+      "bun install --silent --no-env-file",
+      "bun run types",
+      "docker compose up -d --build",
+    ]);
+    const lines = [
+      "✓ Installed dependencies",
+      "✓ Generated schemas, OpenAPI documents and types",
+      "✓ Built and started the containers",
+      "Recreate this setup",
+    ].map((line) => stdout.indexOf(line));
+    expect(lines.every((at) => at >= 0)).toBe(true);
+    expect(lines).toEqual(lines.toSorted((a, b) => a - b));
     expect(stdout).toContain(" --trpc --up\n");
-    expect(stdout).not.toContain("fake docker");
+    expect(stdout).not.toContain("fake ");
+  });
+
+  it("starts a network engine's database container before bun run types with --up", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(["--yes", "--database", "pg", "--trpc", "--up"], undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    expect(await calls(bin)).toEqual([
+      "bun install --silent --no-env-file",
+      "docker compose up -d --wait db",
+      "bun run types",
+      "docker compose up -d --build",
+    ]);
+    expect(result.stdout.toString()).toContain("✓ Started the database");
   });
 
   it("runs docker compose up -d --build with --up when the project has no up script", async () => {
@@ -969,30 +1003,63 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain(
-      "Starting it in Docker (docker compose up -d --build)…\nfake docker compose up -d --build\n",
-    );
+    expect(await calls(bin)).toEqual([
+      "bun install --silent --no-env-file",
+      "docker compose up -d --build",
+    ]);
+    expect(result.stdout.toString()).toContain("✓ Built and started the containers");
   });
 
-  it("exits 1 when --up fails, after the steps and the error, keeping the files", async () => {
+  it("exits 1 when an --up step fails, after the steps and its output, keeping the files", async () => {
     const bin = await fakeBun();
     const { cwd, result } = await init(
       ["--yes", "--database", "sqlite", "--trpc", "--up"],
       undefined,
       {
         PATH: `${bin}:${process.env.PATH}`,
-        FAKE_BUN_RUN_ERROR: "Bind for 0.0.0.0:3000 failed: port is already allocated",
+        FAKE_DOCKER_ERROR: "Bind for 0.0.0.0:3000 failed: port is already allocated",
       },
+    );
+    cwds.push(cwd);
+    const stdout = result.stdout.toString();
+
+    expect(result.exitCode).toBe(1);
+    expect(stdout).toContain("✗ Building and starting the containers failed");
+    expect(stdout).toContain("Recreate this setup");
+    expect(result.stderr.toString()).toContain("port is already allocated");
+    expect(result.stderr.toString()).toContain(
+      "init: docker compose up -d --build failed. The project is written and installed: fix the error above, then run `bun run up`.",
+    );
+    expect(await readdir(cwd)).toContain("graphoria.ts");
+  });
+
+  it("stops at the --up step that fails", async () => {
+    const bin = await fakeBun();
+    const { cwd, result } = await init(
+      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      undefined,
+      { PATH: `${bin}:${process.env.PATH}`, FAKE_BUN_RUN_ERROR: "codegen failed" },
     );
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(1);
-    expect(result.stdout.toString()).toContain("Recreate this setup");
-    expect(result.stderr.toString()).toContain("port is already allocated");
-    expect(result.stderr.toString()).toContain(
-      "init: bun run up failed. The project is written and installed: fix the error above, then run `bun run up`.",
+    expect(await calls(bin)).toEqual(["bun install --silent --no-env-file", "bun run types"]);
+    expect(result.stderr.toString()).toContain("init: bun run types failed.");
+  });
+
+  it("draws each step as a spinner in a terminal, then its ✓ line", async () => {
+    const bin = await fakeBun();
+    const { cwd, exitCode, output } = await initInTerminal(
+      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      [],
+      { extraEnv: { PATH: `${bin}:${process.env.PATH}` } },
     );
-    expect(await readdir(cwd)).toContain("graphoria.ts");
+    cwds.push(cwd);
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain(`\r\x1b[2K${SPINNER[0]} Installing dependencies…`);
+    expect(output).toContain("\r\x1b[2K✓ Built and started the containers ");
+    expect(output).toMatch(/✓ Built and started the containers +\S+\r\n/);
   });
 
   it("rejects --up with --no-install as a usage error, writing nothing", async () => {

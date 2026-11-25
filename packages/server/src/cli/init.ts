@@ -7,6 +7,7 @@ import type { DatabaseType } from "../config";
 import type { InitArgs } from "./initArgs";
 import type { HostPorts, InitAnswers } from "./initTemplates";
 import type { Paint } from "./paint";
+import type { Step } from "./progress";
 import type { Ask, Choice, MultiSelect, Say, Select } from "./prompt";
 
 import { version } from "../../package.json";
@@ -22,8 +23,10 @@ import {
   TRPC_FILES,
   renderProject,
   seedSchema,
+  upSteps,
 } from "./initTemplates";
 import { PLAIN_PAINT, paintFor } from "./paint";
+import { runSteps } from "./progress";
 import { ask, interactive, multiSelect, select } from "./prompt";
 
 export type InitIO = {
@@ -585,6 +588,15 @@ const noTerminal = (question: string): never => {
   process.exit(2);
 };
 
+const INSTALL: Step = {
+  doing: "Installing dependencies",
+  done: "Installed dependencies",
+  // --silent drops the progress and the package list, though a failed install still prints
+  // Bun's error. --no-env-file drops the line naming the .env just written, which the install
+  // reads nothing from (Bun 1.4.2 ignores the flag and prints the line).
+  command: ["bun", "install", "--silent", "--no-env-file"],
+};
+
 const NO_TERMINAL_IO: InitIO = {
   ask: noTerminal,
   say: () => {},
@@ -652,51 +664,27 @@ export const initCommand = async (argv: string[]): Promise<never> => {
     process.exit(1);
   }
   const label = answers.database === "sqlite" ? "SQLite" : ENGINES[answers.database].label;
-  console.log(`\nCreated ${name} (${label}): ${written.join(", ")}\n`);
+  const paint = paintFor(process.stdout);
+  console.log(
+    `\n${paint.success("✓")} Created ${paint.name(name)} (${label}), ${written.length} files`,
+  );
 
-  if (args.install) {
-    console.log("Installing dependencies (bun install)…");
-    // --silent drops the progress and the package list, though a failed install still prints
-    // Bun's error. --no-env-file drops the line naming the .env just written, which the install
-    // reads nothing from (Bun 1.4.2 ignores the flag and prints the line).
-    const install = Bun.spawn(["bun", "install", "--silent", "--no-env-file"], {
-      cwd: dir,
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "inherit",
-    });
-    if ((await install.exited) !== 0) {
-      console.error("init: bun install failed. The files are written; run `bun install` next.");
-      process.exit(1);
-    }
-    console.log("");
+  const failed = await runSteps(
+    [...(args.install ? [INSTALL] : []), ...(args.up ? upSteps(answers) : [])],
+    { cwd: dir, out: process.stdout, errors: process.stderr, paint },
+  );
+  if (failed === INSTALL) {
+    console.error("init: bun install failed. The files are written; run `bun install` next.");
+    process.exit(1);
   }
-
-  const up = upCommand(answers).join(" ");
-  let upFailed = false;
-  if (args.up) {
-    console.log(`Starting it in Docker (${up})…`);
-    try {
-      const run = Bun.spawn(upCommand(answers), {
-        cwd: dir,
-        stdout: "inherit",
-        stderr: "inherit",
-        stdin: "inherit",
-      });
-      upFailed = (await run.exited) !== 0;
-    } catch (error) {
-      // Bun.spawn throws when the command is not on the PATH: docker, without Docker.
-      console.error(`init: ${error instanceof Error ? error.message : String(error)}`);
-      upFailed = true;
-    }
-    console.log("");
-  }
+  console.log("");
 
   // The steps print even when --up failed: they carry the demo users' passwords.
-  console.log(nextSteps(answers, args.install, users, paintFor(process.stdout), args.up));
-  if (upFailed) {
+  console.log(nextSteps(answers, args.install, users, paint, args.up));
+  if (failed) {
+    const up = upCommand(answers).join(" ");
     console.error(
-      `init: ${up} failed. The project is written and installed: fix the error above, then run \`${up}\`.`,
+      `init: ${failed.command.join(" ")} failed. The project is written and installed: fix the error above, then run \`${up}\`.`,
     );
     process.exit(1);
   }

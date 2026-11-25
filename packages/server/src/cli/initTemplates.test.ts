@@ -19,6 +19,7 @@ import {
   TRPC_FILES,
   renderProject,
   type ProjectValues,
+  upSteps,
 } from "./initTemplates";
 import { EMPTY_OPERATION_TYPES } from "./operationTypes";
 
@@ -170,6 +171,32 @@ describe("generated types", () => {
       }
     },
   );
+
+  it.each<[DatabaseType, string[][]]>([
+    ["pg", [["docker", "compose", "up", "-d", "--wait", "db"]]],
+    ["mysql", [["docker", "compose", "up", "-d", "--wait", "db"]]],
+    ["mssql", [["docker", "compose", "run", "--rm", "db-init"]]],
+    ["sqlite", []],
+  ])("hands init --up bun run up's steps on %s, one by one", (database, before) => {
+    for (const patch of [{ frontend: true }, { trpc: true }]) {
+      const steps = upSteps({ database, frontend: false, trpc: false, ...patch });
+      expect(steps.map(({ command }) => command)).toEqual([
+        ...before,
+        ["bun", "run", "types"],
+        ["docker", "compose", "up", "-d", "--build"],
+      ]);
+    }
+  });
+
+  it("hands init --up docker compose up -d --build alone where there is no bun run up", () => {
+    expect(upSteps({ database: "pg", frontend: false, trpc: false })).toEqual([
+      {
+        doing: "Building and starting the containers",
+        done: "Built and started the containers",
+        command: ["docker", "compose", "up", "-d", "--build"],
+      },
+    ]);
+  });
 
   it("has no types or up script without --frontend or --trpc", () => {
     expect(JSON.parse(renderWith({})["package.json"]!).scripts).toEqual({

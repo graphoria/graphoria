@@ -1,4 +1,5 @@
 import type { DatabaseType } from "../config";
+import type { Step } from "./progress";
 
 import { GRAFANA_DASHBOARD } from "./grafanaDashboard";
 import { EMPTY_OPERATION_TYPES } from "./operationTypes";
@@ -161,14 +162,50 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
 // dependabot bumps.
 const TRPC_VERSION = "11.28.0";
 
+const START_DATABASE: Step = {
+  doing: "Starting the database",
+  done: "Started the database",
+  command: ["docker", "compose", "up", "-d", "--wait", "db"],
+};
+
 // What bun run up runs before bun run types reads the database: the container,
 // seeded. SQL Server's db-init seeds it once the server is up; SQLite has none.
-const DATABASE_UP: Record<ProjectValues["database"], string> = {
-  pg: "docker compose up -d --wait db && ",
-  mysql: "docker compose up -d --wait db && ",
-  mssql: "docker compose run --rm db-init && ",
-  sqlite: "",
+const DATABASE_UP: Record<ProjectValues["database"], Step[]> = {
+  pg: [START_DATABASE],
+  mysql: [START_DATABASE],
+  mssql: [
+    {
+      doing: "Starting and seeding the database",
+      done: "Started and seeded the database",
+      command: ["docker", "compose", "run", "--rm", "db-init"],
+    },
+  ],
+  sqlite: [],
 };
+
+const START_EVERYTHING: Step = {
+  doing: "Building and starting the containers",
+  done: "Built and started the containers",
+  command: ["docker", "compose", "up", "-d", "--build"],
+};
+
+/** What runs the project in Docker: bun run up's steps where the project has the script. */
+export const upSteps = ({
+  database,
+  frontend,
+  trpc,
+}: Pick<ProjectValues, "database" | "frontend" | "trpc">): Step[] =>
+  frontend || trpc
+    ? [
+        ...DATABASE_UP[database],
+        {
+          doing: "Generating schemas, OpenAPI documents and types",
+          done: "Generated schemas, OpenAPI documents and types",
+          command: ["bun", "run", "types"],
+        },
+        START_EVERYTHING,
+      ]
+    : [START_EVERYTHING];
 
 const packageJson = (
   { name, database, rabbitmq, ai, mcp, auth, frontend, trpc }: ProjectValues,
@@ -184,7 +221,9 @@ const packageJson = (
         start: "bun index.ts",
         ...((frontend || trpc) && {
           types: frontend ? "graphoria codegen && gql-tada generate output" : "graphoria codegen",
-          up: `${DATABASE_UP[database]}bun run types && docker compose up -d --build`,
+          up: upSteps({ database, frontend, trpc })
+            .map(({ command }) => command.join(" "))
+            .join(" && "),
         }),
       },
       dependencies: {
