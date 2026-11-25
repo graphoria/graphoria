@@ -135,11 +135,11 @@ const buildGroupedQuery = (
           ? `${whereClause} AND ${joinConditions.join(" AND ")}`
           : `WHERE ${joinConditions.join(" AND ")}`;
 
-        selectClauses.push(`'${itemsSelection.alias || itemsSelection.name}', COALESCE((
+        selectClauses.push(`'${itemsSelection.alias || itemsSelection.name}', COALESCE(json((
           SELECT json_group_array(json_object(${itemFields}))
           FROM ${dottedQuotedName} ${tableAlias}
           ${whereConditions}
-        ), json('[]'))`);
+        )), json('[]'))`);
       }
     }
   }
@@ -286,7 +286,7 @@ export const buildSQLForField = (
       whereClause,
     );
 
-    return `COALESCE((${mainQuery}), json('[]'))`;
+    return `COALESCE(json((${mainQuery})), json('[]'))`;
   }
 
   const selectList = processFieldSelectionsSQLite(
@@ -334,20 +334,21 @@ export const buildSQLForField = (
     const pageAlias = `${tableAlias}_page`;
 
     return `
-    COALESCE((
+    COALESCE(json((
       SELECT json_group_array(json(${pageAlias}.obj) ORDER BY ${pageAlias}.__ord)
       FROM (
         SELECT json_object(${selectList}) AS obj, ROW_NUMBER() OVER (${orderByClause}) AS __ord ${fromClause} ${whereClause} ${orderByClause} ${paginationClause}
       ) ${pageAlias}
-    ), json('[]'))
+    )), json('[]'))
   `;
   }
 
-  // A fallback must be a JSON value: the text 'null' or '[]' would be embedded
-  // as a string.
+  // Since SQLite 3.54 a scalar subquery's result loses its JSON subtype too, so
+  // json() restores it here and in the grouped query. A fallback must be a JSON
+  // value as well: the text 'null' or '[]' would be embedded as a string.
   return `
-    COALESCE((
+    COALESCE(json((
       SELECT ${isArraySelection ? `json_group_array(json_object(${selectList}) ${orderByClause})` : `json_object(${selectList})`} ${fromClause} ${whereClause} ${withoutArrayWrapper ? " LIMIT 1" : ""} ${paginationClause ? ` ${paginationClause}` : ""}
-    ), json('${isArraySelection ? "[]" : "null"}'))
+    )), json('${isArraySelection ? "[]" : "null"}'))
   `;
 };

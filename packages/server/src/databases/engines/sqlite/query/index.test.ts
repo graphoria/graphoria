@@ -24,6 +24,20 @@ describe("SQLite: generateSQL", () => {
     expect(text).toContain("json_group_array(json(t1_page.obj) ORDER BY t1_page.__ord)");
   });
 
+  it("restores the JSON subtype a scalar subquery loses", () => {
+    const texts = [
+      sql(`{ dbo_products { product_id dbo_product_categories { name } } }`),
+      sql(`{ dbo_products_single { product_id } }`),
+      sql(`{ dbo_products(limit: 10, orderBy: [{ product_id: ASC }]) { product_id } }`),
+      sql(`{ dbo_orders_aggregate(groupBy: [customer_id]) { count items { order_id } } }`),
+    ];
+
+    for (const text of texts) {
+      expect(text).toContain("COALESCE(json((");
+      expect(text).not.toContain("COALESCE((");
+    }
+  });
+
   it("falls back to JSON values, never to text", () => {
     const text = sql(`{ dbo_products { product_id } }`);
 
