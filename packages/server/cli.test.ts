@@ -232,7 +232,8 @@ describe("cli init", () => {
   /**
    * A directory whose `bun` and `docker` print their arguments and add them to its
    * `calls` file. `bun` then fails with FAKE_BUN_ERROR when set, `bun run` with
-   * FAKE_BUN_RUN_ERROR, and `docker` with FAKE_DOCKER_ERROR.
+   * FAKE_BUN_RUN_ERROR, `docker compose version` with FAKE_COMPOSE_ERROR,
+   * `docker version` with FAKE_DAEMON_ERROR, and any other `docker` with FAKE_DOCKER_ERROR.
    */
   const fakeBun = async () => {
     const bin = await mkdtemp(join(tmpdir(), "graphoria-fake-bun-"));
@@ -243,7 +244,7 @@ describe("cli init", () => {
     );
     await writeFile(
       join(bin, "docker"),
-      '#!/bin/sh\necho "fake docker $*"\necho "docker $*" >> "${0%/*}/calls"\nif [ -n "$FAKE_DOCKER_ERROR" ]; then echo "$FAKE_DOCKER_ERROR" >&2; exit 1; fi\n',
+      '#!/bin/sh\necho "fake docker $*"\necho "docker $*" >> "${0%/*}/calls"\ncase "$*" in\n  "compose version") error="$FAKE_COMPOSE_ERROR" ;;\n  version*) error="$FAKE_DAEMON_ERROR" ;;\n  *) error="$FAKE_DOCKER_ERROR" ;;\nesac\nif [ -n "$error" ]; then echo "$error" >&2; exit 1; fi\n',
       { mode: 0o755 },
     );
     cwds.push(bin);
@@ -252,6 +253,9 @@ describe("cli init", () => {
 
   const calls = async (bin: string) =>
     (await readFile(join(bin, "calls"), "utf8").catch(() => "")).split("\n").filter(Boolean);
+
+  // What init --up asks Docker before it writes anything.
+  const DOCKER_CHECKS = ["docker compose version", "docker version --format {{.Server.Version}}"];
 
   /** Runs init in a terminal, typing each step's keys once its prompt shows. */
   const initInTerminal = async (
@@ -962,6 +966,7 @@ describe("cli init", () => {
 
     expect(result.exitCode).toBe(0);
     expect(await calls(bin)).toEqual([
+      ...DOCKER_CHECKS,
       "bun install --silent --no-env-file",
       "bun run types",
       "docker compose up -d --build",
@@ -987,6 +992,7 @@ describe("cli init", () => {
 
     expect(result.exitCode).toBe(0);
     expect(await calls(bin)).toEqual([
+      ...DOCKER_CHECKS,
       "bun install --silent --no-env-file",
       "docker compose up -d --wait db",
       "bun run types",
@@ -1004,10 +1010,42 @@ describe("cli init", () => {
 
     expect(result.exitCode).toBe(0);
     expect(await calls(bin)).toEqual([
+      ...DOCKER_CHECKS,
       "bun install --silent --no-env-file",
       "docker compose up -d --build",
     ]);
     expect(result.stdout.toString()).toContain("✓ Built and started the containers");
+  });
+
+  it.each([
+    [
+      "docker is not on the PATH",
+      {},
+      "init: --up needs Docker, so nothing was written: docker is not on the PATH.\nInstall Docker, or leave out --up.\n",
+    ],
+    [
+      "Docker Compose is missing",
+      { FAKE_COMPOSE_ERROR: "docker: 'compose' is not a docker command." },
+      "init: --up needs Docker Compose, so nothing was written: docker: 'compose' is not a docker command.\nInstall the Compose plugin, or leave out --up.\n",
+    ],
+    [
+      "the Docker daemon does not answer",
+      {
+        FAKE_DAEMON_ERROR:
+          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      },
+      "init: --up needs a running Docker, so nothing was written: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\nStart Docker, or leave out --up.\n",
+    ],
+  ])("exits 2 before asking or writing anything when %s", async (situation, env, stderr) => {
+    const bin = await fakeBun();
+    if (situation === "docker is not on the PATH") await rm(join(bin, "docker"));
+    const { cwd, result } = await init(["--up"], undefined, { PATH: bin, ...env });
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toBe(stderr);
+    expect(await readdir(cwd)).toEqual([]);
+    expect(await calls(bin)).not.toContain("bun install --silent --no-env-file");
   });
 
   it("exits 1 when an --up step fails, after the steps and its output, keeping the files", async () => {
@@ -1043,7 +1081,11 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(1);
-    expect(await calls(bin)).toEqual(["bun install --silent --no-env-file", "bun run types"]);
+    expect(await calls(bin)).toEqual([
+      ...DOCKER_CHECKS,
+      "bun install --silent --no-env-file",
+      "bun run types",
+    ]);
     expect(result.stderr.toString()).toContain("init: bun run types failed.");
   });
 

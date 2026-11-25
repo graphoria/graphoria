@@ -597,6 +597,46 @@ const INSTALL: Step = {
   command: ["bun", "install", "--silent", "--no-env-file"],
 };
 
+// What --up runs, and what a failure asks for. `docker info --format` exits 0
+// without a daemon; `docker version` does not.
+const DOCKER_CHECKS = [
+  {
+    command: ["docker", "compose", "version"],
+    needs: "Docker Compose",
+    fix: "Install the Compose plugin",
+  },
+  {
+    command: ["docker", "version", "--format", "{{.Server.Version}}"],
+    needs: "a running Docker",
+    fix: "Start Docker",
+  },
+];
+
+const refuseUp = (needs: string, reason: string, fix: string): never => {
+  console.error(`init: --up needs ${needs}, so nothing was written: ${reason}`);
+  console.error(`${fix}, or leave out --up.`);
+  process.exit(2);
+};
+
+const firstLine = (output: Buffer) =>
+  output
+    .toString()
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+
+/** Stops init, before it asks or writes anything, when --up could not run Docker. */
+const checkDocker = () => {
+  if (!Bun.which("docker")) refuseUp("Docker", "docker is not on the PATH.", "Install Docker");
+  for (const { command, needs, fix } of DOCKER_CHECKS) {
+    const { exitCode, stdout, stderr } = Bun.spawnSync(command, { stdin: "ignore" });
+    if (exitCode === 0) continue;
+    const reason =
+      firstLine(stderr) ?? firstLine(stdout) ?? `\`${command.join(" ")}\` exited ${exitCode}.`;
+    refuseUp(needs, reason, fix);
+  }
+};
+
 const NO_TERMINAL_IO: InitIO = {
   ask: noTerminal,
   say: () => {},
@@ -625,6 +665,7 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   };
 
   refuseExisting([...PROJECT_FILES, "bun.lock"]);
+  if (args.up) checkDocker();
   const io = args.yes ? NO_PROMPT_IO : interactive() ? TERMINAL_IO : NO_TERMINAL_IO;
   const answers = await collectAnswers(args, io);
   if (answers.frontend)
