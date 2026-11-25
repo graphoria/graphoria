@@ -1108,6 +1108,50 @@ describe("nextSteps", () => {
     expect(nextSteps(ANSWERS, true)).not.toContain("bun run up");
   });
 
+  it("says the project runs in Docker after --up, then how to run it on the host instead", () => {
+    const steps = nextSteps({ ...ANSWERS, trpc: true }, true, undefined, PLAIN_PAINT, true);
+
+    expect(steps).toStartWith(
+      "Running in Docker: open http://localhost:3000/graphiql\n" +
+        "Start it again later with:\n" +
+        "  bun run up\n" +
+        "\n" +
+        "Or run Graphoria on the host against the database container:\n" +
+        "  docker compose stop graphoria\n" +
+        "  docker compose up -d --wait db\n" +
+        "  bun run types\n" +
+        "  bun run dev\n",
+    );
+    expect(steps).not.toContain("Run everything in Docker");
+    expect(
+      nextSteps({ ...ANSWERS, frontend: true }, true, undefined, PLAIN_PAINT, true),
+    ).toStartWith(
+      "Running in Docker: open http://localhost:3000 (the app) or http://localhost:3000/graphiql\n",
+    );
+  });
+
+  it("says a SQLite project runs in Docker after --up, then how to run it on this machine", () => {
+    expect(
+      nextSteps(
+        { ...ANSWERS, database: "sqlite", dbPort: 0, trpc: true },
+        true,
+        undefined,
+        PLAIN_PAINT,
+        true,
+      ),
+    ).toStartWith(
+      "Running in Docker, with the database file on a volume: open http://localhost:3000/graphiql\n" +
+        "Start it again later with:\n" +
+        "  bun run up\n" +
+        "\n" +
+        "Or run it on this machine; the first `bun run types` creates app.db and seeds it:\n" +
+        "  docker compose stop graphoria\n" +
+        "  bun run types\n" +
+        "  bun run dev\n" +
+        "\n",
+    );
+  });
+
   it("links each service on the port init picked for it", () => {
     const ports = {
       ...DEFAULT_PORTS,

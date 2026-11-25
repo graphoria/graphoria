@@ -414,9 +414,13 @@ export const nextSteps = (
   const link = (port: number, path = "") => paint.url(`http://localhost:${port}${path}`);
   const { ports } = answers;
 
-  const open = answers.frontend
-    ? `  then open ${link(ports.app)} (the app) or ${link(ports.app, "/graphiql")}`
-    : `  then open ${link(ports.app, "/graphiql")}`;
+  const urls = answers.frontend
+    ? `${link(ports.app)} (the app) or ${link(ports.app, "/graphiql")}`
+    : link(ports.app, "/graphiql");
+  const open = `  then open ${urls}`;
+  const restart = ["Start it again later with:", command(upCommand(answers).join(" ")), ""];
+  // After --up, the graphoria container holds the port a host run listens on.
+  const stopContainer = up ? [command("docker compose stop graphoria")] : [];
 
   // Besides the database, what graphoria.ts connects to: a host run starts
   // their containers too, and Grafana, which shows the traces Jaeger keeps.
@@ -428,28 +432,39 @@ export const nextSteps = (
 
   const typesScript = answers.frontend || answers.trpc;
 
+  const sqliteHost = [
+    `${up ? "Or run" : "Run"} it on this machine; the first ${typesScript ? inline("bun run types") : "boot"} creates ${answers.dbName}.db and seeds it:`,
+    ...stopContainer,
+    ...(services ? [command(`docker compose up -d --wait ${services}`)] : []),
+    ...(typesScript ? [command("bun run types")] : []),
+    command("bun run dev"),
+  ];
+
   const run =
     answers.database === "sqlite"
-      ? [
-          ...(installed ? [] : [`First run ${inline("bun install")}.`, ""]),
-          `Run it on this machine; the first ${typesScript ? inline("bun run types") : "boot"} creates ${answers.dbName}.db and seeds it:`,
-          ...(services ? [command(`docker compose up -d --wait ${services}`)] : []),
-          ...(typesScript ? [command("bun run types")] : []),
-          command("bun run dev"),
-          open,
-          "",
-          "Or in Docker, with the database file on a volume:",
-          command(upCommand(answers).join(" ")),
-        ]
+      ? up
+        ? [
+            `Running in Docker, with the database file on a volume: open ${urls}`,
+            ...restart,
+            ...sqliteHost,
+          ]
+        : [
+            ...(installed ? [] : [`First run ${inline("bun install")}.`, ""]),
+            ...sqliteHost,
+            open,
+            "",
+            "Or in Docker, with the database file on a volume:",
+            command(upCommand(answers).join(" ")),
+          ]
       : [
           ...(installed
             ? []
             : [`First run ${inline("bun install")}: the Dockerfile needs its bun.lock.`, ""]),
-          "Run everything in Docker:",
-          command(upCommand(answers).join(" ")),
-          open,
-          "",
+          ...(up
+            ? [`Running in Docker: open ${urls}`, ...restart]
+            : ["Run everything in Docker:", command(upCommand(answers).join(" ")), open, ""]),
           "Or run Graphoria on the host against the database container:",
+          ...stopContainer,
           command(
             answers.database === "mssql"
               ? "docker compose run --rm db-init"
