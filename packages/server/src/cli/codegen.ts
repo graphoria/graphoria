@@ -2,6 +2,7 @@ import { readdir, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { isString } from "es-toolkit/compat";
 import { format } from "oxfmt";
+import { z } from "zod";
 
 import type { Configuration } from "../types/configuration";
 import type { CodegenArgs } from "./codegenArgs";
@@ -96,7 +97,13 @@ export const runCodegen = async (
 
   const configPath =
     args.config ?? (isString(env.configuration) ? env.configuration : "./graphoria.ts");
-  const configuration = withoutCaches(ConfigurationZod.parse(await loadConfiguration(configPath)));
+  const parsed = ConfigurationZod.safeParse(await loadConfiguration(configPath));
+  if (!parsed.success) {
+    throw new Error(`${relative(process.cwd(), resolve(configPath))} is invalid`, {
+      cause: parsed.error,
+    });
+  }
+  const configuration = withoutCaches(parsed.data);
 
   // No setQueryTimeoutMs, unlike the boot: with a timeout set, every SQLite
   // connection logs a warn, and an in-process run would leave the process-wide
@@ -181,14 +188,40 @@ export const summaryLines = (
   ];
 };
 
+const pathOf = (path: PropertyKey[]) =>
+  path.reduce<string>(
+    (text, key) =>
+      typeof key === "number" ? `${text}[${key}]` : text ? `${text}.${String(key)}` : String(key),
+    "",
+  );
+
+/** What a failed run prints: the error's message, and a zod cause's issues a row apiece. */
+export const failureLines = (error: unknown, paint: Paint = PLAIN_PAINT): string[] => {
+  const [first, ...rest] = (error instanceof Error ? error.message : String(error)).split("\n");
+  const lines = [
+    `${paint.accent(paint.name("graphoria codegen"))}  ${paint.failure("failed")}`,
+    "",
+    `  ${paint.failure("✗")} ${first}`,
+    ...rest.map((line) => `    ${line}`),
+  ];
+  const cause = error instanceof Error ? error.cause : undefined;
+  if (!(cause instanceof z.ZodError)) return lines;
+  const rows = cause.issues.map(({ path, message }) => [pathOf(path), message] as const);
+  const width = Math.max(0, ...rows.map(([at]) => at.length));
+  return [
+    ...lines,
+    ...rows.map(
+      ([at, message]) => `    ${at ? `${paint.code(at.padEnd(width))}  ` : ""}${message}`,
+    ),
+  ];
+};
+
 export const codegenCommand = async (argv: string[]): Promise<void> => {
-  const log = logger("cli");
   let args: CodegenArgs;
   try {
     args = parseCodegenArgs(argv);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    log.error({ err: error }, `codegen: ${msg}`);
+    console.error(`codegen: ${error instanceof Error ? error.message : String(error)}`);
     console.error(CODEGEN_USAGE);
     process.exit(2);
   }
@@ -205,8 +238,9 @@ export const codegenCommand = async (argv: string[]): Promise<void> => {
     console.log(lines.join("\n"));
     process.exit(0);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    log.error({ err: error }, `codegen failed: ${msg}`);
+    // Not console.error: Bun would print it all in red on a terminal.
+    process.stderr.write(`${failureLines(error, paintFor(process.stderr)).join("\n")}\n`);
+    if (logger("cli").isLevelEnabled("debug")) process.stderr.write(`\n${Bun.inspect(error)}\n`);
     process.exit(1);
   }
 };

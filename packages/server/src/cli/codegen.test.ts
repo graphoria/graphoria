@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -71,6 +71,7 @@ const codegen = (dir: string, args: string[] = [], env: Record<string, string> =
   return {
     exitCode: result.exitCode,
     stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
     output: result.stdout.toString() + result.stderr.toString(),
     ms: performance.now() - started,
   };
@@ -251,7 +252,12 @@ describe("graphoria codegen", () => {
       {},
       'remote schema "ext"',
     ],
-    ["a database it cannot open", { filename: "/nonexistent-dir/app.db" }, {}, "codegen failed"],
+    [
+      "a database it cannot open",
+      { filename: "/nonexistent-dir/app.db" },
+      {},
+      "  ✗ unable to open database file\n",
+    ],
   ])(
     "exits 1 with nothing written on %s",
     async (_case, options, env, message) => {
@@ -270,21 +276,57 @@ describe("graphoria codegen", () => {
     [
       "fails to load",
       'export default () => { throw new Error("BOOKS_URL is not set (see .env)"); };\n',
+      ["  ✗ Configuration could not be loaded: BOOKS_URL is not set (see .env)"],
     ],
-    ["fails to validate", "export default () => ({ name: 1 });\n"],
+    [
+      "fails to validate",
+      "export default () => ({ name: 1 });\n",
+      [
+        "  ✗ graphoria.ts is invalid",
+        "    name     Invalid input: expected string, received number",
+        "    version  Invalid input: expected string, received undefined",
+      ],
+    ],
   ])(
-    "exits 1 with nothing written on a config that %s",
-    async (_case, source) => {
+    "exits 1 with nothing written on a config that %s, saying why on stderr alone",
+    async (_case, source, lines) => {
       const dir = await project();
       await writeFile(join(dir, "graphoria.ts"), source);
 
       const result = codegen(dir);
 
       expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(["graphoria codegen  failed", "", ...lines, ""].join("\n"));
       expect(await ls(join(dir, ".graphoria"))).toEqual([]);
     },
     30_000,
   );
+
+  it("names the file it looked for when the config is missing", async () => {
+    const dir = await project();
+
+    const result = codegen(dir, ["--config", "./missing.ts"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      `  ✗ Configuration could not be loaded: no file at ${join(await realpath(dir), "missing.ts")}\n`,
+    );
+  }, 30_000);
+
+  it("prints the stack too under LOG_LEVEL=debug", async () => {
+    const dir = await project();
+    await writeFile(
+      join(dir, "graphoria.ts"),
+      'export default () => { throw new Error("BOOKS_URL is not set"); };\n',
+    );
+
+    const quiet = codegen(dir);
+    const loud = codegen(dir, [], { LOG_LEVEL: "debug" });
+
+    expect(quiet.stderr).not.toContain("graphoria.ts:1:");
+    expect(loud.stderr).toContain("graphoria.ts:1:");
+  }, 30_000);
 
   it("prints the usage and exits 2 on an unknown flag", async () => {
     const dir = await project();
@@ -292,7 +334,10 @@ describe("graphoria codegen", () => {
     const result = codegen(dir, ["--nope"]);
 
     expect(result.exitCode).toBe(2);
-    expect(result.output).toContain("Usage: graphoria codegen");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "codegen: Unknown option '--nope'\nUsage: graphoria codegen [--config <path>] [--out <dir>] [--types <file>]\n",
+    );
   }, 30_000);
 
   it("deletes the files of a role no longer configured", async () => {
@@ -380,5 +425,62 @@ describe("graphoria codegen", () => {
     expect(typesLine(2)[4]).toBe("  ✓ tRPC output types   graphoria-env.d.ts (2 operations)");
     expect(typesLine()[4]).toBe("  – tRPC output types   skipped: @trpc/server is not installed");
     expect(typesLine(1)[6]).toBe("  Done in 4.2s");
+  });
+});
+
+describe("failureLines", () => {
+  it("prints the error under a failed header", async () => {
+    const { failureLines } = await import("./codegen");
+
+    expect(failureLines(new Error("boom"))).toEqual(["graphoria codegen  failed", "", "  ✗ boom"]);
+  });
+
+  it("indents a message's next lines under its first", async () => {
+    const { failureLines } = await import("./codegen");
+
+    expect(
+      failureLines(
+        new Error(
+          'Configuration references 1 name that do not exist:\n  - a.b — no table named "b"',
+        ),
+      ),
+    ).toEqual([
+      "graphoria codegen  failed",
+      "",
+      "  ✗ Configuration references 1 name that do not exist:",
+      '      - a.b — no table named "b"',
+    ]);
+  });
+
+  it("prints a zod cause's issues a row apiece, their paths aligned", async () => {
+    const { failureLines } = await import("./codegen");
+    const { z } = await import("zod");
+    const parsed = z
+      .strictObject({ name: z.string(), databases: z.array(z.object({ type: z.string() })) })
+      .safeParse({ name: 1, databases: [{}], extra: true });
+
+    expect(failureLines(new Error("graphoria.ts is invalid", { cause: parsed.error }))).toEqual([
+      "graphoria codegen  failed",
+      "",
+      "  ✗ graphoria.ts is invalid",
+      "    name               Invalid input: expected string, received number",
+      "    databases[0].type  Invalid input: expected string, received undefined",
+      '    Unrecognized key: "extra"',
+    ]);
+  });
+
+  it("paints the verdict and the mark in the failure color", async () => {
+    const { failureLines } = await import("./codegen");
+    const { COLOR_PAINT } = await import("./paint");
+
+    const lines = failureLines(new Error("boom"), COLOR_PAINT);
+
+    expect(lines.map((line) => Bun.stripANSI(line))).toEqual([
+      "graphoria codegen  failed",
+      "",
+      "  ✗ boom",
+    ]);
+    expect(lines[0]).toEndWith("  \x1b[31mfailed\x1b[39m");
+    expect(lines[2]).toBe("  \x1b[31m✗\x1b[39m boom");
   });
 });

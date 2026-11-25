@@ -84,7 +84,17 @@ graphoria codegen  4 roles: superadmin, anonymous, reader, editor
   Done in 412ms
 ```
 
-In a terminal the summary is in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
+On a failure, it prints what failed on stderr: the error, and a row per invalid field of a config that does not validate. `LOG_LEVEL=debug` adds the stack.
+
+```
+graphoria codegen  failed
+
+  ✗ graphoria.ts is invalid
+    name     Invalid input: expected string, received number
+    version  Invalid input: expected string, received undefined
+```
+
+In a terminal both are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1` keeps it through a pipe.
 
 ## Errors
 
