@@ -124,7 +124,7 @@ Config-authoring types + helpers live in `packages/server/src/config/` (exposed 
 - **Strict TypeScript**. Avoid `any`; if forced, comment why. `as unknown as X` is a yellow flag — usually means a real type contract is being papered over.
 - **Comments policy**: write none by default. Only when WHY is non-obvious — invariants, hidden constraints, workarounds. Don't restate WHAT.
 - **Comparisons of secrets**: always `crypto.timingSafeEqual` (see `safeCompare` in `jwt.ts` / `paseto.ts`).
-- **Configuration files** (`graphoria.ts`) are TypeScript modules whose default export is a _function_ `(helpers) => ConfigurationInput`. They're loaded via dynamic `import()` and validated against `ConfigurationZod` at startup.
+- **Configuration files** (`graphoria.ts`) are TypeScript modules whose default export is a _function_ `(helpers) => ConfigurationInput`. They're loaded via dynamic `import()`, or passed to the `configuration` option as the function itself or a `ConfigurationInput` object (`loadConfiguration` resolves all three), and validated against `ConfigurationZod` at startup.
 
 ---
 
