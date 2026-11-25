@@ -380,10 +380,30 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean, up = f
 export const upCommand = ({ frontend, trpc }: Pick<InitAnswers, "frontend" | "trpc">): string[] =>
   frontend || trpc ? ["bun", "run", "up"] : ["docker", "compose", "up", "-d", "--build"];
 
+type DemoUsers = { reader: string; editor: string };
+
+const seedCommands = (
+  { database }: Pick<InitAnswers, "database">,
+  users: DemoUsers,
+  paint: Paint,
+) => {
+  const seed = (role: "reader" | "editor", password: string) =>
+    `  ${paint.code(`bunx graphoria seed-auth --user ${role} --password `)}${paint.secret(password)}${paint.code(` --role ${role} --config ./graphoria.ts`)}`;
+  return [
+    seed("reader", users.reader),
+    seed("editor", users.editor),
+    ...(database === "sqlite"
+      ? [
+          `(SQLite in Docker: run them inside the container, prefixed with ${paint.code("`docker compose exec graphoria`")}.)`,
+        ]
+      : []),
+  ];
+};
+
 export const nextSteps = (
   answers: InitAnswers,
   installed: boolean,
-  users?: { reader: string; editor: string },
+  users?: DemoUsers,
   paint: Paint = PLAIN_PAINT,
   up = false,
 ) => {
@@ -393,8 +413,6 @@ export const nextSteps = (
   const inline = (code: string) => paint.code(`\`${code}\``);
   const link = (port: number, path = "") => paint.url(`http://localhost:${port}${path}`);
   const { ports } = answers;
-  const seed = (role: "reader" | "editor", password: string) =>
-    `  ${paint.code(`bunx graphoria seed-auth --user ${role} --password `)}${paint.secret(password)}${paint.code(` --role ${role} --config ./graphoria.ts`)}`;
 
   const open = answers.frontend
     ? `  then open ${link(ports.app)} (the app) or ${link(ports.app, "/graphiql")}`
@@ -454,13 +472,7 @@ export const nextSteps = (
       ? [
           "",
           `${paint.name("Two demo users")}, one per role. Once the database is up, create them:`,
-          seed("reader", users.reader),
-          seed("editor", users.editor),
-          ...(answers.database === "sqlite"
-            ? [
-                `(SQLite in Docker: run them inside the container, prefixed with ${inline("docker compose exec graphoria")}.)`,
-              ]
-            : []),
+          ...seedCommands(answers, users, paint),
           "Without a token you read the authors. A reader also reads the published books; an editor",
           "reads every book, adds drafts (addBook) and publishes them (publishBook).",
           "Log in with auth_login in GraphiQL or POST /rest/auth/login, then send",
@@ -714,20 +726,27 @@ export const initCommand = async (argv: string[]): Promise<never> => {
     [...(args.install ? [INSTALL] : []), ...(args.up ? upSteps(answers) : [])],
     { cwd: dir, out: process.stdout, errors: process.stderr, paint },
   );
-  if (failed === INSTALL) {
-    console.error("init: bun install failed. The files are written; run `bun install` next.");
-    process.exit(1);
-  }
   console.log("");
-
-  // The steps print even when --up failed: they carry the demo users' passwords.
-  console.log(nextSteps(answers, args.install, users, paint, args.up));
   if (failed) {
-    const up = upCommand(answers).join(" ");
+    // The guide is for a project that runs, but the passwords print nowhere else.
+    if (users) {
+      console.log(
+        [
+          `${paint.name("Two demo users")}, one per role; their passwords print only here. Once the database is up, create them:`,
+          ...seedCommands(answers, users, paint),
+          "",
+        ].join("\n"),
+      );
+    }
+    const url = `http://localhost:${answers.ports.app}${answers.frontend ? "" : "/graphiql"}`;
     console.error(
-      `init: ${failed.command.join(" ")} failed. The project is written and installed: fix the error above, then run \`${up}\`.`,
+      failed === INSTALL
+        ? "init: bun install failed. The files are written; run `bun install` next."
+        : `init: ${failed.command.join(" ")} failed. The project is written and installed: fix the error above, then run \`${upCommand(answers).join(" ")}\` and open ${url}.`,
     );
     process.exit(1);
   }
+
+  console.log(nextSteps(answers, args.install, users, paint, args.up));
   process.exit(0);
 };

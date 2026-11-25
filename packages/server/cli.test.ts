@@ -1048,7 +1048,7 @@ describe("cli init", () => {
     expect(await calls(bin)).not.toContain("bun install --silent --no-env-file");
   });
 
-  it("exits 1 when an --up step fails, after the steps and its output, keeping the files", async () => {
+  it("exits 1 when an --up step fails, after its output, with what to run next in place of the guide", async () => {
     const bin = await fakeBun();
     const { cwd, result } = await init(
       ["--yes", "--database", "sqlite", "--trpc", "--up"],
@@ -1060,16 +1060,44 @@ describe("cli init", () => {
     );
     cwds.push(cwd);
     const stdout = result.stdout.toString();
+    const { PORT } = await env(cwd);
 
     expect(result.exitCode).toBe(1);
     expect(stdout).toContain("✗ Building and starting the containers failed");
-    expect(stdout).toContain("Recreate this setup");
+    expect(stdout).not.toContain("bun run dev");
+    expect(stdout).not.toContain("Recreate this setup");
     expect(result.stderr.toString()).toContain("port is already allocated");
-    expect(result.stderr.toString()).toContain(
-      "init: docker compose up -d --build failed. The project is written and installed: fix the error above, then run `bun run up`.",
+    expect(result.stderr.toString()).toEndWith(
+      `\ninit: docker compose up -d --build failed. The project is written and installed: fix the error above, then run \`bun run up\` and open http://localhost:${PORT}/graphiql.\n`,
     );
     expect(await readdir(cwd)).toContain("graphoria.ts");
   });
+
+  it.each([
+    ["the install", { FAKE_BUN_ERROR: "error: GET https://registry.npmjs.org/nope - 404" }],
+    ["an --up step", { FAKE_DOCKER_ERROR: "failed to solve" }],
+  ])(
+    "keeps the demo users' commands, whose passwords print nowhere else, when %s fails",
+    async (_step, failure) => {
+      const bin = await fakeBun();
+      const { cwd, result } = await init(
+        ["--yes", "--database", "sqlite", "--auth", "--up"],
+        undefined,
+        { PATH: `${bin}:${process.env.PATH}`, ...failure },
+      );
+      cwds.push(cwd);
+      const stdout = result.stdout.toString();
+
+      expect(result.exitCode).toBe(1);
+      expect(stdout).toContain(
+        "\nTwo demo users, one per role; their passwords print only here. Once the database is up, create them:\n",
+      );
+      expect(stdout).toMatch(
+        /\n {2}bunx graphoria seed-auth --user reader --password \S+ --role reader --config \.\/graphoria\.ts\n {2}bunx graphoria seed-auth --user editor --password \S+ --role editor --config \.\/graphoria\.ts\n/,
+      );
+      expect(stdout).not.toContain("Recreate this setup");
+    },
+  );
 
   it("stops at the --up step that fails", async () => {
     const bin = await fakeBun();
