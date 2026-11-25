@@ -92,7 +92,7 @@ bun run types
 
 It writes `web/graphql-env.d.ts`; commit that file. Until it exists the app still runs, but `tsc` reports errors in `web/`. After a change to the tables or to `graphoria.ts` (permissions, operations, remotes), run `bun run types` again: restarting `bun run dev` no longer refreshes the schemas.
 
-`bun run up` runs everything in Docker with the types written: it starts the database container and waits for the seed (on SQL Server it runs `db-init`; SQLite has no container), runs `bun run types` against it, then `docker compose up -d --build`. `init` prints it in place of `docker compose up -d --build`, and `init --up` runs its steps right after the install.
+`bun run up` runs everything in Docker with the types written: it starts the database container and waits for the seed (on SQL Server it runs `db-init`; SQLite has no container), runs `bun run types` against it, then `docker compose up -d --build`. It runs Docker with `--progress quiet`, which prints only errors: when the image build fails, run `docker compose up -d --build` to see the build's log. `init` prints it in place of `docker compose up -d --build`, and `init --up` runs its steps right after the install.
 
 ### Add a RabbitMQ broker with `--rabbitmq`
 

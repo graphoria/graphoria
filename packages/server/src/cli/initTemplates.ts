@@ -162,50 +162,55 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
 // dependabot bumps.
 const TRPC_VERSION = "11.28.0";
 
-const START_DATABASE: Step = {
+const startDatabase = (compose: string[]): Step => ({
   doing: "Starting the database",
   done: "Started the database",
-  command: ["docker", "compose", "up", "-d", "--wait", "db"],
-};
+  command: [...compose, "up", "-d", "--wait", "db"],
+});
 
 // What bun run up runs before bun run types reads the database: the container,
 // seeded. SQL Server's db-init seeds it once the server is up; SQLite has none.
-const DATABASE_UP: Record<ProjectValues["database"], Step[]> = {
-  pg: [START_DATABASE],
-  mysql: [START_DATABASE],
-  mssql: [
+const DATABASE_UP: Record<ProjectValues["database"], (compose: string[]) => Step[]> = {
+  pg: (compose) => [startDatabase(compose)],
+  mysql: (compose) => [startDatabase(compose)],
+  mssql: (compose) => [
     {
       doing: "Starting and seeding the database",
       done: "Started and seeded the database",
-      command: ["docker", "compose", "run", "--rm", "db-init"],
+      command: [...compose, "run", "--rm", "db-init"],
     },
   ],
-  sqlite: [],
+  sqlite: () => [],
 };
 
-const START_EVERYTHING: Step = {
-  doing: "Building and starting the containers",
-  done: "Built and started the containers",
-  command: ["docker", "compose", "up", "-d", "--build"],
+/**
+ * What runs the project in Docker: bun run up's steps where the project has the script.
+ *
+ * Quiet for the script: Docker prints only its errors, though a failed build's error then leaves
+ * out the build's log. init runs the steps loud, since it holds their output back and prints it
+ * only for the step that fails.
+ */
+export const upSteps = (
+  { database, frontend, trpc }: Pick<ProjectValues, "database" | "frontend" | "trpc">,
+  { quiet = false } = {},
+): Step[] => {
+  const compose = ["docker", "compose", ...(quiet ? ["--progress", "quiet"] : [])];
+  const everything: Step = {
+    doing: "Building and starting the containers",
+    done: "Built and started the containers",
+    command: [...compose, "up", "-d", "--build"],
+  };
+  if (!frontend && !trpc) return [everything];
+  return [
+    ...DATABASE_UP[database](compose),
+    {
+      doing: "Generating schemas, OpenAPI documents and types",
+      done: "Generated schemas, OpenAPI documents and types",
+      command: ["bun", "run", ...(quiet ? ["--silent"] : []), "types"],
+    },
+    everything,
+  ];
 };
-
-/** What runs the project in Docker: bun run up's steps where the project has the script. */
-export const upSteps = ({
-  database,
-  frontend,
-  trpc,
-}: Pick<ProjectValues, "database" | "frontend" | "trpc">): Step[] =>
-  frontend || trpc
-    ? [
-        ...DATABASE_UP[database],
-        {
-          doing: "Generating schemas, OpenAPI documents and types",
-          done: "Generated schemas, OpenAPI documents and types",
-          command: ["bun", "run", "types"],
-        },
-        START_EVERYTHING,
-      ]
-    : [START_EVERYTHING];
 
 const packageJson = (
   { name, database, rabbitmq, ai, mcp, auth, frontend, trpc }: ProjectValues,
@@ -221,7 +226,7 @@ const packageJson = (
         start: "bun index.ts",
         ...((frontend || trpc) && {
           types: frontend ? "graphoria codegen && gql-tada generate output" : "graphoria codegen",
-          up: upSteps({ database, frontend, trpc })
+          up: upSteps({ database, frontend, trpc }, { quiet: true })
             .map(({ command }) => command.join(" "))
             .join(" && "),
         }),

@@ -152,21 +152,21 @@ describe("generated types", () => {
       dev: "bun --watch index.ts",
       start: "bun index.ts",
       types: "graphoria codegen",
-      up: "docker compose up -d --wait db && bun run types && docker compose up -d --build",
+      up: "docker compose --progress quiet up -d --wait db && bun run --silent types && docker compose --progress quiet up -d --build",
     });
   });
 
   it.each([
-    ["pg", "docker compose up -d --wait db && "],
-    ["mysql", "docker compose up -d --wait db && "],
-    ["mssql", "docker compose run --rm db-init && "],
+    ["pg", "docker compose --progress quiet up -d --wait db && "],
+    ["mysql", "docker compose --progress quiet up -d --wait db && "],
+    ["mssql", "docker compose --progress quiet run --rm db-init && "],
     ["sqlite", ""],
   ] as const)(
     "starts %s's seeded database for bun run types, then everything, with bun run up",
     (database, before) => {
       for (const patch of [{ frontend: true }, { trpc: true }]) {
         expect(JSON.parse(renderWith(patch, database)["package.json"]!).scripts.up).toBe(
-          `${before}bun run types && docker compose up -d --build`,
+          `${before}bun run --silent types && docker compose --progress quiet up -d --build`,
         );
       }
     },
@@ -186,6 +186,20 @@ describe("generated types", () => {
         ["docker", "compose", "up", "-d", "--build"],
       ]);
     }
+  });
+
+  it("keeps Docker's progress and bun run's script line out of bun run up's steps when quiet", () => {
+    const loud = upSteps({ database: "mssql", frontend: true, trpc: false });
+    const quiet = upSteps({ database: "mssql", frontend: true, trpc: false }, { quiet: true });
+
+    expect(quiet.map(({ command }) => command)).toEqual([
+      ["docker", "compose", "--progress", "quiet", "run", "--rm", "db-init"],
+      ["bun", "run", "--silent", "types"],
+      ["docker", "compose", "--progress", "quiet", "up", "-d", "--build"],
+    ]);
+    expect(quiet.map(({ doing, done }) => [doing, done])).toEqual(
+      loud.map(({ doing, done }) => [doing, done]),
+    );
   });
 
   it("hands init --up docker compose up -d --build alone where there is no bun run up", () => {
@@ -1694,7 +1708,7 @@ describe("renderProject with the frontend", () => {
       dev: "bun --watch index.ts",
       start: "bun index.ts",
       types: "graphoria codegen && gql-tada generate output",
-      up: "docker compose up -d --wait db && bun run types && docker compose up -d --build",
+      up: "docker compose --progress quiet up -d --wait db && bun run --silent types && docker compose --progress quiet up -d --build",
     });
   });
 
