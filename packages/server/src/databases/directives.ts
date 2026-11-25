@@ -22,7 +22,7 @@ const sqlString = (value: unknown): string => {
 };
 
 // Directive handlers registry
-export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
+const HANDLERS = {
   uppercase: (querySelector) => `UPPER(${querySelector})`,
   lowercase: (querySelector) => `LOWER(${querySelector})`,
   truncate: (querySelector, directive, dbType) =>
@@ -101,6 +101,43 @@ export const DIRECTIVE_HANDLERS: Record<string, DirectiveHandler> = {
   abs: (querySelector) => `ABS(${querySelector})`,
   multiply: (querySelector, directive) => `(${querySelector} * ${directive.arguments!["by"]})`,
   divide: (querySelector, directive) => `(${querySelector} / ${directive.arguments!["by"]})`,
+} satisfies Record<string, DirectiveHandler>;
+
+export type DirectiveName = keyof typeof HANDLERS;
+
+// Annotated, not inferred: through `satisfies` alone each handler keeps only the
+// parameters it declares, and a call passing all three would not compile.
+export const DIRECTIVE_HANDLERS: Record<DirectiveName, DirectiveHandler> = HANDLERS;
+
+// An own-key check: a plain lookup reads Object.prototype too, so `toString` would
+// render `[object Undefined]` and `hasOwnProperty` would throw.
+export const isDirectiveName = (name: string): name is DirectiveName =>
+  Object.hasOwn(DIRECTIVE_HANDLERS, name);
+
+/**
+ * The JSON type each transform answers. `default` is `COALESCE(col, value)` with
+ * the value bound as a string: it keeps a string, and SQLite answers any other
+ * column as bound on a null row.
+ */
+export const DIRECTIVE_RESULT_TYPES: Record<DirectiveName, "string" | "number" | "default"> = {
+  uppercase: "string",
+  lowercase: "string",
+  truncate: "string",
+  default: "default",
+  trim: "string",
+  ltrim: "string",
+  rtrim: "string",
+  substring: "string",
+  replace: "string",
+  concat: "string",
+  pad: "string",
+  dateFormat: "string",
+  round: "number",
+  ceil: "number",
+  floor: "number",
+  abs: "number",
+  multiply: "number",
+  divide: "number",
 };
 
 /**
@@ -116,8 +153,8 @@ export const applyDirectives = (
   if (!directives?.length) return querySelector;
 
   return directives.reduce((query, directive) => {
+    if (!isDirectiveName(directive.name)) return query;
     const handler = DIRECTIVE_HANDLERS[directive.name];
-    if (!handler) return query;
 
     // Resolve $name refs (both $static_N and user $var) to positional placeholders
     const resolvedArgs =

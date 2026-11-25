@@ -9,27 +9,33 @@ import type { InitAnswers } from "./initTemplates";
 import type { Choice } from "./prompt";
 
 import {
-  COLOR_PAINT,
-  PLAIN_PAINT,
   collectAnswers,
   findConflicts,
   generatePassword,
   generateSecret,
   isPortFree,
   nextSteps,
-  paintFor,
   passwordError,
+  pickPorts,
+  portNotes,
   portWarning,
   projectName,
   recreateCommand,
   sampleQuery,
+  upCommand,
 } from "./init";
+import { DEFAULT_PORTS } from "./initTemplates";
+import { COLOR_PAINT, PLAIN_PAINT } from "./paint";
 
-const ARGS: InitArgs = { yes: false, install: true };
+const ARGS: InitArgs = { yes: false, install: true, up: false };
 
 type Menus = { select?: number[]; multiSelect?: number[][] };
 
-const prompter = (answers: (string | null)[] = [], menus: Menus = {}) => {
+const prompter = (
+  answers: (string | null)[] = [],
+  menus: Menus = {},
+  isPortFree: (port: number) => boolean = () => true,
+) => {
   const fallbacks: string[] = [];
   const said: string[] = [];
   const selected: string[] = [];
@@ -54,6 +60,7 @@ const prompter = (answers: (string | null)[] = [], menus: Menus = {}) => {
       const picks = menus.multiSelect?.shift();
       return picks === undefined ? [...initial] : picks.map((index) => choices[index].value);
     },
+    isPortFree,
   };
   return { fallbacks, multi, multiOptions, said, selected, io };
 };
@@ -67,6 +74,7 @@ describe("collectAnswers", () => {
     expect(answers.dbName).toBe("app");
     expect(answers.dbPassword).toMatch(/^[A-Za-z0-9]{16}$/);
     expect(answers.dbPort).toBe(5432);
+    expect(answers.dbPortGiven).toBe(false);
     expect(answers.rabbitmq).toBe(false);
     expect(answers.ai).toBe(false);
     expect(answers.mcp).toBe(false);
@@ -105,6 +113,7 @@ describe("collectAnswers", () => {
       dbName: "shop",
       dbPassword: "S3cret.pass",
       dbPort: 13306,
+      dbPortGiven: true,
       rabbitmq: true,
       ai: false,
       mcp: false,
@@ -118,7 +127,40 @@ describe("collectAnswers", () => {
       metrics: false,
       tracing: false,
       virtualColumns: false,
+      ports: DEFAULT_PORTS,
     });
+  });
+
+  it("offers the first free port from the engine's as the database port", async () => {
+    const io = prompter([], {}, (port) => port !== 5432);
+    const answers = await collectAnswers(ARGS, io.io);
+
+    expect(io.fallbacks.at(-1)).toBe("5433");
+    expect(answers.dbPort).toBe(5433);
+    expect(answers.dbPortGiven).toBe(false);
+  });
+
+  it("keeps the --db-port it was given, taken or not", async () => {
+    const io = prompter([], {}, () => false);
+
+    expect(await collectAnswers({ ...ARGS, dbPort: 15432 }, io.io)).toMatchObject({
+      dbPort: 15432,
+      dbPortGiven: true,
+    });
+  });
+
+  it("counts a port typed at the question as given, and the offered one as picked", async () => {
+    const typed = await collectAnswers(ARGS, prompter(["app", "pw", "15432"]).io);
+    const offered = await collectAnswers(ARGS, prompter(["app", "pw", "5432"]).io);
+
+    expect(typed).toMatchObject({ dbPort: 15432, dbPortGiven: true });
+    expect(offered).toMatchObject({ dbPort: 5432, dbPortGiven: false });
+  });
+
+  it("picks the published ports through the prober it was given", async () => {
+    const io = prompter([], {}, (port) => port !== 3000);
+
+    expect((await collectAnswers(ARGS, io.io)).ports.app).toBe(3001);
   });
 
   it("defaults the port to the engine chosen in the menu", async () => {
@@ -418,6 +460,7 @@ describe("collectAnswers", () => {
       dbName: "app",
       dbPassword: "",
       dbPort: 0,
+      dbPortGiven: false,
       rabbitmq: false,
       ai: false,
       mcp: false,
@@ -431,6 +474,7 @@ describe("collectAnswers", () => {
       metrics: false,
       tracing: false,
       virtualColumns: false,
+      ports: DEFAULT_PORTS,
     });
     expect(io.fallbacks).toEqual(["app"]);
   });
@@ -548,11 +592,115 @@ describe("portWarning", () => {
     expect(warning).toContain("RabbitMQ");
     expect(warning).toContain("RABBITMQ_PORT");
   });
+});
 
-  it("says to free a port that no .env variable moves", () => {
-    expect(portWarning(4318, { service: "Jaeger OTLP receiver" }, () => false)).toBe(
-      "Port 4318 is in use on this host, so Docker Compose cannot publish the Jaeger OTLP receiver on it. No .env variable moves it, so free it before `docker compose up`.",
+describe("pickPorts", () => {
+  const everything = {
+    database: "pg" as const,
+    dbPort: 5432,
+    redis: true,
+    rabbitmq: true,
+    dataTools: true,
+    metrics: true,
+    tracing: true,
+  };
+
+  it("publishes each service on its own port when every port is free", () => {
+    expect(pickPorts(everything, () => true)).toEqual(DEFAULT_PORTS);
+  });
+
+  it("moves a taken port to the next free one, never onto a port it already gave", () => {
+    const busy = new Set([3000, 6379, 6380]);
+    const ports = pickPorts(everything, (port) => !busy.has(port));
+
+    expect(ports).toMatchObject({ app: 3001, redis: 6381, grafana: 3002 });
+  });
+
+  it("leaves the database's port to the database", () => {
+    expect(pickPorts({ ...everything, dbPort: 3000 }, () => true).app).toBe(3001);
+    expect(pickPorts({ ...everything, database: "sqlite", dbPort: 0 }, () => true).app).toBe(3000);
+  });
+
+  it("probes only the ports the project publishes", () => {
+    const probed: number[] = [];
+    const plain = {
+      database: "pg" as const,
+      dbPort: 5432,
+      redis: false,
+      rabbitmq: false,
+      dataTools: false,
+      metrics: false,
+      tracing: false,
+    };
+    const ports = pickPorts(plain, (port) => {
+      probed.push(port);
+      return true;
+    });
+
+    expect(probed).toEqual([3000]);
+    expect(ports).toEqual(DEFAULT_PORTS);
+  });
+});
+
+describe("portNotes", () => {
+  const answers: InitAnswers = {
+    database: "pg",
+    dbName: "app",
+    dbPassword: "S3cret.pass",
+    dbPort: 5432,
+    dbPortGiven: false,
+    rabbitmq: true,
+    ai: false,
+    mcp: false,
+    auth: false,
+    redis: true,
+    dataTools: true,
+    frontend: false,
+    trpc: false,
+    cron: false,
+    rateLimit: false,
+    metrics: true,
+    tracing: true,
+    virtualColumns: false,
+    ports: DEFAULT_PORTS,
+  };
+
+  it("says nothing when every port is the default and free", () => {
+    expect(portNotes(answers, () => true)).toEqual([]);
+  });
+
+  it("names each moved port, the port it got and the variable that holds it", () => {
+    const moved = { ...DEFAULT_PORTS, app: 3002, redis: 6380, jaegerOtlp: 4319, grafana: 3003 };
+
+    expect(portNotes({ ...answers, ports: moved }, () => true)).toEqual([
+      "Port 3000 is taken, so Graphoria uses 3002 instead (PORT in .env).",
+      "Port 6379 is taken, so Redis uses 6380 instead (REDIS_PORT in .env).",
+      "Port 4318 is taken, so Jaeger's OTLP receiver uses 4319 instead (JAEGER_OTLP_PORT in .env).",
+      "Port 3001 is taken, so Grafana uses 3003 instead (GRAFANA_PORT in .env).",
+    ]);
+  });
+
+  it("says when it moved the database off its engine's taken port, unless the port was given", () => {
+    const isFree = (port: number) => port !== 5432;
+    const moved = { ...answers, dbPort: 5433 };
+
+    expect(portNotes(moved, isFree)).toEqual([
+      "Port 5432 is taken, so the database uses 5433 instead (DB_PORT in .env).",
+    ]);
+    expect(portNotes({ ...moved, dbPortGiven: true }, isFree)).toEqual([]);
+  });
+
+  it("warns about a database port that is itself taken", () => {
+    const given = { ...answers, dbPort: 15432, dbPortGiven: true };
+    const [warning] = portNotes(given, (port) => port !== 15432);
+
+    expect(warning).toStartWith(
+      "Port 15432 is in use on this host, so Docker Compose cannot publish the database on it. Set DB_PORT in .env",
     );
+  });
+
+  it("has no database port to speak of on SQLite", () => {
+    expect(portNotes({ ...answers, database: "sqlite", dbPort: 0 }, () => false)).toEqual([]);
   });
 });
 
@@ -588,6 +736,7 @@ const ANSWERS: InitAnswers = {
   dbName: "app",
   dbPassword: "S3cret.pass",
   dbPort: 5432,
+  dbPortGiven: true,
   rabbitmq: false,
   ai: false,
   mcp: false,
@@ -601,6 +750,7 @@ const ANSWERS: InitAnswers = {
   metrics: false,
   tracing: false,
   virtualColumns: false,
+  ports: DEFAULT_PORTS,
 };
 
 describe("recreateCommand", () => {
@@ -642,8 +792,37 @@ describe("recreateCommand", () => {
     );
   });
 
+  it("adds --up when init ran the project", () => {
+    expect(recreateCommand(ANSWERS, true, true)).toBe(
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --up",
+    );
+    expect(nextSteps(ANSWERS, true, undefined, PLAIN_PAINT, true)).toContain(
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --up",
+    );
+  });
+
+  it("leaves out a database port init picked, so a copy gets a free one", () => {
+    expect(recreateCommand({ ...ANSWERS, dbPort: 5433, dbPortGiven: false }, true)).toBe(
+      "bunx graphoria init --yes --database pg --db-name app",
+    );
+  });
+
   it("never carries a password", () => {
     expect(recreateCommand(ANSWERS, true)).not.toContain(ANSWERS.dbPassword);
+  });
+});
+
+describe("upCommand", () => {
+  it("runs bun run up where the project has it, docker compose up -d --build elsewhere", () => {
+    expect(upCommand({ frontend: false, trpc: false })).toEqual([
+      "docker",
+      "compose",
+      "up",
+      "-d",
+      "--build",
+    ]);
+    expect(upCommand({ frontend: true, trpc: false })).toEqual(["bun", "run", "up"]);
+    expect(upCommand({ frontend: false, trpc: true })).toEqual(["bun", "run", "up"]);
   });
 });
 
@@ -903,6 +1082,131 @@ describe("nextSteps", () => {
     );
   });
 
+  it("runs bun run types before bun run dev whenever the project has the script", () => {
+    expect(nextSteps({ ...ANSWERS, frontend: true }, true)).toContain(
+      "  docker compose up -d --wait db\n  bun run types\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, database: "mssql", trpc: true }, true)).toContain(
+      "  docker compose run --rm db-init\n  bun run types\n  bun run dev\n",
+    );
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, trpc: true }, true)).toContain(
+      "the first `bun run types` creates app.db and seeds it:\n  bun run types\n  bun run dev\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("bun run types");
+  });
+
+  it("runs everything in Docker with bun run up whenever the project has the script", () => {
+    expect(nextSteps({ ...ANSWERS, frontend: true }, true)).toContain(
+      "Run everything in Docker:\n  bun run up\n",
+    );
+    expect(nextSteps({ ...ANSWERS, database: "sqlite", dbPort: 0, trpc: true }, true)).toContain(
+      "Or in Docker, with the database file on a volume:\n  bun run up",
+    );
+    expect(nextSteps(ANSWERS, true)).toContain(
+      "Run everything in Docker:\n  docker compose up -d --build\n",
+    );
+    expect(nextSteps(ANSWERS, true)).not.toContain("bun run up");
+  });
+
+  it("says the project runs in Docker after --up, then how to run it on the host instead", () => {
+    const steps = nextSteps({ ...ANSWERS, trpc: true }, true, undefined, PLAIN_PAINT, true);
+
+    expect(steps).toStartWith(
+      "Running in Docker: open http://localhost:3000/graphiql\n" +
+        "Start it again later with:\n" +
+        "  bun run up\n" +
+        "\n" +
+        "Or run Graphoria on the host against the database container:\n" +
+        "  docker compose stop graphoria\n" +
+        "  docker compose up -d --wait db\n" +
+        "  bun run types\n" +
+        "  bun run dev\n",
+    );
+    expect(steps).not.toContain("Run everything in Docker");
+    expect(
+      nextSteps({ ...ANSWERS, frontend: true }, true, undefined, PLAIN_PAINT, true),
+    ).toStartWith(
+      "Running in Docker: open http://localhost:3000 (the app) or http://localhost:3000/graphiql\n",
+    );
+  });
+
+  it("says a SQLite project runs in Docker after --up, then how to run it on this machine", () => {
+    expect(
+      nextSteps(
+        { ...ANSWERS, database: "sqlite", dbPort: 0, trpc: true },
+        true,
+        undefined,
+        PLAIN_PAINT,
+        true,
+      ),
+    ).toStartWith(
+      "Running in Docker, with the database file on a volume: open http://localhost:3000/graphiql\n" +
+        "Start it again later with:\n" +
+        "  bun run up\n" +
+        "\n" +
+        "Or run it on this machine; the first `bun run types` creates app.db and seeds it:\n" +
+        "  docker compose stop graphoria\n" +
+        "  bun run types\n" +
+        "  bun run dev\n" +
+        "\n",
+    );
+  });
+
+  it("links each service on the port init picked for it", () => {
+    const ports = {
+      ...DEFAULT_PORTS,
+      app: 3005,
+      rabbitmqManagement: 15673,
+      dbgate: 9001,
+      redisCommander: 8082,
+      jaegerUi: 16687,
+      grafana: 3006,
+    };
+    const steps = nextSteps(
+      {
+        ...ANSWERS,
+        frontend: true,
+        rabbitmq: true,
+        redis: true,
+        dataTools: true,
+        mcp: true,
+        trpc: true,
+        metrics: true,
+        tracing: true,
+        ports,
+      },
+      true,
+    );
+
+    expect(steps).toContain(
+      "then open http://localhost:3005 (the app) or http://localhost:3005/graphiql",
+    );
+    for (const url of [
+      "http://localhost:3005/mcp",
+      "http://localhost:3005/trpc",
+      "http://localhost:3005/metrics",
+      "management UI: http://localhost:15673",
+      "the database at http://localhost:9001",
+      "Redis at http://localhost:8082",
+      "at http://localhost:16687",
+      "at http://localhost:3006",
+    ]) {
+      expect(steps).toContain(url);
+    }
+    expect(steps).not.toContain("localhost:3000");
+  });
+
+  it("names the files bun run types writes, and when to run it again", () => {
+    expect(nextSteps({ ...ANSWERS, frontend: true, trpc: true }, true)).toContain(
+      "`bun run types` reads the database, with no server running, and writes\n" +
+        "web/graphql-env.d.ts, which types the app's queries, and graphoria-env.d.ts, which types the plain-string operations. Commit both, and run it again\n" +
+        "after a change to the tables or to graphoria.ts.\n",
+    );
+    expect(nextSteps({ ...ANSWERS, trpc: true }, true)).toContain(
+      "\ngraphoria-env.d.ts, which types the plain-string operations. Commit it, and run it again\n",
+    );
+  });
+
   it("starts the broker and Redis too for a host run", () => {
     const both = { ...ANSWERS, rabbitmq: true, redis: true };
 
@@ -1065,41 +1369,5 @@ describe("nextSteps", () => {
     expect(steps).toContain(
       "  \x1b[36mbunx graphoria seed-auth --user reader --password \x1b[39m\x1b[33mReaderPass123\x1b[39m\x1b[36m --role reader --config ./graphoria.ts\x1b[39m",
     );
-  });
-});
-
-describe("paintFor", () => {
-  it.each([
-    {
-      what: "a terminal whose TERM takes color",
-      isTTY: true,
-      ansi: "\x1b[97m",
-      forced: false,
-      want: COLOR_PAINT,
-    },
-    { what: "a pipe", isTTY: undefined, ansi: "\x1b[97m", forced: false, want: PLAIN_PAINT },
-    {
-      what: "a pipe under FORCE_COLOR",
-      isTTY: undefined,
-      ansi: "\x1b[97m",
-      forced: true,
-      want: COLOR_PAINT,
-    },
-    {
-      what: "a pipe under FORCE_COLOR=0",
-      isTTY: undefined,
-      ansi: "",
-      forced: true,
-      want: PLAIN_PAINT,
-    },
-    {
-      what: "a terminal under NO_COLOR, TERM=dumb or no TERM",
-      isTTY: true,
-      ansi: "",
-      forced: false,
-      want: PLAIN_PAINT,
-    },
-  ])("picks the paint for $what", ({ isTTY, ansi, forced, want }) => {
-    expect(paintFor({ isTTY }, ansi, forced)).toBe(want);
   });
 });

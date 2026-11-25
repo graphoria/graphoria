@@ -1,12 +1,16 @@
 import type { DatabaseType } from "../config";
+import type { Step } from "./progress";
 
 import { GRAFANA_DASHBOARD } from "./grafanaDashboard";
+import { EMPTY_OPERATION_TYPES } from "./operationTypes";
 
 export type InitAnswers = {
   database: DatabaseType;
   dbName: string;
   dbPassword: string;
   dbPort: number;
+  // From --db-port or typed at the question, rather than the port init offered.
+  dbPortGiven: boolean;
   rabbitmq: boolean;
   ai: boolean;
   mcp: boolean;
@@ -20,6 +24,7 @@ export type InitAnswers = {
   metrics: boolean;
   tracing: boolean;
   virtualColumns: boolean;
+  ports: HostPorts;
 };
 
 export type ProjectValues = InitAnswers & {
@@ -62,26 +67,33 @@ const DBGATE_ENGINES: Record<ServerEngine, string> = {
   mssql: "mssql@dbgate-plugin-mssql",
 };
 
-export const RABBITMQ_PORT = 5672;
-export const RABBITMQ_MANAGEMENT_PORT = 15672;
+// The host ports Docker Compose publishes besides the database's, each one a
+// variable in .env.
+export type HostPorts = {
+  app: number;
+  redis: number;
+  rabbitmq: number;
+  rabbitmqManagement: number;
+  dbgate: number;
+  redisCommander: number;
+  jaegerUi: number;
+  jaegerOtlp: number;
+  grafana: number;
+};
 
-// The host port dbgate's single-page app is published on; it listens on 3000
-// inside its own container, which Graphoria already took on the host.
-export const DBGATE_PORT = 9000;
-
-// Redis Commander's own default port.
-export const REDIS_COMMANDER_PORT = 8081;
-
-// Jaeger's own UI port.
-export const JAEGER_UI_PORT = 16686;
-
-// The host port Jaeger takes OTLP on. No variable moves it: .env's
-// OTEL_EXPORTER_OTLP_ENDPOINT names it.
-export const JAEGER_OTLP_PORT = 4318;
-
-// The host port Grafana is published on; it listens on 3000 inside its own
-// container, which Graphoria already took on the host.
-export const GRAFANA_PORT = 3001;
+export const DEFAULT_PORTS: HostPorts = {
+  app: 3000,
+  redis: 6379,
+  rabbitmq: 5672,
+  rabbitmqManagement: 15672,
+  // dbgate and Grafana listen on 3000 inside their own containers, which
+  // Graphoria already takes on the host.
+  dbgate: 9000,
+  redisCommander: 8081,
+  jaegerUi: 16686,
+  jaegerOtlp: 4318,
+  grafana: 3001,
+};
 
 export const PROJECT_FILES = [
   "package.json",
@@ -107,6 +119,8 @@ export const FRONTEND_FILES = [
 ] as const;
 
 export const TRPC_FILES = ["web/trpc.ts"] as const;
+
+export const TRPC_ENV_FILES = ["graphoria-env.d.ts"] as const;
 
 export const METRICS_FILES = [
   "prometheus.yml",
@@ -148,8 +162,58 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
 // dependabot bumps.
 const TRPC_VERSION = "11.28.0";
 
+const startDatabase = (compose: string[]): Step => ({
+  doing: "Starting the database",
+  done: "Started the database",
+  command: [...compose, "up", "-d", "--wait", "db"],
+});
+
+// What bun run up runs before bun run types reads the database: the container,
+// seeded. SQL Server's db-init seeds it once the server is up; SQLite has none.
+const DATABASE_UP: Record<ProjectValues["database"], (compose: string[]) => Step[]> = {
+  pg: (compose) => [startDatabase(compose)],
+  mysql: (compose) => [startDatabase(compose)],
+  mssql: (compose) => [
+    {
+      doing: "Starting and seeding the database",
+      done: "Started and seeded the database",
+      command: [...compose, "run", "--rm", "db-init"],
+    },
+  ],
+  sqlite: () => [],
+};
+
+/**
+ * What runs the project in Docker: bun run up's steps where the project has the script.
+ *
+ * Quiet for the script: Docker prints only its errors, though a failed build's error then leaves
+ * out the build's log. init runs the steps loud, since it holds their output back and prints it
+ * only for the step that fails.
+ */
+export const upSteps = (
+  { database, frontend, trpc }: Pick<ProjectValues, "database" | "frontend" | "trpc">,
+  { quiet = false } = {},
+): Step[] => {
+  const compose = ["docker", "compose", ...(quiet ? ["--progress", "quiet"] : [])];
+  const everything: Step = {
+    doing: "Building and starting the containers",
+    done: "Built and started the containers",
+    command: [...compose, "up", "-d", "--build"],
+  };
+  if (!frontend && !trpc) return [everything];
+  return [
+    ...DATABASE_UP[database](compose),
+    {
+      doing: "Generating schemas, OpenAPI documents and types",
+      done: "Generated schemas, OpenAPI documents and types",
+      command: ["bun", "run", ...(quiet ? ["--silent"] : []), "types"],
+    },
+    everything,
+  ];
+};
+
 const packageJson = (
-  { name, rabbitmq, ai, mcp, auth, frontend, trpc }: ProjectValues,
+  { name, database, rabbitmq, ai, mcp, auth, frontend, trpc }: ProjectValues,
   { graphoria }: Versions,
 ) =>
   JSON.stringify(
@@ -157,13 +221,16 @@ const packageJson = (
       name,
       private: true,
       type: "module",
-      scripts: frontend
-        ? {
-            dev: "PRINT_SCHEMAS=true bun --watch index.ts",
-            start: "bun index.ts",
-            types: "gql-tada generate output",
-          }
-        : { dev: "bun --watch index.ts", start: "bun index.ts" },
+      scripts: {
+        dev: "bun --watch index.ts",
+        start: "bun index.ts",
+        ...((frontend || trpc) && {
+          types: frontend ? "graphoria codegen && gql-tada generate output" : "graphoria codegen",
+          up: upSteps({ database, frontend, trpc }, { quiet: true })
+            .map(({ command }) => command.join(" "))
+            .join(" && "),
+        }),
+      },
       dependencies: {
         "@graphoria/server": `^${graphoria}`,
         ...(rabbitmq && { "@graphoria/queues": `^${graphoria}` }),
@@ -544,15 +611,22 @@ const booksCaller = ({ auth, frontend }: ProjectValues) => {
   return frontend ? "" : " Call it with the admin secret.";
 };
 
+// gql.tada comes with --frontend only; without it, graphoria-env.d.ts types the
+// plain string.
+const booksQuery = (values: ProjectValues) => {
+  const query = `"query { ${seedSchema(values)}_books(orderBy: { published_year: DESC }) { id title published_year } }"`;
+  return values.frontend ? `graphql(\n        ${query},\n      )` : query;
+};
+
 const BOOKS_OPERATION = (
   values: ProjectValues,
 ) => `    // GET /rest/books answers from this process first, then from Redis, and runs
     // the query again once the entry is 10 seconds old.${booksCaller(values)}
-    books: {
-      query: "query { ${seedSchema(values)}_books(orderBy: { published_year: DESC }) { id title published_year } }",
+    books: operation({
+      query: ${booksQuery(values)},
       rest: { path: "/books", method: "GET" },
       cache: { ttl: 10_000, max: 100 },
-    },
+    }),
 `;
 
 const PUBLISH_BOOK_HANDLER = `      handler: ({ repository }, { id }) => repository.main.books.publish(id),
@@ -673,11 +747,11 @@ const publishBookInput = z.object({ id: z.number().int() });
 
 const graphoriaConfig = (
   values: ProjectValues,
-) => `import { operation, ${values.virtualColumns ? "virtualColumnExpression, " : ""}z } from "@graphoria/server/config";
+) => `${values.trpc ? '// The output types of the plain-string operations, which bun run types writes.\nimport type {} from "./graphoria-env";\n' : ""}import { operation, ${values.virtualColumns ? "virtualColumnExpression, " : ""}z } from "@graphoria/server/config";
 import type { ConfigurationFn } from "@graphoria/server/config";
 
 import { createRepository, type Repository } from "./repository";
-
+${values.frontend && values.redis ? 'import { graphql } from "./web/graphql";\n' : ""}
 // Bun loads these from .env; in Docker Compose they come from the environment.
 const env = (name: string) => {
   const value = process.env[name];
@@ -751,8 +825,8 @@ console.log(\`Scalar   → http://localhost:\${server.port}\${prefixes.scalar}\`
 const rabbitmqEnv = (values: ProjectValues) =>
   values.rabbitmq
     ? `RABBITMQ_HOST=localhost
-RABBITMQ_PORT=5672
-RABBITMQ_MANAGEMENT_PORT=15672
+RABBITMQ_PORT=${values.ports.rabbitmq}
+RABBITMQ_MANAGEMENT_PORT=${values.ports.rabbitmqManagement}
 RABBITMQ_USER=graphoria
 RABBITMQ_PASSWORD=${values.rabbitmqPassword}
 RABBITMQ_VHOST=/
@@ -775,7 +849,8 @@ const authEnv = ({ auth, redis }: ProjectValues) => (auth && !redis ? "AUTH_STOR
 
 const redisEnv = (values: ProjectValues) =>
   values.redis
-    ? `REDIS_URL=redis://localhost:6379
+    ? `REDIS_PORT=${values.ports.redis}
+REDIS_URL=redis://localhost:${values.ports.redis}
 AUTH_STORE=redis
 RATE_LIMIT_STORE=redis
 `
@@ -794,19 +869,20 @@ const metricsEnv = (values: ProjectValues) =>
 const tracingEnv = (values: ProjectValues) =>
   values.tracing
     ? `TRACING_ENABLED=true
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:${JAEGER_OTLP_PORT}
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:${values.ports.jaegerOtlp}
 OTEL_SERVICE_NAME=${values.name}
-JAEGER_UI_PORT=${JAEGER_UI_PORT}
+JAEGER_UI_PORT=${values.ports.jaegerUi}
+JAEGER_OTLP_PORT=${values.ports.jaegerOtlp}
 `
     : "";
 
-const grafanaEnv = ({ metrics, tracing }: ProjectValues) =>
-  metrics || tracing ? `GRAFANA_PORT=${GRAFANA_PORT}\n` : "";
+const grafanaEnv = ({ metrics, tracing, ports }: ProjectValues) =>
+  metrics || tracing ? `GRAFANA_PORT=${ports.grafana}\n` : "";
 
 const dataToolsEnv = (values: ProjectValues) =>
   values.dataTools
-    ? `DBGATE_PORT=${DBGATE_PORT}
-${values.redis ? `REDIS_COMMANDER_PORT=${REDIS_COMMANDER_PORT}\n` : ""}`
+    ? `DBGATE_PORT=${values.ports.dbgate}
+${values.redis ? `REDIS_COMMANDER_PORT=${values.ports.redisCommander}\n` : ""}`
     : "";
 
 const sqliteDotEnv = (
@@ -817,6 +893,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
+PORT=${values.ports.app}
 ${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${trpcEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
@@ -831,6 +908,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
+PORT=${values.ports.app}
 ${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${trpcEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 };
 
@@ -838,8 +916,8 @@ const GITIGNORE = `node_modules
 .env
 `;
 
-// .graphoria holds the schemas `bun run dev` prints.
-const GITIGNORE_FRONTEND = `${GITIGNORE}.graphoria
+// .graphoria holds what `bun run types` generates: the schemas and the OpenAPI documents.
+const GITIGNORE_GENERATED = `${GITIGNORE}.graphoria
 `;
 
 // The database file and the journals SQLite writes beside it.
@@ -847,11 +925,11 @@ const SQLITE_FILES = `*.db
 *.db-*
 `;
 
-const gitignore = ({ database, frontend }: ProjectValues) =>
-  `${frontend ? GITIGNORE_FRONTEND : GITIGNORE}${database === "sqlite" ? SQLITE_FILES : ""}`;
+const gitignore = ({ database, frontend, trpc }: ProjectValues) =>
+  `${frontend || trpc ? GITIGNORE_GENERATED : GITIGNORE}${database === "sqlite" ? SQLITE_FILES : ""}`;
 
-const dockerignore = ({ database }: ProjectValues) =>
-  `${DOCKERIGNORE}${database === "sqlite" ? SQLITE_FILES : ""}`;
+const dockerignore = ({ database, frontend, trpc }: ProjectValues) =>
+  `${DOCKERIGNORE}${frontend || trpc ? ".graphoria\n" : ""}${database === "sqlite" ? SQLITE_FILES : ""}`;
 
 // The Compose volume mounts at /app/data, and the runtime user writes the
 // database file there.
@@ -998,7 +1076,7 @@ const RABBITMQ_SERVICE = `  rabbitmq:
 const REDIS_SERVICE = `  redis:
     image: redis:8
     ports:
-      - "6379:6379"
+      - "\${REDIS_PORT}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -1072,7 +1150,7 @@ const JAEGER_SERVICE = `  jaeger:
     ports:
       - "127.0.0.1:\${JAEGER_UI_PORT}:16686"
       # OTLP over HTTP, where Graphoria posts its spans.
-      - "127.0.0.1:${JAEGER_OTLP_PORT}:4318"
+      - "127.0.0.1:\${JAEGER_OTLP_PORT}:4318"
     # The image declares /tmp a volume, which \`docker compose down\` would leave behind.
     tmpfs:
       - /tmp
@@ -1131,6 +1209,11 @@ const initComment = (frontend: boolean) =>
     ? "# Keep it: until index.ts reaches handleSignals, Bun as PID 1 ignores SIGTERM."
     : "# Not needed, and harmless: the server handles SIGTERM itself, even as PID 1.";
 
+// .env's PORT is the host's; inside Compose Graphoria keeps 3000, which
+// prometheus.yml scrapes and the image's healthcheck calls.
+const PORT_INSIDE = `      # 3000 inside Compose; .env's PORT is the port published on this machine.
+      PORT: "3000"`;
+
 const sqliteCompose = ({
   name,
   dbName,
@@ -1140,11 +1223,12 @@ const sqliteCompose = ({
   frontend,
   tracing,
   metrics,
+  ports,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
 #
-# Then open http://localhost:3000/graphiql. Secrets come from .env. The
+# Then open http://localhost:${ports.app}/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${metrics ? `${PROMETHEUS_SERVICE}\n` : ""}${metrics || tracing ? `${GRAFANA_SERVICE(metrics)}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
@@ -1155,9 +1239,10 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
     env_file: .env
     environment:
       # On the volume, not in the image: the file outlives a rebuild.
-      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
+      DB_FILE: data/${dbName}.db
+${PORT_INSIDE}${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
     ports:
-      - "3000:3000"
+      - "\${PORT}:3000"
     volumes:
       - db-data:/app/data${rabbitmq || redis || tracing ? `\n    depends_on:${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}${tracing ? JAEGER_DEPENDENCY : ""}` : ""}
 
@@ -1167,7 +1252,7 @@ ${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTo
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database, rabbitmq, redis, dataTools, frontend, tracing, metrics } = values;
+  const { name, database, rabbitmq, redis, dataTools, frontend, tracing, metrics, ports } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -1179,7 +1264,7 @@ const dockerCompose = (values: ProjectValues) => {
 #
 #   docker compose up -d --build
 #
-# Then open http://localhost:3000/graphiql. Credentials come from .env. The
+# Then open http://localhost:${ports.app}/graphiql. Credentials come from .env. The
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${DB_SERVICES[database]}
@@ -1192,9 +1277,10 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
     environment:
       # Inside Compose the database is the \`db\` service on its own port.
       DB_HOST: db
-      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
+      DB_PORT: "${engine.port}"
+${PORT_INSIDE}${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
     ports:
-      - "3000:3000"
+      - "\${PORT}:3000"
     # Start once the database is ready. Boot would otherwise retry it for up to 60 s.
     depends_on:
 ${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}${tracing ? JAEGER_DEPENDENCY : ""}
@@ -2017,7 +2103,7 @@ ${values.trpc ? PUBLISH_TRPC : PUBLISH_REST}
 
 const GRAPHQL_TS = `import { initGraphQLTada } from "gql.tada";
 
-// \`bun run types\` writes this file from the schema \`bun run dev\` prints.
+// \`bun run types\` writes this file, from the database, with no server running.
 import type { introspection } from "./graphql-env.d.ts";
 
 export const graphql = initGraphQLTada<{ introspection: introspection }>();
@@ -2029,8 +2115,8 @@ import { getAccessToken } from "@graphoria/react";
 
 import type config from "../graphoria";
 
-// The operations in graphoria.ts, typed from the configuration itself: no
-// code generation.
+// The operations in graphoria.ts, typed from the configuration itself; one whose
+// query is a plain string, from the graphoria-env.d.ts that bun run types writes.
 export const trpc = createTRPCClient<TRPCRouterOf<typeof config>>({
   links: [
     httpBatchLink({
@@ -2071,6 +2157,7 @@ export const renderProject = (
   ".dockerignore": dockerignore(values),
   "docker-compose.yml": dockerCompose(values),
   "seed.sql": SEEDS[values.database](values),
+  ...(values.trpc && { "graphoria-env.d.ts": EMPTY_OPERATION_TYPES }),
   ...(values.frontend && frontendFiles(values)),
   ...(values.frontend && values.auth && values.trpc && { "web/trpc.ts": TRPC_TS }),
   ...(values.metrics && {

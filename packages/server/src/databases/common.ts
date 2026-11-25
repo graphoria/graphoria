@@ -827,6 +827,24 @@ export const sqliteJsonValue = (
   return `CASE WHEN typeof(${selector}) = 'blob' THEN hex(${selector}) ELSE ${selector} END`;
 };
 
+/**
+ * A virtual column as SQLite's JSON functions must receive it, picked from its
+ * declared type: `sqliteJsonValue` names its selector twice, which runs a
+ * correlated subquery twice.
+ */
+export const sqliteVirtualJsonValue = (dataType: string, selector: string): string => {
+  if (categorizeSqlType(dataType) === SqlTypeCategory.BOOLEAN) {
+    return `CASE NOT NOT ${selector} WHEN 1 THEN json('true') WHEN 0 THEN json('false') END`;
+  }
+  // SQLite's own affinity rule. quote() spells a blob X'…' in hex()'s digits and
+  // NULL as the text NULL, which no hex string equals: trimmed, it is hex() but
+  // keeps NULL null, where hex(NULL) is ''.
+  if (/blob/i.test(dataType)) {
+    return `nullif(rtrim(ltrim(quote(${selector}), 'X'''), ''''), 'NULL')`;
+  }
+  return selector;
+};
+
 export const processFieldSelectionsFp =
   (dbType: DatabaseType = "pg") =>
   (
@@ -858,10 +876,19 @@ export const processFieldSelectionsFp =
           if (virtColumn) {
             // Explicit assertion needed due to Column union type inference
             const vc = virtColumn as VirtualColumn;
-            if (vc.function) {
-              selectClauses.push([`${colName}`, `${vc.function}(${vc.params?.join(", ")})`]);
-            } else if (vc.expression) {
-              selectClauses.push([`${colName}`, `(${vc.expression})`]);
+            const selector = vc.function
+              ? `${vc.function}(${vc.params?.join(", ")})`
+              : vc.expression
+                ? `(${vc.expression})`
+                : undefined;
+
+            if (selector) {
+              const encoded =
+                dbType === "sqlite" ? sqliteVirtualJsonValue(vc.dataType, selector) : selector;
+              selectClauses.push([
+                colName,
+                applyDirectives(encoded, sel.directives, dbType, variablesDefinition),
+              ]);
             }
           } else {
             const sqlName = sqlColumnName(entities, tableName, sel.name);

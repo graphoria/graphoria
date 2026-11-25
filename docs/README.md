@@ -4,12 +4,13 @@ Reference guides for configuring and running Graphoria. New here? Start with the
 
 ## Getting started
 
-| Guide                                         | Description                                                           |
-| --------------------------------------------- | --------------------------------------------------------------------- |
-| [Quickstart](./QUICKSTART.md)                 | Zero to a running server in five minutes                              |
-| [Configuration Reference](./CONFIGURATION.md) | Full configuration schema — databases, auth, operations, queues, cron |
-| [Deployment](./DEPLOYMENT.md)                 | From the image to production: proxy, sizing, shutdown, Kubernetes     |
-| [API Reference](./API_REFERENCE.md)           | Complete package exports for server, config, and react                |
+| Guide                                         | Description                                                                                       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| [Quickstart](./QUICKSTART.md)                 | Zero to a running server in five minutes                                                          |
+| [Codegen](./CODEGEN.md)                       | The per-role schemas, OpenAPI documents and tRPC output types, written without running the server |
+| [Configuration Reference](./CONFIGURATION.md) | Full configuration schema — databases, auth, operations, queues, cron                             |
+| [Deployment](./DEPLOYMENT.md)                 | From the image to production: proxy, sizing, shutdown, Kubernetes                                 |
+| [API Reference](./API_REFERENCE.md)           | Complete package exports for server, config, and react                                            |
 
 ## Auth & access
 
@@ -25,7 +26,7 @@ Reference guides for configuring and running Graphoria. New here? Start with the
 | Guide                                   | Description                                                        |
 | --------------------------------------- | ------------------------------------------------------------------ |
 | [Operations](./OPERATIONS.md)           | Custom query and handler operations, hooks, caching                |
-| [tRPC](./TRPC.md)                       | Operations as typed tRPC procedures, with no code generation       |
+| [tRPC](./TRPC.md)                       | Operations as typed tRPC procedures, typed from `graphoria.ts`     |
 | [GraphQL Directives](./DIRECTIVES.md)   | Built-in data-transformation and `@when` control-flow directives   |
 | [Virtual Columns](./VIRTUAL_COLUMNS.md) | Computed columns powered by SQL expressions or functions           |
 | [Performance](./PERFORMANCE.md)         | Query strategy, caching behaviour, measured numbers and the gate   |
