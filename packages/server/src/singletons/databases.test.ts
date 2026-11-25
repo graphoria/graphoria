@@ -37,6 +37,8 @@ const baseDb = {
   connection: { host: "localhost", port: 5432, user: "u", password: "p", database: "db" },
 };
 
+const MAIN = { database: "main", at: "localhost:5432" };
+
 const fakeClock = () => {
   let t = 0;
   const sleeps: number[] = [];
@@ -119,7 +121,7 @@ describe("connectWithRetry", () => {
     const clock = fakeClock();
     const { connect, attempts } = failingConnect(0);
 
-    expect(await connectWithRetry("main", connect, 60000, clock)).toBe("connected");
+    expect(await connectWithRetry(MAIN, connect, 60000, clock)).toBe("connected");
     expect(attempts()).toBe(1);
     expect(clock.sleeps).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
@@ -129,11 +131,16 @@ describe("connectWithRetry", () => {
     const clock = fakeClock();
     const { connect } = failingConnect(2);
 
-    expect(await connectWithRetry("main", connect, 60000, clock)).toBe("connected");
+    expect(await connectWithRetry(MAIN, connect, 60000, clock)).toBe("connected");
     expect(clock.sleeps).toEqual([1000, 2000]);
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn.mock.calls[0]![0]).toEqual(
-      expect.objectContaining({ database: "main", attempt: 1, retryInMs: 1000 }),
+      expect.objectContaining({
+        database: "main",
+        at: "localhost:5432",
+        attempt: 1,
+        retryInMs: 1000,
+      }),
     );
     expect(warn.mock.calls[0]![1]).toBe("database connect failed, retrying");
   });
@@ -142,7 +149,7 @@ describe("connectWithRetry", () => {
     const clock = fakeClock();
     const { connect, attempts } = failingConnect();
 
-    await expect(connectWithRetry("main", connect, 60000, clock)).rejects.toThrow("fail 7");
+    await expect(connectWithRetry(MAIN, connect, 60000, clock)).rejects.toThrow("fail 7");
     expect(clock.sleeps).toEqual([1000, 2000, 4000, 8000, 16000, 29000]);
     expect(attempts()).toBe(7);
     expect(clock.now()).toBe(60000);
@@ -152,7 +159,7 @@ describe("connectWithRetry", () => {
     const clock = fakeClock();
     const { connect, attempts } = failingConnect();
 
-    await expect(connectWithRetry("main", connect, 200000, clock)).rejects.toThrow("fail 12");
+    await expect(connectWithRetry(MAIN, connect, 200000, clock)).rejects.toThrow("fail 12");
     expect(clock.sleeps).toEqual([
       1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000, 19000,
     ]);
@@ -163,7 +170,7 @@ describe("connectWithRetry", () => {
     const clock = fakeClock();
     const { connect, attempts } = failingConnect();
 
-    await expect(connectWithRetry("main", connect, 0, clock)).rejects.toThrow("fail 1");
+    await expect(connectWithRetry(MAIN, connect, 0, clock)).rejects.toThrow("fail 1");
     expect(attempts()).toBe(1);
     expect(clock.sleeps).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
@@ -173,7 +180,7 @@ describe("connectWithRetry", () => {
     const clock = fakeClock();
     const { connect, attempts } = failingConnect(Infinity, () => clock.advance(30000));
 
-    await expect(connectWithRetry("main", connect, 60000, clock)).rejects.toThrow("fail 2");
+    await expect(connectWithRetry(MAIN, connect, 60000, clock)).rejects.toThrow("fail 2");
     expect(clock.sleeps).toEqual([1000]);
     expect(attempts()).toBe(2);
     expect(clock.now()).toBe(61000);
@@ -228,6 +235,49 @@ describe("instantiateDatabasesConnections retry", () => {
     expect(calls).toEqual(["retry_onconnect"]);
     expect(clock.sleeps).toEqual([]);
   });
+
+  it("hands each retry to onRetry, in place of the warn", async () => {
+    const clock = fakeClock();
+    failures.set("a", 2);
+    const retries: unknown[] = [];
+
+    await instantiateDatabasesConnections(
+      [{ ...baseDb, name: "a" }] as never,
+      60000,
+      clock,
+      (retry) => retries.push(retry),
+    );
+
+    expect(retries).toEqual([
+      {
+        database: "a",
+        at: "localhost:5432",
+        attempt: 1,
+        retryInMs: 1000,
+        error: expect.any(Error),
+      },
+      {
+        database: "a",
+        at: "localhost:5432",
+        attempt: 2,
+        retryInMs: 2000,
+        error: expect.any(Error),
+      },
+    ]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("names the database and where it connects once the connect fails", async () => {
+    failures.set("b", Infinity);
+
+    const error = await instantiateDatabasesConnections([{ ...baseDb, name: "b" }] as never).then(
+      () => undefined,
+      (failure: unknown) => failure as Error,
+    );
+
+    expect(error?.message).toBe('Could not connect to database "b" at localhost:5432: b down');
+    expect(error?.cause).toHaveProperty("message", "b down");
+  });
 });
 
 describe("instantiateDatabasesConnections sqlite", () => {
@@ -264,7 +314,7 @@ describe("instantiateDatabasesConnections sqlite", () => {
     } as never;
 
     await expect(instantiateDatabasesConnections([db], 60000, clock)).rejects.toThrow(
-      "unable to open database file",
+      'Could not connect to database "sqlite_unopenable" at /nonexistent-graphoria-dir/app.db: unable to open database file',
     );
     expect(clock.sleeps).toEqual([]);
     expect(databasesConnections["sqlite_unopenable"]).toBeUndefined();

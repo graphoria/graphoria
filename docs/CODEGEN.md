@@ -98,13 +98,13 @@ In a terminal both are in color: `NO_COLOR=1` turns that off, and `FORCE_COLOR=1
 
 ## Errors
 
-| Case                                                              | Behaviour                                                                                |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| An unknown flag or a missing value                                | the usage, exit 2                                                                        |
-| `SUPERADMIN_ROLE` equal to `ANONYMOUS_ROLE`                       | the server's error, exit 1, nothing written                                              |
-| The config fails to load or validate                              | exit 1, nothing written                                                                  |
-| A database is unreachable                                         | exit 1, nothing written; a network engine retries for `DB_CONNECT_RETRY_MS` (60 s) first |
-| The config names missing tables                                   | exit 1, nothing written                                                                  |
-| A remote schema or remote REST API does not resolve               | exit 1, each one named, nothing written; the server warns and boots without it           |
-| A queue without `@graphoria/queues`, `ai` without `@graphoria/ai` | no error: codegen loads neither. The SDL holds `ask`, while the server refuses to boot   |
-| An output path is not writable                                    | exit 1, the path named                                                                   |
+| Case                                                              | Behaviour                                                                                                  |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| An unknown flag or a missing value                                | the usage, exit 2                                                                                          |
+| `SUPERADMIN_ROLE` equal to `ANONYMOUS_ROLE`                       | the server's error, exit 1, nothing written                                                                |
+| The config fails to load or validate                              | exit 1, nothing written                                                                                    |
+| A database is unreachable                                         | exit 1, nothing written; a network engine retries for `DB_CONNECT_RETRY_MS` (60 s) first, a line per retry |
+| The config names missing tables                                   | exit 1, nothing written                                                                                    |
+| A remote schema or remote REST API does not resolve               | exit 1, each one named, nothing written; the server warns and boots without it                             |
+| A queue without `@graphoria/queues`, `ai` without `@graphoria/ai` | no error: codegen loads neither. The SDL holds `ask`, while the server refuses to boot                     |
+| An output path is not writable                                    | exit 1, the path named                                                                                     |

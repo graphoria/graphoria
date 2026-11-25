@@ -4,6 +4,7 @@ import { isString } from "es-toolkit/compat";
 import { format } from "oxfmt";
 import { z } from "zod";
 
+import type { ConnectRetry } from "../singletons/databases";
 import type { Configuration } from "../types/configuration";
 import type { CodegenArgs } from "./codegenArgs";
 import type { Paint } from "./paint";
@@ -29,6 +30,8 @@ export type CodegenResult = {
 export type CodegenDependencies = {
   /** Test seam: whether @trpc/server resolves, as the server's tRPC loader checks it. */
   trpcResolves?: () => boolean;
+  /** Called for each retry of a database that does not connect; the server's warn by default. */
+  onRetry?: (retry: ConnectRetry) => void;
 };
 
 const trpcServerResolves = () => {
@@ -86,7 +89,7 @@ const prune = async (dir: string, pattern: RegExp, written: Map<string, string>)
 
 export const runCodegen = async (
   args: CodegenArgs,
-  { trpcResolves = trpcServerResolves }: CodegenDependencies = {},
+  { trpcResolves = trpcServerResolves, onRetry }: CodegenDependencies = {},
 ): Promise<CodegenResult> => {
   assertDistinctRoles(env);
   if (env.leftoverSchemasOutputDir) {
@@ -109,7 +112,12 @@ export const runCodegen = async (
   // connection logs a warn, and an in-process run would leave the process-wide
   // timeout to whatever runs next.
   try {
-    await instantiateDatabasesConnections(configuration.enabledDatabases, env.dbConnectRetryMs);
+    await instantiateDatabasesConnections(
+      configuration.enabledDatabases,
+      env.dbConnectRetryMs,
+      undefined,
+      onRetry,
+    );
     const analyzed = await analyzeConfiguration(configuration, env);
 
     const leftOut = leftOutNames(analyzed.leftOutRemotes);
@@ -216,6 +224,13 @@ export const failureLines = (error: unknown, paint: Paint = PLAIN_PAINT): string
   ];
 };
 
+const retryLine = ({ database, at, retryInMs, error }: ConnectRetry, paint: Paint) => {
+  const [reason] = (error instanceof Error ? error.message : String(error)).split("\n");
+  return paint.dim(
+    `Waiting for database "${database}" at ${at}: ${reason}, retrying in ${formatDuration(retryInMs)}`,
+  );
+};
+
 export const codegenCommand = async (argv: string[]): Promise<void> => {
   let args: CodegenArgs;
   try {
@@ -226,9 +241,12 @@ export const codegenCommand = async (argv: string[]): Promise<void> => {
     process.exit(2);
   }
 
+  const errors = paintFor(process.stderr);
   try {
     const started = performance.now();
-    const result = await runCodegen(args);
+    const result = await runCodegen(args, {
+      onRetry: (retry) => process.stderr.write(`${retryLine(retry, errors)}\n`),
+    });
     const lines = summaryLines(
       result,
       process.cwd(),
@@ -239,7 +257,7 @@ export const codegenCommand = async (argv: string[]): Promise<void> => {
     process.exit(0);
   } catch (error) {
     // Not console.error: Bun would print it all in red on a terminal.
-    process.stderr.write(`${failureLines(error, paintFor(process.stderr)).join("\n")}\n`);
+    process.stderr.write(`${failureLines(error, errors).join("\n")}\n`);
     if (logger("cli").isLevelEnabled("debug")) process.stderr.write(`\n${Bun.inspect(error)}\n`);
     process.exit(1);
   }

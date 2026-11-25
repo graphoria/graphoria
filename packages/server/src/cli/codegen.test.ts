@@ -256,7 +256,7 @@ describe("graphoria codegen", () => {
       "a database it cannot open",
       { filename: "/nonexistent-dir/app.db" },
       {},
-      "  ✗ unable to open database file\n",
+      '  ✗ Could not connect to database "main" at /nonexistent-dir/app.db: unable to open database file\n',
     ],
   ])(
     "exits 1 with nothing written on %s",
@@ -271,6 +271,34 @@ describe("graphoria codegen", () => {
     },
     30_000,
   );
+
+  it("prints a line per retry while a database does not answer, then names it", async () => {
+    const dir = await project();
+    await writeFile(
+      join(dir, "graphoria.ts"),
+      `export default () => ({ name: "x", version: "1.0.0", databases: [{ name: "main", type: "pg", enabled: true,
+  connection: { host: "127.0.0.1", port: 1, user: "u", password: "p", database: "d" } }] });\n`,
+    );
+
+    const result = codegen(dir, [], { DB_CONNECT_RETRY_MS: "1500" });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    const lines = result.stderr.split("\n");
+    const header = lines.indexOf("graphoria codegen  failed");
+    expect(header).toBeGreaterThan(0);
+    for (const line of lines.slice(0, header)) {
+      expect(line).toMatch(
+        /^Waiting for database "main" at 127\.0\.0\.1:1: Failed to connect, retrying in \S+$/,
+      );
+    }
+    expect(lines.slice(header)).toEqual([
+      "graphoria codegen  failed",
+      "",
+      '  ✗ Could not connect to database "main" at 127.0.0.1:1: Failed to connect',
+      "",
+    ]);
+  }, 30_000);
 
   it.each([
     [
