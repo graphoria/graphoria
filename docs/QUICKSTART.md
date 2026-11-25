@@ -49,6 +49,8 @@ With `--database sqlite` there is no database server: the database is the file `
 
 With `--rabbitmq`, `--redis` or `--tracing` (below), a run on your machine needs those containers too, so the steps `init` prints add them to `docker compose up -d --wait`.
 
+Each port Docker Compose publishes on your machine is a variable in `.env`: `PORT` for Graphoria (`bun run dev` listens on it too), `DB_PORT` for the database, and one per service, such as `REDIS_PORT` or `GRAFANA_PORT`. `init` writes each default when it is free and the next free port otherwise, and says which ones it moved, so a second project runs beside the first. A `--db-port` you pass is kept as it is.
+
 Open `http://localhost:3000/graphiql`, add the `x-admin-secret` header with the `ADMIN_SECRET` from `.env`, and query the seed:
 
 ```graphql

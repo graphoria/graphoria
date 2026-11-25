@@ -19,17 +19,24 @@ import {
   nextSteps,
   paintFor,
   passwordError,
+  pickPorts,
+  portNotes,
   portWarning,
   projectName,
   recreateCommand,
   sampleQuery,
 } from "./init";
+import { DEFAULT_PORTS } from "./initTemplates";
 
 const ARGS: InitArgs = { yes: false, install: true };
 
 type Menus = { select?: number[]; multiSelect?: number[][] };
 
-const prompter = (answers: (string | null)[] = [], menus: Menus = {}) => {
+const prompter = (
+  answers: (string | null)[] = [],
+  menus: Menus = {},
+  isPortFree: (port: number) => boolean = () => true,
+) => {
   const fallbacks: string[] = [];
   const said: string[] = [];
   const selected: string[] = [];
@@ -54,6 +61,7 @@ const prompter = (answers: (string | null)[] = [], menus: Menus = {}) => {
       const picks = menus.multiSelect?.shift();
       return picks === undefined ? [...initial] : picks.map((index) => choices[index].value);
     },
+    isPortFree,
   };
   return { fallbacks, multi, multiOptions, said, selected, io };
 };
@@ -118,7 +126,28 @@ describe("collectAnswers", () => {
       metrics: false,
       tracing: false,
       virtualColumns: false,
+      ports: DEFAULT_PORTS,
     });
+  });
+
+  it("offers the first free port from the engine's as the database port", async () => {
+    const io = prompter([], {}, (port) => port !== 5432);
+    const answers = await collectAnswers(ARGS, io.io);
+
+    expect(io.fallbacks.at(-1)).toBe("5433");
+    expect(answers.dbPort).toBe(5433);
+  });
+
+  it("keeps the --db-port it was given, taken or not", async () => {
+    const io = prompter([], {}, () => false);
+
+    expect((await collectAnswers({ ...ARGS, dbPort: 15432 }, io.io)).dbPort).toBe(15432);
+  });
+
+  it("picks the published ports through the prober it was given", async () => {
+    const io = prompter([], {}, (port) => port !== 3000);
+
+    expect((await collectAnswers(ARGS, io.io)).ports.app).toBe(3001);
   });
 
   it("defaults the port to the engine chosen in the menu", async () => {
@@ -431,6 +460,7 @@ describe("collectAnswers", () => {
       metrics: false,
       tracing: false,
       virtualColumns: false,
+      ports: DEFAULT_PORTS,
     });
     expect(io.fallbacks).toEqual(["app"]);
   });
@@ -548,10 +578,114 @@ describe("portWarning", () => {
     expect(warning).toContain("RabbitMQ");
     expect(warning).toContain("RABBITMQ_PORT");
   });
+});
 
-  it("says to free a port that no .env variable moves", () => {
-    expect(portWarning(4318, { service: "Jaeger OTLP receiver" }, () => false)).toBe(
-      "Port 4318 is in use on this host, so Docker Compose cannot publish the Jaeger OTLP receiver on it. No .env variable moves it, so free it before `docker compose up`.",
+describe("pickPorts", () => {
+  const everything = {
+    database: "pg" as const,
+    dbPort: 5432,
+    redis: true,
+    rabbitmq: true,
+    dataTools: true,
+    metrics: true,
+    tracing: true,
+  };
+
+  it("publishes each service on its own port when every port is free", () => {
+    expect(pickPorts(everything, () => true)).toEqual(DEFAULT_PORTS);
+  });
+
+  it("moves a taken port to the next free one, never onto a port it already gave", () => {
+    const busy = new Set([3000, 6379, 6380]);
+    const ports = pickPorts(everything, (port) => !busy.has(port));
+
+    expect(ports).toMatchObject({ app: 3001, redis: 6381, grafana: 3002 });
+  });
+
+  it("leaves the database's port to the database", () => {
+    expect(pickPorts({ ...everything, dbPort: 3000 }, () => true).app).toBe(3001);
+    expect(pickPorts({ ...everything, database: "sqlite", dbPort: 0 }, () => true).app).toBe(3000);
+  });
+
+  it("probes only the ports the project publishes", () => {
+    const probed: number[] = [];
+    const plain = {
+      database: "pg" as const,
+      dbPort: 5432,
+      redis: false,
+      rabbitmq: false,
+      dataTools: false,
+      metrics: false,
+      tracing: false,
+    };
+    const ports = pickPorts(plain, (port) => {
+      probed.push(port);
+      return true;
+    });
+
+    expect(probed).toEqual([3000]);
+    expect(ports).toEqual(DEFAULT_PORTS);
+  });
+});
+
+describe("portNotes", () => {
+  const answers: InitAnswers = {
+    database: "pg",
+    dbName: "app",
+    dbPassword: "S3cret.pass",
+    dbPort: 5432,
+    rabbitmq: true,
+    ai: false,
+    mcp: false,
+    auth: false,
+    redis: true,
+    dataTools: true,
+    frontend: false,
+    trpc: false,
+    cron: false,
+    rateLimit: false,
+    metrics: true,
+    tracing: true,
+    virtualColumns: false,
+    ports: DEFAULT_PORTS,
+  };
+
+  it("says nothing when every port is the default and free", () => {
+    expect(portNotes(answers, false, () => true)).toEqual([]);
+  });
+
+  it("names each moved port, the port it got and the variable that holds it", () => {
+    const moved = { ...DEFAULT_PORTS, app: 3002, redis: 6380, jaegerOtlp: 4319, grafana: 3003 };
+
+    expect(portNotes({ ...answers, ports: moved }, false, () => true)).toEqual([
+      "Port 3000 is taken, so Graphoria uses 3002 instead (PORT in .env).",
+      "Port 6379 is taken, so Redis uses 6380 instead (REDIS_PORT in .env).",
+      "Port 4318 is taken, so Jaeger's OTLP receiver uses 4319 instead (JAEGER_OTLP_PORT in .env).",
+      "Port 3001 is taken, so Grafana uses 3003 instead (GRAFANA_PORT in .env).",
+    ]);
+  });
+
+  it("says when it moved the database off its engine's taken port, unless --db-port chose it", () => {
+    const isFree = (port: number) => port !== 5432;
+    const moved = { ...answers, dbPort: 5433 };
+
+    expect(portNotes(moved, false, isFree)).toEqual([
+      "Port 5432 is taken, so the database uses 5433 instead (DB_PORT in .env).",
+    ]);
+    expect(portNotes(moved, true, isFree)).toEqual([]);
+  });
+
+  it("warns about a database port that is itself taken", () => {
+    const [warning] = portNotes({ ...answers, dbPort: 15432 }, true, (port) => port !== 15432);
+
+    expect(warning).toStartWith(
+      "Port 15432 is in use on this host, so Docker Compose cannot publish the database on it. Set DB_PORT in .env",
+    );
+  });
+
+  it("has no database port to speak of on SQLite", () => {
+    expect(portNotes({ ...answers, database: "sqlite", dbPort: 0 }, false, () => false)).toEqual(
+      [],
     );
   });
 });
@@ -601,6 +735,7 @@ const ANSWERS: InitAnswers = {
   metrics: false,
   tracing: false,
   virtualColumns: false,
+  ports: DEFAULT_PORTS,
 };
 
 describe("recreateCommand", () => {
@@ -927,6 +1062,50 @@ describe("nextSteps", () => {
       "Run everything in Docker:\n  docker compose up -d --build\n",
     );
     expect(nextSteps(ANSWERS, true)).not.toContain("bun run up");
+  });
+
+  it("links each service on the port init picked for it", () => {
+    const ports = {
+      ...DEFAULT_PORTS,
+      app: 3005,
+      rabbitmqManagement: 15673,
+      dbgate: 9001,
+      redisCommander: 8082,
+      jaegerUi: 16687,
+      grafana: 3006,
+    };
+    const steps = nextSteps(
+      {
+        ...ANSWERS,
+        frontend: true,
+        rabbitmq: true,
+        redis: true,
+        dataTools: true,
+        mcp: true,
+        trpc: true,
+        metrics: true,
+        tracing: true,
+        ports,
+      },
+      true,
+    );
+
+    expect(steps).toContain(
+      "then open http://localhost:3005 (the app) or http://localhost:3005/graphiql",
+    );
+    for (const url of [
+      "http://localhost:3005/mcp",
+      "http://localhost:3005/trpc",
+      "http://localhost:3005/metrics",
+      "management UI: http://localhost:15673",
+      "the database at http://localhost:9001",
+      "Redis at http://localhost:8082",
+      "at http://localhost:16687",
+      "at http://localhost:3006",
+    ]) {
+      expect(steps).toContain(url);
+    }
+    expect(steps).not.toContain("localhost:3000");
   });
 
   it("names the files bun run types writes, and when to run it again", () => {

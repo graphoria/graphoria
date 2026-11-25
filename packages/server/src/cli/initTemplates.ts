@@ -21,6 +21,7 @@ export type InitAnswers = {
   metrics: boolean;
   tracing: boolean;
   virtualColumns: boolean;
+  ports: HostPorts;
 };
 
 export type ProjectValues = InitAnswers & {
@@ -63,26 +64,33 @@ const DBGATE_ENGINES: Record<ServerEngine, string> = {
   mssql: "mssql@dbgate-plugin-mssql",
 };
 
-export const RABBITMQ_PORT = 5672;
-export const RABBITMQ_MANAGEMENT_PORT = 15672;
+// The host ports Docker Compose publishes besides the database's, each one a
+// variable in .env.
+export type HostPorts = {
+  app: number;
+  redis: number;
+  rabbitmq: number;
+  rabbitmqManagement: number;
+  dbgate: number;
+  redisCommander: number;
+  jaegerUi: number;
+  jaegerOtlp: number;
+  grafana: number;
+};
 
-// The host port dbgate's single-page app is published on; it listens on 3000
-// inside its own container, which Graphoria already took on the host.
-export const DBGATE_PORT = 9000;
-
-// Redis Commander's own default port.
-export const REDIS_COMMANDER_PORT = 8081;
-
-// Jaeger's own UI port.
-export const JAEGER_UI_PORT = 16686;
-
-// The host port Jaeger takes OTLP on. No variable moves it: .env's
-// OTEL_EXPORTER_OTLP_ENDPOINT names it.
-export const JAEGER_OTLP_PORT = 4318;
-
-// The host port Grafana is published on; it listens on 3000 inside its own
-// container, which Graphoria already took on the host.
-export const GRAFANA_PORT = 3001;
+export const DEFAULT_PORTS: HostPorts = {
+  app: 3000,
+  redis: 6379,
+  rabbitmq: 5672,
+  rabbitmqManagement: 15672,
+  // dbgate and Grafana listen on 3000 inside their own containers, which
+  // Graphoria already takes on the host.
+  dbgate: 9000,
+  redisCommander: 8081,
+  jaegerUi: 16686,
+  jaegerOtlp: 4318,
+  grafana: 3001,
+};
 
 export const PROJECT_FILES = [
   "package.json",
@@ -771,8 +779,8 @@ console.log(\`Scalar   → http://localhost:\${server.port}\${prefixes.scalar}\`
 const rabbitmqEnv = (values: ProjectValues) =>
   values.rabbitmq
     ? `RABBITMQ_HOST=localhost
-RABBITMQ_PORT=5672
-RABBITMQ_MANAGEMENT_PORT=15672
+RABBITMQ_PORT=${values.ports.rabbitmq}
+RABBITMQ_MANAGEMENT_PORT=${values.ports.rabbitmqManagement}
 RABBITMQ_USER=graphoria
 RABBITMQ_PASSWORD=${values.rabbitmqPassword}
 RABBITMQ_VHOST=/
@@ -795,7 +803,8 @@ const authEnv = ({ auth, redis }: ProjectValues) => (auth && !redis ? "AUTH_STOR
 
 const redisEnv = (values: ProjectValues) =>
   values.redis
-    ? `REDIS_URL=redis://localhost:6379
+    ? `REDIS_PORT=${values.ports.redis}
+REDIS_URL=redis://localhost:${values.ports.redis}
 AUTH_STORE=redis
 RATE_LIMIT_STORE=redis
 `
@@ -814,19 +823,20 @@ const metricsEnv = (values: ProjectValues) =>
 const tracingEnv = (values: ProjectValues) =>
   values.tracing
     ? `TRACING_ENABLED=true
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:${JAEGER_OTLP_PORT}
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:${values.ports.jaegerOtlp}
 OTEL_SERVICE_NAME=${values.name}
-JAEGER_UI_PORT=${JAEGER_UI_PORT}
+JAEGER_UI_PORT=${values.ports.jaegerUi}
+JAEGER_OTLP_PORT=${values.ports.jaegerOtlp}
 `
     : "";
 
-const grafanaEnv = ({ metrics, tracing }: ProjectValues) =>
-  metrics || tracing ? `GRAFANA_PORT=${GRAFANA_PORT}\n` : "";
+const grafanaEnv = ({ metrics, tracing, ports }: ProjectValues) =>
+  metrics || tracing ? `GRAFANA_PORT=${ports.grafana}\n` : "";
 
 const dataToolsEnv = (values: ProjectValues) =>
   values.dataTools
-    ? `DBGATE_PORT=${DBGATE_PORT}
-${values.redis ? `REDIS_COMMANDER_PORT=${REDIS_COMMANDER_PORT}\n` : ""}`
+    ? `DBGATE_PORT=${values.ports.dbgate}
+${values.redis ? `REDIS_COMMANDER_PORT=${values.ports.redisCommander}\n` : ""}`
     : "";
 
 const sqliteDotEnv = (
@@ -837,6 +847,7 @@ ADMIN_SECRET=${values.adminSecret}
 JWT_SECRET=${values.jwtSecret}
 DB_FILE=${values.dbName}.db
 CONSOLE_ENABLED=true
+PORT=${values.ports.app}
 ${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${trpcEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 
 const dotEnv = (values: ProjectValues) => {
@@ -851,6 +862,7 @@ DB_USER=${ENGINES[values.database].user}
 DB_PASSWORD=${values.dbPassword}
 DB_NAME=${values.dbName}
 CONSOLE_ENABLED=true
+PORT=${values.ports.app}
 ${rabbitmqEnv(values)}${aiEnv(values)}${authEnv(values)}${redisEnv(values)}${trpcEnv(values)}${rateLimitEnv(values)}${metricsEnv(values)}${tracingEnv(values)}${grafanaEnv(values)}${dataToolsEnv(values)}`;
 };
 
@@ -1018,7 +1030,7 @@ const RABBITMQ_SERVICE = `  rabbitmq:
 const REDIS_SERVICE = `  redis:
     image: redis:8
     ports:
-      - "6379:6379"
+      - "\${REDIS_PORT}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -1092,7 +1104,7 @@ const JAEGER_SERVICE = `  jaeger:
     ports:
       - "127.0.0.1:\${JAEGER_UI_PORT}:16686"
       # OTLP over HTTP, where Graphoria posts its spans.
-      - "127.0.0.1:${JAEGER_OTLP_PORT}:4318"
+      - "127.0.0.1:\${JAEGER_OTLP_PORT}:4318"
     # The image declares /tmp a volume, which \`docker compose down\` would leave behind.
     tmpfs:
       - /tmp
@@ -1151,6 +1163,11 @@ const initComment = (frontend: boolean) =>
     ? "# Keep it: until index.ts reaches handleSignals, Bun as PID 1 ignores SIGTERM."
     : "# Not needed, and harmless: the server handles SIGTERM itself, even as PID 1.";
 
+// .env's PORT is the host's; inside Compose Graphoria keeps 3000, which
+// prometheus.yml scrapes and the image's healthcheck calls.
+const PORT_INSIDE = `      # 3000 inside Compose; .env's PORT is the port published on this machine.
+      PORT: "3000"`;
+
 const sqliteCompose = ({
   name,
   dbName,
@@ -1160,11 +1177,12 @@ const sqliteCompose = ({
   frontend,
   tracing,
   metrics,
+  ports,
 }: ProjectValues) => `# ${name}: SQLite and Graphoria, built from this directory.
 #
 #   docker compose up -d --build
 #
-# Then open http://localhost:3000/graphiql. Secrets come from .env. The
+# Then open http://localhost:${ports.app}/graphiql. Secrets come from .env. The
 # database file lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${tracing ? `${JAEGER_SERVICE}\n` : ""}${metrics ? `${PROMETHEUS_SERVICE}\n` : ""}${metrics || tracing ? `${GRAFANA_SERVICE(metrics)}\n` : ""}${dataTools ? `${DBGATE_SQLITE_SERVICE(dbName)}\n` : ""}${dataTools && redis ? `${REDIS_COMMANDER_SERVICE}\n` : ""}  graphoria:
@@ -1175,9 +1193,10 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
     env_file: .env
     environment:
       # On the volume, not in the image: the file outlives a rebuild.
-      DB_FILE: data/${dbName}.db${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
+      DB_FILE: data/${dbName}.db
+${PORT_INSIDE}${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
     ports:
-      - "3000:3000"
+      - "\${PORT}:3000"
     volumes:
       - db-data:/app/data${rabbitmq || redis || tracing ? `\n    depends_on:${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}${tracing ? JAEGER_DEPENDENCY : ""}` : ""}
 
@@ -1187,7 +1206,7 @@ ${rabbitmq ? "  rabbitmq-data:\n" : ""}${redis ? "  redis-data:\n" : ""}${dataTo
 
 const dockerCompose = (values: ProjectValues) => {
   if (values.database === "sqlite") return sqliteCompose(values);
-  const { name, database, rabbitmq, redis, dataTools, frontend, tracing, metrics } = values;
+  const { name, database, rabbitmq, redis, dataTools, frontend, tracing, metrics, ports } = values;
   const engine = ENGINES[database];
   const dependency =
     database === "mssql"
@@ -1199,7 +1218,7 @@ const dockerCompose = (values: ProjectValues) => {
 #
 #   docker compose up -d --build
 #
-# Then open http://localhost:3000/graphiql. Credentials come from .env. The
+# Then open http://localhost:${ports.app}/graphiql. Credentials come from .env. The
 # database lives in the db-data volume; \`docker compose down -v\` deletes it.
 services:
 ${DB_SERVICES[database]}
@@ -1212,9 +1231,10 @@ ${rabbitmq ? `${RABBITMQ_SERVICE}\n` : ""}${redis ? `${REDIS_SERVICE}\n` : ""}${
     environment:
       # Inside Compose the database is the \`db\` service on its own port.
       DB_HOST: db
-      DB_PORT: "${engine.port}"${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
+      DB_PORT: "${engine.port}"
+${PORT_INSIDE}${rabbitmq ? `\n      RABBITMQ_HOST: rabbitmq\n      RABBITMQ_PORT: "5672"` : ""}${redis ? `\n      REDIS_URL: redis://redis:6379` : ""}${tracing ? JAEGER_ENDPOINT : ""}
     ports:
-      - "3000:3000"
+      - "\${PORT}:3000"
     # Start once the database is ready. Boot would otherwise retry it for up to 60 s.
     depends_on:
 ${dependency}${rabbitmq ? `\n      rabbitmq:\n        condition: service_healthy` : ""}${redis ? `\n      redis:\n        condition: service_healthy` : ""}${tracing ? JAEGER_DEPENDENCY : ""}

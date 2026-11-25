@@ -11,6 +11,7 @@ import { storesInUse } from "../singletons/cache";
 import { ConfigurationZod } from "../types/zod/configuration";
 import { GRAFANA_DASHBOARD } from "./grafanaDashboard";
 import {
+  DEFAULT_PORTS,
   FRONTEND_FILES,
   GRAFANA_FILES,
   METRICS_FILES,
@@ -49,6 +50,7 @@ const values = (database: DatabaseType): ProjectValues => ({
   metrics: false,
   tracing: false,
   virtualColumns: false,
+  ports: DEFAULT_PORTS,
   rabbitmqPassword: "rabbit-pass",
   adminSecret: "admin-secret-value",
   jwtSecret: "jwt-secret-value",
@@ -296,6 +298,45 @@ describe("renderProject .env", () => {
     expect(lines).toContain("DB_NAME=shop");
   });
 
+  it.each(ENGINES)("sets the port Graphoria listens and is published on for %s", (database) => {
+    expect(render(database)[".env"]!.split("\n")).toContain("PORT=3000");
+    expect(
+      renderWith({ ports: { ...DEFAULT_PORTS, app: 3005 } }, database)[".env"]!.split("\n"),
+    ).toContain("PORT=3005");
+  });
+
+  it("writes every published port init picked", () => {
+    const ports = {
+      app: 3005,
+      redis: 6380,
+      rabbitmq: 5673,
+      rabbitmqManagement: 15673,
+      dbgate: 9001,
+      redisCommander: 8082,
+      jaegerUi: 16687,
+      jaegerOtlp: 4319,
+      grafana: 3006,
+    };
+    const patch = { redis: true, rabbitmq: true, dataTools: true, tracing: true, metrics: true };
+    const lines = renderWith({ ...patch, ports })[".env"]!.split("\n");
+
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        "PORT=3005",
+        "REDIS_PORT=6380",
+        "REDIS_URL=redis://localhost:6380",
+        "RABBITMQ_PORT=5673",
+        "RABBITMQ_MANAGEMENT_PORT=15673",
+        "DBGATE_PORT=9001",
+        "REDIS_COMMANDER_PORT=8082",
+        "JAEGER_UI_PORT=16687",
+        "JAEGER_OTLP_PORT=4319",
+        "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4319",
+        "GRAFANA_PORT=3006",
+      ]),
+    );
+  });
+
   it("adds the RabbitMQ settings, with a generated password", () => {
     const lines = renderWith({ rabbitmq: true })[".env"]!.split("\n");
 
@@ -522,8 +563,31 @@ describe("renderProject docker-compose.yml", () => {
     expect(services.graphoria.build).toBe(".");
     expect(services.graphoria.init).toBe(true);
     expect(services.graphoria.env_file).toBe(".env");
-    expect(services.graphoria.environment).toEqual({ DB_HOST: "db", DB_PORT: String(port) });
-    expect(services.graphoria.ports).toEqual(["3000:3000"]);
+    expect(services.graphoria.environment).toEqual({
+      DB_HOST: "db",
+      DB_PORT: String(port),
+      PORT: "3000",
+    });
+    expect(services.graphoria.ports).toEqual(["${PORT}:3000"]);
+  });
+
+  it.each(ENGINES)(
+    "publishes Graphoria on .env's PORT, listening on 3000 inside, for %s",
+    (database) => {
+      const { services } = compose(database);
+
+      expect(services.graphoria.ports).toEqual(["${PORT}:3000"]);
+      expect(services.graphoria.environment).toMatchObject({ PORT: "3000" });
+    },
+  );
+
+  it("names the port init picked in the header's GraphiQL link", () => {
+    for (const database of ENGINES) {
+      const yml = renderWith({ ports: { ...DEFAULT_PORTS, app: 3005 } }, database)[
+        "docker-compose.yml"
+      ]!;
+      expect(yml).toContain("# Then open http://localhost:3005/graphiql.");
+    }
   });
 
   it.each(["pg", "mysql"] as const)("seeds %s from the image's init scripts", (database) => {
@@ -583,7 +647,7 @@ describe("renderProject docker-compose.yml", () => {
       const { services, volumes } = compose(database, { redis: true });
 
       expect(services.redis!.image).toBe("redis:8");
-      expect(services.redis!.ports).toEqual(["6379:6379"]);
+      expect(services.redis!.ports).toEqual(["${REDIS_PORT}:6379"]);
       expect(services.redis!.volumes).toContain("redis-data:/data");
       expect(services.redis!.healthcheck?.test).toBeDefined();
       expect(services.graphoria!.environment).toMatchObject({
@@ -604,7 +668,7 @@ describe("renderProject docker-compose.yml", () => {
       expect(services.jaeger!.image).toBe("jaegertracing/jaeger:2.20.0");
       expect(services.jaeger!.ports).toEqual([
         "127.0.0.1:${JAEGER_UI_PORT}:16686",
-        "127.0.0.1:4318:4318",
+        "127.0.0.1:${JAEGER_OTLP_PORT}:4318",
       ]);
       expect(services.jaeger!.tmpfs).toEqual(["/tmp"]);
       expect(services.jaeger!.healthcheck?.test).toBeDefined();
@@ -2288,7 +2352,10 @@ describe("renderProject for SQLite", () => {
     };
 
     expect(Object.keys(compose.services)).toEqual(["graphoria"]);
-    expect(compose.services.graphoria!.environment).toEqual({ DB_FILE: "data/shop.db" });
+    expect(compose.services.graphoria!.environment).toEqual({
+      DB_FILE: "data/shop.db",
+      PORT: "3000",
+    });
     expect(compose.services.graphoria!.volumes).toEqual(["db-data:/app/data"]);
     expect(Object.keys(compose.volumes)).toEqual(["db-data"]);
   });

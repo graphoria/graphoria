@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { version } from "./package.json";
+import { isPortFree } from "./src/cli/init";
 
 let dir: string;
 let configPath: string;
@@ -295,6 +296,13 @@ describe("cli init", () => {
   const cwds: string[] = [];
   afterAll(() => Promise.all(cwds.map((cwd) => rm(cwd, { recursive: true, force: true }))));
 
+  // The port init gives a service no other one competes for: its default, or
+  // the next free one on this host.
+  const firstFree = (port: number) => {
+    while (!isPortFree(port)) port++;
+    return String(port);
+  };
+
   it("scaffolds a project with every default", async () => {
     const { cwd, result } = await init(["--yes", "--no-install"]);
     cwds.push(cwd);
@@ -304,7 +312,12 @@ describe("cli init", () => {
     const values = await env(cwd);
     expect(values.ADMIN_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(values.JWT_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(values).toMatchObject({ DB_USER: "postgres", DB_NAME: "app", DB_PORT: "5432" });
+    expect(values).toMatchObject({
+      DB_USER: "postgres",
+      DB_NAME: "app",
+      DB_PORT: firstFree(5432),
+      PORT: firstFree(3000),
+    });
     expect(JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies).toEqual({
       "@graphoria/server": `^${version}`,
     });
@@ -319,7 +332,7 @@ describe("cli init", () => {
     expect(values.METRICS_ENABLED).toBe("true");
     expect(values.METRICS_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(values.METRICS_SECRET).not.toBe(values.ADMIN_SECRET);
-    expect(result.stdout.toString()).toContain("http://localhost:3000/metrics");
+    expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/metrics`);
   });
 
   it("mounts the tRPC surface with --trpc", async () => {
@@ -327,11 +340,12 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
-    expect((await env(cwd)).TRPC_ENABLED).toBe("true");
+    const values = await env(cwd);
+    expect(values.TRPC_ENABLED).toBe("true");
     expect(
       JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies,
     ).toHaveProperty("@trpc/server");
-    expect(result.stdout.toString()).toContain("http://localhost:3000/trpc");
+    expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/trpc`);
   });
 
   it("adds the React frontend with --frontend", async () => {
@@ -393,13 +407,15 @@ describe("cli init", () => {
     });
     const values = await env(cwd);
     expect(values.RABBITMQ_HOST).toBe("localhost");
-    expect(values.RABBITMQ_MANAGEMENT_PORT).toBe("15672");
+    expect(values.RABBITMQ_MANAGEMENT_PORT).toBe(firstFree(15672));
     expect(values.RABBITMQ_VHOST).toBe("/");
     expect(values.RABBITMQ_PASSWORD).toMatch(/^[A-Za-z0-9]{16}$/);
     const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
     expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq"]);
     expect((await readdir(cwd)).sort()).toEqual(FILES);
-    expect(result.stdout.toString()).toContain("http://localhost:15672");
+    expect(result.stdout.toString()).toContain(
+      `http://localhost:${values.RABBITMQ_MANAGEMENT_PORT}`,
+    );
     expect(result.stdout.toString()).toContain("/rest/ai");
   });
 
@@ -412,12 +428,13 @@ describe("cli init", () => {
       "@graphoria/server": `^${version}`,
       "@graphoria/ai": `^${version}`,
     });
-    expect((await env(cwd)).LLM_PROVIDER).toBeUndefined();
+    const values = await env(cwd);
+    expect(values.LLM_PROVIDER).toBeUndefined();
     expect(await readFile(join(cwd, "graphoria.ts"), "utf8")).toContain(
       "  ai: {\n    // POST /mcp answers MCP clients",
     );
-    expect(result.stdout.toString()).toContain("http://localhost:3000/mcp");
-    expect(result.stdout.toString()).toContain("--db-port 5432 --mcp --no-install");
+    expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/mcp`);
+    expect(result.stdout.toString()).toContain(`--db-port ${values.DB_PORT} --mcp --no-install`);
   });
 
   it("scaffolds Redis for the cache, the auth token store and the rate limits with --redis", async () => {
@@ -426,7 +443,8 @@ describe("cli init", () => {
 
     expect(result.exitCode).toBe(0);
     const values = await env(cwd);
-    expect(values.REDIS_URL).toBe("redis://localhost:6379");
+    expect(values.REDIS_PORT).toBe(firstFree(6379));
+    expect(values.REDIS_URL).toBe(`redis://localhost:${values.REDIS_PORT}`);
     expect(values.AUTH_STORE).toBe("redis");
     expect(values.RATE_LIMIT_STORE).toBe("redis");
     expect(values.CACHE_STORE).toBeUndefined();
@@ -483,7 +501,7 @@ describe("cli init", () => {
     const values = await env(cwd);
     expect(values.RABBITMQ_HOST).toBe("localhost");
     expect(values.LLM_PROVIDER).toBe("ollama");
-    expect(values.REDIS_URL).toBe("redis://localhost:6379");
+    expect(values.REDIS_URL).toBe(`redis://localhost:${values.REDIS_PORT}`);
     expect(values.AUTH_STORE).toBe("redis");
     expect(values.RATE_LIMIT_STORE).toBe("redis");
     expect(values.CACHE_STORE).toBeUndefined();
@@ -766,7 +784,7 @@ describe("cli init", () => {
 
     expect(exitCode).toBe(0);
     expect(output).toContain("  \x1b[36mbun run dev\x1b[39m");
-    expect(output).toContain("\x1b[94mhttp://localhost:3000/graphiql\x1b[39m");
+    expect(output).toContain(`\x1b[94mhttp://localhost:${(await env(cwd)).PORT}/graphiql\x1b[39m`);
   }, 30_000);
 
   it("prints the guide without color under NO_COLOR, or into a pipe", async () => {
@@ -821,7 +839,7 @@ describe("cli init", () => {
     }
   };
 
-  it.each(["--metrics", "--tracing"])("warns when Grafana's port is taken (%s)", async (flag) => {
+  it.each(["--metrics", "--tracing"])("moves Grafana off a taken port (%s)", async (flag) => {
     const holder = hold(3001);
     const { cwd, result } = await init(["--yes", flag, "--no-install"]).finally(() =>
       holder?.stop(true),
@@ -829,12 +847,14 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
+    const { GRAFANA_PORT } = await env(cwd);
+    expect(GRAFANA_PORT).not.toBe("3001");
     expect(result.stderr.toString()).toContain(
-      "Port 3001 is in use on this host, so Docker Compose cannot publish the Grafana on it. Set GRAFANA_PORT in .env to a free port",
+      `Port 3001 is taken, so Grafana uses ${GRAFANA_PORT} instead (GRAFANA_PORT in .env).`,
     );
   });
 
-  it("warns when the port Jaeger takes OTLP on is taken", async () => {
+  it("moves Jaeger's OTLP receiver off a taken port, and points the traces at it", async () => {
     const holder = hold(4318);
     const { cwd, result } = await init(["--yes", "--tracing", "--no-install"]).finally(() =>
       holder?.stop(true),
@@ -842,9 +862,26 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
+    const values = await env(cwd);
+    expect(values.JAEGER_OTLP_PORT).not.toBe("4318");
+    expect(values.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`http://localhost:${values.JAEGER_OTLP_PORT}`);
     expect(result.stderr.toString()).toContain(
-      "Port 4318 is in use on this host, so Docker Compose cannot publish the Jaeger OTLP receiver on it. No .env variable moves it",
+      `Port 4318 is taken, so Jaeger's OTLP receiver uses ${values.JAEGER_OTLP_PORT} instead (JAEGER_OTLP_PORT in .env).`,
     );
+  });
+
+  it("moves Graphoria off a taken port 3000, and links the app there", async () => {
+    const holder = hold(3000);
+    const { cwd, result } = await init(["--yes", "--no-install"]).finally(() => holder?.stop(true));
+    cwds.push(cwd);
+
+    expect(result.exitCode).toBe(0);
+    const { PORT } = await env(cwd);
+    expect(PORT).not.toBe("3000");
+    expect(result.stderr.toString()).toContain(
+      `Port 3000 is taken, so Graphoria uses ${PORT} instead (PORT in .env).`,
+    );
+    expect(result.stdout.toString()).toContain(`then open http://localhost:${PORT}/graphiql`);
   });
 
   it("colors the guide through a pipe under FORCE_COLOR", async () => {

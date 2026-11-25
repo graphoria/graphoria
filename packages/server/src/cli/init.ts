@@ -5,24 +5,18 @@ import { customAlphabet } from "nanoid";
 
 import type { DatabaseType } from "../config";
 import type { InitArgs } from "./initArgs";
-import type { InitAnswers } from "./initTemplates";
+import type { HostPorts, InitAnswers } from "./initTemplates";
 import type { Ask, Choice, MultiSelect, Say, Select } from "./prompt";
 
 import { version } from "../../package.json";
 import { DATABASE_TYPES, dbNameError, parseInitArgs, portError } from "./initArgs";
 import {
-  DBGATE_PORT,
+  DEFAULT_PORTS,
   ENGINES,
   FRONTEND_FILES,
   GRAFANA_FILES,
-  GRAFANA_PORT,
-  JAEGER_OTLP_PORT,
-  JAEGER_UI_PORT,
   METRICS_FILES,
   PROJECT_FILES,
-  RABBITMQ_MANAGEMENT_PORT,
-  RABBITMQ_PORT,
-  REDIS_COMMANDER_PORT,
   TRPC_ENV_FILES,
   TRPC_FILES,
   renderProject,
@@ -35,6 +29,7 @@ export type InitIO = {
   say: Say;
   select: Select;
   multiSelect: MultiSelect;
+  isPortFree: (port: number) => boolean;
 };
 
 const DATABASE_LABELS: Record<DatabaseType, string> = {
@@ -65,13 +60,23 @@ const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> =
   hint,
 });
 
-const TERMINAL_IO: InitIO = { ask, say: console.log, select, multiSelect };
+export const isPortFree = (port: number): boolean => {
+  try {
+    Bun.listen({ hostname: "0.0.0.0", port, socket: { data() {} } }).stop(true);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const TERMINAL_IO: InitIO = { ask, say: console.log, select, multiSelect, isPortFree };
 
 const NO_PROMPT_IO: InitIO = {
   ask: () => null,
   say: () => {},
   select: (_question, choices, initial) => choices[initial].value,
   multiSelect: (_question, _choices, initial) => [...initial],
+  isPortFree,
 };
 
 // 16, not more: see the MySQL rule in passwordError.
@@ -164,7 +169,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
           await question(
             io,
             "Database port on this host",
-            String(ENGINES[database].port),
+            String(freePort(ENGINES[database].port, new Set(), io.isPortFree)),
             portError,
           ),
         ));
@@ -212,7 +217,7 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
   const chosen = new Set(extras);
 
-  return {
+  const answers = {
     database,
     dbName,
     dbPassword,
@@ -231,30 +236,106 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
     tracing: args.tracing ?? chosen.has("tracing"),
     virtualColumns: args.virtualColumns ?? chosen.has("virtualColumns"),
   };
+  return { ...answers, ports: pickPorts(answers, io.isPortFree) };
 };
 
-export const isPortFree = (port: number): boolean => {
-  try {
-    Bun.listen({ hostname: "0.0.0.0", port, socket: { data() {} } }).stop(true);
-    return true;
-  } catch {
-    return false;
+// The first port from `preferred` up that is free and not in `taken`.
+const freePort = (
+  preferred: number,
+  taken: ReadonlySet<number>,
+  isFree: (port: number) => boolean,
+): number => {
+  for (let port = preferred; port <= 65535; port++) {
+    if (!taken.has(port) && isFree(port)) return port;
   }
+  return preferred;
+};
+
+// What the project publishes besides its database, in the order the ports are
+// handed out, and the .env variable each one lands in.
+const PUBLISHED: { key: keyof HostPorts; service: string; envVar: string }[] = [
+  { key: "app", service: "Graphoria", envVar: "PORT" },
+  { key: "redis", service: "Redis", envVar: "REDIS_PORT" },
+  { key: "rabbitmq", service: "RabbitMQ", envVar: "RABBITMQ_PORT" },
+  {
+    key: "rabbitmqManagement",
+    service: "RabbitMQ's management UI",
+    envVar: "RABBITMQ_MANAGEMENT_PORT",
+  },
+  { key: "dbgate", service: "dbgate", envVar: "DBGATE_PORT" },
+  { key: "redisCommander", service: "Redis Commander", envVar: "REDIS_COMMANDER_PORT" },
+  { key: "jaegerUi", service: "Jaeger's UI", envVar: "JAEGER_UI_PORT" },
+  { key: "jaegerOtlp", service: "Jaeger's OTLP receiver", envVar: "JAEGER_OTLP_PORT" },
+  { key: "grafana", service: "Grafana", envVar: "GRAFANA_PORT" },
+];
+
+// Each published port: its default when free, else the next free one that no
+// other service, the database included, already took. A service the project
+// leaves out keeps its default, unprobed.
+export const pickPorts = (
+  answers: Pick<
+    InitAnswers,
+    "database" | "dbPort" | "redis" | "rabbitmq" | "dataTools" | "metrics" | "tracing"
+  >,
+  isFree: (port: number) => boolean,
+): HostPorts => {
+  const published: Record<keyof HostPorts, boolean> = {
+    app: true,
+    redis: answers.redis,
+    rabbitmq: answers.rabbitmq,
+    rabbitmqManagement: answers.rabbitmq,
+    dbgate: answers.dataTools,
+    redisCommander: answers.dataTools && answers.redis,
+    jaegerUi: answers.tracing,
+    jaegerOtlp: answers.tracing,
+    grafana: answers.metrics || answers.tracing,
+  };
+  const taken = new Set(answers.database === "sqlite" ? [] : [answers.dbPort]);
+  const ports = { ...DEFAULT_PORTS };
+  for (const { key } of PUBLISHED) {
+    if (!published[key]) continue;
+    ports[key] = freePort(DEFAULT_PORTS[key], taken, isFree);
+    taken.add(ports[key]);
+  }
+  return ports;
 };
 
 export const portWarning = (
   port: number,
-  describe: { service: string; envVar?: string },
+  describe: { service: string; envVar: string },
   isFree: (port: number) => boolean = isPortFree,
 ): string | undefined => {
   if (isFree(port)) return undefined;
   const taken = `Port ${port} is in use on this host, so Docker Compose cannot publish the ${describe.service} on it.`;
-  if (describe.envVar === undefined)
-    return `${taken} No .env variable moves it, so free it before \`docker compose up\`.`;
   let free = port + 1;
   while (free <= 65535 && !isFree(free)) free++;
   const suggestion = free <= 65535 ? ` such as ${free}` : "";
   return `${taken} Set ${describe.envVar} in .env to a free port${suggestion} before \`docker compose up\`.`;
+};
+
+const moved = (from: number, service: string, to: number, envVar: string) =>
+  `Port ${from} is taken, so ${service} uses ${to} instead (${envVar} in .env).`;
+
+// What init says about the ports: the ones it moved off a taken default, and a
+// database port that is itself taken (one --db-port or the question chose).
+export const portNotes = (
+  answers: InitAnswers,
+  dbPortGiven: boolean,
+  isFree: (port: number) => boolean = isPortFree,
+): string[] => {
+  const notes: string[] = [];
+  if (answers.database !== "sqlite") {
+    const engine = ENGINES[answers.database].port;
+    const warning = portWarning(answers.dbPort, { service: "database", envVar: "DB_PORT" }, isFree);
+    if (warning) notes.push(warning);
+    else if (!dbPortGiven && answers.dbPort !== engine && !isFree(engine))
+      notes.push(moved(engine, "the database", answers.dbPort, "DB_PORT"));
+  }
+  for (const { key, service, envVar } of PUBLISHED) {
+    if (answers.ports[key] !== DEFAULT_PORTS[key])
+      notes.push(moved(DEFAULT_PORTS[key], service, answers.ports[key], envVar));
+  }
+  return notes;
 };
 
 export const sampleQuery = (
@@ -333,12 +414,13 @@ export const nextSteps = (
   const command = (line: string) => `  ${paint.code(line)}`;
   const inline = (code: string) => paint.code(`\`${code}\``);
   const link = (port: number, path = "") => paint.url(`http://localhost:${port}${path}`);
+  const { ports } = answers;
   const seed = (role: "reader" | "editor", password: string) =>
     `  ${paint.code(`bunx graphoria seed-auth --user ${role} --password `)}${paint.secret(password)}${paint.code(` --role ${role} --config ./graphoria.ts`)}`;
 
   const open = answers.frontend
-    ? `  then open ${link(3000)} (the app) or ${link(3000, "/graphiql")}`
-    : `  then open ${link(3000, "/graphiql")}`;
+    ? `  then open ${link(ports.app)} (the app) or ${link(ports.app, "/graphiql")}`
+    : `  then open ${link(ports.app, "/graphiql")}`;
 
   // Besides the database, what graphoria.ts connects to: a host run starts
   // their containers too, and Grafana, which shows the traces Jaeger keeps.
@@ -385,8 +467,8 @@ export const nextSteps = (
         ];
 
   const grafana = answers.metrics
-    ? `${paint.name("Grafana")} opens on the Graphoria dashboard at ${link(GRAFANA_PORT)} in the Docker run: Prometheus scrapes the graphoria service, not a host run${answers.tracing ? "; the traces are under Explore → Jaeger" : ""}.`
-    : `${paint.name("Grafana")} shows the traces at ${link(GRAFANA_PORT)}, under Explore → Jaeger.`;
+    ? `${paint.name("Grafana")} opens on the Graphoria dashboard at ${link(ports.grafana)} in the Docker run: Prometheus scrapes the graphoria service, not a host run${answers.tracing ? "; the traces are under Explore → Jaeger" : ""}.`
+    : `${paint.name("Grafana")} shows the traces at ${link(ports.grafana)}, under Explore → Jaeger.`;
 
   return [
     ...run,
@@ -404,13 +486,13 @@ export const nextSteps = (
           "Without a token you read the authors. A reader also reads the published books; an editor",
           "reads every book, adds drafts (addBook) and publishes them (publishBook).",
           "Log in with auth_login in GraphiQL or POST /rest/auth/login, then send",
-          `Authorization: Bearer <access_token>${answers.frontend ? `, or sign in at ${link(3000)}` : ""}.`,
+          `Authorization: Bearer <access_token>${answers.frontend ? `, or sign in at ${link(ports.app)}` : ""}.`,
         ]
       : []),
     ...(answers.rabbitmq
       ? [
           "",
-          `${paint.name("RabbitMQ")} management UI: ${link(RABBITMQ_MANAGEMENT_PORT)} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
+          `${paint.name("RabbitMQ")} management UI: ${link(ports.rabbitmqManagement)} (user RABBITMQ_USER, password RABBITMQ_PASSWORD from .env)`,
           `Publish with the events_bookAdded mutation; subscribe with events_onBookAdded.${answers.auth ? " Both take an editor's token or the admin secret." : ""}`,
           ...(answers.auth
             ? [
@@ -429,7 +511,7 @@ export const nextSteps = (
     ...(answers.mcp
       ? [
           "",
-          `The ${paint.name("MCP server")} answers MCP clients at ${link(3000, "/mcp")}. Its tools run as the caller, as on /graphql:`,
+          `The ${paint.name("MCP server")} answers MCP clients at ${link(ports.app, "/mcp")}. Its tools run as the caller, as on /graphql:`,
           answers.auth
             ? "without a header a client reads the authors; send a reader's or an editor's token, or the admin secret."
             : answers.frontend
@@ -448,9 +530,9 @@ export const nextSteps = (
     ...(answers.dataTools
       ? [
           "",
-          `${paint.name("dbgate")} explores the database at ${link(DBGATE_PORT)} once ${inline("docker compose up")} runs it.`,
+          `${paint.name("dbgate")} explores the database at ${link(ports.dbgate)} once ${inline("docker compose up")} runs it.`,
           ...(answers.redis
-            ? [`${paint.name("Redis Commander")} inspects Redis at ${link(REDIS_COMMANDER_PORT)}.`]
+            ? [`${paint.name("Redis Commander")} inspects Redis at ${link(ports.redisCommander)}.`]
             : []),
         ]
       : []),
@@ -472,7 +554,7 @@ export const nextSteps = (
     ...(answers.trpc
       ? [
           "",
-          `${paint.name("tRPC")} serves the operations at ${link(3000, "/trpc")} (TRPC_ENABLED in .env); a call runs as its caller, as on /rest.`,
+          `${paint.name("tRPC")} serves the operations at ${link(ports.app, "/trpc")} (TRPC_ENABLED in .env); a call runs as its caller, as on /rest.`,
           `A client made with @trpc/client types them from graphoria.ts through TRPCRouterOf from @graphoria/server/trpc${answers.auth && answers.frontend ? ", as web/trpc.ts does for the app's Publish button" : ""}.`,
         ]
       : []),
@@ -491,13 +573,13 @@ export const nextSteps = (
     ...(answers.metrics
       ? [
           "",
-          `${paint.name("Metrics")}: ${link(3000, "/metrics")} answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.`,
+          `${paint.name("Metrics")}: ${link(ports.app, "/metrics")} answers Prometheus when the x-admin-secret header carries METRICS_SECRET from .env, a secret that opens nothing else.`,
         ]
       : []),
     ...(answers.tracing
       ? [
           "",
-          `${paint.name("Jaeger")} shows a trace for each request, down to the SQL it ran, at ${link(JAEGER_UI_PORT)}: pick the service named OTEL_SERVICE_NAME in .env.`,
+          `${paint.name("Jaeger")} shows a trace for each request, down to the SQL it ran, at ${link(ports.jaegerUi)}: pick the service named OTEL_SERVICE_NAME in .env.`,
         ]
       : []),
     ...(answers.metrics || answers.tracing ? [grafana] : []),
@@ -533,6 +615,7 @@ const NO_TERMINAL_IO: InitIO = {
   say: () => {},
   select: noTerminal,
   multiSelect: noTerminal,
+  isPortFree,
 };
 
 export const initCommand = async (argv: string[]): Promise<never> => {
@@ -562,40 +645,9 @@ export const initCommand = async (argv: string[]): Promise<never> => {
   if (answers.trpc) refuseExisting([...TRPC_ENV_FILES]);
   if (answers.metrics || answers.tracing)
     refuseExisting([...(answers.metrics ? METRICS_FILES : []), ...GRAFANA_FILES]);
-  const warnings = [
-    answers.database === "sqlite"
-      ? undefined
-      : portWarning(answers.dbPort, { service: "database", envVar: "DB_PORT" }),
-    answers.rabbitmq
-      ? portWarning(RABBITMQ_PORT, { service: "RabbitMQ", envVar: "RABBITMQ_PORT" })
-      : undefined,
-    answers.rabbitmq
-      ? portWarning(RABBITMQ_MANAGEMENT_PORT, {
-          service: "RabbitMQ management UI",
-          envVar: "RABBITMQ_MANAGEMENT_PORT",
-        })
-      : undefined,
-    answers.dataTools
-      ? portWarning(DBGATE_PORT, { service: "dbgate", envVar: "DBGATE_PORT" })
-      : undefined,
-    answers.dataTools && answers.redis
-      ? portWarning(REDIS_COMMANDER_PORT, {
-          service: "Redis Commander",
-          envVar: "REDIS_COMMANDER_PORT",
-        })
-      : undefined,
-    answers.tracing
-      ? portWarning(JAEGER_UI_PORT, { service: "Jaeger UI", envVar: "JAEGER_UI_PORT" })
-      : undefined,
-    answers.tracing
-      ? portWarning(JAEGER_OTLP_PORT, { service: "Jaeger OTLP receiver" })
-      : undefined,
-    answers.metrics || answers.tracing
-      ? portWarning(GRAFANA_PORT, { service: "Grafana", envVar: "GRAFANA_PORT" })
-      : undefined,
-  ];
   const stderrPaint = paintFor(process.stderr);
-  for (const warning of warnings) if (warning) console.warn(stderrPaint.warning(warning));
+  for (const note of portNotes(answers, args.dbPort !== undefined, io.isPortFree))
+    console.warn(stderrPaint.warning(note));
 
   const name = projectName(dir);
   // Printed with the seed-auth commands only: not in .env, never in recreateCommand.
