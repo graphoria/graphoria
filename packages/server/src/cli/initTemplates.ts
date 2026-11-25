@@ -160,7 +160,7 @@ const FRONTEND_QUEUE_DEPENDENCIES = {
 // The optional peer TRPC_ENABLED loads, and the app's client, which must match
 // it. Exact: a test holds both to packages/server's own devDependencies, which
 // dependabot bumps.
-const TRPC_VERSION = "11.28.0";
+const TRPC_VERSION = "11.29.5";
 
 const startDatabase = (compose: string[]): Step => ({
   doing: "Starting the database",
