@@ -784,10 +784,12 @@ ${values.rabbitmq ? queueConfig(values) : ""}${values.ai || values.mcp ? aiConfi
 
 const INDEX = `import { createBunServer } from "@graphoria/server";
 
+import config from "./graphoria";
+
 // No \`port\` here: the server listens on PORT (default 3000), the port the
 // image's healthcheck probes.
 const { server, prefixes } = await createBunServer({
-  configuration: "./graphoria.ts",
+  configuration: config,
 });
 
 console.log(\`GraphQL  → http://localhost:\${server.port}\${prefixes.graphql}\`);
@@ -798,12 +800,13 @@ console.log(\`Scalar   → http://localhost:\${server.port}\${prefixes.scalar}\`
 
 const INDEX_FRONTEND = `import { createHandlers } from "@graphoria/server";
 
+import config from "./graphoria";
 import web from "./web/index.html";
 
 // No \`port\` here: the server listens on PORT (default 3000), the port the
 // image's healthcheck probes.
 const { serverHandlers, prefixes, handleSignals } = await createHandlers({
-  configuration: "./graphoria.ts",
+  configuration: config,
 });
 
 const server = Bun.serve({

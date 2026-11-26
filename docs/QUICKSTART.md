@@ -25,7 +25,7 @@ bunx graphoria init
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `graphoria.ts`                                | The configuration. It reads the database connection from the environment, and declares `addBook`: `POST /rest/add-book`, with the admin secret.                |
 | `repository.ts`                               | The [typed repository](./OPERATIONS.md#typed-repositories) `addBook` stores a book through; it answers the stored row, `id` included.                          |
-| `index.ts`                                    | The entry point.                                                                                                                                               |
+| `index.ts`                                    | The entry point: it imports `graphoria.ts` and starts the server with it.                                                                                      |
 | `.env`                                        | A random `ADMIN_SECRET` and `JWT_SECRET`, and the database settings (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`); on SQLite, `DB_FILE` instead. |
 | `docker-compose.yml`                          | The database and Graphoria. On SQLite it's Graphoria alone, with the file on a volume; otherwise the database's port is published on your machine too.         |
 | `Dockerfile`, `.dockerignore`                 | The image recipe of the [Docker Compose starter](../examples/docker-compose-starter/).                                                                         |
