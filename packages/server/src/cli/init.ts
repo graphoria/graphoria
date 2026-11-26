@@ -219,7 +219,13 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
       : []),
   ];
   const extras =
-    extraChoices.length === 0 ? [] : await io.multiSelect<Extra>("Select extras", extraChoices, []);
+    extraChoices.length === 0
+      ? []
+      : await io.multiSelect<Extra>("Select extras", extraChoices, [
+          "rabbitmq",
+          "auth",
+          "frontend",
+        ]);
   const chosen = new Set(extras);
 
   const answers = {
@@ -350,6 +356,8 @@ export const sampleQuery = (
   return `{ ${schema}_authors { name ${schema}_books { title${answers.virtualColumns ? " age" : ""} } } }`;
 };
 
+// --yes ticks RabbitMQ, Login and the frontend, as the extras menu does, so one
+// left out needs its --no flag.
 export const recreateCommand = (answers: InitAnswers, installed: boolean, up = false): string =>
   [
     "bunx graphoria init --yes",
@@ -358,13 +366,13 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean, up = f
     ...(answers.database !== "sqlite" && answers.dbPortGiven
       ? [`--db-port ${answers.dbPort}`]
       : []),
-    ...(answers.rabbitmq ? ["--rabbitmq"] : []),
+    answers.rabbitmq ? "--rabbitmq" : "--no-rabbitmq",
     ...(answers.ai ? ["--ai"] : []),
     ...(answers.mcp ? ["--mcp"] : []),
-    ...(answers.auth ? ["--auth"] : []),
+    answers.auth ? "--auth" : "--no-auth",
     ...(answers.redis ? ["--redis"] : []),
     ...(answers.dataTools ? ["--data-tools"] : []),
-    ...(answers.frontend ? ["--frontend"] : []),
+    answers.frontend ? "--frontend" : "--no-frontend",
     ...(answers.trpc ? ["--trpc"] : []),
     ...(answers.cron ? ["--cron"] : []),
     ...(answers.rateLimit ? ["--rate-limit"] : []),

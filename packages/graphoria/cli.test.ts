@@ -33,7 +33,7 @@ describe("graphoria", () => {
 
     expect(result.exitCode).toBe(0);
     expect(await readdir(cwd)).toContain("graphoria.ts");
-    expect(await readdir(cwd)).toHaveLength(11);
+    expect(await readdir(cwd)).toHaveLength(13);
   });
 
   it("pins the @graphoria/server of its own version", () => {

@@ -326,7 +326,7 @@ describe("cli init", () => {
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
-    expect((await readdir(cwd)).sort()).toEqual(FILES);
+    expect((await readdir(cwd)).sort()).toEqual([...FILES, "bunfig.toml", "web"].sort());
     const values = await env(cwd);
     expect(values.ADMIN_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(values.JWT_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -335,10 +335,14 @@ describe("cli init", () => {
       DB_NAME: "app",
       DB_PORT: firstFree(5432),
       PORT: firstFree(3000),
+      AUTH_STORE: "memory",
     });
-    expect(JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies).toEqual({
-      "@graphoria/server": `^${version}`,
-    });
+    const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
+    expect(Object.keys(compose.services).sort()).toEqual(["db", "graphoria", "rabbitmq"]);
+    // Only Login and the frontend together bring the React SDK.
+    expect(
+      JSON.parse(await readFile(join(cwd, "package.json"), "utf8")).dependencies,
+    ).toHaveProperty("@graphoria/react", `^${version}`);
   });
 
   it("generates the metrics secret apart from the admin secret with --metrics", async () => {
@@ -387,7 +391,13 @@ describe("cli init", () => {
   });
 
   it("wires the add-book operation and its queue event with --rabbitmq --frontend", async () => {
-    const { cwd, result } = await init(["--yes", "--rabbitmq", "--frontend", "--no-install"]);
+    const { cwd, result } = await init([
+      "--yes",
+      "--rabbitmq",
+      "--frontend",
+      "--no-auth",
+      "--no-install",
+    ]);
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
@@ -413,7 +423,14 @@ describe("cli init", () => {
   });
 
   it("scaffolds RabbitMQ and the AI agent with --rabbitmq --ai", async () => {
-    const { cwd, result } = await init(["--yes", "--rabbitmq", "--ai", "--no-install"]);
+    const { cwd, result } = await init([
+      "--yes",
+      "--rabbitmq",
+      "--ai",
+      "--no-auth",
+      "--no-frontend",
+      "--no-install",
+    ]);
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
@@ -438,7 +455,14 @@ describe("cli init", () => {
   });
 
   it("scaffolds the MCP server with --mcp, with no LLM settings", async () => {
-    const { cwd, result } = await init(["--yes", "--mcp", "--no-install"]);
+    const { cwd, result } = await init([
+      "--yes",
+      "--mcp",
+      "--no-rabbitmq",
+      "--no-auth",
+      "--no-frontend",
+      "--no-install",
+    ]);
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
@@ -452,7 +476,9 @@ describe("cli init", () => {
       "  ai: {\n    // POST /mcp answers MCP clients",
     );
     expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/mcp`);
-    expect(result.stdout.toString()).toContain("--db-name app --mcp --no-install\n");
+    expect(result.stdout.toString()).toContain(
+      "--db-name app --no-rabbitmq --mcp --no-auth --no-frontend --no-install\n",
+    );
   });
 
   it("recreates with the --db-port it was given, and without one it picked", async () => {
@@ -461,13 +487,22 @@ describe("cli init", () => {
     cwds.push(given.cwd, picked.cwd);
 
     expect(given.result.stdout.toString()).toContain(
-      "--db-name app --db-port 15432 --no-install\n",
+      "--db-name app --db-port 15432 --rabbitmq --auth --frontend --no-install\n",
     );
-    expect(picked.result.stdout.toString()).toContain("--database pg --db-name app --no-install\n");
+    expect(picked.result.stdout.toString()).toContain(
+      "--database pg --db-name app --rabbitmq --auth --frontend --no-install\n",
+    );
   });
 
   it("scaffolds Redis for the cache, the auth token store and the rate limits with --redis", async () => {
-    const { cwd, result } = await init(["--yes", "--redis", "--no-install"]);
+    const { cwd, result } = await init([
+      "--yes",
+      "--redis",
+      "--no-rabbitmq",
+      "--no-auth",
+      "--no-frontend",
+      "--no-install",
+    ]);
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
@@ -485,7 +520,15 @@ describe("cli init", () => {
   });
 
   it("scaffolds login with two roles with --auth, printing the demo passwords only", async () => {
-    const { cwd, result } = await init(["--yes", "--database", "sqlite", "--auth", "--no-install"]);
+    const { cwd, result } = await init([
+      "--yes",
+      "--database",
+      "sqlite",
+      "--auth",
+      "--no-rabbitmq",
+      "--no-frontend",
+      "--no-install",
+    ]);
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
@@ -508,6 +551,7 @@ describe("cli init", () => {
       "--ai",
       "--redis",
       "--frontend",
+      "--no-auth",
       "--no-install",
     ]);
     cwds.push(cwd);
@@ -607,6 +651,8 @@ describe("cli init", () => {
         "--yes",
         "--frontend",
         "--trpc",
+        "--no-rabbitmq",
+        "--no-auth",
         "--no-install",
       ],
       { cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
@@ -740,7 +786,7 @@ describe("cli init", () => {
         ["Database name", "shop\r"],
         ["Database password", "\r"],
         ["Database port on this host", "\r"],
-        ["Select extras", " \x1b[B\x1b[B\x1b[B\x1b[B \r"],
+        ["Select extras", "\x1b[B\x1b[B\x1b[B \x1b[B \x1b[B\x1b[B \r"],
       ],
     );
     cwds.push(cwd);
@@ -749,6 +795,9 @@ describe("cli init", () => {
     expect(output).toContain("? Database engine MySQL");
     // The text prompt echoes what is typed.
     expect(output).toContain("Database name [app] shop");
+    expect(output).toContain("> [x] RabbitMQ");
+    expect(output).toContain("[x] Login");
+    expect(output).toContain("[x] React frontend");
     expect(output).toContain("? Select extras RabbitMQ, Redis");
     expect(await env(cwd)).toMatchObject({ DB_USER: "root", DB_NAME: "shop", DB_PORT: "3306" });
     const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
@@ -758,7 +807,12 @@ describe("cli init", () => {
   it("takes answers typed ahead of their questions, as a paste", async () => {
     const { cwd, exitCode, output } = await initInTerminal(
       ["--no-install"],
-      [["Database engine", "\x1b[B\rBad\rshop\rSecret12\r3307\r \x1b[B\x1b[B\x1b[B\x1b[B \r"]],
+      [
+        [
+          "Database engine",
+          "\x1b[B\rBad\rshop\rSecret12\r3307\r\x1b[B\x1b[B\x1b[B \x1b[B \x1b[B\x1b[B \r",
+        ],
+      ],
     );
     cwds.push(cwd);
 
@@ -910,7 +964,9 @@ describe("cli init", () => {
     expect(result.stderr.toString()).toContain(
       `Port 3000 is taken, so Graphoria uses ${PORT} instead (PORT in .env).`,
     );
-    expect(result.stdout.toString()).toContain(`then open http://localhost:${PORT}/graphiql`);
+    expect(result.stdout.toString()).toContain(
+      `then open http://localhost:${PORT} (the app) or http://localhost:${PORT}/graphiql`,
+    );
   });
 
   it("colors the guide through a pipe under FORCE_COLOR", async () => {
@@ -1003,9 +1059,13 @@ describe("cli init", () => {
 
   it("runs docker compose up -d --build with --up when the project has no up script", async () => {
     const bin = await fakeBun();
-    const { cwd, result } = await init(["--yes", "--database", "sqlite", "--up"], undefined, {
-      PATH: `${bin}:${process.env.PATH}`,
-    });
+    const { cwd, result } = await init(
+      ["--yes", "--database", "sqlite", "--no-rabbitmq", "--no-auth", "--no-frontend", "--up"],
+      undefined,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+      },
+    );
     cwds.push(cwd);
 
     expect(result.exitCode).toBe(0);
@@ -1051,7 +1111,16 @@ describe("cli init", () => {
   it("exits 1 when an --up step fails, after its output, with what to run next in place of the guide", async () => {
     const bin = await fakeBun();
     const { cwd, result } = await init(
-      ["--yes", "--database", "sqlite", "--trpc", "--up"],
+      [
+        "--yes",
+        "--database",
+        "sqlite",
+        "--trpc",
+        "--no-rabbitmq",
+        "--no-auth",
+        "--no-frontend",
+        "--up",
+      ],
       undefined,
       {
         PATH: `${bin}:${process.env.PATH}`,
