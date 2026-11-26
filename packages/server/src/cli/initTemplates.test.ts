@@ -28,6 +28,8 @@ const PLAYGROUNDS = join(import.meta.dir, "../../../playgrounds/package.json");
 // What `@graphoria/server/config` resolves to. A generated config written outside
 // the workspace imports this instead: no node_modules above it holds the package.
 const CONFIG_SOURCE = join(import.meta.dir, "../config/index.ts");
+// The same for `@graphoria/server`, which index.ts imports.
+const SERVER_SOURCE = join(import.meta.dir, "../index.ts");
 // The same for `@graphoria/server/trpc` and `@graphoria/react`, which web/trpc.ts imports.
 const TRPC_SOURCE = join(import.meta.dir, "../trpc/index.ts");
 const REACT_SOURCE = join(import.meta.dir, "../../../react/src/index.ts");
@@ -1286,6 +1288,19 @@ describe("renderProject graphoria.ts", () => {
   });
 });
 
+describe("renderProject index.ts", () => {
+  it.each([
+    ["createBunServer", {}],
+    ["createHandlers", { frontend: true }],
+  ] as const)("imports graphoria.ts and passes it to %s", (factory, patch) => {
+    const index = renderWith(patch as Partial<ProjectValues>)["index.ts"]!;
+
+    expect(index).toContain('import config from "./graphoria";');
+    expect(index).toContain(`await ${factory}({\n  configuration: config,\n});`);
+    expect(index).not.toContain('"./graphoria.ts"');
+  });
+});
+
 describe("renderProject seed.sql", () => {
   it.each(ENGINES)("creates authors and books for %s", (database) => {
     const seed = render(database)["seed.sql"]!;
@@ -2501,8 +2516,8 @@ describe("renderProject types the add-book operation", () => {
 } => ({ kind: "Document" });
 `;
 
-  // One tsc run over every engine's graphoria.ts and repository.ts, with and
-  // without --auth, and the tRPC clients the configs type, plus copies that
+  // One tsc run over every engine's graphoria.ts, repository.ts and index.ts,
+  // with and without --auth, and the tRPC clients the configs type, plus copies that
   // call the repository or a client wrongly: their errors must be the only
   // ones. books' answer takes its type from the app's graphql() with
   // --frontend, and from graphoria-env.d.ts without.
@@ -2518,6 +2533,7 @@ describe("renderProject types the add-book operation", () => {
       for (const name of [
         "graphoria.ts",
         "repository.ts",
+        "index.ts",
         "web/trpc.ts",
         "web/graphql.ts",
         "graphoria-env.d.ts",
@@ -2584,6 +2600,7 @@ describe("renderProject types the add-book operation", () => {
             dirname(dirname(Bun.resolveSync("@types/bun/package.json", import.meta.dir))),
           ],
           paths: {
+            "@graphoria/server": [SERVER_SOURCE],
             "@graphoria/server/config": [CONFIG_SOURCE],
             "@graphoria/server/trpc": [TRPC_SOURCE],
             "@graphoria/react": [REACT_SOURCE],
