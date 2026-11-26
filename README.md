@@ -382,8 +382,8 @@ Generated GraphQL fields follow the `{schema}_{name}` pattern by default — e.g
 
 | Verb     | Path            | Description                                                                                                                  |
 | -------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| GET/POST | `/graphql`      | GraphQL over HTTP, POST only. GET is the WebSocket upgrade (graphql-ws); a plain GET is `404`.                               |
-| GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies).                                                                                 |
+| GET/POST | `/graphql`      | GraphQL over HTTP, POST only. GET is the WebSocket upgrade (graphql-ws); a plain GET is `404`. Opt-out: `GRAPHQL_ENABLED`.   |
+| GET/POST | `/rest/*`       | REST API (operations + remote-REST proxies). Opt-out: `REST_ENABLED`.                                                        |
 | GET/POST | `/trpc/*`       | Operations as typed tRPC procedures (opt-in via `TRPC_ENABLED`).                                                             |
 | GET      | `/graphiql`     | Bundled GraphiQL playground.                                                                                                 |
 | GET      | `/scalar`       | Bundled Scalar API docs.                                                                                                     |

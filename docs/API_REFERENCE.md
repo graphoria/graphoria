@@ -120,11 +120,11 @@ type Execute = (
 
 ```typescript
 type Prefixes = {
-  graphql: string; // e.g. "/graphql"
-  graphiql: string; // e.g. "/graphiql"
-  scalar: string; // e.g. "/scalar"
-  rest: string; // e.g. "/rest"
-  openapi: string; // e.g. "/openapi.json"
+  graphql: string; // e.g. "/graphql" — not mounted when GRAPHQL_ENABLED=false
+  graphiql: string; // e.g. "/graphiql" — not mounted when GRAPHQL_ENABLED=false
+  scalar: string; // e.g. "/scalar" — not mounted when REST_ENABLED=false
+  rest: string; // e.g. "/rest" — /rest/* not mounted when REST_ENABLED=false (/rest/ai follows AI_REST_ENABLED)
+  openapi: string; // e.g. "/openapi.json" — not mounted when REST_ENABLED=false
   console: string; // e.g. "/_console" — mounted only when CONSOLE_ENABLED
   health: string; // e.g. "/health" — serves /health/live and /health/ready
   metrics: string; // e.g. "/metrics" — mounted only when METRICS_ENABLED
