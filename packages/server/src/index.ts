@@ -541,10 +541,12 @@ const createGraphQLServer = async (env: Env) => {
       routes[`${env.prefix}/*`] = { OPTIONS: () => new S200(null) };
     }
 
-    // Static routes
-    routes[prefixes.openapi] = () => new S200(analyzedConfiguration.openapi);
-    routes[prefixes.graphiql] = () => html(graphiqlFile);
-    routes[prefixes.scalar] = () => html(scalarFile);
+    // Static routes, each mounted with the API it documents
+    if (env.restEnabled) {
+      routes[prefixes.openapi] = () => new S200(analyzedConfiguration.openapi);
+      routes[prefixes.scalar] = () => html(scalarFile);
+    }
+    if (env.graphqlEnabled) routes[prefixes.graphiql] = () => html(graphiqlFile);
 
     // Probes for an orchestrator: no auth, no rate limit. A Redis store is a
     // dependency only where something reads it.
@@ -630,63 +632,65 @@ const createGraphQLServer = async (env: Env) => {
     }
 
     // GraphQL endpoint
-    routes[prefixes.graphql] = {
-      ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
-      GET: withHttpTracing(
-        "graphql",
-        withHttpMetrics(
+    if (env.graphqlEnabled) {
+      routes[prefixes.graphql] = {
+        ...(env.enableCors ? { OPTIONS: () => new S200(null) } : {}),
+        GET: withHttpTracing(
           "graphql",
-          withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
-            try {
-              if (req.headers.get("upgrade") === "websocket") {
-                const success = server.upgrade(req, {
-                  data: {},
-                });
-                return success
-                  ? undefined
-                  : new Response("WebSocket upgrade error", { status: 400 });
+          withHttpMetrics(
+            "graphql",
+            withRateLimit(async (req: Request, server: Bun.Server<unknown>) => {
+              try {
+                if (req.headers.get("upgrade") === "websocket") {
+                  const success = server.upgrade(req, {
+                    data: {},
+                  });
+                  return success
+                    ? undefined
+                    : new Response("WebSocket upgrade error", { status: 400 });
+                }
+                return new S404({ error: "Not Found" });
+              } catch (error) {
+                return new S400({ errors: [{ message: (error as Error)?.message }] });
               }
-              return new S404({ error: "Not Found" });
+            }),
+          ),
+        ),
+        POST: withHttpTracing(
+          "graphql",
+          withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
+            try {
+              const { gql, session, limit } = await getRoleHandlers(req, server);
+              if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+
+              const { query, variables, operationName } = await req.json();
+
+              if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
+
+              const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
+
+              if (hasErrors)
+                return new S400({
+                  errors: validationErrors.map((error) => ({
+                    message: error.message,
+                    locations: error.locations,
+                  })),
+                });
+
+              return new S200(await gql.handler(query, variables, req, session, { operationName }));
             } catch (error) {
-              return new S400({ errors: [{ message: (error as Error)?.message }] });
+              const message = (error as Error)?.message;
+
+              if (message === "Invalid username or password") {
+                return new S401({ errors: [{ message }] });
+              } else {
+                return new S400({ errors: [{ message }] });
+              }
             }
           }),
         ),
-      ),
-      POST: withHttpTracing(
-        "graphql",
-        withHttpMetrics("graphql", async (req: BunRequest, server: Bun.Server<unknown>) => {
-          try {
-            const { gql, session, limit } = await getRoleHandlers(req, server);
-            if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
-
-            const { query, variables, operationName } = await req.json();
-
-            if (gql.isNoDataQuery(query)) return new S200(gql.noDataResult);
-
-            const { hasErrors, validationErrors } = gql.hasErrors(query, { variables });
-
-            if (hasErrors)
-              return new S400({
-                errors: validationErrors.map((error) => ({
-                  message: error.message,
-                  locations: error.locations,
-                })),
-              });
-
-            return new S200(await gql.handler(query, variables, req, session, { operationName }));
-          } catch (error) {
-            const message = (error as Error)?.message;
-
-            if (message === "Invalid username or password") {
-              return new S401({ errors: [{ message }] });
-            } else {
-              return new S400({ errors: [{ message }] });
-            }
-          }
-        }),
-      ),
-    };
+      };
+    }
 
     // The AI agent over REST, for the roles granted `ai`
     if (aiSurfaces.rest) {
@@ -744,29 +748,31 @@ const createGraphQLServer = async (env: Env) => {
     }
 
     // REST API endpoint
-    routes[`${prefixes.rest}/*`] = withHttpTracing(
-      "rest",
-      withHttpMetrics("rest", async (req: BunRequest, server: Bun.Server<unknown>) => {
-        if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
+    if (env.restEnabled) {
+      routes[`${prefixes.rest}/*`] = withHttpTracing(
+        "rest",
+        withHttpMetrics("rest", async (req: BunRequest, server: Bun.Server<unknown>) => {
+          if (req.method === "OPTIONS" && env.enableCors) return new S200(null);
 
-        try {
-          const { rest, session, limit } = await getRoleHandlers(req, server);
-          if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
+          try {
+            const { rest, session, limit } = await getRoleHandlers(req, server);
+            if (limit && !limit.allowed) return new S429(limit.retryAfterMs);
 
-          const urlParsed = new URL(req.url);
+            const urlParsed = new URL(req.url);
 
-          return await rest.handler(
-            urlParsed,
-            urlParsed.pathname.replace(prefixes.rest, ""),
-            req.method,
-            req,
-            session,
-          );
-        } catch {
-          return new S400({ errors: [{ message: "Bad request" }] });
-        }
-      }),
-    );
+            return await rest.handler(
+              urlParsed,
+              urlParsed.pathname.replace(prefixes.rest, ""),
+              req.method,
+              req,
+              session,
+            );
+          } catch {
+            return new S400({ errors: [{ message: "Bad request" }] });
+          }
+        }),
+      );
+    }
 
     // Operations as tRPC procedures, opt-in via TRPC_ENABLED. The caller is
     // resolved inside, as on REST: its role picks the router.

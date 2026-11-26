@@ -45,6 +45,8 @@ describe("EnvZod boolean flags", () => {
       ...baseEnv,
       CONSOLE_ENABLED: "false",
       CORS_ENABLED: "false",
+      GRAPHQL_ENABLED: "false",
+      REST_ENABLED: "false",
       PRINT_SCHEMAS: "false",
       QUERY_ON_RESPONSE: "false",
       AI_ENABLED: "false",
@@ -56,6 +58,8 @@ describe("EnvZod boolean flags", () => {
 
     expect(env.console.enabled).toBe(false);
     expect(env.enableCors).toBe(false);
+    expect(env.graphqlEnabled).toBe(false);
+    expect(env.restEnabled).toBe(false);
     expect(env.schemas.print).toBe(false);
     expect(env.queryOnResponse).toBe(false);
     expect(env.ai.enabled).toBe(false);
@@ -81,6 +85,8 @@ describe("EnvZod boolean flags", () => {
     const env = EnvZod.parse(baseEnv);
     expect(env.console.enabled).toBe(false);
     expect(env.enableCors).toBe(true);
+    expect(env.graphqlEnabled).toBe(true);
+    expect(env.restEnabled).toBe(true);
     expect(env.schemas.print).toBe(false);
     expect(env.ai.graphqlEnabled).toBe(true);
     expect(env.ai.enabled).toBeUndefined();
