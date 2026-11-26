@@ -209,10 +209,12 @@ See [`.env.example`](./.env.example) for every supported variable.
 ```typescript
 import { createBunServer } from "@graphoria/server";
 
+import config from "./graphoria";
+
 // ADMIN_SECRET and JWT_SECRET are read from the environment (e.g. a .env file).
 const { server, prefixes } = await createBunServer({
   port: 3000,
-  configuration: "./graphoria.ts",
+  configuration: config,
 });
 
 console.log(`Server running on http://localhost:${server.port}`);
@@ -220,6 +222,8 @@ console.log(`GraphQL:  ${prefixes.graphql}`);
 console.log(`REST:     ${prefixes.rest}`);
 console.log(`GraphiQL: ${prefixes.graphiql}`);
 ```
+
+`config` is the default export of `graphoria.ts` (see [Configuration File](#configuration-file), below), and `configuration` also takes the file's path, `"./graphoria.ts"`.
 
 ### Logging
 
@@ -282,8 +286,10 @@ A statement that runs longer than `SLOW_QUERY_MS` (default `1000`, `0` turns it 
 ```typescript
 import { createHandlers } from "@graphoria/server";
 
+import config from "./graphoria";
+
 const { serverHandlers } = await createHandlers({
-  configuration: "./graphoria.ts",
+  configuration: config,
 });
 
 const server = Bun.serve({

@@ -309,8 +309,10 @@ Create `index.ts` next to your config:
 ```typescript
 import { createBunServer } from "@graphoria/server";
 
+import config from "./graphoria";
+
 const { server, prefixes } = await createBunServer({
-  configuration: "./graphoria.ts",
+  configuration: config,
   port: 3000,
 });
 
@@ -320,7 +322,7 @@ console.log(`GraphiQL → http://localhost:${server.port}${prefixes.graphiql}`);
 console.log(`Scalar   → http://localhost:${server.port}${prefixes.scalar}`);
 ```
 
-`createBunServer()` reads your configuration, introspects the database, builds the schema, and starts a Bun HTTP server. It returns the `server` instance plus the URL prefixes for each endpoint, so you can log them or redirect from your own routes.
+`createBunServer()` loads the configuration it is given, introspects the database, builds the schema, and starts a Bun HTTP server. It returns the `server` instance plus the URL prefixes for each endpoint, so you can log them or redirect from your own routes. `configuration` also takes the file's path (`"./graphoria.ts"`), and without the option the server reads that path from `CONFIGURATION`: see [`Env.configuration`](./API_REFERENCE.md#envconfiguration).
 
 Secrets are read from the environment, not passed as options. Bun auto-loads a `.env` file — `ADMIN_SECRET` is always required. `JWT_SECRET` is required by the default JWT strategy once auth or the console is on; without either you can leave it out, and bearer tokens are then ignored:
 
@@ -380,8 +382,10 @@ If you already have a Bun server, use `createHandlers()` instead. It returns the
 ```typescript
 import { createHandlers } from "@graphoria/server";
 
+import config from "./graphoria";
+
 const { serverHandlers, prefixes } = await createHandlers({
-  configuration: "./graphoria.ts",
+  configuration: config,
 });
 
 Bun.serve({
