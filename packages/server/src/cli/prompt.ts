@@ -1,6 +1,6 @@
 import { emitKeypressEvents } from "node:readline";
 
-export type Choice<T> = { value: T; label: string; hint?: string };
+export type Choice<T> = { value: T; label: string; hint?: string; group?: string };
 
 export type Ask = (question: string, fallback: string) => string | null | Promise<string | null>;
 export type Say = (line: string) => void;
@@ -119,20 +119,25 @@ const release = () => {
   stdin.pause();
 };
 
-const menuLines = <T>(
+export const menuLines = <T>(
   question: string,
   choices: readonly Choice<T>[],
   state: MenuState,
   multi: boolean,
-): string[] => [
-  `? ${question}${multi ? " (space to toggle, enter to confirm)" : ""}`,
-  ...choices.map((choice, index) => {
-    const pointer = index === state.active ? ">" : " ";
-    const box = multi ? (state.selected.includes(index) ? "[x] " : "[ ] ") : "";
-    const hint = choice.hint ? ` - ${choice.hint}` : "";
-    return `  ${pointer} ${box}${choice.label}${hint}`;
-  }),
-];
+): string[] => {
+  const width = Math.max(0, ...choices.map((choice) => choice.group?.length ?? 0));
+  return [
+    `? ${question}${multi ? " (space to toggle, enter to confirm)" : ""}`,
+    ...choices.map((choice, index) => {
+      const pointer = index === state.active ? ">" : " ";
+      const box = multi ? (state.selected.includes(index) ? "[x] " : "[ ] ") : "";
+      const hint = choice.hint ? ` - ${choice.hint}` : "";
+      const first = choice.group !== choices[index - 1]?.group;
+      const group = width > 0 ? (first ? (choice.group ?? "") : "").padEnd(width + 2) : "";
+      return `  ${group}${pointer} ${box}${choice.label}${hint}`;
+    }),
+  ];
+};
 
 export const finishLines = <T>(
   question: string,

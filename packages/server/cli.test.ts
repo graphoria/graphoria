@@ -119,6 +119,10 @@ describe("cli without env", () => {
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("Usage: graphoria");
+    // The extras' flags follow the init menu's order.
+    expect(result.stdout.toString()).toContain(
+      "[--frontend] [--trpc] [--auth] [--rate-limit] [--rabbitmq] [--cron] [--virtual-columns] [--redis] [--data-tools] [--ai] [--mcp] [--metrics] [--tracing]",
+    );
     expect(result.stdout.toString()).toContain(
       "graphoria codegen [--config <path>] [--out <dir>] [--types <file>]",
     );
@@ -477,7 +481,7 @@ describe("cli init", () => {
     );
     expect(result.stdout.toString()).toContain(`http://localhost:${values.PORT}/mcp`);
     expect(result.stdout.toString()).toContain(
-      "--db-name app --no-rabbitmq --mcp --no-auth --no-frontend --no-install\n",
+      "--db-name app --no-frontend --no-auth --no-rabbitmq --mcp --no-install\n",
     );
   });
 
@@ -487,10 +491,10 @@ describe("cli init", () => {
     cwds.push(given.cwd, picked.cwd);
 
     expect(given.result.stdout.toString()).toContain(
-      "--db-name app --db-port 15432 --rabbitmq --auth --frontend --no-install\n",
+      "--db-name app --db-port 15432 --frontend --auth --rabbitmq --no-install\n",
     );
     expect(picked.result.stdout.toString()).toContain(
-      "--database pg --db-name app --rabbitmq --auth --frontend --no-install\n",
+      "--database pg --db-name app --frontend --auth --rabbitmq --no-install\n",
     );
   });
 
@@ -786,7 +790,7 @@ describe("cli init", () => {
         ["Database name", "shop\r"],
         ["Database password", "\r"],
         ["Database port on this host", "\r"],
-        ["Select extras", "\x1b[B\x1b[B\x1b[B \x1b[B \x1b[B\x1b[B \r"],
+        ["Select extras", " \x1b[B\x1b[B \x1b[B\x1b[B\x1b[B\x1b[B\x1b[B \r"],
       ],
     );
     cwds.push(cwd);
@@ -795,9 +799,9 @@ describe("cli init", () => {
     expect(output).toContain("? Database engine MySQL");
     // The text prompt echoes what is typed.
     expect(output).toContain("Database name [app] shop");
-    expect(output).toContain("> [x] RabbitMQ");
+    expect(output).toContain("App            > [x] React frontend");
     expect(output).toContain("[x] Login");
-    expect(output).toContain("[x] React frontend");
+    expect(output).toContain("[x] RabbitMQ");
     expect(output).toContain("? Select extras RabbitMQ, Redis");
     expect(await env(cwd)).toMatchObject({ DB_USER: "root", DB_NAME: "shop", DB_PORT: "3306" });
     const compose = Bun.YAML.parse(await readFile(join(cwd, "docker-compose.yml"), "utf8"));
@@ -810,7 +814,7 @@ describe("cli init", () => {
       [
         [
           "Database engine",
-          "\x1b[B\rBad\rshop\rSecret12\r3307\r\x1b[B\x1b[B\x1b[B \x1b[B \x1b[B\x1b[B \r",
+          "\x1b[B\rBad\rshop\rSecret12\r3307\r \x1b[B\x1b[B \x1b[B\x1b[B\x1b[B\x1b[B\x1b[B \r",
         ],
       ],
     );
@@ -1035,7 +1039,7 @@ describe("cli init", () => {
     ].map((line) => stdout.indexOf(line));
     expect(lines.every((at) => at >= 0)).toBe(true);
     expect(lines).toEqual(lines.toSorted((a, b) => a - b));
-    expect(stdout).toContain(" --trpc --up\n");
+    expect(stdout).toContain(" --frontend --trpc --auth --rabbitmq --up\n");
     expect(stdout).not.toContain("fake ");
   });
 
@@ -1234,6 +1238,9 @@ describe("cli init", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr.toString()).toContain("Usage: graphoria init");
+    expect(result.stderr.toString()).toContain(
+      "[--frontend] [--trpc] [--auth] [--rate-limit] [--rabbitmq] [--cron] [--virtual-columns] [--redis] [--data-tools] [--ai] [--mcp] [--metrics] [--tracing]",
+    );
     expect(await readdir(cwd)).toEqual([]);
   });
 });

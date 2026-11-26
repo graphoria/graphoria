@@ -59,10 +59,11 @@ type Extra =
   | "tracing"
   | "virtualColumns";
 
-const extraChoice = (value: Extra, label: string, hint: string): Choice<Extra> => ({
+const extraChoice = (value: Extra, label: string, hint: string, group: string): Choice<Extra> => ({
   value,
   label,
   hint,
+  group,
 });
 
 export const isPortFree = (port: number): boolean => {
@@ -180,51 +181,60 @@ export const collectAnswers = async (args: InitArgs, io: InitIO): Promise<InitAn
   }
 
   const extraChoices: Choice<Extra>[] = [
-    ...(args.rabbitmq === undefined ? [extraChoice("rabbitmq", "RabbitMQ", "queues demo")] : []),
-    ...(args.ai === undefined
-      ? [extraChoice("ai", "AI agent", "natural-language queries, needs Ollama")]
-      : []),
-    ...(args.mcp === undefined
-      ? [extraChoice("mcp", "MCP server", "tools for LLM clients at /mcp")]
-      : []),
-    ...(args.auth === undefined
-      ? [extraChoice("auth", "Login", "two roles, reader and editor")]
-      : []),
-    ...(args.redis === undefined
-      ? [extraChoice("redis", "Redis", "cache, token store, rate limits")]
-      : []),
-    ...(args.dataTools === undefined
-      ? [extraChoice("dataTools", "Data tools", "dbgate, and Redis Commander with Redis")]
-      : []),
     ...(args.frontend === undefined
-      ? [extraChoice("frontend", "React frontend", "app at localhost:3000")]
+      ? [extraChoice("frontend", "React frontend", "app at localhost:3000", "App")]
       : []),
     ...(args.trpc === undefined
-      ? [extraChoice("trpc", "tRPC", "operations as typed procedures at /trpc")]
+      ? [extraChoice("trpc", "tRPC", "operations as typed procedures at /trpc", "App")]
       : []),
-    ...(args.cron === undefined
-      ? [extraChoice("cron", "Cron job", "logs the book count every minute")]
+    ...(args.auth === undefined
+      ? [extraChoice("auth", "Login", "two roles, reader and editor", "Access")]
       : []),
     ...(args.rateLimit === undefined
-      ? [extraChoice("rateLimit", "Rate limits", "requests a minute per caller")]
+      ? [extraChoice("rateLimit", "Rate limits", "requests a minute per caller", "Access")]
       : []),
-    ...(args.metrics === undefined
-      ? [extraChoice("metrics", "Metrics", "Prometheus and a Grafana dashboard")]
+    ...(args.rabbitmq === undefined
+      ? [extraChoice("rabbitmq", "RabbitMQ", "queues demo", "Events & jobs")]
       : []),
-    ...(args.tracing === undefined
-      ? [extraChoice("tracing", "Tracing", "spans per request in Jaeger and Grafana")]
+    ...(args.cron === undefined
+      ? [extraChoice("cron", "Cron job", "logs the book count every minute", "Events & jobs")]
       : []),
     ...(args.virtualColumns === undefined
-      ? [extraChoice("virtualColumns", "Computed column", "books.age, worked out in SQL")]
+      ? [extraChoice("virtualColumns", "Computed column", "books.age, worked out in SQL", "Data")]
+      : []),
+    ...(args.redis === undefined
+      ? [extraChoice("redis", "Redis", "cache, token store, rate limits", "Data")]
+      : []),
+    ...(args.dataTools === undefined
+      ? [extraChoice("dataTools", "Data tools", "dbgate, and Redis Commander with Redis", "Data")]
+      : []),
+    ...(args.ai === undefined
+      ? [extraChoice("ai", "AI agent", "natural-language queries, needs Ollama", "AI")]
+      : []),
+    ...(args.mcp === undefined
+      ? [extraChoice("mcp", "MCP server", "tools for LLM clients at /mcp", "AI")]
+      : []),
+    ...(args.metrics === undefined
+      ? [extraChoice("metrics", "Metrics", "Prometheus and a Grafana dashboard", "Observability")]
+      : []),
+    ...(args.tracing === undefined
+      ? [
+          extraChoice(
+            "tracing",
+            "Tracing",
+            "spans per request in Jaeger and Grafana",
+            "Observability",
+          ),
+        ]
       : []),
   ];
   const extras =
     extraChoices.length === 0
       ? []
       : await io.multiSelect<Extra>("Select extras", extraChoices, [
-          "rabbitmq",
-          "auth",
           "frontend",
+          "auth",
+          "rabbitmq",
         ]);
   const chosen = new Set(extras);
 
@@ -356,7 +366,7 @@ export const sampleQuery = (
   return `{ ${schema}_authors { name ${schema}_books { title${answers.virtualColumns ? " age" : ""} } } }`;
 };
 
-// --yes ticks RabbitMQ, Login and the frontend, as the extras menu does, so one
+// --yes ticks the frontend, Login and RabbitMQ, as the extras menu does, so one
 // left out needs its --no flag.
 export const recreateCommand = (answers: InitAnswers, installed: boolean, up = false): string =>
   [
@@ -366,19 +376,19 @@ export const recreateCommand = (answers: InitAnswers, installed: boolean, up = f
     ...(answers.database !== "sqlite" && answers.dbPortGiven
       ? [`--db-port ${answers.dbPort}`]
       : []),
-    answers.rabbitmq ? "--rabbitmq" : "--no-rabbitmq",
-    ...(answers.ai ? ["--ai"] : []),
-    ...(answers.mcp ? ["--mcp"] : []),
-    answers.auth ? "--auth" : "--no-auth",
-    ...(answers.redis ? ["--redis"] : []),
-    ...(answers.dataTools ? ["--data-tools"] : []),
     answers.frontend ? "--frontend" : "--no-frontend",
     ...(answers.trpc ? ["--trpc"] : []),
-    ...(answers.cron ? ["--cron"] : []),
+    answers.auth ? "--auth" : "--no-auth",
     ...(answers.rateLimit ? ["--rate-limit"] : []),
+    answers.rabbitmq ? "--rabbitmq" : "--no-rabbitmq",
+    ...(answers.cron ? ["--cron"] : []),
+    ...(answers.virtualColumns ? ["--virtual-columns"] : []),
+    ...(answers.redis ? ["--redis"] : []),
+    ...(answers.dataTools ? ["--data-tools"] : []),
+    ...(answers.ai ? ["--ai"] : []),
+    ...(answers.mcp ? ["--mcp"] : []),
     ...(answers.metrics ? ["--metrics"] : []),
     ...(answers.tracing ? ["--tracing"] : []),
-    ...(answers.virtualColumns ? ["--virtual-columns"] : []),
     ...(installed ? [] : ["--no-install"]),
     ...(up ? ["--up"] : []),
   ].join(" ");
@@ -612,7 +622,7 @@ export const nextSteps = (
 };
 
 const USAGE =
-  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--rabbitmq] [--ai] [--mcp] [--auth] [--redis] [--data-tools] [--frontend] [--trpc] [--cron] [--rate-limit] [--metrics] [--tracing] [--virtual-columns] [--no-install] [--up]";
+  "Usage: graphoria init [--yes] [--database pg|mysql|mssql|sqlite] [--db-name <name>] [--db-port <port>] [--frontend] [--trpc] [--auth] [--rate-limit] [--rabbitmq] [--cron] [--virtual-columns] [--redis] [--data-tools] [--ai] [--mcp] [--metrics] [--tracing] [--no-install] [--up]";
 
 const noTerminal = (question: string): never => {
   console.error(`init: no terminal to ask "${question}" in, so nothing was written.`);

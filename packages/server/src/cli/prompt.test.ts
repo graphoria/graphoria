@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { MenuState } from "./prompt";
 
-import { finishLines, multiSelect, reduceLine, reduceMenu, select } from "./prompt";
+import { finishLines, menuLines, multiSelect, reduceLine, reduceMenu, select } from "./prompt";
 
 const CHOICES = [
   { value: "pg", label: "PostgreSQL" },
@@ -129,6 +129,32 @@ describe("reduceLine", () => {
     expect(reduceLine("shop", undefined, { name: "left" })).toEqual(unchanged);
     expect(reduceLine("shop", "\t", { name: "tab" })).toEqual(unchanged);
     expect(reduceLine("shop", "\x01", { name: "a", ctrl: true })).toEqual(unchanged);
+  });
+});
+
+describe("menuLines", () => {
+  it("draws no section column when no choice has a group", () => {
+    expect(menuLines("Database engine", CHOICES, { active: 1, selected: [] }, false)).toEqual([
+      "? Database engine",
+      "    PostgreSQL",
+      "  > MySQL",
+      "    SQL Server",
+    ]);
+  });
+
+  it("names each group beside its first row, in a column as wide as the longest name", () => {
+    const choices = [
+      { value: "frontend", label: "React frontend", group: "App" },
+      { value: "trpc", label: "tRPC", group: "App" },
+      { value: "metrics", label: "Metrics", hint: "Prometheus", group: "Observability" },
+    ];
+
+    expect(menuLines("Select extras", choices, { active: 0, selected: [0] }, true)).toEqual([
+      "? Select extras (space to toggle, enter to confirm)",
+      "  App            > [x] React frontend",
+      "                   [ ] tRPC",
+      "  Observability    [ ] Metrics - Prometheus",
+    ]);
   });
 });
 

@@ -41,6 +41,7 @@ const prompter = (
   const selected: string[] = [];
   const multi: string[] = [];
   const multiOptions: string[][] = [];
+  const multiGroups: (string | undefined)[][] = [];
   const io: InitIO = {
     ask: (_question: string, fallback: string) => {
       fallbacks.push(fallback);
@@ -57,12 +58,13 @@ const prompter = (
     multiSelect: <T>(_question: string, choices: readonly Choice<T>[], initial: readonly T[]) => {
       multi.push(_question);
       multiOptions.push(choices.map((choice) => choice.label));
+      multiGroups.push(choices.map((choice) => choice.group));
       const picks = menus.multiSelect?.shift();
       return picks === undefined ? [...initial] : picks.map((index) => choices[index].value);
     },
     isPortFree,
   };
-  return { fallbacks, multi, multiOptions, said, selected, io };
+  return { fallbacks, multi, multiGroups, multiOptions, said, selected, io };
 };
 
 describe("collectAnswers", () => {
@@ -105,7 +107,7 @@ describe("collectAnswers", () => {
   it("takes the engine from the menu and the rest from the answers", async () => {
     const io = prompter([" shop ", "S3cret.pass", "13306"], {
       select: [1],
-      multiSelect: [[0, 3]],
+      multiSelect: [[2, 4]],
     });
 
     expect(await collectAnswers(ARGS, io.io)).toEqual({
@@ -252,7 +254,7 @@ describe("collectAnswers", () => {
   });
 
   it("adds the extras ticked in the list", async () => {
-    const io = prompter([], { multiSelect: [[0, 2, 3, 6, 7, 8, 9, 10, 11, 12]] });
+    const io = prompter([], { multiSelect: [[0, 1, 2, 3, 4, 5, 6, 10, 11, 12]] });
     const answers = await collectAnswers(ARGS, io.io);
 
     expect(answers).toMatchObject({
@@ -297,19 +299,34 @@ describe("collectAnswers", () => {
     await collectAnswers(ARGS, io.io);
 
     expect(io.multiOptions[0]).toEqual([
-      "RabbitMQ",
-      "AI agent",
-      "MCP server",
-      "Login",
-      "Redis",
-      "Data tools",
       "React frontend",
       "tRPC",
-      "Cron job",
+      "Login",
       "Rate limits",
+      "RabbitMQ",
+      "Cron job",
+      "Computed column",
+      "Redis",
+      "Data tools",
+      "AI agent",
+      "MCP server",
       "Metrics",
       "Tracing",
-      "Computed column",
+    ]);
+    expect(io.multiGroups[0]).toEqual([
+      "App",
+      "App",
+      "Access",
+      "Access",
+      "Events & jobs",
+      "Events & jobs",
+      "Data",
+      "Data",
+      "Data",
+      "AI",
+      "AI",
+      "Observability",
+      "Observability",
     ]);
   });
 
@@ -776,46 +793,46 @@ describe("recreateCommand", () => {
         true,
       ),
     ).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --ai --mcp --auth --redis --data-tools --frontend --trpc --cron --rate-limit --metrics --tracing --virtual-columns",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --frontend --trpc --auth --rate-limit --rabbitmq --cron --virtual-columns --redis --data-tools --ai --mcp --metrics --tracing",
     );
   });
 
   it("leaves out the port SQLite does not have", () => {
     expect(recreateCommand({ ...ANSWERS, database: "sqlite", dbPort: 0 }, true)).toBe(
-      "bunx graphoria init --yes --database sqlite --db-name app --no-rabbitmq --no-auth --no-frontend",
+      "bunx graphoria init --yes --database sqlite --db-name app --no-frontend --no-auth --no-rabbitmq",
     );
   });
 
   it("adds --no-install when the install was skipped", () => {
     expect(recreateCommand(ANSWERS, false)).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-rabbitmq --no-auth --no-frontend --no-install",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-frontend --no-auth --no-rabbitmq --no-install",
     );
   });
 
   it("adds --up when init ran the project", () => {
     expect(recreateCommand(ANSWERS, true, true)).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-rabbitmq --no-auth --no-frontend --up",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-frontend --no-auth --no-rabbitmq --up",
     );
     expect(nextSteps(ANSWERS, true, undefined, PLAIN_PAINT, true)).toContain(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-rabbitmq --no-auth --no-frontend --up",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-frontend --no-auth --no-rabbitmq --up",
     );
   });
 
   it("leaves out a database port init picked, so a copy gets a free one", () => {
     expect(recreateCommand({ ...ANSWERS, dbPort: 5433, dbPortGiven: false }, true)).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --no-rabbitmq --no-auth --no-frontend",
+      "bunx graphoria init --yes --database pg --db-name app --no-frontend --no-auth --no-rabbitmq",
     );
   });
 
   it("turns each default left unticked into its --no flag, since --yes ticks it", () => {
     expect(recreateCommand({ ...ANSWERS, auth: true }, true)).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-rabbitmq --auth --no-frontend",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-frontend --auth --no-rabbitmq",
     );
     expect(recreateCommand({ ...ANSWERS, frontend: true }, true)).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-rabbitmq --no-auth --frontend",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --frontend --no-auth --no-rabbitmq",
     );
     expect(recreateCommand({ ...ANSWERS, rabbitmq: true }, true)).toBe(
-      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --rabbitmq --no-auth --no-frontend",
+      "bunx graphoria init --yes --database pg --db-name app --db-port 5432 --no-frontend --no-auth --rabbitmq",
     );
   });
 
