@@ -108,11 +108,17 @@ export const consoleRoutesFactory = ({
   const sessions = createConsoleSessions({ env, consolePath, tokenService });
   const aiSurfaces = resolveAISurfaces(env, projectConfiguration.ai);
   // A surface switched off keeps its prefix but mounts no route: list what answers.
+  const mountedBy: Record<string, boolean> = {
+    metrics: env.metrics.enabled,
+    trpc: env.trpc.enabled,
+    graphql: env.graphqlEnabled,
+    graphiql: env.graphqlEnabled,
+    rest: env.restEnabled,
+    openapi: env.restEnabled,
+    scalar: env.restEnabled,
+  };
   const mountedPrefixes = Object.fromEntries(
-    Object.entries(prefixes).filter(
-      ([name]) =>
-        (name !== "metrics" || env.metrics.enabled) && (name !== "trpc" || env.trpc.enabled),
-    ),
+    Object.entries(prefixes).filter(([name]) => mountedBy[name] ?? true),
   );
 
   const auth = projectConfiguration.auth;

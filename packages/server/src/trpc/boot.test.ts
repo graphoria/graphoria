@@ -69,7 +69,7 @@ type Router = TRPCRouterOf<typeof configure>;
 type Route = (req: Request) => Promise<Response>;
 
 // A boot sets the process-wide query timeout, so it gets 0, its value before any boot.
-const boot = async (enabled: boolean) => {
+const boot = async (enabled: boolean, options: Record<string, unknown> = {}) => {
   const { createHandlers } = await import("../index");
   const { env } = await import("../singletons/env");
 
@@ -83,6 +83,7 @@ const boot = async (enabled: boolean) => {
     // createHandlers merges its options shallowly: the whole block is passed.
     trpc: { ...env.trpc, enabled },
     configuration: configure,
+    ...options,
   });
 };
 
@@ -204,6 +205,27 @@ describe("tRPC surface, TRPC_ENABLED on", () => {
     events.length = 0;
     await Promise.all([client.adminOnly.query(), client.listItems.query({})]);
     expect(events.map((event) => event.action)).toEqual(["admin_secret.used"]);
+  });
+});
+
+describe("tRPC surface, REST_ENABLED off", () => {
+  afterAll(teardown);
+
+  it("answers the operations REST no longer serves", async () => {
+    const handlers = await boot(true, { restEnabled: false });
+    const { routes } = handlers.serverHandlers;
+    const route = routes[`${handlers.prefixes.trpc}/*`] as unknown as Route;
+    const client = createTRPCClient<Router>({
+      links: [
+        httpBatchLink({
+          url: `http://localhost${handlers.prefixes.trpc}`,
+          fetch: (input, init) => route(new Request(input as string, init as RequestInit)),
+        }),
+      ],
+    });
+
+    expect(routes[`${handlers.prefixes.rest}/*`]).toBeUndefined();
+    expect(await client.listItems.query({ minId: 3 })).toEqual({ main_items: [{ id: 3 }] });
   });
 });
 

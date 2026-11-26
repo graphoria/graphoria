@@ -48,6 +48,8 @@ const fakeEnv = {
   ai: { secrets: [], mcp: { secrets: [] } },
   jwt: { secrets: ["test-jwt-secret"], expiresIn: "5m", rtExpiresIn: "7d" },
   rateLimit: { max: 0, anonymousMax: 0, windowMs: 60_000, trustProxy: false },
+  graphqlEnabled: true,
+  restEnabled: true,
   metrics: { enabled: false },
   trpc: { enabled: false },
 };
@@ -437,7 +439,8 @@ describe("consoleRoutesFactory", () => {
   });
 
   it("lists on /config only the endpoints the server mounts", async () => {
-    const all = { ...prefixes, metrics: "/metrics", trpc: "/trpc" };
+    const docs = { graphiql: "/graphiql", scalar: "/scalar", openapi: "/openapi.json" };
+    const all = { ...prefixes, ...docs, metrics: "/metrics", trpc: "/trpc" };
     const listed = async (env: Record<string, unknown>) => {
       const routes = consoleRoutesFactory({
         env: { ...fakeEnv, ...env },
@@ -451,12 +454,28 @@ describe("consoleRoutesFactory", () => {
       return (await (await routes["/_console/api/config"].GET(req())).json()).prefixes;
     };
 
-    expect(await listed({})).toEqual(prefixes);
+    expect(await listed({})).toEqual({ ...prefixes, ...docs });
     expect(await listed({ metrics: { enabled: true } })).toEqual({
       ...prefixes,
+      ...docs,
       metrics: "/metrics",
     });
-    expect(await listed({ trpc: { enabled: true } })).toEqual({ ...prefixes, trpc: "/trpc" });
+    expect(await listed({ trpc: { enabled: true } })).toEqual({
+      ...prefixes,
+      ...docs,
+      trpc: "/trpc",
+    });
+    expect(await listed({ graphqlEnabled: false })).toEqual({
+      rest: "/rest",
+      console: "/_console",
+      scalar: "/scalar",
+      openapi: "/openapi.json",
+    });
+    expect(await listed({ restEnabled: false })).toEqual({
+      graphql: "/graphql",
+      console: "/_console",
+      graphiql: "/graphiql",
+    });
   });
 
   it("reports MCP on when AI_MCP_ENABLED turns it on over the config", async () => {
