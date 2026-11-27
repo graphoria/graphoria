@@ -13,7 +13,7 @@ Every operation is one of two types — they share the same surrounding shape bu
 - **Query operations** declare a GraphQL `query` string. Graphoria runs it (with input validation, RBAC, hooks, and caching) on each call.
 - **Handler operations** declare an async `handler` function. You write the logic in TypeScript and have full access to the database, the queue manager (to publish), and your typed repositories.
 
-Both types accept the same surrounding fields: `description`, `input`, `output`, `hooks`, `rest`, `graphql`; query operations also accept `cache` (a handler's response is never cached, so `cache` on one fails at boot). The difference is whether you supply `query` or `handler`. `input` must be a Zod object schema (`z.object(...)`, refined or not); any other schema fails at startup.
+Both types accept the same surrounding fields: `description`, `input`, `output`, `hooks`, `rest`, `graphql`; query operations also accept `cache` (a handler's response is never cached, so `cache` on one fails at boot). The difference is whether you supply `query` or `handler`. `input` must be a Zod object schema (`z.object(...)`, refined or not); any other schema fails at startup. With auth on, `login`, `logout`, `refresh` and `me` are the auth routes' keys, so an operation keyed like one fails the boot, and so does an operation on an auth route's method and path (`POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `GET /auth/me`).
 
 ## Query operations
 
@@ -230,6 +230,8 @@ archiveOrder: operation({
 ```
 
 A PostgreSQL procedure's arguments are typed `String`, so send them strings (`z.coerce.string()`).
+
+With auth on, an operation keyed `login`, `logout`, `refresh` or `me` now fails the boot, naming the key: the auth routes took those keys, which left such an operation with no REST or tRPC route. Rename it. An operation on an auth route's method and path, under any key, fails the boot too, naming the route: it answered in that route's place. Change its path.
 
 ## Hooks lifecycle
 

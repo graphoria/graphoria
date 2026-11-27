@@ -268,6 +268,54 @@ describe("handleRESTRequestFactory operationRuntime", () => {
   });
 });
 
+describe("handleRESTRequestFactory auth routes", () => {
+  const operation = { handler: async () => ({ ok: true }), rest: { path: "/x", method: "POST" } };
+
+  it.each(["login", "logout", "refresh", "me"])(
+    "refuses an operation keyed %p while auth is enabled",
+    (key) => {
+      expect(() =>
+        handleRESTRequestFactory(stubEntities(key, operation), stubGql(), { enabled: true }),
+      ).toThrow(
+        `Operation "${key}" uses a key reserved for the auth routes while auth is enabled (login, logout, refresh, me): rename it`,
+      );
+    },
+  );
+
+  it("keeps an operation keyed me while auth is off", () => {
+    const factory = handleRESTRequestFactory(stubEntities("me", operation), stubGql(), null);
+
+    expect(Object.keys(factory.operationsEnhanced)).toEqual(["me"]);
+  });
+
+  it.each([
+    ["POST", "/auth/login"],
+    ["POST", "/auth/logout"],
+    ["POST", "/auth/refresh"],
+    ["GET", "/auth/me"],
+  ])("refuses an operation on the auth route %s %s while auth is enabled", (method, path) => {
+    expect(() =>
+      handleRESTRequestFactory(
+        stubEntities("mine", { ...operation, rest: { path, method } }),
+        stubGql(),
+        { enabled: true },
+      ),
+    ).toThrow(
+      `Operation "mine" uses the auth route ${method} ${path} while auth is enabled: change its path`,
+    );
+  });
+
+  it("keeps an operation on an auth route's path under another method", () => {
+    const factory = handleRESTRequestFactory(
+      stubEntities("mine", { ...operation, rest: { path: "/auth/me", method: "POST" } }),
+      stubGql(),
+      { enabled: true },
+    );
+
+    expect(Object.keys(factory.operationsEnhanced)).toContain("mine");
+  });
+});
+
 describe("handleRESTRequestFactory beforeRequest REST parameter sources", () => {
   it("passes pathParams, queryParams, and body separately to beforeRequest", async () => {
     let observed: Record<string, unknown> = {};
