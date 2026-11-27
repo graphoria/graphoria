@@ -10,7 +10,7 @@ This guide walks through the lifecycle of an operation from declaration to invoc
 
 Every operation is one of two types — they share the same surrounding shape but differ in the body:
 
-- **Query operations** declare a GraphQL `query` string. Graphoria runs it (with input validation, RBAC, hooks, and caching) on each call.
+- **Query operations** declare a GraphQL `query` string. Graphoria runs it (with input validation, RBAC, hooks, and, over REST and tRPC, caching) on each call.
 - **Handler operations** declare an async `handler` function. You write the logic in TypeScript and have full access to the database, the queue manager (to publish), and your typed repositories.
 
 Both types accept the same surrounding fields: `description`, `input`, `output`, `hooks`, `rest`, `graphql`; query operations also accept `cache` (a handler's response is never cached, so `cache` on one fails at boot). The difference is whether you supply `query` or `handler`. `input` must be a Zod object schema (`z.object(...)`, refined or not); any other schema fails at startup. With auth on, `login`, `logout`, `refresh` and `me` are the auth routes' keys, so an operation keyed like one fails the boot, and so does an operation on an auth route's method and path (`POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `GET /auth/me`).
@@ -82,39 +82,49 @@ When the work doesn't map cleanly to a single GraphQL query — for example, mul
 
 ```typescript
 operations: {
-  registerUser: operation({
-    description: "Register a new user and send a welcome email",
+  quoteBasket: operation({
+    description: "Price a basket and announce the quote",
     input: z.object({
-      email: z.email(),
-      password: z.string().min(8),
-      role: z.enum(["user", "admin"]).default("user"),
+      customerId: z.string(),
+      items: z
+        .array(z.object({ productId: z.string(), quantity: z.number().int().min(1) }))
+        .min(1),
     }),
     output: z.object({
-      userId: z.string(),
-      access_token: z.string(),
+      total: z.number(),
     }),
     handler: async ({ gqlQuery, queues }, input) => {
-      const { data } = await gqlQuery<{ insert_users: { id: string }[] }>(`
-        mutation Insert($email: String!, $password: String!, $role: String!) {
-          insert_users(objects: [{ email: $email, password: $password, role: $role }]) {
-            id
+      const { data } = await gqlQuery<{ products: { id: string; price: number }[] }>(
+        `
+          query Prices($ids: [String!]!) {
+            products: public_products(where: { id: { in: $ids } }) {
+              id
+              price
+            }
           }
-        }
-      `, { email: input.email, password: input.password, role: input.role });
+        `,
+        { ids: input.items.map((item) => item.productId) },
+      );
 
-      const userId = data.insert_users[0].id;
+      const prices = new Map(data.products.map((product) => [product.id, product.price]));
+      const total = input.items.reduce((sum, item) => {
+        const price = prices.get(item.productId);
+        if (price === undefined) throw new Error(`Unknown product: ${item.productId}`);
+        return sum + price * item.quantity;
+      }, 0);
 
-      await queues.sendMessage("events_userRegistered", { userId, email: input.email });
+      await queues.sendMessage("events_basketQuoted", { customerId: input.customerId, total });
 
-      return { userId, access_token: "stub" };
+      return { total };
     },
     rest: {
-      path: "/users",
+      path: "/quotes",
       method: "POST",
       body: z.object({
-        email: z.email(),
-        password: z.string().min(8),
-        role: z.enum(["user", "admin"]).default("user"),
+        customerId: z.string(),
+        items: z
+          .array(z.object({ productId: z.string(), quantity: z.number().int().min(1) }))
+          .min(1),
       }),
     },
   }),
@@ -140,7 +150,7 @@ type OperationOptions<TRepository> = {
 };
 ```
 
-`gqlQuery` runs queries through the same handler that serves `/graphql`. By default the query executes as the _caller's_ role, so RBAC is preserved. If the operation needs to bypass RBAC, design the underlying tables to allow it directly rather than escalating privileges in the handler.
+`gqlQuery` runs queries through the same handler that serves `/graphql`, as the superadmin role, whichever surface called the operation (REST, tRPC or GraphQL), and in cron jobs: it bypasses RBAC, row filters included. A handler is not told who called it, so serve per-caller data with a query operation, whose `query` runs as the caller.
 
 ### Typed repositories
 
@@ -189,14 +199,14 @@ The handler sees `repository` typed as `{ main: Repo }` — access each database
 
 ## REST and GraphQL exposure
 
-An operation with a `rest` route is served there. Unless that route is a `GET`, the operation is also a GraphQL mutation, `<name>(input: <name>Input!)`, its argument typed by `input`. A `GET` operation is REST-only, and so is one without `rest`, whose method defaults to `GET`: it has no route at all, so give every operation a `rest` route. Tweak with `graphql` and `rest`:
+An operation with a `rest` route is served there. Unless that route is a `GET`, the operation is also a GraphQL mutation, `<name>(input: <name>Input!)`, its argument typed by `input` (`<name>` is `graphql.name` when set). A `GET` operation is REST-only, and so is one without `rest`, whose method defaults to `GET`: it has no route at all, so give every operation a `rest` route. Tweak with `graphql` and `rest`:
 
 ```typescript
 operation({
   /* … */
-  graphql: { enabled: true, name: "registerUserMutation" },
+  graphql: { enabled: true, name: "quoteBasketMutation" },
   rest: {
-    path: "/users",
+    path: "/quotes",
     method: "POST",
     pathParams: z.object({/* schema for path params */}),
     queryParams: z.object({ source: z.string() }),
@@ -207,8 +217,10 @@ operation({
 
 - `graphql.enabled: false` keeps the operation REST-only — useful for endpoints that need REST semantics (file uploads, webhooks) but don't belong in the GraphQL schema.
 - `rest.method` defaults to `GET`. Operations that mutate state should use `POST`/`PUT`/`PATCH` so the OpenAPI spec is honest about their effects.
-- `rest.pathParams` / `queryParams` / `body` are where a REST call takes its input: each source is parsed by its schema, and a source without one is ignored. `input` types the GraphQL mutation's argument; REST does not read it.
-- `output` types the mutation's result: an object schema gives `<name>Output!`, a nullable object (`.nullable()`) a nullable `<name>Output`, and any other output, or none, `Boolean!`. A nullable field inside `output` or `input` is a nullable field of its own type. A handler's REST answer is the JSON of what it returns, `null` included; a handler that returns nothing answers an empty body. `/openapi.json` describes that answer with the `output` schema as is, without the `data` envelope a query operation's answer has.
+- `rest.pathParams` / `queryParams` / `body` are where a REST call takes its input: each source is parsed by its schema, and a source without one is ignored. `input` types the GraphQL mutation's argument, a nested object or a list of them as an input type of its own (`<name>Input<key>`), and parses what a GraphQL call sends: defaults are applied and refinements enforced, and a value it rejects answers `Invalid input for "<name>": <path>: <message>` (`input` as the path of a refinement of the whole object). REST does not read it.
+- Over GraphQL, a field declared `.optional()` takes no value, not `null`, though the SDL types it nullable: `input` refuses `null` there, as REST and tRPC do, so declare the field `.nullish()` to accept it. A field without fixed properties (`z.record(...)`, `z.object({})`, a union of objects) stays `String`, which its schema refuses, so no GraphQL call can send it: call such an operation over REST or tRPC.
+- `output` types the mutation's result: an object schema gives `<name>Output!`, a nullable object (`.nullable()`) a nullable `<name>Output`, and any other output, or none, `Boolean!`. A `Boolean!` field answers the operation's result when it is a boolean and `true` otherwise, so a query operation's data comes back only through an object `output`. A nullable field inside `output` or `input` is a nullable field of its own type. A handler's REST answer is the JSON of what it returns, `null` included; a handler that returns nothing answers an empty body. `/openapi.json` describes that answer with the `output` schema as is, without the `data` envelope a query operation's answer has.
+- Over GraphQL, the operation gets the values the caller sent, as graphql-js reads them from the request's document and variables: a string such as `"$5 off"` or `"$session.sub"` arrives as typed. A query operation runs its `query` with those values, or what its `beforeRequest` returns, as its variables, as the caller, as on REST: the caller's row filters apply, and a role granted the operation but not what its `query` reads gets `You are not authorized`.
 - Path and query values arrive as strings: declare a number `z.coerce.number()`. A parameter declared `z.boolean()` is converted before validation, accepting `true`/`1`/`yes`/`on`/`y`/`enabled` and `false`/`0`/`no`/`off`/`n`/`disabled` (case-insensitive); any other value fails validation. Declaring it `z.boolean()` rather than `z.stringbool()` is also what makes the OpenAPI spec describe it as a boolean, so the docs render a true/false picker instead of a free-text box.
 
 With `TRPC_ENABLED`, every operation with a `rest` route is also a tRPC procedure under `/trpc/*`: a query when `rest.method` is `GET`, a mutation otherwise. A procedure takes its arguments from `input` alone and never reads `rest.pathParams`, `queryParams` or `body`, so give `input` to an operation a tRPC client calls with arguments. See [tRPC](./TRPC.md).
@@ -235,16 +247,18 @@ With auth on, an operation keyed `login`, `logout`, `refresh` or `me` now fails 
 
 An operation's hooks now run when GraphQL calls it, as on tRPC: `init` on each role's first call, from any surface, `beforeRequest` with the parsed `input` (`pathParams`, `queryParams` and `body` are `undefined`), and `afterRequest` on the result, which becomes the answer. A hook that reads a REST source must fall back to `input`, as one that serves tRPC does.
 
+A GraphQL mutation to an operation now parses its input with the operation's `input` schema, as REST and tRPC do, so a call that schema rejects, which 0.7 passed to the handler, answers `Invalid input for "<name>": …`: a `null` sent for a field declared `.optional()` (declare it `.nullish()`), text sent for a field without fixed properties (`z.record(...)`, `z.object({})`), which GraphQL types `String` (call such an operation over REST or tRPC), and a value one of its refinements rejects.
+
 ## Hooks lifecycle
 
-Three optional hooks let you extend an operation without changing its core query/handler. They run on its REST route and on its [tRPC](./TRPC.md) procedure: a call through GraphQL runs the handler alone.
+Three optional hooks let you extend an operation without changing its core query/handler. They run on its REST route, its [tRPC](./TRPC.md) procedure and its GraphQL field, which caches nothing.
 
 ```typescript
 operation({
   /* … */
   hooks: {
     init: async ({ gqlQuery }) => {
-      // Runs on the operation's first REST or tRPC request. Return value is cached and passed to beforeRequest.
+      // Runs on each role's first request, on any surface. Return value is cached and passed to beforeRequest.
       return await loadStaticConfig();
     },
     beforeRequest: ({ input, pathParams, queryParams, body }, initData) => {
@@ -264,9 +278,9 @@ operation({
 });
 ```
 
-`init` is the right place for one-time work: priming a cache, loading static metadata, opening a connection to a third-party service. It runs on the operation's first REST or tRPC request, not at boot, and its return value is preserved between requests and passed as the second argument to `beforeRequest`. An `init` that returns `undefined` runs again on the next request, and requests that arrive while it is still running each run it too: keep it idempotent.
+`init` is the right place for one-time work: priming a cache, loading static metadata, opening a connection to a third-party service. It runs on the operation's first request from each role, whichever surface (REST, tRPC or GraphQL) sends it, not at boot, and its return value is preserved between requests and passed as the second argument to `beforeRequest`. An `init` that returns `undefined` runs again on the next request, and requests that arrive while it is still running each run it too: keep it idempotent.
 
-`beforeRequest` is a transform from the validated `input` to the actual variables (or handler input). Alongside the merged `input`, the context exposes each REST source separately — `pathParams`, `queryParams`, and `body`, each parsed with its own `rest.*` schema (or `undefined` when that schema is omitted). Use it to inject server-side context, normalize input, or short-circuit the request by throwing. Over tRPC the three REST sources are always `undefined` and `input` is the procedure's parsed input, so a hook that serves both surfaces reads `input`.
+`beforeRequest` is a transform from the validated `input` to the actual variables (or handler input). Alongside the merged `input`, the context exposes each REST source separately — `pathParams`, `queryParams`, and `body`, each parsed with its own `rest.*` schema (or `undefined` when that schema is omitted). Use it to inject server-side context, normalize input, or short-circuit the request by throwing. Over tRPC and GraphQL the three REST sources are always `undefined` and `input` is the parsed input, so a hook that serves every surface reads `input`.
 
 `afterRequest` runs only on success, for both query- and handler-based operations. Throw to convert a successful response into an error. Its `output` is the operation's output payload: for query operations the unwrapped GraphQL `data` — the value you return replaces `data` in the response envelope (other fields are preserved); for handler operations it's whatever the handler returned. When a query operation is cached, `afterRequest` runs on the cache miss and its transformed result is what gets cached, so cache hits reuse it without re-invoking the hook — avoid per-request values (e.g. timestamps) there if the route is cached.
 
@@ -359,16 +373,14 @@ A role missing the operation name from its `operations` list will not see the op
 GraphQL:
 
 ```graphql
-query {
-  getOrdersByCustomer(input: { customerId: "cus_42", limit: 10 }) {
-    orders {
-      id
-      total
-      createdAt
-    }
+mutation {
+  quoteBasket(input: { customerId: "cus_42", items: [{ productId: "prd_7", quantity: 2 }] }) {
+    total
   }
 }
 ```
+
+The call takes the operation's `input`, parsed by its schema; a value it rejects answers `Invalid input for "quoteBasket": …`. `getOrdersByCustomer` is a `GET` operation, so it has no GraphQL field: call it over REST or tRPC.
 
 REST:
 

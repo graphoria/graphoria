@@ -84,7 +84,7 @@ console.log(result);
 await close(); // release database connections
 ```
 
-`execute` bypasses authentication — there is no token verification — so don't expose it to untrusted input. Because no HTTP request exists, operation `init`/`beforeRequest` hooks and header-derived session variables do not run.
+`execute` bypasses authentication — there is no token verification — so don't expose it to untrusted input. Because no HTTP request exists, header-derived session variables are not set.
 
 ## Environment variables
 

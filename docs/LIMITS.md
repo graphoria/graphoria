@@ -24,10 +24,10 @@ change with it.
 | Request rate      | `RATE_LIMIT_MAX` / `RATE_LIMIT_ANONYMOUS_MAX` | `0`            | **off** | per-role `rateLimit`; `RATE_LIMIT_WINDOW_MS` moves the window |
 | Query cost        | `MAX_QUERY_COST`                              | `0`            | **off** | none — one global budget                                      |
 
-**Operator-authored queries are exempt from depth, page size and cost.** REST operations, cron jobs
-and the query function handed to operation hooks take their text from the configuration, never from
-a caller, so a limit there could only reject the operator's own intent. The statement timeout is not
-exempted — it protects the database from a slow query whoever wrote it.
+**Operator-authored queries are exempt from depth, page size and cost.** Operations, over REST, tRPC
+or GraphQL, cron jobs and the query function handed to operation hooks take their text from the
+configuration, never from a caller, so a limit there could only reject the operator's own intent.
+The statement timeout is not exempted — it protects the database from a slow query whoever wrote it.
 
 ## Two of the five ship off
 

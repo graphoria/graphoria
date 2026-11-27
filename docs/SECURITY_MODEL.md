@@ -345,9 +345,10 @@ to; all of them keep one caller from consuming the server.
 | Request rate      | `RATE_LIMIT_MAX`, `RATE_LIMIT_ANONYMOUS_MAX` | `0` — **off**  | Requests per `RATE_LIMIT_WINDOW_MS` per caller |
 | Query cost        | `MAX_QUERY_COST`                             | `0` — **off**  | Estimated rows one query asks a database for   |
 
-Operator-authored queries are exempt from the depth, page and cost limits: operations, over REST or
-tRPC, cron jobs and the query function handed to operation hooks take their text from the
-configuration, never from a caller, so a limit there could only reject the operator's own intent.
+Operator-authored queries are exempt from the depth, page and cost limits: operations, over REST,
+tRPC or GraphQL, cron jobs and the query function handed to operation hooks take their text from
+the configuration, never from a caller, so a limit there could only reject the operator's own
+intent.
 
 **The query cost budget ships off too.** Depth bounds how deep a query nests and the page size
 bounds one list field; neither bounds a query that is merely wide — a hundred sibling relationships,
