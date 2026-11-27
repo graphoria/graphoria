@@ -50,6 +50,7 @@ const sdl = `
     remote_mutation_field(value: String): String
     make_thing: Thing
     run_job(id: Int, note: String): Boolean!
+    orphan: Boolean
   }
   type Thing {
     id: ID!
@@ -111,6 +112,10 @@ const buildEntities = ({
 }: { withQueuePublisher?: boolean; withRemoteMutation?: boolean } = {}) =>
   ({
     getResolverSource: (name: string) => sourceMap[name],
+    getResolverEntry: (name: string) =>
+      sourceMap[name] === EntitySource.OPERATION
+        ? { source: EntitySource.OPERATION, key: name }
+        : undefined,
     queuesMap: withQueuePublisher
       ? { queue_publish: { resolverName: "queue_publish_resolver" } }
       : {},
@@ -1488,6 +1493,12 @@ describe("handleGraphQLRequestFactory.handler — mutation dispatch errors", () 
     expect(factory.handler(login, {}, fakeReq, undefined)).rejects.toThrow(
       "Authentication is not enabled",
     );
+  });
+
+  it("throws for a mutation field no resolver serves, instead of leaving it out", async () => {
+    await expect(
+      factoryFn(buildEntities()).handler("mutation { orphan }", {}, fakeReq, undefined),
+    ).rejects.toThrow('No resolver for mutation field "orphan"');
   });
 
   it("REMOTE_SCHEMA mutation throws when the entry is missing from remoteMutationsMap", () => {

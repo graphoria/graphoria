@@ -118,8 +118,12 @@ export const handleGraphQLRequestFactory = (
       ),
 
     [EntitySource.OPERATION]: async (field, variableValues, _queryAnalysis, req, session) => {
+      const entry = entities.getResolverEntry(field.name);
       const routes = operations?.();
-      const route = routes?.operationsEnhanced[field.name];
+      const route =
+        entry?.source === EntitySource.OPERATION
+          ? routes?.operationsEnhanced[entry.key]
+          : undefined;
 
       if (!routes || !route) {
         throw new Error(`Operation not found: ${field.name}`);
@@ -746,23 +750,25 @@ export const handleGraphQLRequestFactory = (
             const variableValues = variableValuesOf(operation, variables);
 
             for await (const field of resolved.fields) {
-              const source = field.source;
+              const handler = field.source && mutationHandlers[field.source];
 
-              if (source && mutationHandlers[source]) {
-                const result = await mutationHandlers[source]!(
-                  field,
-                  variableValues,
-                  queryAnalysis,
-                  req,
-                  session,
-                  callerValues,
-                );
-
-                results = {
-                  ...results,
-                  ...result.data,
-                };
+              if (!handler) {
+                throw new Error(`No resolver for mutation field "${field.name}"`);
               }
+
+              const result = await handler(
+                field,
+                variableValues,
+                queryAnalysis,
+                req,
+                session,
+                callerValues,
+              );
+
+              results = {
+                ...results,
+                ...result.data,
+              };
             }
 
             log.debug(

@@ -64,6 +64,12 @@ const configure = (({ operation, z }) => ({
       rest: { path: "/echo", method: "POST" },
       handler: async (_options, input) => input,
     }),
+    renamed: operation({
+      graphql: { name: "renamedMutation" },
+      output: z.object({ ok: z.boolean() }),
+      rest: { path: "/renamed", method: "POST" },
+      handler: async () => ({ ok: true }),
+    }),
     listItems: operation({
       query:
         "query ($minId: Int!) { main_items(where: { id: { gte: $minId } }, orderBy: [{ id: ASC }]) { id } }",
@@ -166,6 +172,14 @@ describe("an operation's input", () => {
     await expect(
       asAna("mutation ($in: echoInput!) { echo(input: $in) { name } }", { in: { name: 5 } }),
     ).rejects.toThrow('Variable "$in" has invalid value');
+  });
+});
+
+describe("an operation renamed by graphql.name", () => {
+  it("answers under its field name", async () => {
+    expect(await asAna("mutation { renamedMutation { ok } }")).toEqual({
+      data: { renamedMutation: { ok: true } },
+    });
   });
 });
 

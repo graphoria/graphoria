@@ -103,8 +103,9 @@ export const mergeEntities = (
   if (entityOfRole.operations) {
     Object.entries(entityOfRole.operations).forEach(([name, operation]) => {
       if (operation.graphql.enabled && (operation.rest?.method || "GET") !== "GET") {
-        resolverRegistry[name] = createResolverEntry.operation(
+        resolverRegistry[operation.graphql.name ?? name] = createResolverEntry.operation(
           operation as TypedOperation<unknown, unknown, unknown>,
+          name,
         );
       }
     });
