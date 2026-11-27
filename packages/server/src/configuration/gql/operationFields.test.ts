@@ -42,11 +42,15 @@ const configure = (({ operation, z }) => ({
         name: z.string().min(3),
         n: z.number().int().default(7),
         tags: z.array(z.string()).optional(),
+        address: z.object({ city: z.string() }).optional(),
+        items: z.array(z.object({ sku: z.string() })).optional(),
       }),
       output: z.object({
         name: z.string(),
         n: z.number().int().optional(),
         tags: z.array(z.string()).optional(),
+        address: z.object({ city: z.string() }).optional(),
+        items: z.array(z.object({ sku: z.string() })).optional(),
       }),
       rest: { path: "/echo", method: "POST" },
       handler: async (_options, input) => input,
@@ -92,6 +96,15 @@ describe("an operation's input", () => {
         t: "x",
       }),
     ).toEqual({ data: { echo: { tags: ["x"] } } });
+  });
+
+  it("takes nested objects, inline and from a variable", async () => {
+    expect(
+      await asAna(
+        'mutation ($sku: String!) { echo(input: { name: "abc", address: { city: "Rome" }, items: [{ sku: $sku }] }) { address { city } items { sku } } }',
+        { sku: "A1" },
+      ),
+    ).toEqual({ data: { echo: { address: { city: "Rome" }, items: [{ sku: "A1" }] } } });
   });
 
   it("comes whole from one variable", async () => {
