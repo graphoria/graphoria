@@ -64,6 +64,11 @@ const configure = (({ operation, z }) => ({
       rest: { path: "/echo", method: "POST" },
       handler: async (_options, input) => input,
     }),
+    toggle: operation({
+      input: z.object({ on: z.boolean() }),
+      rest: { path: "/toggle", method: "POST" },
+      handler: async (_options, { on }) => (on ? { changed: 1 } : false),
+    }),
     renamed: operation({
       graphql: { name: "renamedMutation" },
       output: z.object({ ok: z.boolean() }),
@@ -219,6 +224,20 @@ describe("an operation's input schema", () => {
   it("hands the handler the parsed input, defaults applied", async () => {
     expect(await asAna('mutation { echo(input: { name: "abc" }) { name n } }')).toEqual({
       data: { echo: { name: "abc", n: 7 } },
+    });
+  });
+});
+
+describe("an operation without an object output", () => {
+  it("answers true for a handler result that is not a boolean", async () => {
+    expect(await asAna("mutation { toggle(input: { on: true }) }")).toEqual({
+      data: { toggle: true },
+    });
+  });
+
+  it("answers the handler's boolean", async () => {
+    expect(await asAna("mutation { toggle(input: { on: false }) }")).toEqual({
+      data: { toggle: false },
     });
   });
 });

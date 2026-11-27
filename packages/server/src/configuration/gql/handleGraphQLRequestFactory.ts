@@ -2,6 +2,7 @@ import { isString } from "es-toolkit";
 import {
   execute,
   getArgumentValues,
+  getNamedType,
   getVariableValues,
   Kind,
   MaxIntrospectionDepthRule,
@@ -161,12 +162,18 @@ export const handleGraphQLRequestFactory = (
             )
           ).data;
 
-      // Filter result based on requested fields
-      const filteredResult = filterResultBySelection(result, field.selections);
+      // Without an object `output` the field is `Boolean!`, whatever the handler returns.
+      const isBoolean =
+        getNamedType(entities.schema.getMutationType()?.getFields()[field.name]?.type)?.name ===
+        "Boolean";
 
       return {
         data: {
-          [field.alias || field.name]: filteredResult,
+          [field.alias || field.name]: isBoolean
+            ? typeof result === "boolean"
+              ? result
+              : true
+            : filterResultBySelection(result, field.selections),
         },
       };
     },
