@@ -92,13 +92,22 @@ CREATE VIEW app.open_tasks AS
   WHERE completed = false
 ;;
 
-CREATE FUNCTION app.tasks_by_priority(min_priority integer)
+-- smallint rather than integer: Bun binds a JS integer as integer, which a
+-- smallint argument does not take, so this pins that arguments go as text.
+CREATE FUNCTION app.tasks_by_priority(min_priority smallint)
 RETURNS TABLE (id integer, title varchar, priority integer)
 AS $$
   SELECT t.id, t.title, t.priority
   FROM app.tasks t
   WHERE t.priority >= min_priority
   ORDER BY t.id;
+$$ LANGUAGE sql
+;;
+
+-- The OUT argument comes first: the input arguments' names must not shift onto it.
+CREATE FUNCTION app.quote_amount(OUT total integer, IN flag bit, IN amount integer)
+AS $$
+  SELECT amount WHERE flag = B'1';
 $$ LANGUAGE sql
 ;;
 

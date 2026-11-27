@@ -103,7 +103,7 @@ describe("postgresql callStoredProcedure", () => {
 
     expect(recorded).toHaveLength(1);
     expect(recorded[0]!.query).toBe('SELECT * FROM "public"."create_order"($1, $2);');
-    expect(recorded[0]!.params).toEqual(["acme", 42]);
+    expect(recorded[0]!.params).toEqual(["acme", "42"]);
   });
   it("reports success as the boolean the schema declares, not the procedure's rows", async () => {
     databasesConnections.default = fakePool([]) as unknown as (typeof databasesConnections)[string];

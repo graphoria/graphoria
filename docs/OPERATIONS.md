@@ -229,7 +229,7 @@ archiveOrder: operation({
 }),
 ```
 
-A PostgreSQL procedure's arguments are typed `String`, so send them strings (`z.coerce.string()`).
+A PostgreSQL procedure's arguments are now typed by their SQL type, as MySQL and SQL Server ones are (they were all `String`): an `integer` argument takes `4`, no longer `"4"`. A `bigint` argument is `Int`, which is 32-bit, as on MySQL and SQL Server: a value past 2147483647 is refused. A `bit` argument stays `String`: PostgreSQL's `bit` is a bit string, not a boolean.
 
 With auth on, an operation keyed `login`, `logout`, `refresh` or `me` now fails the boot, naming the key: the auth routes took those keys, which left such an operation with no REST or tRPC route. Rename it. An operation on an auth route's method and path, under any key, fails the boot too, naming the route: it answered in that route's place. Change its path.
 
