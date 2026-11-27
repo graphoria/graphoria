@@ -49,6 +49,7 @@ const sdl = `
     auth_logout: Boolean
     remote_mutation_field(value: String): String
     make_thing: Thing
+    run_job(id: Int, note: String): Boolean!
   }
   type Thing {
     id: ID!
@@ -101,6 +102,7 @@ const sourceMap: Record<string, EntitySource> = {
   auth_logout: EntitySource.AUTH,
   remote_mutation_field: EntitySource.REMOTE_SCHEMA,
   make_thing: EntitySource.OPERATION,
+  run_job: EntitySource.STORED_PROCEDURE,
 };
 
 const buildEntities = ({
@@ -127,7 +129,7 @@ const buildEntities = ({
         }
       : {},
     queriesMap: {},
-    mutationsMap: {},
+    mutationsMap: { run_job: { resolverName: "run_job" } },
     operations: {},
     typeDefs: sdl,
     schema,
@@ -810,6 +812,94 @@ describe("handleGraphQLRequestFactory.handler — operation results", () => {
   });
 });
 
+describe("handleGraphQLRequestFactory.handler — root field arguments", () => {
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let setQueueManager: any;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let databases: any;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  let aiModule: any;
+
+  beforeAll(async () => {
+    ({ setQueueManager } = await import("../../singletons/queues"));
+    databases = await import("../../databases");
+    aiModule = await import("../../singletons/ai");
+  });
+
+  it("publishes a literal that starts with $ as typed", async () => {
+    const sent: unknown[] = [];
+    setQueueManager({
+      publisherMap: () => ({ queue_publish_resolver: { name: "queue_publish_resolver" } }),
+      sendMessage: async (_publisher: string, message: unknown) => sent.push(message) > 0,
+      connections: () => [],
+    });
+    try {
+      await factoryFn(buildEntities()).handler(
+        'mutation { queue_publish(data: "$5 off") }',
+        {},
+        fakeReq,
+        undefined,
+      );
+      expect(sent).toEqual(["$5 off"]);
+    } finally {
+      setQueueManager(undefined);
+    }
+  });
+
+  it("checks a password that starts with $ as typed", async () => {
+    const spy = spyOn(databases, "checkUserCredentials").mockResolvedValue({ valid: false });
+    try {
+      await expect(
+        factoryFn(buildEntities(), { enabled: true } as Auth).handler(
+          'mutation { auth_login(username: "ana", password: "$ecret") { access_token } }',
+          {},
+          fakeReq,
+          undefined,
+        ),
+      ).rejects.toThrow("Invalid username or password");
+      expect(spy.mock.calls[0]!.slice(1)).toEqual(["ana", "$ecret"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("asks a prompt that starts with $ as typed", async () => {
+    const prompts: unknown[] = [];
+    const spy = spyOn(aiModule, "getAgent").mockReturnValue(async (prompt: unknown) => {
+      prompts.push(prompt);
+      return { answer: "none", queries: [] };
+    });
+    try {
+      await factoryFn(buildEntities()).handler(
+        'query { ask(prompt: "$5 coupons?") { answer } }',
+        {},
+        fakeReq,
+        { sub: "superadmin", role: "superadmin", authMethod: "admin_secret" },
+      );
+      expect(prompts).toEqual(["$5 coupons?"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("calls a stored procedure with its coerced arguments, a $ literal as typed", async () => {
+    const spy = spyOn(databases, "callStoredProcedure").mockResolvedValue(true);
+    try {
+      expect(
+        await factoryFn(buildEntities()).handler(
+          'mutation ($id: Int) { run_job(id: $id, note: "$5 off") }',
+          { id: 5 },
+          fakeReq,
+          undefined,
+        ),
+      ).toEqual({ data: { run_job: true } });
+      expect(spy.mock.calls[0]![1]).toEqual({ id: 5, note: "$5 off" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("handleGraphQLRequestFactory.handler — remote fields", () => {
   const remoteSchema = {
     config: { name: "test", url: "http://localhost:4000/graphql", timeout: 5000 },
@@ -1371,28 +1461,20 @@ describe("handleGraphQLRequestFactory.handler — mutation dispatch errors", () 
     );
   });
 
+  const login = 'mutation { auth_login(username: "alice", password: "pw") { access_token } }';
+
   it("AUTH auth_login throws when auth.enabled is false", () => {
     const factory = factoryFn(buildEntities(), {
       enabled: false,
     } as Auth);
-    const analysis = mutationAnalysis({
-      name: "auth_login",
-      source: EntitySource.AUTH,
-      arguments: { username: "alice", password: "pw" },
-    });
-    expect(factory.handler(analysis, {}, fakeReq, undefined)).rejects.toThrow(
+    expect(factory.handler(login, {}, fakeReq, undefined)).rejects.toThrow(
       "Authentication is not enabled",
     );
   });
 
   it("AUTH auth_login throws when auth is null (default)", () => {
     const factory = factoryFn(buildEntities());
-    const analysis = mutationAnalysis({
-      name: "auth_login",
-      source: EntitySource.AUTH,
-      arguments: { username: "alice", password: "pw" },
-    });
-    expect(factory.handler(analysis, {}, fakeReq, undefined)).rejects.toThrow(
+    expect(factory.handler(login, {}, fakeReq, undefined)).rejects.toThrow(
       "Authentication is not enabled",
     );
   });
@@ -1439,29 +1521,17 @@ describe("handleGraphQLRequestFactory — audit", () => {
     });
     try {
       const factory = factoryFn(buildEntities());
-      const analysis: AnalysisResult = {
-        operations: [
-          {
-            name: null,
-            operation: "mutation",
-            variables: [],
-            fields: [
-              {
-                name: "queue_publish",
-                source: EntitySource.QUEUE_PUBLISHER,
-                arguments: { data: "$payload" },
-              },
-            ],
-          },
-        ],
-        fragments: [],
-      };
 
-      await factory.handler(analysis, { payload: "card 4111" }, fakeReq, {
-        sub: "alice",
-        role: "user",
-        jti: "j1",
-      });
+      await factory.handler(
+        "mutation ($payload: String) { queue_publish(data: $payload) }",
+        { payload: "card 4111" },
+        fakeReq,
+        {
+          sub: "alice",
+          role: "user",
+          jti: "j1",
+        },
+      );
 
       expect(records).toEqual([
         {
@@ -1590,43 +1660,57 @@ describe("handleGraphQLRequestFactory — audit", () => {
         queriesMap: { users: { rolePermission: { filter: { id: { eq: "tenant-7731" } } } } },
       };
 
-      const error = await factoryFn(entities)
+      // The table field then fails: these entities have no database behind it.
+      await factoryFn(entities)
         .handler('{ users { id } ask(prompt: "$static_0") { answer } }', {}, fakeReq, {
           sub: "ana@acme.test",
           role: "user",
         })
-        .catch((caught: unknown) => caught);
+        .catch(() => undefined);
 
-      expect(seen.map((call) => call.prompt)).toEqual([]);
-      expect(records).toEqual([]);
-      expect((error as Error).message).toBe("Variable static_0 not found");
+      expect(seen.map((call) => call.prompt)).toEqual(["$static_0"]);
     } finally {
       spy.mockRestore();
     }
   });
 
   it.each([
-    ["a number", 42],
-    ["null", null],
-    ["an object", { text: "how many?" }],
-    ["an empty string", ""],
-  ])("refuses %s as the prompt, before any agent call or record", async (_label, value) => {
-    const { seen, spy } = asking();
-    try {
-      const outcome = factoryFn(buildEntities()).handler(
-        "query Ask($p: String) { ask(prompt: $p) { answer } }",
-        { p: value },
-        fakeReq,
-        { sub: "ana@acme.test", role: "user" },
-      );
+    [
+      "a number",
+      42,
+      'Variable "$p" has invalid value: String cannot represent a non string value: 42',
+    ],
+    [
+      "null",
+      null,
+      'Argument "Query.ask(prompt:)" has invalid value: Expected variable "$p" provided to non-null type "String!" not to be null.',
+    ],
+    [
+      "an object",
+      { text: "how many?" },
+      'Variable "$p" has invalid value: String cannot represent a non string value: { text: "how many?" }',
+    ],
+    ["an empty string", "", "`prompt` (string) is required"],
+  ])(
+    "refuses %s as the prompt, before any agent call or record",
+    async (_label, value, message) => {
+      const { seen, spy } = asking();
+      try {
+        const outcome = factoryFn(buildEntities()).handler(
+          "query Ask($p: String) { ask(prompt: $p) { answer } }",
+          { p: value },
+          fakeReq,
+          { sub: "ana@acme.test", role: "user" },
+        );
 
-      await expect(outcome).rejects.toThrow("`prompt` (string) is required");
-      expect(seen).toEqual([]);
-      expect(records).toEqual([]);
-    } finally {
-      spy.mockRestore();
-    }
-  });
+        await expect(outcome).rejects.toThrow(message);
+        expect(seen).toEqual([]);
+        expect(records).toEqual([]);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
 
   it("refuses an operation selecting ask twice, before any agent call or record", async () => {
     const { seen, spy } = asking();

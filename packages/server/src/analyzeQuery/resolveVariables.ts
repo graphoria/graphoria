@@ -16,19 +16,6 @@ const PRIMITIVE_GRAPHQL_TYPES = new Set(["Int", "Float", "String", "Boolean", "I
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
-/**
- * Resolves a single `$varName` reference against a flat variable map.
- * Returns the resolved value, or the original value if it's not a variable ref.
- */
-export const resolveVariableRef = (variables: Record<string, unknown>, value: unknown): unknown => {
-  if (!isString(value)) return value;
-  if (!value.startsWith("$")) return value;
-
-  const varName = value.substring(1);
-  if (variables[varName] === undefined) throw new Error(`Variable ${varName} not found`);
-  return variables[varName];
-};
-
 // ─── Step 1: Validation ─────────────────────────────────────────────────────
 
 /**
@@ -368,6 +355,8 @@ export const resolveFieldArguments = (
   return fields.map((field) => {
     // Sent upstream as text, not bound into SQL: its `$name`s stay for the proxy.
     if (field.source === EntitySource.REMOTE_SCHEMA) return field;
+    // Read by graphql-js from the request: `argumentsOf` in handleGraphQLRequestFactory.
+    if (field.node) return field;
 
     let newArguments = field.arguments;
 

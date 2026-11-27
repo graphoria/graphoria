@@ -213,6 +213,24 @@ operation({
 
 With `TRPC_ENABLED`, every operation with a `rest` route is also a tRPC procedure under `/trpc/*`: a query when `rest.method` is `GET`, a mutation otherwise. A procedure takes its arguments from `input` alone and never reads `rest.pathParams`, `queryParams` or `body`, so give `input` to an operation a tRPC client calls with arguments. See [tRPC](./TRPC.md).
 
+### Upgrading from 0.7
+
+A GraphQL mutation document's variables, and those of a query that selects `ask`, are now coerced to the types the document declares, whoever sends it: a GraphQL client, an operation whose `query` is a mutation (over REST or tRPC), or a cron job with its `variables`. A value its type refuses never reaches the stored procedure, queue publisher or operation handler: a GraphQL client gets `Variable "$<name>" has invalid value …`, a REST call answers `400` (`Bad request`), a tRPC call `500` with the message in the log, and a cron job logs it. Make each value match its variable's type:
+
+```typescript
+archiveOrder: operation({
+  query: "mutation ($id: Int!) { archive_order(id: $id) }",
+  rest: {
+    path: "/orders/:id/archive",
+    method: "POST",
+    // 0.7 also took z.string(), and sent "42" to `Int!`
+    pathParams: z.object({ id: z.coerce.number().int() }),
+  },
+}),
+```
+
+A PostgreSQL procedure's arguments are typed `String`, so send them strings (`z.coerce.string()`).
+
 ## Hooks lifecycle
 
 Three optional hooks let you extend an operation without changing its core query/handler. They run on its REST route and on its [tRPC](./TRPC.md) procedure: a call through GraphQL runs the handler alone.

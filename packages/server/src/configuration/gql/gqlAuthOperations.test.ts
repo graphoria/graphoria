@@ -163,12 +163,12 @@ describe("handleAuthMutation — the payload", () => {
 
   const login = (selections: SelectionAnalysis[]): SelectionAnalysis => ({
     name: "auth_login",
-    arguments: { username: "alice", password: "alice-password" },
     selections,
   });
+  const credentials = { username: "alice", password: "alice-password" };
 
   it("answers only the auth_login subfields the selection asks for", async () => {
-    expect(await handleAuthMutation(login([{ name: "access_token" }]), {}, auth)).toEqual({
+    expect(await handleAuthMutation(login([{ name: "access_token" }]), credentials, auth)).toEqual({
       data: { auth_login: { access_token: expect.any(String) } },
     });
   });
@@ -177,7 +177,7 @@ describe("handleAuthMutation — the payload", () => {
     expect(
       await handleAuthMutation(
         login([{ name: "access_token", alias: "token" }, { name: "role" }]),
-        {},
+        credentials,
         auth,
       ),
     ).toEqual({ data: { auth_login: { token: expect.any(String), role: "user" } } });

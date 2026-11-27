@@ -44,6 +44,7 @@ export const analyzeOperation = (
     name: name ? name.value : null,
     operation,
     variables: allVariables,
+    ...(variableDefinitions?.length && { variableDefinitions }),
     fields,
   };
 };

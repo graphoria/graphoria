@@ -7,7 +7,6 @@ import {
   extractRuntimePrimitivesToVariables,
   flattenObjectVariables,
   resolveFieldArguments,
-  resolveVariableRef,
   resolveVariables,
   validateVariables,
 } from "./resolveVariables";
@@ -511,28 +510,6 @@ describe("extractRuntimePrimitivesToVariables", () => {
       expect(generatedVariables[0].name).toBe("static_0");
       expect(runtimeVariables).toEqual({ static_0: "some-org-id" });
     });
-  });
-});
-
-// ─── resolveVariableRef ─────────────────────────────────────────────────────
-
-describe("resolveVariableRef", () => {
-  it("should resolve a $variable reference", () => {
-    expect(resolveVariableRef({ name: "Alice" }, "$name")).toBe("Alice");
-  });
-
-  it("should return non-string values unchanged", () => {
-    expect(resolveVariableRef({}, 42)).toBe(42);
-    expect(resolveVariableRef({}, true)).toBe(true);
-    expect(resolveVariableRef({}, null)).toBe(null);
-  });
-
-  it("should return plain strings unchanged", () => {
-    expect(resolveVariableRef({}, "hello")).toBe("hello");
-  });
-
-  it("should throw on undefined variable", () => {
-    expect(() => resolveVariableRef({}, "$missing")).toThrow("Variable missing not found");
   });
 });
 
