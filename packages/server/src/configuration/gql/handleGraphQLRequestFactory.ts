@@ -130,8 +130,20 @@ export const handleGraphQLRequestFactory = (
         throw new Error("You are not authorized");
       }
 
-      const input =
+      let input: unknown =
         argumentsOf(field, entities.schema.getMutationType(), variableValues).input ?? {};
+
+      // As on tRPC: defaults applied, refinements enforced.
+      if (route.input) {
+        const parsed = await route.input.safeParseAsync(input);
+        if (!parsed.success) {
+          const issues = parsed.error.issues.map(
+            (issue) => `${issue.path.join(".") || "input"}: ${issue.message}`,
+          );
+          throw new Error(`Invalid input for "${field.name}": ${issues.join("; ")}`);
+        }
+        input = parsed.data;
+      }
 
       const result = route.handler
         ? await route.handler(routes.operationRuntime.handlerOptions(), input)

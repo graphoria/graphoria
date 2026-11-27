@@ -45,13 +45,15 @@ const configure = (({ operation, z }) => ({
   },
   operations: {
     echo: operation({
-      input: z.object({
-        name: z.string().min(3),
-        n: z.number().int().default(7),
-        tags: z.array(z.string()).optional(),
-        address: z.object({ city: z.string() }).optional(),
-        items: z.array(z.object({ sku: z.string() })).optional(),
-      }),
+      input: z
+        .object({
+          name: z.string().min(3),
+          n: z.number().int().default(7),
+          tags: z.array(z.string()).optional(),
+          address: z.object({ city: z.string() }).optional(),
+          items: z.array(z.object({ sku: z.string() })).optional(),
+        })
+        .refine(async (value) => value.name !== "nobody", "nobody is reserved"),
       output: z.object({
         name: z.string(),
         n: z.number().int().optional(),
@@ -183,6 +185,26 @@ describe("an operation runs as its REST route does", () => {
   it("runs a handler's gqlQuery as the superadmin role", async () => {
     expect(await asGus("mutation { countItems { count } }")).toEqual({
       data: { countItems: { count: 3 } },
+    });
+  });
+});
+
+describe("an operation's input schema", () => {
+  it("refuses input it rejects, naming the field", async () => {
+    await expect(asAna('mutation { echo(input: { name: "ab" }) { name } }')).rejects.toThrow(
+      'Invalid input for "echo": name: Too small: expected string to have >=3 characters',
+    );
+  });
+
+  it("names the input itself for an async refinement of the whole object", async () => {
+    await expect(asAna('mutation { echo(input: { name: "nobody" }) { name } }')).rejects.toThrow(
+      'Invalid input for "echo": input: nobody is reserved',
+    );
+  });
+
+  it("hands the handler the parsed input, defaults applied", async () => {
+    expect(await asAna('mutation { echo(input: { name: "abc" }) { name n } }')).toEqual({
+      data: { echo: { name: "abc", n: 7 } },
     });
   });
 });
