@@ -241,9 +241,9 @@ hand, the same way the Prometheus exposition above is.
 | `graphoria.remote_rest`   | client   | A remote REST proxy                  | `http.request.method`, `server.address`, `http.response.status_code`                             |
 
 A request roots one trace; a cron tick and a subscription poll each root their own, because neither
-sits inside one. REST and tRPC query operations, cron queries, an operation hook's `gqlQuery` and
-MCP's `graphql_execute` all run through the GraphQL handler, so they get the operation span without
-anything further.
+sits inside one. Query operations over REST, tRPC or GraphQL, cron queries, an operation hook's
+`gqlQuery` and MCP's `graphql_execute` all run through the GraphQL handler, so they get the
+operation span without anything further.
 
 An operation is named the way the metrics label and the slow query log name one: its own name, or
 its root field names joined by a comma when the document is anonymous.

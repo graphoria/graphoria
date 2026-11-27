@@ -1,5 +1,5 @@
 import { describe, expect, test as it } from "bun:test";
-import { buildSchema } from "graphql";
+import { buildSchema, isInputObjectType, isObjectType } from "graphql";
 import { z } from "zod";
 
 import type { GraphQLInputObjectType, GraphQLObjectType, GraphQLSchema } from "graphql";
@@ -245,6 +245,49 @@ describe("Type definition generator", () => {
       );
 
       expect(fieldsOf(schema, "publishBookInput")).toEqual({ id: "Int!", year: "Int" });
+    });
+
+    it("types a nested input object, and a list of them, as input types of their own", () => {
+      const schema = schemaFor(
+        book,
+        z.object({
+          address: z.object({ city: z.string(), zip: z.string().nullable() }),
+          items: z.array(z.object({ sku: z.string() })),
+          note: z.object({ text: z.string() }).nullable(),
+        }),
+      );
+
+      expect(fieldsOf(schema, "publishBookInput")).toEqual({
+        address: "publishBookInputaddress!",
+        items: "[publishBookInputitems]!",
+        note: "publishBookInputnote",
+      });
+      expect(fieldsOf(schema, "publishBookInputaddress")).toEqual({
+        city: "String!",
+        zip: "String",
+      });
+      expect(fieldsOf(schema, "publishBookInputitems")).toEqual({ sku: "String!" });
+    });
+
+    it("types a list of nullable objects as a list of the object's type, in the input and the output", () => {
+      const lines = z.array(z.object({ sku: z.string() }).nullable());
+      const withLines = z.object({ lines });
+      const schema = schemaFor(withLines, withLines);
+
+      expect(fieldsOf(schema, "publishBookInput")).toEqual({ lines: "[publishBookInputlines]!" });
+      expect(fieldsOf(schema, "publishBookInputlines")).toEqual({ sku: "String!" });
+      expect(isInputObjectType(schema.getType("publishBookInputlines"))).toBe(true);
+      expect(fieldsOf(schema, "publishBookOutput")).toEqual({ lines: "[publishBookOutputlines]!" });
+      expect(fieldsOf(schema, "publishBookOutputlines")).toEqual({ sku: "String!" });
+      expect(isObjectType(schema.getType("publishBookOutputlines"))).toBe(true);
+    });
+
+    it("keeps String for a nested object without properties, in the input and the output", () => {
+      const withEmpty = z.object({ id: z.number().int(), meta: z.object({}) });
+      const schema = schemaFor(withEmpty, withEmpty);
+
+      expect(fieldsOf(schema, "publishBookInput")).toEqual({ id: "Int!", meta: "String!" });
+      expect(fieldsOf(schema, "publishBookOutput")).toEqual({ id: "Int!", meta: "String!" });
     });
   });
 

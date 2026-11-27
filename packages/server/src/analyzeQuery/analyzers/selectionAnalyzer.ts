@@ -3,6 +3,7 @@ import { GraphQLNonNull, GraphQLObjectType, TypeNameMetaFieldDef } from "graphql
 import type { FieldNode, SelectionNode } from "graphql";
 import type { EntitiesWithSchema, SelectionAnalysis, VariableDefinition } from "../types";
 
+import { EntitySource } from "../../types/resolver";
 import { analyzeDirectives } from "../directiveUtils";
 import { getFieldType, unwrapType } from "../typeUtils";
 import { extractArgumentValue } from "../valueExtractors";
@@ -37,6 +38,10 @@ export const analyzeSelections = (
             name: fieldName,
           };
         }
+        const keepsNode =
+          parentType === entities.schema.getMutationType() ||
+          (parentType === entities.schema.getQueryType() &&
+            entities.getResolverSource(fieldName) === EntitySource.AI);
         const isTypenameField = fieldName === "__typename";
         const fieldType = isTypenameField
           ? TypeNameMetaFieldDef.type
@@ -102,6 +107,7 @@ export const analyzeSelections = (
               ),
             }),
           ...(isRequired && { isRequired }),
+          ...(keepsNode && { node: field }),
         };
         return selectionAnalysis;
       } else if (selection.kind === "FragmentSpread") {

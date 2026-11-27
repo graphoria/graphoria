@@ -12,6 +12,8 @@ import { buildCacheStore, registerCache } from "../../singletons/cache";
 
 export type AuthOperation = "login" | "logout" | "refresh" | "me";
 
+const AUTH_ROUTE_KEYS: readonly AuthOperation[] = ["login", "logout", "refresh", "me"];
+
 export type OperationsEnhanced = {
   [K in keyof Operations]: Operations[K] & {
     queryStructure: AnalysisResult | null;
@@ -77,6 +79,15 @@ export const buildApiRoutes = (
   }
 
   if (auth?.enabled) {
+    // The auth routes below take these keys: an operation under one of them would
+    // silently lose its route to them.
+    const taken = AUTH_ROUTE_KEYS.find((key) => Object.hasOwn(operationsEnhanced, key));
+    if (taken) {
+      throw new Error(
+        `Operation "${taken}" uses a key reserved for the auth routes while auth is enabled (${AUTH_ROUTE_KEYS.join(", ")}): rename it`,
+      );
+    }
+
     operationsEnhanced["login"] = {
       graphql: { enabled: false },
       hasError: false,
@@ -142,6 +153,23 @@ export const buildApiRoutes = (
         role: z.string(),
       }),
     };
+
+    // The REST factory keeps the first route on a method and path, and operations
+    // come first: one on an auth route's would answer in its place.
+    const authRoutes = AUTH_ROUTE_KEYS.map((key) => operationsEnhanced[key]!);
+    for (const route of Object.values(operationsEnhanced)) {
+      const shadowed = authRoutes.find(
+        (authRoute) =>
+          !route.authOperation &&
+          authRoute.rest!.method === route.rest!.method &&
+          authRoute.rest!.path === route.rest!.path,
+      );
+      if (shadowed) {
+        throw new Error(
+          `Operation "${route.routeKey}" uses the auth route ${shadowed.rest!.method} ${shadowed.rest!.path} while auth is enabled: change its path`,
+        );
+      }
+    }
   }
 
   return {

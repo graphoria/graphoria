@@ -32,12 +32,6 @@ export const CACHED_OPERATION_PATH = "/cached-task-page";
 const boolArg = (engine: BenchEngine, value: boolean) =>
   engine === "mysql" ? (value ? "1" : "0") : String(value);
 
-/**
- * PostgreSQL routine parameters introspect as String; MySQL and SQL Server
- * carry their declared Int through to the generated field.
- */
-const routineArg = (engine: BenchEngine) => (engine === "pg" ? '"4"' : "4");
-
 export const listQuery = (engine: BenchEngine) =>
   `query { ${benchField(engine, "tasks")}(limit: 100, orderBy: [{ id: ASC }]) { id title priority completed } }`;
 
@@ -130,8 +124,7 @@ export const scenarios = (engine: BenchEngine): Scenario[] => {
     {
       name: "procedure",
       description: "stored routine through a Mutation field — the only generated write path",
-      run: (context) =>
-        gql(context, "procedure", `mutation { ${routine}(min_priority: ${routineArg(engine)}) }`),
+      run: (context) => gql(context, "procedure", `mutation { ${routine}(min_priority: 4) }`),
     },
     {
       name: "cached-repeat",

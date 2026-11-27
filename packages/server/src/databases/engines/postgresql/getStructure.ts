@@ -123,16 +123,19 @@ export const getDatabaseStructure = async (db: Database) => {
           ORDER BY param.idx
         ) AS param_array
         FROM (
-          SELECT  
-            row_number() OVER () AS idx,
-            arg_name AS parameter_name,
-            arg_type AS data_type
-          FROM (
-            SELECT 
-              unnest(COALESCE(p.proargnames, ARRAY[]::text[])) AS arg_name,
-              unnest(string_to_array(pg_get_function_identity_arguments(p.oid), ', ')) AS arg_type
-          ) args
-          WHERE arg_type IS NOT NULL AND arg_type != ''
+          SELECT
+            row_number() OVER (ORDER BY args.arg_position) AS idx,
+            args.arg_name AS parameter_name,
+            -- PostgreSQL's bit is a bit string, not a boolean: typed text, it takes '1'.
+            CASE WHEN args.arg_type = 'bit'::regtype::oid THEN 'text'
+                 ELSE format_type(args.arg_type, NULL) END AS data_type
+          FROM unnest(
+            COALESCE(p.proallargtypes, p.proargtypes::oid[]),
+            p.proargmodes,
+            p.proargnames
+          ) WITH ORDINALITY AS args(arg_type, arg_mode, arg_name, arg_position)
+          -- Input arguments only: OUT and TABLE columns are the routine's result.
+          WHERE COALESCE(args.arg_mode, 'i') IN ('i', 'b', 'v')
         ) param
       ) params ON true
       WHERE p.prokind IN ('f', 'p')

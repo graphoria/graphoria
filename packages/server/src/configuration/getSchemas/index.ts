@@ -5,6 +5,7 @@ import type { EntitiesWithSchema } from "../../analyzeQuery/types";
 import type { EntitiesOfRole } from "../../databases/high-level-operations";
 import type { Auth } from "../../types/configuration";
 import type { HandleGraphQLRequest } from "../gql/handleGraphQLRequestFactory";
+import type { HandleRESTRequest } from "../rest/handleRESTRequestFactory";
 import type { MergedEntities } from "./mergeEntities";
 
 import { handleGraphQLRequestFactory } from "../gql/handleGraphQLRequestFactory";
@@ -37,14 +38,15 @@ export const getSchema = (
     ...getGQLEntities(mergedEntities, auth?.enabled),
   };
 
-  const gql = handleGraphQLRequestFactory(entities, auth);
+  // An operation field runs as its REST route does, which needs the REST
+  // factory, which needs the GraphQL one: the route is read per request.
+  let rest: HandleRESTRequest | undefined;
+  const gql = handleGraphQLRequestFactory(entities, auth, () => rest!);
+  rest = handleRESTRequestFactory(entities, gql, auth, gqlSuperadminHandler);
 
   return {
     ...entities,
-    handlers: {
-      gql,
-      rest: handleRESTRequestFactory(entities, gql, auth, gqlSuperadminHandler),
-    },
+    handlers: { gql, rest },
   };
 };
 

@@ -1,6 +1,9 @@
 import { isString } from "es-toolkit";
 import {
   execute,
+  getArgumentValues,
+  getNamedType,
+  getVariableValues,
   Kind,
   MaxIntrospectionDepthRule,
   OverlappingFieldsCanBeMergedRule,
@@ -11,7 +14,7 @@ import {
 import { LRUCache } from "lru-cache";
 
 import type { BunRequest } from "bun";
-import type { DocumentNode, GraphQLError } from "graphql";
+import type { DocumentNode, GraphQLError, GraphQLObjectType, VariableValues } from "graphql";
 import type { RoleEntities } from "../../ai/adapter";
 import type {
   AnalysisResult,
@@ -19,8 +22,10 @@ import type {
   SelectionAnalysis,
 } from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
+import type { OperationOptions } from "../../config/types/operation";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
+import type { OperationsEnhanced } from "../rest";
 
 import { analyzeQuery } from "../../analyzeQuery";
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
@@ -29,12 +34,11 @@ import { CONTROL_FLOW_DIRECTIVES } from "../../analyzeQuery/directiveUtils";
 import { introspectionLimitRule } from "../../analyzeQuery/introspectionLimit";
 import { reservedVariableNamesRule } from "../../analyzeQuery/reservedVariables";
 import { resolveOperationSelections, selectOperation } from "../../analyzeQuery/resolveSelections";
-import { resolveVariableRef, resolveVariables } from "../../analyzeQuery/resolveVariables";
+import { resolveVariables } from "../../analyzeQuery/resolveVariables";
 import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databases";
 import { proxyRemoteField } from "../../remoteSchemas/proxy";
 import { getAgent } from "../../singletons/ai";
 import { actorFromSession, audit } from "../../logging/audit";
-import { databasesConnections, repositoryMap } from "../../singletons/databases";
 import { env } from "../../singletons/env";
 import { queueManager } from "../../singletons/queues";
 import { EntitySource } from "../../types/resolver";
@@ -44,15 +48,32 @@ import { logger } from "../../logging";
 import { incMetric, isMetricsEnabled, observeMetric } from "../../observability/metrics";
 import { startSpan, withActiveSpan } from "../../observability/tracing";
 
+/**
+ * What an operation field runs with: the routes and options the role's REST
+ * factory prepares. Typed here rather than as a `Pick` of that factory's
+ * return type, which would make the two factories' inferred types circular.
+ */
+export type OperationRoutes = {
+  operationsEnhanced: OperationsEnhanced;
+  operationRuntime: {
+    handlerOptions: () => OperationOptions;
+    initDataOf: (route: OperationsEnhanced[string]) => Promise<unknown>;
+  };
+};
+
 // Handle GraphQL query
-export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth | null = null) => {
+export const handleGraphQLRequestFactory = (
+  entities: SchemaEntities,
+  auth: Auth | null = null,
+  operations?: () => OperationRoutes,
+) => {
   // Mutation handlers by source type
   const mutationHandlers: Partial<
     Record<
       EntitySource,
       (
         field: SelectionAnalysis,
-        variables: Record<string, unknown>,
+        variableValues: VariableValues,
         queryAnalysis: AnalysisResult,
         req: BunRequest | undefined,
         session: SessionContext | undefined,
@@ -60,14 +81,20 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       ) => Promise<{ data: object }>
     >
   > = {
-    [EntitySource.QUEUE_PUBLISHER]: async (field, variables, _queryAnalysis, _req, session) => {
-      const data = resolveVariableRef(variables, field.arguments?.data);
-
+    [EntitySource.QUEUE_PUBLISHER]: async (
+      field,
+      variableValues,
+      _queryAnalysis,
+      _req,
+      session,
+    ) => {
       const publisher = entities.queuesMap[field.name];
 
       if (!publisher) {
         throw new Error(`Queue publisher not found: ${field.name}`);
       }
+
+      const { data } = argumentsOf(field, entities.schema.getMutationType(), variableValues);
 
       audit().emit({
         action: "queue.publish",
@@ -85,60 +112,106 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
       };
     },
 
-    [EntitySource.AUTH]: (field, variables, _queryAnalysis, req, session) =>
-      handleAuthMutation(field, variables, auth, req, session),
+    [EntitySource.AUTH]: (field, variableValues, _queryAnalysis, req, session) =>
+      handleAuthMutation(
+        field,
+        argumentsOf(field, entities.schema.getMutationType(), variableValues),
+        auth,
+        req,
+        session,
+      ),
 
-    [EntitySource.OPERATION]: async (field, variables) => {
-      const operation = entities.operations[field.name];
+    [EntitySource.OPERATION]: async (field, variableValues, _queryAnalysis, req, session) => {
+      const entry = entities.getResolverEntry(field.name);
+      const routes = operations?.();
+      const route =
+        entry?.source === EntitySource.OPERATION
+          ? routes?.operationsEnhanced[entry.key]
+          : undefined;
 
-      if (!operation?.handler) {
-        throw new Error(`Operation handler not found for: ${field.name}`);
+      if (!routes || !route) {
+        throw new Error(`Operation not found: ${field.name}`);
       }
 
-      const argumentsReplaced = Object.fromEntries(
-        Object.entries(field.arguments?.input ?? {}).map(([key, value]) => [
-          key,
-          resolveVariableRef(variables, value),
-        ]),
-      );
+      // First, as on REST: a caller who cannot run the operation learns nothing from its input.
+      if (route.hasError) {
+        throw new Error("You are not authorized");
+      }
 
-      const result = await operation.handler(
-        {
-          databases: databasesConnections,
-          gqlQuery: operatorQuery,
-          queues: queueManager,
-          repository: repositoryMap,
-        },
-        argumentsReplaced,
-      );
+      let input: unknown =
+        argumentsOf(field, entities.schema.getMutationType(), variableValues).input ?? {};
 
-      // Filter result based on requested fields
-      const filteredResult = filterResultBySelection(result, field.selections);
+      // As on tRPC: defaults applied, refinements enforced.
+      if (route.input) {
+        const parsed = await route.input.safeParseAsync(input);
+        if (!parsed.success) {
+          const issues = parsed.error.issues.map(
+            (issue) => `${issue.path.join(".") || "input"}: ${issue.message}`,
+          );
+          throw new Error(`Invalid input for "${field.name}": ${issues.join("; ")}`);
+        }
+        input = parsed.data;
+      }
+
+      // The hooks as on tRPC: `beforeRequest` reads `input`, and no REST source is set here.
+      const initData = await routes.operationRuntime.initDataOf(route);
+      const variables =
+        (await route.hooks?.beforeRequest?.(
+          { input, pathParams: undefined, queryParams: undefined, body: undefined },
+          initData,
+        )) ?? input;
+
+      const output = route.handler
+        ? await route.handler(routes.operationRuntime.handlerOptions(), variables)
+        : (
+            await operatorQuery(
+              route.queryStructure!,
+              variables as Record<string, unknown>,
+              req,
+              session,
+              route.timeout,
+            )
+          ).data;
+
+      const result = route.hooks?.afterRequest
+        ? await route.hooks.afterRequest({ output })
+        : output;
+
+      // Without an object `output` the field is `Boolean!`, whatever the handler returns.
+      const isBoolean =
+        getNamedType(entities.schema.getMutationType()?.getFields()[field.name]?.type)?.name ===
+        "Boolean";
 
       return {
         data: {
-          [field.alias || field.name]: filteredResult,
+          [field.alias || field.name]: isBoolean
+            ? typeof result === "boolean"
+              ? result
+              : true
+            : filterResultBySelection(result, field.selections),
         },
       };
     },
 
-    [EntitySource.STORED_PROCEDURE]: async (field, variables, queryAnalysis, _req, session) => {
+    [EntitySource.STORED_PROCEDURE]: async (
+      field,
+      variableValues,
+      queryAnalysis,
+      _req,
+      session,
+    ) => {
       const sp = entities.mutationsMap[field.name];
 
       if (!sp) {
         throw new Error(`Stored procedure not found: ${field.name}`);
       }
 
-      const argumentsReplaced = Object.fromEntries(
-        Object.entries(field.arguments ?? {}).map(([key, value]) => [
-          key,
-          resolveVariableRef(variables, value),
-        ]),
-      );
-
       const result = await callStoredProcedure(
         sp,
-        argumentsReplaced as Record<string, string | number | boolean | null>,
+        argumentsOf(field, entities.schema.getMutationType(), variableValues) as Record<
+          string,
+          string | number | boolean | null
+        >,
         {
           operation: {
             type: "mutation",
@@ -158,7 +231,7 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
 
     [EntitySource.REMOTE_SCHEMA]: async (
       field,
-      _variables,
+      _variableValues,
       _queryAnalysis,
       req,
       _session,
@@ -277,6 +350,34 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
     ),
     ...variables,
   });
+
+  // The request's variables, coerced by graphql-js to the types the document
+  // declares, defaults applied.
+  const variableValuesOf = (
+    operation: OperationAnalysis,
+    variables: Record<string, unknown>,
+  ): VariableValues => {
+    const coerced = getVariableValues(
+      entities.schema,
+      operation.variableDefinitions ?? [],
+      variables,
+    );
+    if (coerced.errors) throw coerced.errors[0];
+    return coerced.variableValues;
+  };
+
+  // A root field's arguments, read by graphql-js from the request's own document
+  // and variables. Never from `resolved.allVariables`: that also holds what the
+  // server binds (`static_N`), which a caller's literal "$static_0" would read.
+  const argumentsOf = (
+    field: SelectionAnalysis,
+    rootType: GraphQLObjectType | null | undefined,
+    variableValues: VariableValues,
+  ): Record<string, unknown> => {
+    const definition = rootType?.getFields()[field.name];
+    if (!definition || !field.node) throw new Error(`No arguments for field ${field.name}`);
+    return getArgumentValues(definition, field.node, variableValues);
+  };
 
   // Keyed by an analysis's meta document, so per role and query text, and gone
   // with the analysis. Only an operation that declares no variables answers
@@ -503,12 +604,8 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
                 field.source !== EntitySource.AI,
             );
 
-            // Every `ask` is settled before any field runs, so a refused prompt costs
-            // no remote call.
             const callerValues =
-              aiFields.length > 0 || remoteFields.length > 0
-                ? callerValuesOf(operation, variables)
-                : {};
+              remoteFields.length > 0 ? callerValuesOf(operation, variables) : {};
 
             // Each `ask` runs a whole agent loop, while the rate limiter counts
             // the request once.
@@ -516,8 +613,14 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
               throw new Error("Only one `ask` is allowed per request");
             }
 
+            // Every `ask` is settled before any field runs, so a refused prompt costs
+            // no remote call.
             const asks = aiFields.map((field) => {
-              const prompt = resolveVariableRef(callerValues, field.arguments?.prompt);
+              const { prompt } = argumentsOf(
+                field,
+                entities.schema.getQueryType(),
+                variableValuesOf(operation, variables),
+              );
               if (typeof prompt !== "string" || prompt.length === 0) {
                 throw new Error("`prompt` (string) is required");
               }
@@ -666,25 +769,28 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
             // Route mutation to the appropriate handler based on field source
             let results: Record<string, object> = {};
             const callerValues = callerValuesOf(operation, variables);
+            const variableValues = variableValuesOf(operation, variables);
 
             for await (const field of resolved.fields) {
-              const source = field.source;
+              const handler = field.source && mutationHandlers[field.source];
 
-              if (source && mutationHandlers[source]) {
-                const result = await mutationHandlers[source]!(
-                  field,
-                  resolved.allVariables,
-                  queryAnalysis,
-                  req,
-                  session,
-                  callerValues,
-                );
-
-                results = {
-                  ...results,
-                  ...result.data,
-                };
+              if (!handler) {
+                throw new Error(`No resolver for mutation field "${field.name}"`);
               }
+
+              const result = await handler(
+                field,
+                variableValues,
+                queryAnalysis,
+                req,
+                session,
+                callerValues,
+              );
+
+              results = {
+                ...results,
+                ...result.data,
+              };
             }
 
             log.debug(

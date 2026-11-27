@@ -156,7 +156,14 @@ export const callStoredProcedure = async (
       `SELECT * FROM ${sp.dottedQuotedName}(${args.map((_, i) => `$${i + 1}`).join(", ")});`,
       sp.db!,
       args,
-      variables,
+      // As text, as when every argument was a string: Bun binds a JS integer as
+      // `integer`, which a `smallint` argument does not take, and text takes the routine's type.
+      Object.fromEntries(
+        Object.entries(variables).map(([name, value]) => [
+          name,
+          value == null ? value : String(value),
+        ]),
+      ),
     );
 
     return true;

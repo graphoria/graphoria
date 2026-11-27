@@ -682,13 +682,32 @@ describe.skipIf(!integrationEnabled)("query · pg", () => {
     // delete resolvers, so this is the only database mutation path to cover.
     it("exposes a stored function as a mutation field", async () => {
       const response = await gql<{ app_tasks_by_priority: boolean }>(
-        `mutation { app_tasks_by_priority(min_priority: "4") }`,
+        `mutation { app_tasks_by_priority(min_priority: 4) }`,
       );
 
       expect(response.errors ?? []).toEqual([]);
       // `true` rather than any boolean: a failed call is swallowed into `false`,
       // so the looser assertion held even when the procedure never ran.
       expect(response.data?.app_tasks_by_priority).toBe(true);
+    });
+
+    it("types a stored function's input arguments, skipping its OUT argument", async () => {
+      const response = await gql<{
+        __type: { fields: { name: string; args: { name: string; type: { name: string } }[] }[] };
+      }>(`{ __type(name: "Mutation") { fields { name args { name type { name } } } } }`);
+      const field = response.data?.__type.fields.find((f) => f.name === "app_quote_amount");
+
+      expect(field?.args.map((arg) => [arg.name, arg.type.name])).toEqual([
+        ["flag", "String"],
+        ["amount", "Int"],
+      ]);
+
+      const call = await gql<{ app_quote_amount: boolean }>(
+        `mutation { app_quote_amount(flag: "1", amount: 7) }`,
+      );
+
+      expect(call.errors ?? []).toEqual([]);
+      expect(call.data?.app_quote_amount).toBe(true);
     });
   });
 });

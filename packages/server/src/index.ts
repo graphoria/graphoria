@@ -321,8 +321,8 @@ const startAgent = async (env: Env, ai: Configuration["ai"]) => {
  * dispatch pipeline as the `/graphql` endpoint, introspection included. It bypasses auth:
  * `opts.role` selects the role (defaults to the superadmin role — full
  * privileges) and there is no token verification. Because no `BunRequest`
- * exists, request-dependent features (operation `init`/`beforeRequest` hooks
- * and header-derived session variables) do not run.
+ * exists, request-dependent features (header-derived session variables) do
+ * not run.
  *
  * @param options - Resolved env-shaped config (`Env`); same shape the server takes.
  *   `configuration` is a path, the configuration function (the `graphoria.ts`

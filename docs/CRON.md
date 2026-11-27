@@ -165,7 +165,7 @@ When `query` is set without `onTick`, Graphoria executes the query as the supera
 {
   name: "vacuum_inactive_sessions",
   pattern: "0 3 * * *",
-  query: `mutation { vacuumSessions(olderThan: "30d") { deletedCount } }`,
+  query: `mutation { vacuumSessions(input: { olderThan: "30d" }) { deletedCount } }`,
 }
 ```
 

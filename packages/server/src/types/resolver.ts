@@ -85,6 +85,8 @@ export type OperationResolverEntry = ResolverEntryBase & {
   source: EntitySource.OPERATION;
   // oxlint-disable-next-line typescript/no-explicit-any
   resolver: TypedOperation<any, any, any>;
+  /** The operation's key in `operations`: its field is named `graphql.name` when it sets one. */
+  key: string;
 };
 
 /**
@@ -169,9 +171,13 @@ export const createResolverEntry = {
   }),
 
   // oxlint-disable-next-line typescript/no-explicit-any
-  operation: (resolver: TypedOperation<unknown, unknown, unknown>): OperationResolverEntry => ({
+  operation: (
+    resolver: TypedOperation<unknown, unknown, unknown>,
+    key: string,
+  ): OperationResolverEntry => ({
     source: EntitySource.OPERATION,
     resolver,
+    key,
   }),
 
   remoteSchema: (

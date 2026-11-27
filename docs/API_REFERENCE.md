@@ -112,7 +112,7 @@ type Execute = (
 ) => Promise<unknown>;
 ```
 
-`execute` **bypasses authentication** — there is no token verification. `opts.role` selects the role and defaults to the superadmin role (full privileges), so do not expose it to untrusted input. Because no `BunRequest` exists, operation `init`/`beforeRequest` hooks and header-derived session variables do not run.
+`execute` **bypasses authentication** — there is no token verification. `opts.role` selects the role and defaults to the superadmin role (full privileges), so do not expose it to untrusted input. Because no `BunRequest` exists, header-derived session variables are not set.
 
 #### Prefixes
 

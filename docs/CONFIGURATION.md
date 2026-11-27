@@ -773,7 +773,7 @@ operation({
   input: z.object({ id: z.string() }),
   hooks: {
     init: async (options) => {
-      // Called once at startup. Return init data.
+      // Runs on each role's first request, on any surface. Return init data.
       return { cache: new Map() };
     },
     beforeRequest: (context, initData) => {

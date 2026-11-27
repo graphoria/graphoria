@@ -1,4 +1,4 @@
-import type { DocumentNode, GraphQLSchema } from "graphql";
+import type { DocumentNode, FieldNode, GraphQLSchema, VariableDefinitionNode } from "graphql";
 import type { MergedEntities } from "../configuration/getSchemas/mergeEntities";
 import type { EntitySource } from "../types/resolver";
 
@@ -13,6 +13,8 @@ export interface OperationAnalysis {
   name: string | null;
   operation: "query" | "mutation" | "subscription";
   variables?: VariableDefinition[];
+  /** As the document declares them: graphql-js coerces the request's values against these. */
+  variableDefinitions?: readonly VariableDefinitionNode[];
   fields: SelectionAnalysis[];
   /**
    * The operation narrowed to its root `__schema`, `__type` and `__typename`,
@@ -40,6 +42,12 @@ export interface SelectionAnalysis {
   isArray?: boolean;
   directives?: DirectiveAnalysis[];
   isRequired?: boolean;
+  /**
+   * Set on every `Mutation` root field and on `ask`: graphql-js reads their
+   * arguments from it. Never on a nested field: the subscription strategies
+   * stringify selections, and a node is circular.
+   */
+  node?: FieldNode;
 }
 
 export interface DirectiveAnalysis {

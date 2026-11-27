@@ -369,6 +369,7 @@ describe("Common", () => {
     expect(ordDirectiveOptionalQuery).toEqual({
       operations: [
         {
+          variableDefinitions: expect.any(Array),
           name: "Orders",
           operation: "query",
           fields: [
@@ -423,6 +424,7 @@ describe("Common", () => {
     expect(ordDirectiveRequiredQuery).toEqual({
       operations: [
         {
+          variableDefinitions: expect.any(Array),
           name: "Orders",
           operation: "query",
           fields: [
@@ -476,6 +478,7 @@ describe("Common", () => {
     expect(prodWhereArgumentVariableQuery).toEqual({
       operations: [
         {
+          variableDefinitions: expect.any(Array),
           fields: [
             {
               arguments: {
@@ -543,6 +546,7 @@ describe("Common", () => {
     expect(prodWhereArgumentVariableAndStaticQuery).toEqual({
       operations: [
         {
+          variableDefinitions: expect.any(Array),
           fields: [
             {
               arguments: {

@@ -294,15 +294,21 @@ export const generateSubscriptionType = (mergedEntities: MergedEntities) => {
     }`;
 };
 
+// An object without properties has no GraphQL type of its own: `type X {}` does not parse.
+const hasFields = (schema: OpenAPIV3_1.SchemaObject): boolean =>
+  schema.type === "object" && Object.keys(schema.properties ?? {}).length > 0;
+
 const generateGraphQLTypeFromSchema = (
   schema: OpenAPIV3_1.SchemaObject,
   typeName: string,
   collector: string[],
+  keyword: "type" | "input" = "type",
 ): string => {
   if (schema.type === "array") {
     const items = schema.items as OpenAPIV3_1.SchemaObject | undefined;
-    if (items?.type === "object" && items.properties) {
-      generateGraphQLTypeFromSchema(items, typeName, collector);
+    const element = items && unwrapNullable(items).schema;
+    if (element && hasFields(element)) {
+      generateGraphQLTypeFromSchema(element, typeName, collector, keyword);
       return `[${typeName}]`;
     }
     return `[${mapJSONSchemaToGraphQLType(items ?? {})}]`;
@@ -314,17 +320,18 @@ const generateGraphQLTypeFromSchema = (
       const isRequired = !nullable && (schema.required?.includes(key) ?? false);
       const bang = isRequired ? "!" : "";
 
-      if (prop.type === "object" && prop.properties) {
+      if (hasFields(prop)) {
         const nestedName = `${typeName}${key}`;
-        generateGraphQLTypeFromSchema(prop, nestedName, collector);
+        generateGraphQLTypeFromSchema(prop, nestedName, collector, keyword);
         return `${key}: ${nestedName}${bang}`;
       }
 
       if (prop.type === "array") {
         const items = prop.items as OpenAPIV3_1.SchemaObject | undefined;
-        if (items?.type === "object" && items.properties) {
+        const element = items && unwrapNullable(items).schema;
+        if (element && hasFields(element)) {
           const nestedName = `${typeName}${key}`;
-          generateGraphQLTypeFromSchema(items, nestedName, collector);
+          generateGraphQLTypeFromSchema(element, nestedName, collector, keyword);
           return `${key}: [${nestedName}]${bang}`;
         }
         return `${key}: ${mapJSONSchemaToGraphQLType(prop)}${bang}`;
@@ -333,7 +340,9 @@ const generateGraphQLTypeFromSchema = (
       return `${key}: ${mapJSONSchemaToGraphQLType(prop)}${bang}`;
     });
 
-    collector.push(`type ${typeName} {\n            ${fields.join("\n            ")}\n          }`);
+    collector.push(
+      `${keyword} ${typeName} {\n            ${fields.join("\n            ")}\n          }`,
+    );
     return typeName;
   }
 
@@ -385,20 +394,12 @@ export const generateMutationType = (mergedEntities: MergedEntities, hasRoles: b
       const bang = hasOutputProperties && nullableOutput ? "" : "!";
 
       return {
-        input: hasInputProperties
-          ? `
-          input ${mutationName}Input {
-            ${Object.entries(inputShape.properties ?? {})
-              .map(([key, value]) => {
-                const field = value as OpenAPIV3_1.SchemaObject;
-                const required =
-                  inputShape.required?.includes(key) && !unwrapNullable(field).nullable;
-                return `${key}: ${mapJSONSchemaToGraphQLType(field)}${required ? "!" : ""}`;
-              })
-              .join("\n")}
-          }
-        `
-          : "",
+        input: (() => {
+          if (!hasInputProperties) return "";
+          const collector: string[] = [];
+          generateGraphQLTypeFromSchema(inputShape, `${mutationName}Input`, collector, "input");
+          return collector.join("\n");
+        })(),
         output: (() => {
           if (!hasOutputProperties) return "";
           const collector: string[] = [];

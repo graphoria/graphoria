@@ -46,8 +46,8 @@ export const buildExecute = (roles: RolesWithGqlHandler, defaultRole: string) =>
       };
     }
 
-    // No BunRequest in-process: request-dependent features (operation `init`/
-    // `beforeRequest` hooks, header-derived session variables) won't run.
+    // No BunRequest in-process: request-dependent features (header-derived
+    // session variables) won't run.
     return gql.handler(query, variables, undefined, opts.session);
   };
 };

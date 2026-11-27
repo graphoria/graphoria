@@ -3,7 +3,6 @@ import type { SelectionAnalysis } from "../../analyzeQuery/types";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
 
-import { resolveVariableRef } from "../../analyzeQuery/resolveVariables";
 import { checkUserCredentials } from "../../databases";
 import { actorFromSession, audit } from "../../logging/audit";
 import { getTokenService } from "../../singletons/authentication";
@@ -17,7 +16,7 @@ const bySelection = (
 // Handle auth mutations: auth_login / auth_refresh / auth_logout
 export const handleAuthMutation = async (
   field: SelectionAnalysis,
-  variables: Record<string, unknown>,
+  args: Record<string, unknown>,
   auth: Auth | null,
   req?: BunRequest,
   session?: SessionContext,
@@ -27,10 +26,7 @@ export const handleAuthMutation = async (
   }
 
   if (field.name === "auth_login") {
-    const { username, password } = field.arguments ?? {};
-
-    const usernameValue = resolveVariableRef(variables, username);
-    const passwordValue = resolveVariableRef(variables, password);
+    const { username: usernameValue, password: passwordValue } = args;
 
     if (!usernameValue || !passwordValue) {
       throw new Error("Username and password are required");
