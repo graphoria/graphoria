@@ -55,7 +55,10 @@ import { startSpan, withActiveSpan } from "../../observability/tracing";
  */
 export type OperationRoutes = {
   operationsEnhanced: OperationsEnhanced;
-  operationRuntime: { handlerOptions: () => OperationOptions };
+  operationRuntime: {
+    handlerOptions: () => OperationOptions;
+    initDataOf: (route: OperationsEnhanced[string]) => Promise<unknown>;
+  };
 };
 
 // Handle GraphQL query
@@ -150,17 +153,29 @@ export const handleGraphQLRequestFactory = (
         input = parsed.data;
       }
 
-      const result = route.handler
-        ? await route.handler(routes.operationRuntime.handlerOptions(), input)
+      // The hooks as on tRPC: `beforeRequest` reads `input`, and no REST source is set here.
+      const initData = await routes.operationRuntime.initDataOf(route);
+      const variables =
+        (await route.hooks?.beforeRequest?.(
+          { input, pathParams: undefined, queryParams: undefined, body: undefined },
+          initData,
+        )) ?? input;
+
+      const output = route.handler
+        ? await route.handler(routes.operationRuntime.handlerOptions(), variables)
         : (
             await operatorQuery(
               route.queryStructure!,
-              input as Record<string, unknown>,
+              variables as Record<string, unknown>,
               req,
               session,
               route.timeout,
             )
           ).data;
+
+      const result = route.hooks?.afterRequest
+        ? await route.hooks.afterRequest({ output })
+        : output;
 
       // Without an object `output` the field is `Boolean!`, whatever the handler returns.
       const isBoolean =

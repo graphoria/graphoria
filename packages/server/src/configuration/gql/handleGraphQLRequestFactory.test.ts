@@ -753,7 +753,7 @@ describe("handleGraphQLRequestFactory.handler — operation results", () => {
           },
         },
       },
-      operationRuntime: { handlerOptions: () => ({}) },
+      operationRuntime: { handlerOptions: () => ({}), initDataOf: async () => undefined },
     });
     const result = await factoryFn(buildEntities(), null, operations).handler(
       query,

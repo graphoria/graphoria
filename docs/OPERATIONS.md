@@ -233,6 +233,8 @@ A PostgreSQL procedure's arguments are typed `String`, so send them strings (`z.
 
 With auth on, an operation keyed `login`, `logout`, `refresh` or `me` now fails the boot, naming the key: the auth routes took those keys, which left such an operation with no REST or tRPC route. Rename it. An operation on an auth route's method and path, under any key, fails the boot too, naming the route: it answered in that route's place. Change its path.
 
+An operation's hooks now run when GraphQL calls it, as on tRPC: `init` on each role's first call, from any surface, `beforeRequest` with the parsed `input` (`pathParams`, `queryParams` and `body` are `undefined`), and `afterRequest` on the result, which becomes the answer. A hook that reads a REST source must fall back to `input`, as one that serves tRPC does.
+
 ## Hooks lifecycle
 
 Three optional hooks let you extend an operation without changing its core query/handler. They run on its REST route and on its [tRPC](./TRPC.md) procedure: a call through GraphQL runs the handler alone.

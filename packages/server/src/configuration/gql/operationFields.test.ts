@@ -17,6 +17,8 @@ process.env.LOG_LEVEL ??= "silent";
 
 let dir: string;
 let engine: Awaited<ReturnType<typeof import("../../index").createGraphQLEngine>>;
+// What `greet`'s beforeRequest saw as its REST sources, per call.
+const restSources: unknown[] = [];
 
 const configure = (({ operation, z }) => ({
   name: "operation-fields-test",
@@ -91,6 +93,38 @@ const configure = (({ operation, z }) => ({
         );
         return { count: data.main_items.length };
       },
+    }),
+    itemCount: operation({
+      query: "query { main_items { id } }",
+      output: z.object({ count: z.number().int() }),
+      rest: { path: "/item-count", method: "POST" },
+      hooks: {
+        afterRequest: ({ output }) => ({
+          count: (output as { main_items: unknown[] }).main_items.length,
+        }),
+      },
+    }),
+    itemsFrom: operation({
+      query:
+        "query ($minId: Int!) { main_items(where: { id: { gte: $minId } }, orderBy: [{ id: ASC }]) { id } }",
+      input: z.object({ from: z.number().int() }),
+      output: z.object({ main_items: z.array(z.object({ id: z.number().int() })) }),
+      rest: { path: "/items-from", method: "POST" },
+      hooks: { beforeRequest: ({ input }) => ({ minId: input.from }) },
+    }),
+    greet: operation({
+      input: z.object({ name: z.string() }),
+      output: z.object({ text: z.string() }),
+      rest: { path: "/greet", method: "POST" },
+      hooks: {
+        init: async () => ({ greeting: "Hello" }),
+        beforeRequest: ({ input, pathParams, queryParams, body }, initData) => {
+          restSources.push([pathParams, queryParams, body]);
+          return { name: `${(initData as { greeting: string }).greeting}, ${input.name}` };
+        },
+        afterRequest: ({ output }) => ({ text: `${output.text}!` }),
+      },
+      handler: async (_options, { name }) => ({ text: name }),
     }),
   },
 })) satisfies ConfigurationFn;
@@ -239,5 +273,26 @@ describe("an operation without an object output", () => {
     expect(await asAna("mutation { toggle(input: { on: false }) }")).toEqual({
       data: { toggle: false },
     });
+  });
+});
+
+describe("an operation's hooks", () => {
+  it("shapes a query operation's data with afterRequest", async () => {
+    expect(await asAna("mutation { itemCount { count } }")).toEqual({
+      data: { itemCount: { count: 2 } },
+    });
+  });
+
+  it("builds a query operation's variables with beforeRequest", async () => {
+    expect(await asAna("mutation { itemsFrom(input: { from: 2 }) { main_items { id } } }")).toEqual(
+      { data: { itemsFrom: { main_items: [{ id: 3 }] } } },
+    );
+  });
+
+  it("runs init, beforeRequest and afterRequest around a handler, with no REST source", async () => {
+    expect(await asAna('mutation { greet(input: { name: "Ana" }) { text } }')).toEqual({
+      data: { greet: { text: "Hello, Ana!" } },
+    });
+    expect(restSources).toEqual([[undefined, undefined, undefined]]);
   });
 });
