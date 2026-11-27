@@ -33,7 +33,14 @@ const configure = (({ operation, z }) => ({
     enabled: false,
     database: "default",
     permissions: {
-      member: { tables: ["main_items"], operations: "ALL" as const },
+      member: {
+        tables: {
+          main_items: { columns: "ALL" as const, filter: { owner: { eq: "$session.sub" } } },
+        },
+        operations: "ALL" as const,
+      },
+      // Granted operations whose reads it is not granted.
+      guest: { operations: ["listItems", "countItems"] },
     },
   },
   operations: {
@@ -54,6 +61,23 @@ const configure = (({ operation, z }) => ({
       }),
       rest: { path: "/echo", method: "POST" },
       handler: async (_options, input) => input,
+    }),
+    listItems: operation({
+      query:
+        "query ($minId: Int!) { main_items(where: { id: { gte: $minId } }, orderBy: [{ id: ASC }]) { id } }",
+      input: z.object({ minId: z.number().int() }),
+      output: z.object({ main_items: z.array(z.object({ id: z.number().int() })) }),
+      rest: { path: "/items", method: "POST" },
+    }),
+    countItems: operation({
+      output: z.object({ count: z.number().int() }),
+      rest: { path: "/count-items", method: "POST" },
+      handler: async ({ gqlQuery }) => {
+        const { data } = await gqlQuery<{ main_items: { id: number }[] }>(
+          "query { main_items { id } }",
+        );
+        return { count: data.main_items.length };
+      },
     }),
   },
 })) satisfies ConfigurationFn;
@@ -88,6 +112,9 @@ afterAll(async () => {
 
 const asAna = (query: string, variables: Record<string, unknown> = {}) =>
   engine.execute(query, variables, { role: "member", session: { sub: "ana", role: "member" } });
+
+const asGus = (query: string) =>
+  engine.execute(query, {}, { role: "guest", session: { sub: "gus", role: "guest" } });
 
 describe("an operation's input", () => {
   it("resolves a variable nested in a list", async () => {
@@ -137,5 +164,25 @@ describe("an operation's input", () => {
     await expect(
       asAna("mutation ($in: echoInput!) { echo(input: $in) { name } }", { in: { name: 5 } }),
     ).rejects.toThrow('Variable "$in" has invalid value');
+  });
+});
+
+describe("an operation runs as its REST route does", () => {
+  it("runs a query operation's document as the caller, their row filter included", async () => {
+    expect(
+      await asAna("mutation { listItems(input: { minId: 1 }) { main_items { id } } }"),
+    ).toEqual({ data: { listItems: { main_items: [{ id: 1 }, { id: 3 }] } } });
+  });
+
+  it("refuses a query operation to a role not granted what its document reads", async () => {
+    await expect(
+      asGus("mutation { listItems(input: { minId: 1 }) { main_items { id } } }"),
+    ).rejects.toThrow("You are not authorized");
+  });
+
+  it("runs a handler's gqlQuery as the superadmin role", async () => {
+    expect(await asGus("mutation { countItems { count } }")).toEqual({
+      data: { countItems: { count: 3 } },
+    });
   });
 });

@@ -21,8 +21,10 @@ import type {
   SelectionAnalysis,
 } from "../../analyzeQuery/types";
 import type { SchemaEntities } from "../../configuration/getSchemas";
+import type { OperationOptions } from "../../config/types/operation";
 import type { Auth } from "../../types/configuration";
 import type { SessionContext } from "../../utils/sessionVariables";
+import type { OperationsEnhanced } from "../rest";
 
 import { analyzeQuery } from "../../analyzeQuery";
 import { checkQueryCost } from "../../analyzeQuery/costLimit";
@@ -36,7 +38,6 @@ import { callStoredProcedure, executeQueryJSON, generateSQL } from "../../databa
 import { proxyRemoteField } from "../../remoteSchemas/proxy";
 import { getAgent } from "../../singletons/ai";
 import { actorFromSession, audit } from "../../logging/audit";
-import { databasesConnections, repositoryMap } from "../../singletons/databases";
 import { env } from "../../singletons/env";
 import { queueManager } from "../../singletons/queues";
 import { EntitySource } from "../../types/resolver";
@@ -46,8 +47,22 @@ import { logger } from "../../logging";
 import { incMetric, isMetricsEnabled, observeMetric } from "../../observability/metrics";
 import { startSpan, withActiveSpan } from "../../observability/tracing";
 
+/**
+ * What an operation field runs with: the routes and options the role's REST
+ * factory prepares. Typed here rather than as a `Pick` of that factory's
+ * return type, which would make the two factories' inferred types circular.
+ */
+export type OperationRoutes = {
+  operationsEnhanced: OperationsEnhanced;
+  operationRuntime: { handlerOptions: () => OperationOptions };
+};
+
 // Handle GraphQL query
-export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth | null = null) => {
+export const handleGraphQLRequestFactory = (
+  entities: SchemaEntities,
+  auth: Auth | null = null,
+  operations?: () => OperationRoutes,
+) => {
   // Mutation handlers by source type
   const mutationHandlers: Partial<
     Record<
@@ -102,24 +117,33 @@ export const handleGraphQLRequestFactory = (entities: SchemaEntities, auth: Auth
         session,
       ),
 
-    [EntitySource.OPERATION]: async (field, variableValues) => {
-      const operation = entities.operations[field.name];
+    [EntitySource.OPERATION]: async (field, variableValues, _queryAnalysis, req, session) => {
+      const routes = operations?.();
+      const route = routes?.operationsEnhanced[field.name];
 
-      if (!operation?.handler) {
-        throw new Error(`Operation handler not found for: ${field.name}`);
+      if (!routes || !route) {
+        throw new Error(`Operation not found: ${field.name}`);
       }
 
-      const { input } = argumentsOf(field, entities.schema.getMutationType(), variableValues);
+      // First, as on REST: a caller who cannot run the operation learns nothing from its input.
+      if (route.hasError) {
+        throw new Error("You are not authorized");
+      }
 
-      const result = await operation.handler(
-        {
-          databases: databasesConnections,
-          gqlQuery: operatorQuery,
-          queues: queueManager,
-          repository: repositoryMap,
-        },
-        input ?? {},
-      );
+      const input =
+        argumentsOf(field, entities.schema.getMutationType(), variableValues).input ?? {};
+
+      const result = route.handler
+        ? await route.handler(routes.operationRuntime.handlerOptions(), input)
+        : (
+            await operatorQuery(
+              route.queryStructure!,
+              input as Record<string, unknown>,
+              req,
+              session,
+              route.timeout,
+            )
+          ).data;
 
       // Filter result based on requested fields
       const filteredResult = filterResultBySelection(result, field.selections);

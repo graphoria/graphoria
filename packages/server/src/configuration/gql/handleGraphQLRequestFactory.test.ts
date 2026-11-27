@@ -736,15 +736,26 @@ describe("handleGraphQLRequestFactory.handler — operation results", () => {
     variables: Record<string, unknown> = {},
     thing: unknown = THING,
   ) => {
-    const entities = buildEntities();
     let calls = 0;
-    entities.operations.make_thing = {
-      handler: async () => {
-        calls++;
-        return thing;
+    // The route the role's REST factory prepares for the operation.
+    const operations = () => ({
+      operationsEnhanced: {
+        make_thing: {
+          hasError: false,
+          handler: async () => {
+            calls++;
+            return thing;
+          },
+        },
       },
-    };
-    const result = await factoryFn(entities).handler(query, variables, fakeReq, undefined);
+      operationRuntime: { handlerOptions: () => ({}) },
+    });
+    const result = await factoryFn(buildEntities(), null, operations).handler(
+      query,
+      variables,
+      fakeReq,
+      undefined,
+    );
     return { ...result, calls };
   };
 
